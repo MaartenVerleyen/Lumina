@@ -1,0 +1,46 @@
+@import "tailwindcss";
+@import "leaflet/dist/leaflet.css";
+
+/* Register custom darkroom colors for Tailwind v4 */
+@theme {
+  --color-darkroom-950: #070a11;
+  --color-darkroom-900: #0c1220;
+  --color-darkroom-850: #111827;
+  --color-darkroom-800: #1a2234;
+  --color-darkroom-700: #26334d;
+  --color-darkroom-600: #384968;
+}
+
+/* Clean darkroom scrollbar */
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+::-webkit-scrollbar-track {
+  background: #090a0f;
+}
+::-webkit-scrollbar-thumb {
+  background: #26334d;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #10b981;
+}
+
+body {
+  margin: 0;
+  user-select: none;
+  background-color: #090a0f;
+  color: #f1f5f9;
+  overflow: hidden;
+}
+
+/* Fix Leaflet tile darkroom blend */
+.leaflet-container {
+  background-color: #0c1220 !important;
+  width: 100%;
+  height: 100%;
+}
+.leaflet-tile {
+  filter: brightness(0.7) invert(1) contrast(3) hue-rotate(200deg) saturate(0.3) brightness(0.7);
+}
