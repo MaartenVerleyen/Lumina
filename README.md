@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="../src/assets/lumina-mark.svg" width="64" alt="Lumina Logo" />
+  <img src="src/assets/lumina-mark.svg" width="64" alt="Lumina Logo" />
   <h1>Lumina v3.0</h1>
   <p><strong>High-Performance Local Photo Triage & AI Culling Desktop Studio</strong></p>
   <p>
