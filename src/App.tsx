@@ -18,7 +18,6 @@ import {
   CheckSquare,
   Calendar,
   Cpu,
-  Users,
   CheckCircle,
   FolderSync,
   Layers,
@@ -39,15 +38,11 @@ import {
   Crosshair,
   RefreshCw,
   Zap,
-  Flag,
   RotateCw,
   RotateCcw as RotateLeft,
   SlidersHorizontal,
   Compass,
   Tag as TagIcon,
-  Palette,
-  Check,
-  Ban,
   Columns,
   Pin,
   Clock,
@@ -90,6 +85,8 @@ interface PhotoItem {
   path: string;
   thumb_path: string;
   size_kb: number;
+  width: number;
+  height: number;
   thumb_ready: boolean;
   rating: number;
   flag: "pick" | "reject" | null;
@@ -124,6 +121,8 @@ interface ThumbBatchItem {
   thumb_path: string;
   dhash: string;
   sharpness: number;
+  width: number;
+  height: number;
   auto_tags: string[];
 }
 
@@ -330,7 +329,6 @@ export default function App() {
   const [isCommitModalOpen, setIsCommitModalOpen] = useState<boolean>(false);
   const [smartRenameOnCommit, setSmartRenameOnCommit] = useState<boolean>(false);
   const [autoStagePreset, setAutoStagePreset] = useState<AutoStagePreset>("YEAR_MONTH_CITY");
-  const [inspectorTab, setInspectorTab] = useState<"details" | "organize">("details");
 
   // Phase 2: Synchronized Compare Mode State (Zoom & Pan)
   const [compareZoom, setCompareZoom] = useState<number>(1);
@@ -391,7 +389,6 @@ export default function App() {
   const [error, setError] = useState<string>("");
 
   const [tagInput, setTagInput] = useState<string>("");
-  const [moveTargetInput, setMoveTargetInput] = useState<string>("");
   const searchInputRef = useRef<HTMLInputElement>(null);
   const gridContainerRef = useRef<HTMLDivElement>(null);
 
@@ -460,25 +457,29 @@ export default function App() {
     return () => clearInterval(interval);
   }, [aiModel]);
 
-  async function refreshPeople() {
+  async function refreshPeople(currentFolder = folder) {
     try {
-      const res = await invoke<PersonItem[]>("get_people");
+      const res = await invoke<PersonItem[]>("get_people", {
+        rootFolder: currentFolder || null,
+      });
       setPeople(res);
     } catch {}
   }
 
   // Refresh Timeline Buckets
-  async function refreshTimeline() {
+  async function refreshTimeline(currentFolder = folder) {
     try {
-      const b = await invoke<TimelineBucket[]>("get_timeline_distribution");
+      const b = await invoke<TimelineBucket[]>("get_timeline_distribution", {
+        rootFolder: currentFolder || null,
+      });
       setTimelineBuckets(b);
     } catch {}
   }
 
   useEffect(() => {
-    refreshPeople();
-    refreshTimeline();
-  }, [photos.length]);
+    refreshPeople(folder);
+    refreshTimeline(folder);
+  }, [photos.length, folder]);
 
   useEffect(() => {
     const unlisten = listen<FaceMatchEvent>("face-automatch-complete", (event) => {
@@ -563,6 +564,8 @@ export default function App() {
             thumb_path: hit.thumb_path,
             dhash: hit.dhash,
             sharpness: hit.sharpness,
+            width: hit.width || p.width,
+            height: hit.height || p.height,
             tags: mergedTags,
             thumb_ready: true,
             duplicate_group: nextDup,
@@ -659,12 +662,22 @@ export default function App() {
         if (!pDay || pDay < startDay || pDay > endDay) return false;
       }
 
-      // Orientation Filter
+      // Orientation Filter (True image dimensions + non-destructive rotation)
       if (orientationFilter !== "ALL") {
-        const ext = p.name.split(".").pop()?.toLowerCase();
-        const isPortrait = p.rotation === 90 || p.rotation === 270;
-        if (orientationFilter === "PORTRAIT" && !isPortrait) return false;
-        if (orientationFilter === "LANDSCAPE" && isPortrait) return false;
+        const swapped = p.rotation === 90 || p.rotation === 270;
+        const effW = swapped ? p.height : p.width;
+        const effH = swapped ? p.width : p.height;
+        if (effW > 0 && effH > 0) {
+          const isSquare = Math.abs(effW - effH) / Math.max(effW, effH) <= 0.05;
+          if (orientationFilter === "SQUARE" && !isSquare) return false;
+          if (orientationFilter === "PORTRAIT" && (isSquare || effH <= effW)) return false;
+          if (orientationFilter === "LANDSCAPE" && (isSquare || effW <= effH)) return false;
+        } else {
+          // Fallback if dimensions are not yet indexed
+          if (orientationFilter === "PORTRAIT" && !swapped) return false;
+          if (orientationFilter === "LANDSCAPE" && swapped) return false;
+          if (orientationFilter === "SQUARE") return false;
+        }
       }
 
       if (selectedPerson && !p.people.includes(selectedPerson)) return false;
@@ -1204,7 +1217,6 @@ export default function App() {
       setPhotos((prev) =>
         prev.map((p) => (selectedHashes.has(p.hash) ? { ...p, staged_target: targetSub } : p))
       );
-      setMoveTargetInput("");
       setBulkInput("");
       setActiveBulkPopover(null);
     } catch (err) {
@@ -1398,7 +1410,7 @@ export default function App() {
 
   async function handleDismissAllStaged() {
     try {
-      await invoke<number>("clear_all_staged");
+      await invoke<number>("clear_all_staged", { rootFolder: folder || null });
       setPhotos((prev) => prev.map((p) => (p.staged_target ? { ...p, staged_target: null } : p)));
       setIsCommitModalOpen(false);
       if (smartFilter === "STAGED") setSmartFilter("ALL");
@@ -1535,7 +1547,7 @@ export default function App() {
   async function handleOpenHealthDashboard() {
     try {
       setIsHealthModalOpen(true);
-      const stats = await invoke<LibraryHealthStats>("get_library_health_stats");
+      const stats = await invoke<LibraryHealthStats>("get_library_health_stats", { rootFolder: folder || null });
       setHealthStats(stats);
     } catch (err) {
       setError(String(err));
@@ -1559,7 +1571,7 @@ export default function App() {
   async function handlePruneCache() {
     try {
       const removed = await invoke<number>("prune_orphaned_cache");
-      const stats = await invoke<LibraryHealthStats>("get_library_health_stats");
+      const stats = await invoke<LibraryHealthStats>("get_library_health_stats", { rootFolder: folder || null });
       setHealthStats(stats);
       setAutoMatchNotice(`🧹 Pruned ${removed} orphaned cache file(s)!`);
       setTimeout(() => setAutoMatchNotice(""), 4000);
@@ -1788,7 +1800,7 @@ export default function App() {
             <img src={luminaMark} alt="Lumina" className="w-6 h-6 object-contain" />
             <span className="text-zinc-100 font-bold tracking-tight text-sm">Lumina</span>
             <span className="text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-1.5 py-0.2 rounded font-mono">
-              v3.0
+              v3.1
             </span>
           </div>
 
@@ -2488,13 +2500,13 @@ export default function App() {
             <div className="flex items-center gap-3">
               {/* Orientation Filter */}
               <div className="flex bg-zinc-900 border border-zinc-800 rounded-lg p-0.5 text-[11px]">
-                {(["ALL", "LANDSCAPE", "PORTRAIT"] as OrientationFilter[]).map((mode) => (
+                {(["ALL", "LANDSCAPE", "PORTRAIT", "SQUARE"] as OrientationFilter[]).map((mode) => (
                   <button
                     key={mode}
                     onClick={() => setOrientationFilter(mode)}
                     className={`px-2 py-0.5 rounded ${orientationFilter === mode ? "bg-zinc-800 text-zinc-100 font-medium" : "text-zinc-500 hover:text-zinc-300"}`}
                   >
-                    {mode === "ALL" ? "All" : mode === "LANDSCAPE" ? "Wide" : "Tall"}
+                    {mode === "ALL" ? "All" : mode === "LANDSCAPE" ? "Wide" : mode === "PORTRAIT" ? "Tall" : "Square"}
                   </button>
                 ))}
               </div>
@@ -3412,6 +3424,16 @@ export default function App() {
                     </h3>
                     <div className="flex items-center gap-2 mt-1 text-[11px] text-zinc-500">
                       <span>{activePhoto.size_kb} KB</span>
+                      {activePhoto.width > 0 && activePhoto.height > 0 && (
+                        <>
+                          <span>•</span>
+                          <span className="font-mono text-zinc-400">
+                            {activePhoto.rotation === 90 || activePhoto.rotation === 270
+                              ? `${activePhoto.height}×${activePhoto.width}`
+                              : `${activePhoto.width}×${activePhoto.height}`}
+                          </span>
+                        </>
+                      )}
                       <span>•</span>
                       <span className="font-mono text-emerald-400">Score: {activePhoto.sharpness}</span>
                     </div>

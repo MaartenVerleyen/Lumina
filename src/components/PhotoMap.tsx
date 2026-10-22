@@ -3,15 +3,18 @@ import { MapContainer, TileLayer, Marker, Popup, useMapEvents } from "react-leaf
 import L from "leaflet";
 import { convertFileSrc } from "@tauri-apps/api/core";
 
-// Fix default Leaflet marker icons in Vite
-const markerIcon = new L.Icon({
-  iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
-  iconRetinaUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
-  shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
-  iconSize: [25, 41],
-  iconAnchor: [12, 41],
-  popupAnchor: [1, -34],
-  shadowSize: [41, 41],
+// Offline-safe inline SVG DivIcon marker (Zero external network dependency!)
+const markerIcon = L.divIcon({
+  className: "lumina-offline-pin",
+  html: `<div style="width:26px;height:36px;filter:drop-shadow(0 3px 6px rgba(0,0,0,0.65));">
+    <svg viewBox="0 0 24 34" width="26" height="36" xmlns="http://www.w3.org/2000/svg">
+      <path d="M12 1C5.925 1 1 5.925 1 12c0 8.25 11 20.5 11 20.5S23 20.25 23 12c0-6.075-4.925-11-11-11z" fill="#10b981" stroke="#064e3b" stroke-width="1.5"/>
+      <circle cx="12" cy="12" r="4.5" fill="#090a0f"/>
+    </svg>
+  </div>`,
+  iconSize: [26, 36],
+  iconAnchor: [13, 35],
+  popupAnchor: [0, -32],
 });
 
 export interface MapPhotoItem {

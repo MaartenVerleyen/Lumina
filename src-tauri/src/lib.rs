@@ -62,6 +62,8 @@ pub struct PhotoItem {
     pub path: String,
     pub thumb_path: String,
     pub size_kb: u64,
+    pub width: u32,
+    pub height: u32,
     pub thumb_ready: bool,
     pub rating: i32,
     pub flag: Option<String>,          // "pick", "reject", or null
@@ -106,6 +108,8 @@ pub struct ThumbBatchItem {
     pub thumb_path: String,
     pub dhash: String,
     pub sharpness: f64,
+    pub width: u32,
+    pub height: u32,
     pub auto_tags: Vec<String>,
 }
 
@@ -226,6 +230,8 @@ fn open_global_db(app: &AppHandle) -> Result<Connection, String> {
             subfolder TEXT,
             file_size INTEGER DEFAULT 0,
             modified_time INTEGER DEFAULT 0,
+            width INTEGER DEFAULT 0,
+            height INTEGER DEFAULT 0,
             rating INTEGER DEFAULT 0,
             flag TEXT DEFAULT NULL,
             color_label TEXT DEFAULT NULL,
@@ -285,6 +291,13 @@ fn open_global_db(app: &AppHandle) -> Result<Connection, String> {
     let _ = conn.execute("ALTER TABLE photos ADD COLUMN sharpness REAL DEFAULT 0.0", []);
     let _ = conn.execute("ALTER TABLE photos ADD COLUMN staged_target TEXT DEFAULT NULL", []);
     let _ = conn.execute("ALTER TABLE photos ADD COLUMN exif_checked INTEGER DEFAULT 0", []);
+    let _ = conn.execute("ALTER TABLE photos ADD COLUMN width INTEGER DEFAULT 0", []);
+    let _ = conn.execute("ALTER TABLE photos ADD COLUMN height INTEGER DEFAULT 0", []);
+    // Repair any previously shifted dates that used colons instead of hyphens in YYYY-MM-DD
+    let _ = conn.execute(
+        "UPDATE photos SET captured_at = substr(replace(captured_at, ':', '-'), 1, 10) || substr(captured_at, 11) WHERE length(captured_at) >= 10 AND substr(captured_at, 5, 1) = ':'",
+        [],
+    );
     let _ = conn.execute("ALTER TABLE people ADD COLUMN cover_face_thumb TEXT DEFAULT ''", []);
     let _ = conn.execute("ALTER TABLE photo_faces ADD COLUMN source TEXT DEFAULT 'user'", []);
 
@@ -476,10 +489,8 @@ fn has_bilateral_face_structure(face_img: &DynamicImage) -> bool {
 type OnnxPlan = SimplePlan<TypedFact, Box<dyn TypedOp>, Graph<TypedFact, Box<dyn TypedOp>>>;
 
 static ULTRAFACE_PLAN: LazyLock<Mutex<Option<OnnxPlan>>> = LazyLock::new(|| Mutex::new(None));
-static ARCFACE_PLAN: LazyLock<Mutex<Option<OnnxPlan>>> = LazyLock::new(|| Mutex::new(None));
 
 const ULTRAFACE_URL: &str = "https://github.com/onnx/models/raw/main/validated/vision/body_analysis/ultraface/models/version-RFB-320.onnx";
-const ARCFACE_URL: &str = "https://github.com/onnx/models/raw/main/validated/vision/body_analysis/arcface/model/arcfaceresnet100-8.onnx";
 
 fn get_models_dir(app: &AppHandle) -> PathBuf {
     let dir = get_app_storage_dir(app).join("models");
@@ -871,6 +882,15 @@ fn assign_duplicate_groups(photos: &mut [PhotoItem]) {
         p.duplicate_group = None;
     }
 
+    // Order indices chronologically by captured_at then name so bursts with different prefixes still sit adjacent
+    let mut order: Vec<usize> = (0..photos.len()).collect();
+    order.sort_by(|&a, &b| {
+        photos[a]
+            .captured_at
+            .cmp(&photos[b].captured_at)
+            .then_with(|| photos[a].name.cmp(&photos[b].name))
+    });
+
     let parsed: Vec<(Option<u64>, bool)> = photos
         .iter()
         .map(|p| {
@@ -887,11 +907,12 @@ fn assign_duplicate_groups(photos: &mut [PhotoItem]) {
         })
         .collect();
 
-    let n = photos.len();
-    let mut visited = vec![false; n];
+    let n = order.len();
+    let mut visited = vec![false; photos.len()];
     let mut current_group = 1usize;
 
-    for i in 0..n {
+    for pos_i in 0..n {
+        let i = order[pos_i];
         if visited[i] || photos[i].subfolder == "_Trash" {
             continue;
         }
@@ -900,8 +921,9 @@ fn assign_duplicate_groups(photos: &mut [PhotoItem]) {
         };
 
         let mut members = vec![i];
-        let limit = (i + 300).min(n);
-        for j in (i + 1)..limit {
+        let limit = (pos_i + 300).min(n);
+        for pos_j in (pos_i + 1)..limit {
+            let j = order[pos_j];
             if visited[j] || photos[j].subfolder == "_Trash" {
                 continue;
             }
@@ -923,17 +945,19 @@ fn assign_duplicate_groups(photos: &mut [PhotoItem]) {
     }
 }
 
-fn compute_db_duplicate_groups(conn: &Connection) -> HashMap<String, usize> {
+fn compute_db_duplicate_groups(conn: &Connection, root_folder: Option<&str>) -> HashMap<String, usize> {
     let mut map = HashMap::new();
+    let prefix = make_folder_prefix(root_folder);
     let Ok(mut stmt) = conn.prepare(
         "SELECT hash, dhash, COALESCE(camera_model, ''), COALESCE(subfolder, ''), COALESCE(current_path, '')
-         FROM photos WHERE length(dhash) = 16 AND COALESCE(subfolder, '') != '_Trash'
-         ORDER BY subfolder ASC, current_path ASC",
+         FROM photos
+         WHERE length(dhash) = 16 AND COALESCE(subfolder, '') != '_Trash' AND current_path LIKE ?1
+         ORDER BY COALESCE(captured_at, '') ASC, current_path ASC",
     ) else {
         return map;
     };
 
-    let Ok(rows) = stmt.query_map([], |r| {
+    let Ok(rows) = stmt.query_map(params![prefix], |r| {
         let hash: String = r.get(0)?;
         let dhash_str: String = r.get(1)?;
         let cam: String = r.get(2)?;
@@ -1043,6 +1067,60 @@ fn normalize_date_str(raw: &str) -> String {
         }
     }
     String::new()
+}
+
+fn read_exif_orientation(file_path: &Path) -> u32 {
+    if let Ok(file) = File::open(file_path) {
+        let mut bufreader = BufReader::new(file);
+        let exifreader = Reader::new();
+        if let Ok(exif) = exifreader.read_from_container(&mut bufreader) {
+            if let Some(field) = exif.get_field(Tag::Orientation, exif::In::PRIMARY) {
+                if let Some(v) = field.value.get_uint(0) {
+                    return v;
+                }
+            }
+        }
+    }
+    1
+}
+
+fn apply_exif_orientation(img: DynamicImage, orientation: u32) -> DynamicImage {
+    match orientation {
+        2 => img.fliph(),
+        3 => img.rotate180(),
+        4 => img.flipv(),
+        5 => img.rotate90().fliph(),
+        6 => img.rotate90(),
+        7 => img.rotate270().fliph(),
+        8 => img.rotate270(),
+        _ => img,
+    }
+}
+
+fn open_and_orient_image(file_path: &Path) -> Result<DynamicImage, String> {
+    let reader = image::ImageReader::open(file_path).map_err(|e| e.to_string())?;
+    let reader_guessed = reader.with_guessed_format().map_err(|e| e.to_string())?;
+    let img = reader_guessed.decode().map_err(|e| e.to_string())?;
+    let orientation = read_exif_orientation(file_path);
+    Ok(apply_exif_orientation(img, orientation))
+}
+
+fn get_oriented_dimensions(file_path: &Path) -> (u32, u32) {
+    if let Ok((w, h)) = image::image_dimensions(file_path) {
+        let orientation = read_exif_orientation(file_path);
+        if matches!(orientation, 5 | 6 | 7 | 8) {
+            return (h, w);
+        }
+        return (w, h);
+    }
+    (0, 0)
+}
+
+fn make_folder_prefix(root_folder: Option<&str>) -> String {
+    match root_folder {
+        Some(f) if !f.trim().is_empty() => format!("{}%", f.trim()),
+        _ => "%".to_string(),
+    }
 }
 
 fn extract_exif_metadata(file_path: &Path) -> (String, String, String, Option<f64>, Option<f64>) {
@@ -1167,6 +1245,8 @@ fn get_relative_subfolder(root: &Path, file_path: &Path) -> String {
 struct CachedRow {
     size: u64,
     mtime: u64,
+    width: u32,
+    height: u32,
     rating: i32,
     flag: Option<String>,
     color_label: Option<String>,
@@ -1210,7 +1290,8 @@ async fn scan_folder(
                             COALESCE(captured_at, ''), COALESCE(camera_model, ''),
                             COALESCE(location, ''), latitude, longitude,
                             COALESCE(dhash, ''), COALESCE(sharpness, 0.0), staged_target,
-                            COALESCE(exif_checked, 0), flag, color_label, COALESCE(rotation, 0), COALESCE(in_basket, 0)
+                            COALESCE(exif_checked, 0), flag, color_label, COALESCE(rotation, 0), COALESCE(in_basket, 0),
+                            COALESCE(width, 0), COALESCE(height, 0)
                      FROM photos",
                 )
                 .map_err(|e| e.to_string())?;
@@ -1238,6 +1319,8 @@ async fn scan_folder(
                             color_label: row.get(17)?,
                             rotation: row.get(18)?,
                             in_basket: row.get::<_, i32>(19).unwrap_or(0) != 0,
+                            width: row.get::<_, u32>(20).unwrap_or(0),
+                            height: row.get::<_, u32>(21).unwrap_or(0),
                         },
                     ))
                 })
@@ -1336,11 +1419,13 @@ async fn scan_folder(
 
                 let path_str = file_path.to_string_lossy().to_string();
 
-                let (hash, rating, flag, color_label, rotation, in_basket, ai_caption, ocr_text, captured_at, camera_model, location, lat, lon, dhash, sharpness, staged_target) =
+                let (hash, width, height, rating, flag, color_label, rotation, in_basket, ai_caption, ocr_text, captured_at, camera_model, location, lat, lon, dhash, sharpness, staged_target) =
                     if let Some(c) = cache_map.get(&path_str) {
-                        if !force && c.exif_checked == 1 && !c.captured_at.is_empty() && c.size == size_bytes && c.mtime == modified_time {
+                        if !force && c.exif_checked == 1 && c.width > 0 && c.height > 0 && !c.captured_at.is_empty() && c.size == size_bytes && c.mtime == modified_time {
                             (
                                 c.hash.clone(),
+                                c.width,
+                                c.height,
                                 c.rating,
                                 c.flag.clone(),
                                 c.color_label.clone(),
@@ -1363,9 +1448,16 @@ async fn scan_folder(
                             } else {
                                 compute_fast_hash(&file_path, size_bytes).ok()?
                             };
+                            let (w, ht) = if c.width > 0 && c.height > 0 && !force {
+                                (c.width, c.height)
+                            } else {
+                                get_oriented_dimensions(&file_path)
+                            };
                             let (d, cam, loc, new_lat, new_lon) = extract_exif_metadata(&file_path);
                             (
                                 h,
+                                w,
+                                ht,
                                 c.rating,
                                 c.flag.clone(),
                                 c.color_label.clone(),
@@ -1385,8 +1477,9 @@ async fn scan_folder(
                         }
                     } else {
                         let h = compute_fast_hash(&file_path, size_bytes).ok()?;
+                        let (w, ht) = get_oriented_dimensions(&file_path);
                         let (d, cam, loc, lat, lon) = extract_exif_metadata(&file_path);
-                        (h, 0, None, None, 0, false, String::new(), String::new(), d, cam, loc, lat, lon, String::new(), 0.0, None)
+                        (h, w, ht, 0, None, None, 0, false, String::new(), String::new(), d, cam, loc, lat, lon, String::new(), 0.0, None)
                     };
 
                 let thumb_file = thumbs_dir.join(format!("{}.jpg", hash));
@@ -1409,6 +1502,8 @@ async fn scan_folder(
                     path: path_str,
                     thumb_path: thumb_file.to_string_lossy().to_string(),
                     size_kb,
+                    width,
+                    height,
                     thumb_ready,
                     rating,
                     flag,
@@ -1445,13 +1540,15 @@ async fn scan_folder(
                     .unwrap_or(0);
 
                 let _ = tx.execute(
-                    "INSERT INTO photos (hash, current_path, subfolder, file_size, modified_time, rating, flag, color_label, rotation, ai_caption, ocr_text, captured_at, camera_model, location, latitude, longitude, dhash, sharpness, staged_target, exif_checked)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, 1)
+                    "INSERT INTO photos (hash, current_path, subfolder, file_size, modified_time, width, height, rating, flag, color_label, rotation, ai_caption, ocr_text, captured_at, camera_model, location, latitude, longitude, dhash, sharpness, staged_target, exif_checked)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, 1)
                      ON CONFLICT(hash) DO UPDATE SET
                         current_path = excluded.current_path,
                         subfolder = excluded.subfolder,
                         file_size = excluded.file_size,
                         modified_time = excluded.modified_time,
+                        width = CASE WHEN excluded.width > 0 THEN excluded.width ELSE photos.width END,
+                        height = CASE WHEN excluded.height > 0 THEN excluded.height ELSE photos.height END,
                         captured_at = excluded.captured_at,
                         camera_model = excluded.camera_model,
                         location = excluded.location,
@@ -1460,7 +1557,7 @@ async fn scan_folder(
                         staged_target = excluded.staged_target,
                         exif_checked = 1",
                     params![
-                        p.hash, p.path, p.subfolder, size_bytes, mtime, p.rating,
+                        p.hash, p.path, p.subfolder, size_bytes, mtime, p.width, p.height, p.rating,
                         p.flag, p.color_label, p.rotation,
                         p.ai_caption, p.ocr_text, p.captured_at, p.camera_model,
                         p.location, p.latitude, p.longitude, p.dhash, p.sharpness,
@@ -1489,6 +1586,7 @@ async fn scan_folder(
 
         if !needs_processing.is_empty() {
             let app_clone = app.clone();
+            let folder_scope = folder_path.clone();
             std::thread::spawn(move || {
                 let total = needs_processing.len();
                 let completed = AtomicUsize::new(0);
@@ -1513,26 +1611,27 @@ async fn scan_folder(
 
                                 let mut computed_dhash = photo.dhash.clone();
                                 let mut computed_sharpness = photo.sharpness;
+                                let mut computed_w = photo.width;
+                                let mut computed_h = photo.height;
                                 let mut final_thumb_path = photo.thumb_path.clone();
                                 let mut detected_scr = false;
 
-                                if let Ok(reader) = image::ImageReader::open(original_path) {
-                                    if let Ok(reader_guessed) = reader.with_guessed_format() {
-                                        if let Ok(img) = reader_guessed.decode() {
-                                            detected_scr = is_likely_screenshot(
-                                                original_path,
-                                                &photo.camera_model,
-                                                Some(&img),
-                                            );
-                                            let thumb = img.thumbnail(360, 360);
-                                            computed_dhash = compute_dhash(&thumb);
-                                            computed_sharpness = compute_sharpness(&thumb);
+                                if let Ok(img) = open_and_orient_image(original_path) {
+                                    let (iw, ih) = img.dimensions();
+                                    computed_w = iw;
+                                    computed_h = ih;
+                                    detected_scr = is_likely_screenshot(
+                                        original_path,
+                                        &photo.camera_model,
+                                        Some(&img),
+                                    );
+                                    let thumb = img.thumbnail(360, 360);
+                                    computed_dhash = compute_dhash(&thumb);
+                                    computed_sharpness = compute_sharpness(&thumb);
 
-                                            if force || !thumb_file.exists() {
-                                                if thumb.to_rgb8().save(thumb_file).is_err() {
-                                                    final_thumb_path = photo.path.clone();
-                                                }
-                                            }
+                                    if force || !thumb_file.exists() {
+                                        if thumb.to_rgb8().save(thumb_file).is_err() {
+                                            final_thumb_path = photo.path.clone();
                                         }
                                     }
                                 }
@@ -1549,6 +1648,8 @@ async fn scan_folder(
                                     thumb_path: final_thumb_path,
                                     dhash: computed_dhash,
                                     sharpness: computed_sharpness,
+                                    width: computed_w,
+                                    height: computed_h,
                                     auto_tags,
                                 }
                             })
@@ -1561,8 +1662,8 @@ async fn scan_folder(
                             if let Ok(tx) = db_conn.transaction() {
                                 for item in &batch_items {
                                     let _ = tx.execute(
-                                        "UPDATE photos SET dhash = ?1, sharpness = ?2 WHERE hash = ?3",
-                                        params![item.dhash, item.sharpness, item.hash],
+                                        "UPDATE photos SET dhash = ?1, sharpness = ?2, width = CASE WHEN ?3 > 0 THEN ?3 ELSE width END, height = CASE WHEN ?4 > 0 THEN ?4 ELSE height END WHERE hash = ?5",
+                                        params![item.dhash, item.sharpness, item.width, item.height, item.hash],
                                     );
                                     if !item.auto_tags.is_empty() {
                                         let _ = tx.execute(
@@ -1575,7 +1676,7 @@ async fn scan_folder(
                             }
 
                             if done == total || done % 96 == 0 {
-                                dup_groups = compute_db_duplicate_groups(&db_conn);
+                                dup_groups = compute_db_duplicate_groups(&db_conn, Some(&folder_scope));
                             }
                         }
 
@@ -1657,20 +1758,21 @@ fn rescan_exif_batch(app: AppHandle, hashes: Vec<String>) -> Result<Vec<ExifRefr
 // ----------------- DATE TIMELINE AGGREGATION -----------------
 
 #[tauri::command]
-fn get_timeline_distribution(app: AppHandle) -> Result<Vec<TimelineBucket>, String> {
+fn get_timeline_distribution(app: AppHandle, root_folder: Option<String>) -> Result<Vec<TimelineBucket>, String> {
     let conn = open_global_db(&app)?;
+    let prefix = make_folder_prefix(root_folder.as_deref());
     let mut stmt = conn
         .prepare(
             "SELECT substr(replace(captured_at, ':', '-'), 1, 10) as period, count(*)
              FROM photos
-             WHERE captured_at IS NOT NULL AND length(captured_at) >= 10
+             WHERE captured_at IS NOT NULL AND length(captured_at) >= 10 AND current_path LIKE ?1
              GROUP BY period
              ORDER BY period ASC",
         )
         .map_err(|e| e.to_string())?;
 
     let rows = stmt
-        .query_map([], |r| {
+        .query_map(params![prefix], |r| {
             Ok(TimelineBucket {
                 period: r.get(0)?,
                 count: r.get(1)?,
@@ -1838,22 +1940,27 @@ fn stage_photo_move(app: AppHandle, hash: String, target_subfolder: Option<Strin
 }
 
 #[tauri::command]
-fn clear_all_staged(app: AppHandle) -> Result<usize, String> {
+fn clear_all_staged(app: AppHandle, root_folder: Option<String>) -> Result<usize, String> {
     let conn = open_global_db(&app)?;
+    let prefix = make_folder_prefix(root_folder.as_deref());
     let count = conn
-        .execute("UPDATE photos SET staged_target = NULL WHERE staged_target IS NOT NULL", [])
+        .execute(
+            "UPDATE photos SET staged_target = NULL WHERE staged_target IS NOT NULL AND current_path LIKE ?1",
+            params![prefix],
+        )
         .map_err(|e| e.to_string())?;
     Ok(count)
 }
 
 #[tauri::command]
-fn get_staged_operations(app: AppHandle) -> Result<Vec<StagedOperation>, String> {
+fn get_staged_operations(app: AppHandle, root_folder: Option<String>) -> Result<Vec<StagedOperation>, String> {
     let conn = open_global_db(&app)?;
+    let prefix = make_folder_prefix(root_folder.as_deref());
     let mut stmt = conn
-        .prepare("SELECT hash, current_path, staged_target FROM photos WHERE staged_target IS NOT NULL")
+        .prepare("SELECT hash, current_path, staged_target FROM photos WHERE staged_target IS NOT NULL AND current_path LIKE ?1")
         .map_err(|e| e.to_string())?;
     let rows = stmt
-        .query_map([], |row| {
+        .query_map(params![prefix], |row| {
             let p_str: String = row.get(1)?;
             let path = Path::new(&p_str);
             let fname = path.file_name().unwrap_or_default().to_string_lossy().to_string();
@@ -1877,16 +1984,17 @@ fn commit_staged_operations(
 ) -> Result<usize, String> {
     let do_rename = smart_rename.unwrap_or(false);
     let conn = open_global_db(&app)?;
+    let prefix = make_folder_prefix(Some(&root_folder));
     let mut stmt = conn
         .prepare(
             "SELECT hash, current_path, staged_target, COALESCE(captured_at, ''), COALESCE(location, '')
-             FROM photos WHERE staged_target IS NOT NULL
+             FROM photos WHERE staged_target IS NOT NULL AND current_path LIKE ?1
              ORDER BY captured_at ASC, current_path ASC",
         )
         .map_err(|e| e.to_string())?;
 
     let ops: Vec<(String, String, String, String, String)> = stmt
-        .query_map([], |row| {
+        .query_map(params![prefix], |row| {
             Ok((
                 row.get(0)?,
                 row.get(1)?,
@@ -2060,7 +2168,7 @@ fn shift_exif_datetime_str(raw: &str, offset_minutes: i64) -> Option<String> {
     }
 
     Some(format!(
-        "{:04}:{:02}:{:02} {:02}:{:02}:{:02}",
+        "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
         cur_y, cur_m, cur_d, new_hh, new_mm, ss
     ))
 }
@@ -2225,25 +2333,26 @@ fn export_xmp_sidecars(app: AppHandle, hashes: Option<Vec<String>>) -> Result<us
 }
 
 #[tauri::command]
-fn get_library_health_stats(app: AppHandle) -> Result<LibraryHealthStats, String> {
+fn get_library_health_stats(app: AppHandle, root_folder: Option<String>) -> Result<LibraryHealthStats, String> {
     let conn = open_global_db(&app)?;
+    let prefix = make_folder_prefix(root_folder.as_deref());
 
     let total_photos: usize = conn
-        .query_row("SELECT COUNT(*) FROM photos", [], |r| r.get(0))
+        .query_row("SELECT COUNT(*) FROM photos WHERE current_path LIKE ?1", params![prefix], |r| r.get(0))
         .unwrap_or(0);
     let total_bytes: i64 = conn
-        .query_row("SELECT COALESCE(SUM(file_size), 0) FROM photos", [], |r| r.get(0))
+        .query_row("SELECT COALESCE(SUM(file_size), 0) FROM photos WHERE current_path LIKE ?1", params![prefix], |r| r.get(0))
         .unwrap_or(0);
 
     let (trash_cnt, trash_bytes): (usize, i64) = conn
         .query_row(
-            "SELECT COUNT(*), COALESCE(SUM(file_size), 0) FROM photos WHERE staged_target = '_Trash' OR subfolder = '_Trash'",
-            [],
+            "SELECT COUNT(*), COALESCE(SUM(file_size), 0) FROM photos WHERE (staged_target = '_Trash' OR subfolder = '_Trash') AND current_path LIKE ?1",
+            params![prefix],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .unwrap_or((0, 0));
 
-    let dup_groups = compute_db_duplicate_groups(&conn);
+    let dup_groups = compute_db_duplicate_groups(&conn, root_folder.as_deref());
     let mut seen_groups = std::collections::HashSet::new();
     let mut dup_extras_cnt = 0usize;
     let mut dup_extras_bytes = 0i64;
@@ -2301,9 +2410,9 @@ fn get_library_health_stats(app: AppHandle) -> Result<LibraryHealthStats, String
     if let Ok(mut stmt) = conn.prepare(
         "SELECT CASE WHEN camera_model = '' OR camera_model IS NULL THEN 'Unknown / No EXIF' ELSE camera_model END as cam,
                 COUNT(*) as cnt
-         FROM photos GROUP BY cam ORDER BY cnt DESC LIMIT 8",
+         FROM photos WHERE current_path LIKE ?1 GROUP BY cam ORDER BY cnt DESC LIMIT 8",
     ) {
-        if let Ok(rows) = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, usize>(1)?))) {
+        if let Ok(rows) = stmt.query_map(params![prefix], |r| Ok((r.get::<_, String>(0)?, r.get::<_, usize>(1)?))) {
             camera_breakdown = rows.flatten().collect();
         }
     }
@@ -2383,7 +2492,7 @@ async fn detect_faces_in_photo(
             return Ok(existing);
         }
 
-        if let Ok(img) = image::open(&image_path) {
+        if let Ok(img) = open_and_orient_image(Path::new(&image_path)) {
             let onnx_boxes = detect_faces_with_onnx(&app, &img);
             // Clear any old un-named boxes on this photo before inserting fresh ONNX boxes
             let _ = conn.execute(
@@ -2451,7 +2560,7 @@ async fn scan_library_faces_batch(
                     orig_path.clone()
                 };
 
-                if let Ok(img) = image::open(&load_path) {
+                if let Ok(img) = open_and_orient_image(Path::new(&load_path)) {
                     let boxes = detect_faces_with_onnx(&app_clone, &img);
                     if !boxes.is_empty() {
                         // Delete old unnamed boxes for this photo
@@ -2542,7 +2651,7 @@ fn assign_face_region_and_automatch(
         return Err("Person name cannot be empty".into());
     }
 
-    let img = image::open(&image_path).map_err(|e| format!("Failed to open image: {e}"))?;
+    let img = open_and_orient_image(Path::new(&image_path)).map_err(|e| format!("Failed to open image: {e}"))?;
     let conn = open_global_db(&app)?;
 
     let saved_face = save_cropped_face_and_record(
@@ -2630,15 +2739,18 @@ fn remove_face_box(app: AppHandle, face_id: String, hash: String) -> Result<Vec<
 }
 
 #[tauri::command]
-fn get_people(app: AppHandle) -> Result<Vec<PersonItem>, String> {
+fn get_people(app: AppHandle, root_folder: Option<String>) -> Result<Vec<PersonItem>, String> {
     let conn = open_global_db(&app)?;
+    let prefix = make_folder_prefix(root_folder.as_deref());
     let mut stmt = conn
         .prepare(
             "SELECT p.id, p.name, COUNT(DISTINCT pp.hash) as cnt,
-                    COALESCE(NULLIF(p.cover_face_thumb, ''), (SELECT pf.face_thumb FROM photo_faces pf WHERE pf.person_name = p.name LIMIT 1), '') as face_crop,
-                    (SELECT ph.hash FROM photos ph JOIN photo_people pp2 ON ph.hash = pp2.hash WHERE pp2.person_name = p.name LIMIT 1) as fallback_hash
+                    COALESCE(NULLIF(p.cover_face_thumb, ''), (SELECT pf.face_thumb FROM photo_faces pf JOIN photos phf ON pf.hash = phf.hash WHERE pf.person_name = p.name AND phf.current_path LIKE ?1 LIMIT 1), '') as face_crop,
+                    (SELECT ph.hash FROM photos ph JOIN photo_people pp2 ON ph.hash = pp2.hash WHERE pp2.person_name = p.name AND ph.current_path LIKE ?1 LIMIT 1) as fallback_hash
              FROM people p
-             LEFT JOIN photo_people pp ON p.name = pp.person_name
+             JOIN photo_people pp ON p.name = pp.person_name
+             JOIN photos ph_main ON pp.hash = ph_main.hash
+             WHERE ph_main.current_path LIKE ?1
              GROUP BY p.name
              HAVING cnt > 0
              ORDER BY cnt DESC",
@@ -2649,7 +2761,7 @@ fn get_people(app: AppHandle) -> Result<Vec<PersonItem>, String> {
     let thumbs_dir = app_dir.join("thumbnails");
 
     let rows = stmt
-        .query_map([], |row| {
+        .query_map(params![prefix], |row| {
             let face_crop: String = row.get(3)?;
             let fallback_h: Option<String> = row.get(4)?;
             let cover_thumb = if !face_crop.is_empty() && Path::new(&face_crop).exists() {
@@ -2873,7 +2985,7 @@ fn get_tags_for_hash(conn: &Connection, hash: &str) -> Result<Vec<String>, Strin
 // ----------------- FAST ASSISTANT-PREFILLED QWEN3-VL VISION PIPELINE -----------------
 
 fn encode_fast_ai_buffer(image_path: &str) -> Result<String, String> {
-    if let Ok(img) = image::open(image_path) {
+    if let Ok(img) = open_and_orient_image(Path::new(image_path)) {
         let small = img.thumbnail(640, 640).to_rgb8();
         let mut buf = Cursor::new(Vec::new());
         if small.write_to(&mut buf, ImageFormat::Jpeg).is_ok() {
@@ -3058,7 +3170,7 @@ async fn ai_analyze_photo(
     };
 
     let prompt = format!(
-        "Analyze this image and return JSON with keys: caption (1 sentence), objects (array of short lowercase nouns, e.g. card, dog, mug, sofa), scene (1 word: indoor, outdoor, screenshot, document, nature, street), is_screenshot (boolean), ocr_text (exact visible text in image, or empty string), face_boxes (array of {{\"box_2d\": [ymin, xmin, ymax, xmax]}} in 0..1000 coordinates if real human faces are visible, else []). {vocab_hint}"
+        "Analyze this image and return JSON with keys: caption (1 sentence), objects (array of short lowercase nouns, e.g. card, dog, mug, sofa), scene (1 word: indoor, outdoor, screenshot, document, nature, street), is_screenshot (boolean), ocr_text (exact visible text in image, or empty string). {vocab_hint}"
     );
 
     let prefill = "{\"caption\": \"";
@@ -3212,32 +3324,12 @@ async fn ai_analyze_photo(
         params![clean_caption, clean_ocr, hash],
     );
 
-    if !ai_result.face_boxes.is_empty() {
-        if let Ok(img) = image::open(&image_path_for_ai) {
-            for fb in &ai_result.face_boxes {
-                if fb.box_2d.len() == 4 {
-                    let (mut ymin, mut xmin, mut ymax, mut xmax) =
-                        (fb.box_2d[0], fb.box_2d[1], fb.box_2d[2], fb.box_2d[3]);
-                    if ymax > 1.0 || xmax > 1.0 {
-                        ymin /= 1000.0;
-                        xmin /= 1000.0;
-                        ymax /= 1000.0;
-                        xmax /= 1000.0;
-                    }
-                    let bw = (xmax - xmin).clamp(0.04, 0.9);
-                    let bh = (ymax - ymin).clamp(0.04, 0.9);
-                    if bw > 0.04 && bh > 0.04 && bw < 0.85 && bh < 0.85 {
-                        let _ = save_cropped_face_and_record(
-                            &app,
-                            &conn,
-                            &hash,
-                            &img,
-                            (xmin.clamp(0.0, 0.95), ymin.clamp(0.0, 0.95), bw, bh),
-                            None,
-                            "ai",
-                        );
-                    }
-                }
+    // Delegate face detection to pure-Rust ONNX UltraFace if no faces are recorded yet
+    if get_faces_for_hash(&conn, &hash).is_empty() {
+        if let Ok(img) = open_and_orient_image(Path::new(&image_path_for_ai)) {
+            let onnx_boxes = detect_faces_with_onnx(&app, &img);
+            for (bx, by, bw, bh, _score) in onnx_boxes {
+                let _ = save_cropped_face_and_record(&app, &conn, &hash, &img, (bx, by, bw, bh), None, "onnx");
             }
         }
     }
