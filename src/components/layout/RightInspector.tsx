@@ -1,13 +1,17 @@
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { CitySearchResult, FaceInstance, PhotoItem } from "../../types/lumina";
 import {
+  Aperture,
   Calendar,
   Camera,
+  Compass,
   Crosshair,
   FileText,
   Flag,
   Folder,
+  Gauge,
+  Layers,
   Loader2,
   MapPin,
   Maximize2,
@@ -22,8 +26,116 @@ import {
   XCircle,
 } from "lucide-react";
 
+function HistogramCanvas({ imageSrc }: { imageSrc: string }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.src = imageSrc;
+
+    img.onload = () => {
+      const w = 128;
+      const h = 96;
+      const offCanvas = document.createElement("canvas");
+      offCanvas.width = w;
+      offCanvas.height = h;
+      const offCtx = offCanvas.getContext("2d");
+      if (!offCtx) return;
+
+      offCtx.drawImage(img, 0, 0, w, h);
+      const data = offCtx.getImageData(0, 0, w, h).data;
+
+      const rBin = new Array(256).fill(0);
+      const gBin = new Array(256).fill(0);
+      const bBin = new Array(256).fill(0);
+      const lBin = new Array(256).fill(0);
+
+      for (let i = 0; i < data.length; i += 4) {
+        const r = data[i];
+        const g = data[i + 1];
+        const b = data[i + 2];
+        rBin[r]++;
+        gBin[g]++;
+        bBin[b]++;
+        const luma = Math.min(255, Math.round(0.299 * r + 0.587 * g + 0.114 * b));
+        lBin[luma]++;
+      }
+
+      // Ignore extreme 0 and 255 clipping spikes for auto-scaling
+      const maxVal = Math.max(
+        ...rBin.slice(2, 254),
+        ...gBin.slice(2, 254),
+        ...bBin.slice(2, 254),
+        1
+      );
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = "rgba(9, 10, 15, 0.95)";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      function drawCurve(bin: number[], stroke: string, fill: string) {
+        if (!ctx || !canvas) return;
+        ctx.beginPath();
+        ctx.moveTo(0, canvas.height);
+        for (let x = 0; x < 256; x++) {
+          const norm = Math.min(1, bin[x] / maxVal);
+          const y = canvas.height - norm * (canvas.height - 4);
+          ctx.lineTo(x, y);
+        }
+        ctx.lineTo(255, canvas.height);
+        ctx.closePath();
+        ctx.fillStyle = fill;
+        ctx.fill();
+
+        ctx.beginPath();
+        for (let x = 0; x < 256; x++) {
+          const norm = Math.min(1, bin[x] / maxVal);
+          const y = canvas.height - norm * (canvas.height - 4);
+          if (x === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        ctx.strokeStyle = stroke;
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
+      }
+
+      drawCurve(lBin, "rgba(228, 228, 231, 0.45)", "rgba(228, 228, 231, 0.08)");
+      drawCurve(rBin, "rgba(239, 68, 68, 0.8)", "rgba(239, 68, 68, 0.12)");
+      drawCurve(gBin, "rgba(16, 185, 129, 0.8)", "rgba(16, 185, 129, 0.12)");
+      drawCurve(bBin, "rgba(59, 130, 246, 0.8)", "rgba(59, 130, 246, 0.12)");
+    };
+  }, [imageSrc]);
+
+  return (
+    <div className="flex flex-col gap-1 p-2 bg-zinc-900/90 rounded-xl border border-zinc-800">
+      <div className="flex items-center justify-between text-[9px] font-mono uppercase text-zinc-500 px-1">
+        <span>RGB + Luma Histogram</span>
+        <span className="flex items-center gap-1.5 font-bold">
+          <span className="text-zinc-300">L</span>
+          <span className="text-red-400">R</span>
+          <span className="text-emerald-400">G</span>
+          <span className="text-blue-400">B</span>
+        </span>
+      </div>
+      <canvas
+        ref={canvasRef}
+        width={256}
+        height={56}
+        className="w-full h-14 rounded-lg bg-[#090a0f] border border-zinc-800/60"
+      />
+    </div>
+  );
+}
+
 interface RightInspectorProps {
   rightWidth: number;
+  simpleMode: boolean;
   activePhoto: PhotoItem;
   setPhotos: React.Dispatch<React.SetStateAction<PhotoItem[]>>;
   selectedFaceId: string | null;
@@ -68,6 +180,7 @@ interface RightInspectorProps {
 
 export default function RightInspector({
   rightWidth,
+  simpleMode,
   activePhoto,
   setPhotos,
   selectedFaceId,
@@ -137,6 +250,10 @@ export default function RightInspector({
     setIsDrawingFace(false);
   }
 
+  const previewSource = activePhoto.thumb_ready
+    ? activePhoto.thumb_path
+    : activePhoto.path;
+
   return (
     <aside
       style={{ width: `${rightWidth}px` }}
@@ -155,11 +272,11 @@ export default function RightInspector({
             }`}
           >
             <img
-              src={convertFileSrc(activePhoto.path)}
+              src={convertFileSrc(previewSource)}
               alt={activePhoto.name}
               draggable={false}
               style={{ transform: `rotate(${activePhoto.rotation}deg)` }}
-              className="block max-w-full w-auto h-auto max-h-[48vh] object-contain rounded select-none pointer-events-none transition-transform duration-150"
+              className="block max-w-full w-auto h-auto max-h-[44vh] object-contain rounded select-none pointer-events-none transition-transform duration-150"
             />
 
             {/* Face Boxes */}
@@ -244,6 +361,60 @@ export default function RightInspector({
           </button>
         </div>
 
+        {/* Phase 6: Live RGB + Luminance Histogram (Pro Mode) */}
+        {!simpleMode && (
+          <HistogramCanvas imageSrc={convertFileSrc(previewSource)} />
+        )}
+
+        {/* Phase 6: Camera Telemetry LCD Pill */}
+        {(activePhoto.focal_length ||
+          activePhoto.aperture ||
+          activePhoto.shutter_speed ||
+          activePhoto.iso ||
+          activePhoto.lens_model) && (
+          <div className="flex flex-col gap-1.5 p-2.5 bg-zinc-950 border border-zinc-800 rounded-xl text-xs font-mono">
+            <div className="flex items-center justify-between text-zinc-200">
+              <div className="flex items-center gap-1 text-emerald-400" title="Focal Length">
+                <Compass className="w-3.5 h-3.5" />
+                <span>{activePhoto.focal_length || "--mm"}</span>
+              </div>
+              <div className="flex items-center gap-1 text-amber-400" title="Aperture">
+                <Aperture className="w-3.5 h-3.5" />
+                <span>{activePhoto.aperture || "f/--"}</span>
+              </div>
+              <div className="flex items-center gap-1 text-cyan-400" title="Shutter Speed">
+                <Gauge className="w-3.5 h-3.5" />
+                <span>{activePhoto.shutter_speed || "--s"}</span>
+              </div>
+              <div className="flex items-center gap-1 text-indigo-400" title="ISO Sensitivity">
+                <Camera className="w-3.5 h-3.5" />
+                <span>{activePhoto.iso || "ISO --"}</span>
+              </div>
+            </div>
+            {activePhoto.lens_model && (
+              <div className="text-[10px] text-zinc-500 border-t border-zinc-800/80 pt-1 truncate">
+                Lens: {activePhoto.lens_model}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Phase 6: RAW + JPEG Linked Pair Badge */}
+        {activePhoto.pair_raw_path && (
+          <div className="px-2.5 py-1.5 bg-amber-500/10 border border-amber-500/30 rounded-xl text-amber-300 text-[11px] flex items-center justify-between font-mono">
+            <span className="flex items-center gap-1.5 font-semibold">
+              <Layers className="w-3.5 h-3.5 text-amber-400" />
+              <span>RAW + JPEG Linked Pair</span>
+            </span>
+            <span
+              className="text-[10px] text-zinc-400 truncate max-w-[140px]"
+              title={activePhoto.pair_raw_path}
+            >
+              {activePhoto.pair_raw_path.split(/[\\/]/).pop()}
+            </span>
+          </div>
+        )}
+
         {/* Face Strip & Namer */}
         <div className="p-2.5 bg-zinc-900/90 border border-zinc-800 rounded-xl flex flex-col gap-2">
           <div className="flex items-center justify-between">
@@ -262,7 +433,13 @@ export default function RightInspector({
               ) : (
                 <ScanFace className="w-3 h-3" />
               )}
-              <span>{isDetectingSingleFace ? "Scanning..." : "Detect Faces (ONNX)"}</span>
+              <span>
+                {isDetectingSingleFace
+                  ? "Scanning..."
+                  : simpleMode
+                  ? "Find Faces"
+                  : "Detect Faces (ONNX)"}
+              </span>
             </button>
           </div>
 
@@ -477,10 +654,14 @@ export default function RightInspector({
                   </span>
                 </>
               )}
-              <span>•</span>
-              <span className="font-mono text-emerald-400">
-                Score: {activePhoto.sharpness}
-              </span>
+              {!simpleMode && (
+                <>
+                  <span>•</span>
+                  <span className="font-mono text-emerald-400">
+                    Score: {activePhoto.sharpness}
+                  </span>
+                </>
+              )}
             </div>
           </div>
           <button
@@ -556,14 +737,16 @@ export default function RightInspector({
               <span>{activePhoto.camera_model}</span>
             </span>
           )}
-          <button
-            onClick={handleForceRescanExifSelected}
-            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 hover:text-white transition"
-            title="Force refresh EXIF & OS file dates"
-          >
-            <RefreshCw className="w-3 h-3 text-zinc-400" />
-            <span>EXIF</span>
-          </button>
+          {!simpleMode && (
+            <button
+              onClick={handleForceRescanExifSelected}
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 hover:text-white transition"
+              title="Force refresh EXIF & OS file dates"
+            >
+              <RefreshCw className="w-3 h-3 text-zinc-400" />
+              <span>EXIF</span>
+            </button>
+          )}
         </div>
 
         {isEditingInspectorLocation && (

@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -21,6 +21,13 @@ import {
   FaceInstance,
   TimestampShiftResult,
   AiAnalysisResult,
+  OllamaPullProgress,
+  ScanProgressEvent,
+  AiFailureItem,
+  AiBatchReport,
+  SessionLogEntry,
+  PhotoActionSnapshot,
+  UndoHistoryEntry,
 } from "../types/lumina";
 import {
   buildFolderTree,
@@ -28,9 +35,180 @@ import {
   computePresetTargetFolder,
 } from "../utils/photoHelpers";
 
+const MAX_UNDO_STEPS = 20;
+
+export function captureSnapshots(
+  photos: PhotoItem[],
+  targetHashes: Set<string> | string[]
+): PhotoActionSnapshot[] {
+  const set = targetHashes instanceof Set ? targetHashes : new Set(targetHashes);
+  const out: PhotoActionSnapshot[] = [];
+  for (const p of photos) {
+    if (set.has(p.hash)) {
+      out.push({
+        hash: p.hash,
+        flag: p.flag,
+        rating: p.rating,
+        color_label: p.color_label,
+        staged_target: p.staged_target ?? null,
+        in_basket: p.in_basket,
+        rotation: p.rotation,
+      });
+    }
+  }
+  return out;
+}
+
+async function applySnapshotsToBackend(
+  snapshots: PhotoActionSnapshot[],
+  setPhotos: React.Dispatch<React.SetStateAction<PhotoItem[]>>
+) {
+  if (snapshots.length === 0) return;
+
+  const byFlag = new Map<"pick" | "reject" | null, string[]>();
+  const byRating = new Map<number, string[]>();
+  const byColor = new Map<"red" | "yellow" | "green" | "blue" | null, string[]>();
+  const byBasket = new Map<boolean, string[]>();
+  const stageOps: { hash: string; target_subfolder: string | null }[] = [];
+
+  for (const s of snapshots) {
+    const fList = byFlag.get(s.flag) || [];
+    fList.push(s.hash);
+    byFlag.set(s.flag, fList);
+
+    const rList = byRating.get(s.rating) || [];
+    rList.push(s.hash);
+    byRating.set(s.rating, rList);
+
+    const cList = byColor.get(s.color_label) || [];
+    cList.push(s.hash);
+    byColor.set(s.color_label, cList);
+
+    const bList = byBasket.get(s.in_basket) || [];
+    bList.push(s.hash);
+    byBasket.set(s.in_basket, bList);
+
+    stageOps.push({ hash: s.hash, target_subfolder: s.staged_target });
+  }
+
+  for (const [flag, hashes] of byFlag.entries()) {
+    await invoke("set_photo_flag", { hashes, flag });
+  }
+  for (const [rating, hashes] of byRating.entries()) {
+    await invoke("set_photos_rating", { hashes, rating });
+  }
+  for (const [color, hashes] of byColor.entries()) {
+    await invoke("set_photo_color_label", { hashes, color });
+  }
+  for (const [inBasket, hashes] of byBasket.entries()) {
+    await invoke("set_photo_basket", { hashes, inBasket });
+  }
+  if (stageOps.length > 0) {
+    await invoke("stage_photos_move", { ops: stageOps });
+  }
+
+  const snapMap = new Map(snapshots.map((s: PhotoActionSnapshot) => [s.hash, s]));
+  setPhotos((prev) =>
+    prev.map((p) => {
+      const hit = snapMap.get(p.hash);
+      if (!hit) return p;
+      return {
+        ...p,
+        flag: hit.flag,
+        rating: hit.rating,
+        color_label: hit.color_label,
+        staged_target: hit.staged_target,
+        in_basket: hit.in_basket,
+        rotation: hit.rotation,
+      };
+    })
+  );
+}
+
+export function useUndoStack(
+  setPhotos: React.Dispatch<React.SetStateAction<PhotoItem[]>>,
+  setActiveHash: React.Dispatch<React.SetStateAction<string | null>>,
+  setSelectedHashes: React.Dispatch<React.SetStateAction<Set<string>>>,
+  setAutoMatchNotice: React.Dispatch<React.SetStateAction<string>>
+) {
+  const [undoStack, setUndoStack] = useState<UndoHistoryEntry[]>([]);
+  const [redoStack, setRedoStack] = useState<UndoHistoryEntry[]>([]);
+
+  const pushUndoEntry = useCallback((entry: UndoHistoryEntry) => {
+    setUndoStack((prev) => [...prev.slice(-(MAX_UNDO_STEPS - 1)), entry]);
+    setRedoStack([]);
+  }, []);
+
+  const handleUndo = useCallback(async () => {
+    if (undoStack.length === 0) return;
+    const last = undoStack[undoStack.length - 1];
+    setUndoStack((prev) => prev.slice(0, -1));
+    setRedoStack((prev) => [...prev, last]);
+
+    await applySnapshotsToBackend(last.before, setPhotos);
+    if (last.previousActiveHash) {
+      setActiveHash(last.previousActiveHash);
+    }
+    if (last.previousSelectedHashes.length > 0) {
+      setSelectedHashes(new Set(last.previousSelectedHashes));
+    }
+    setAutoMatchNotice(`Undid: ${last.description}`);
+    setTimeout(() => setAutoMatchNotice(""), 3000);
+  }, [undoStack, setPhotos, setActiveHash, setSelectedHashes, setAutoMatchNotice]);
+
+  const handleRedo = useCallback(async () => {
+    if (redoStack.length === 0) return;
+    const next = redoStack[redoStack.length - 1];
+    setRedoStack((prev) => prev.slice(0, -1));
+    setUndoStack((prev) => [...prev, next]);
+
+    await applySnapshotsToBackend(next.after, setPhotos);
+    setAutoMatchNotice(`Redid: ${next.description}`);
+    setTimeout(() => setAutoMatchNotice(""), 3000);
+  }, [redoStack, setPhotos, setAutoMatchNotice]);
+
+  return {
+    undoStack,
+    redoStack,
+    canUndo: undoStack.length > 0,
+    canRedo: redoStack.length > 0,
+    pushUndoEntry,
+    handleUndo,
+    handleRedo,
+  };
+}
+
+function expandWithRawPairs(hashes: string[], photos: PhotoItem[]): string[] {
+  const result = new Set<string>(hashes);
+  const byHash = new Map(photos.map((p) => [p.hash, p]));
+  const byPath = new Map(photos.map((p) => [p.path, p]));
+  for (const h of hashes) {
+    const p = byHash.get(h);
+    if (p?.pair_raw_path) {
+      const pair = byPath.get(p.pair_raw_path);
+      if (pair) result.add(pair.hash);
+    }
+  }
+  return Array.from(result);
+}
+
 export function useLibraryState() {
+  const [isAppReady, setIsAppReady] = useState<boolean>(false);
   const [folder, setFolder] = useState<string>("");
   const [photos, setPhotos] = useState<PhotoItem[]>([]);
+  const [recentFolders, setRecentFolders] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem("lumina_recent_folders");
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [simpleMode, setSimpleMode] = useState<boolean>(() => {
+    return localStorage.getItem("lumina_simple_mode") === "true";
+  });
+  const [isShortcutsModalOpen, setIsShortcutsModalOpen] = useState<boolean>(false);
+  const [ollamaPullProgress, setOllamaPullProgress] = useState<OllamaPullProgress | null>(null);
   const [people, setPeople] = useState<PersonItem[]>([]);
   const [selectedPerson, setSelectedPerson] = useState<string | null>(null);
 
@@ -52,8 +230,9 @@ export function useLibraryState() {
   const [isEditingInspectorLocation, setIsEditingInspectorLocation] = useState<boolean>(false);
   const [inspectorLocationQuery, setInspectorLocationQuery] = useState<string>("");
 
-  // Neural ONNX Face Scanner Progress State
+  // Neural ONNX Face Scanner & Folder Scan Progress State
   const [faceScanProgress, setFaceScanProgress] = useState<FaceScanProgress | null>(null);
+  const [scanProgress, setScanProgress] = useState<ScanProgressEvent | null>(null);
   const [isDetectingSingleFace, setIsDetectingSingleFace] = useState<boolean>(false);
 
   // Auto-Advance Mode Toggle
@@ -91,6 +270,13 @@ export function useLibraryState() {
   const [healthStats, setHealthStats] = useState<LibraryHealthStats | null>(null);
   const [isExportingXmp, setIsExportingXmp] = useState<boolean>(false);
 
+  // Session Activity Log State
+  const [sessionLogs, setSessionLogs] = useState<SessionLogEntry[]>([]);
+  const [isSessionLogModalOpen, setIsSessionLogModalOpen] = useState<boolean>(false);
+
+  // Batch AI Report Modal State
+  const [aiBatchReport, setAiBatchReport] = useState<AiBatchReport | null>(null);
+
   // Bulk Dock Popover States
   const [activeBulkPopover, setActiveBulkPopover] = useState<
     "tag" | "person" | "move" | "location" | "time" | null
@@ -121,6 +307,7 @@ export function useLibraryState() {
     total: number;
     succeeded: number;
     failed: number;
+    currentFile?: string;
   } | null>(null);
   const cancelBatchRef = useRef<boolean>(false);
 
@@ -128,11 +315,90 @@ export function useLibraryState() {
   const [error, setError] = useState<string>("");
   const [tagInput, setTagInput] = useState<string>("");
 
-  // Poll Ollama status
+  const addLog = useCallback(
+    (category: SessionLogEntry["category"], message: string, details?: string) => {
+      const entry: SessionLogEntry = {
+        id: Math.random().toString(36).substring(2, 9),
+        timestamp: new Date().toLocaleTimeString(),
+        category,
+        message,
+        details,
+      };
+      setSessionLogs((prev) => [entry, ...prev.slice(0, 499)]);
+    },
+    []
+  );
+
+  const clearSessionLogs = useCallback(() => setSessionLogs([]), []);
+
+  const undo = useUndoStack(
+    setPhotos,
+    setActiveHash,
+    setSelectedHashes,
+    setAutoMatchNotice
+  );
+
+  function toggleSimpleMode() {
+    setSimpleMode((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem("lumina_simple_mode", String(next));
+      } catch {}
+      addLog("LIBRARY", `Switched UI to ${next ? "Simple Mode" : "Pro Studio Mode"}`);
+      return next;
+    });
+  }
+
+  function saveRecentFolder(path: string) {
+    setRecentFolders((prev) => {
+      const next = [path, ...prev.filter((p) => p !== path)].slice(0, 6);
+      try {
+        localStorage.setItem("lumina_recent_folders", JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  }
+
+  // Listen for Folder Scan Progress Events
   useEffect(() => {
+    const unlisten = listen<ScanProgressEvent>("scan-progress", (event) => {
+      const prog = event.payload;
+      if (prog.done) {
+        setScanProgress(null);
+      } else {
+        setScanProgress(prog);
+      }
+    });
+    return () => {
+      unlisten.then((f) => f());
+    };
+  }, []);
+
+  // Listen for Ollama Pull Progress Events
+  useEffect(() => {
+    const unlisten = listen<OllamaPullProgress>("ollama-pull-progress", (event) => {
+      const prog = event.payload;
+      if (prog.done) {
+        setOllamaPullProgress(null);
+        setAutoMatchNotice(`Smart Photo Assistant (${prog.model}) installed and ready!`);
+        addLog("AI", `Downloaded & installed Ollama model: ${prog.model}`);
+        setTimeout(() => setAutoMatchNotice(""), 5000);
+      } else {
+        setOllamaPullProgress(prog);
+      }
+    });
+    return () => {
+      unlisten.then((f) => f());
+    };
+  }, [addLog]);
+
+  // Poll Ollama status & Mark App Ready for Splashscreen Dismissal
+  useEffect(() => {
+    let mounted = true;
     async function checkStatus() {
       try {
         const s = await invoke<OllamaStatus>("check_ollama_status");
+        if (!mounted) return;
         setOllamaStatus(s);
         if (
           s.installed_models.length > 0 &&
@@ -141,12 +407,21 @@ export function useLibraryState() {
           setAiModel(s.installed_models[0].name);
         }
       } catch {
+        if (!mounted) return;
         setOllamaStatus({ running: false, active_vram_model: null, installed_models: [] });
+      } finally {
+        if (mounted) {
+          setIsAppReady(true);
+          invoke("close_splashscreen").catch(() => {});
+        }
       }
     }
     checkStatus();
     const interval = setInterval(checkStatus, 3500);
-    return () => clearInterval(interval);
+    return () => {
+      mounted = false;
+      clearInterval(interval);
+    };
   }, [aiModel]);
 
   async function refreshPeople(currentFolder = folder) {
@@ -189,6 +464,7 @@ export function useLibraryState() {
             total_matched === 1 ? "" : "s"
           }!`
         );
+        addLog("FACE", `Auto-matched "${person_name}" across ${total_matched} photo(s)`);
         setTimeout(() => setAutoMatchNotice(""), 6000);
       } else {
         setAutoMatchNotice(`Saved "${person_name}"!`);
@@ -199,7 +475,7 @@ export function useLibraryState() {
     return () => {
       unlisten.then((f) => f());
     };
-  }, []);
+  }, [addLog]);
 
   useEffect(() => {
     const unlisten = listen<FaceScanProgress>("face-scan-progress", (event) => {
@@ -232,6 +508,11 @@ export function useLibraryState() {
           `Neural ONNX Face Scan complete: detected ${prog.faces_found} human face(s)` +
             (prog.auto_matched > 0 ? ` & auto-matched ${prog.auto_matched} photo(s)!` : "!")
         );
+        addLog(
+          "FACE",
+          `Completed ONNX Face Scan on ${prog.total} photos`,
+          `${prog.faces_found} faces found, ${prog.auto_matched} auto-matched`
+        );
         setTimeout(() => setAutoMatchNotice(""), 6000);
         refreshPeople(folder);
       } else {
@@ -241,7 +522,7 @@ export function useLibraryState() {
     return () => {
       unlisten.then((f) => f());
     };
-  }, [folder]);
+  }, [folder, addLog]);
 
   useEffect(() => {
     const unlisten = listen<ThumbBatchProgress>("thumb-batch-ready", (event) => {
@@ -563,32 +844,93 @@ export function useLibraryState() {
     });
   }
 
+  async function handleLoadFolderPath(targetPath: string) {
+    if (!targetPath) return;
+    try {
+      setError("");
+      setFolder(targetPath);
+      saveRecentFolder(targetPath);
+      setSelectedHashes(new Set());
+      setActiveHash(null);
+      setExpandedFolders(new Set());
+      setExpandedBurstGroups(new Set());
+      setSelectedPeriodRange(null);
+      setIsScanningFolder(true);
+      setScanProgress({
+        stage: "Scanning directory & EXIF headers...",
+        current_file: targetPath,
+        completed: 0,
+        total: 100,
+        percent: 5,
+        done: false,
+      });
+      const res = await invoke<PhotoItem[]>("scan_folder", {
+        folderPath: targetPath,
+        forceReprocess: false,
+      });
+      setPhotos(res);
+      setIsScanningFolder(false);
+      setScanProgress(null);
+      addLog("LIBRARY", `Opened library folder (${res.length} items)`, targetPath);
+      if (res.length > 0) {
+        setActiveHash(res[0].hash);
+        setSelectedHashes(new Set([res[0].hash]));
+        lastSelectedIndexRef.current = 0;
+      }
+    } catch (err) {
+      setIsScanningFolder(false);
+      setScanProgress(null);
+      setError(String(err));
+    }
+  }
+
   async function handleOpenFolder() {
     try {
       setError("");
       const selected = await open({ directory: true, multiple: false });
       if (selected && typeof selected === "string") {
-        setFolder(selected);
-        setSelectedHashes(new Set());
-        setActiveHash(null);
-        setExpandedFolders(new Set());
-        setExpandedBurstGroups(new Set());
-        setSelectedPeriodRange(null);
-        setIsScanningFolder(true);
-        const res = await invoke<PhotoItem[]>("scan_folder", {
-          folderPath: selected,
-          forceReprocess: false,
-        });
-        setPhotos(res);
-        setIsScanningFolder(false);
-        if (res.length > 0) {
-          setActiveHash(res[0].hash);
-          setSelectedHashes(new Set([res[0].hash]));
-          lastSelectedIndexRef.current = 0;
-        }
+        await handleLoadFolderPath(selected);
       }
     } catch (err) {
       setIsScanningFolder(false);
+      setScanProgress(null);
+      setError(String(err));
+    }
+  }
+
+  async function handlePullDefaultAiModel(modelToPull = "qwen3-vl:8b") {
+    if (ollamaPullProgress) return;
+    try {
+      setError("");
+      addLog("AI", `Started downloading Ollama model: ${modelToPull}`);
+      await invoke<string>("pull_ollama_model", { modelName: modelToPull });
+      const s = await invoke<OllamaStatus>("check_ollama_status");
+      setOllamaStatus(s);
+      setAiModel(modelToPull);
+    } catch (err) {
+      setOllamaPullProgress(null);
+      setError(String(err));
+    }
+  }
+
+  async function handleEmptyTrashToRecycleBin() {
+    if (!folder) return;
+    try {
+      setError("");
+      const count = await invoke<number>("empty_library_trash_to_os", {
+        rootFolder: folder,
+      });
+      if (count > 0) {
+        const res = await invoke<PhotoItem[]>("scan_folder", {
+          folderPath: folder,
+          forceReprocess: false,
+        });
+        setPhotos(res);
+        setAutoMatchNotice(`Moved ${count} rejected photo(s) to your OS Recycle Bin.`);
+        addLog("DISK", `Moved ${count} _Trash photo(s) to OS Recycle Bin`);
+        setTimeout(() => setAutoMatchNotice(""), 4500);
+      }
+    } catch (err) {
       setError(String(err));
     }
   }
@@ -598,11 +940,20 @@ export function useLibraryState() {
     try {
       setError("");
       setIsScanningFolder(true);
+      setScanProgress({
+        stage: "Quick Rescanning folder...",
+        current_file: folder,
+        completed: 0,
+        total: 100,
+        percent: 10,
+        done: false,
+      });
       const res = await invoke<PhotoItem[]>("scan_folder", {
         folderPath: folder,
         forceReprocess: false,
       });
       setPhotos(res);
+      addLog("LIBRARY", `Quick rescanned folder (${res.length} items)`, folder);
       if (res.length > 0 && (!activeHash || !res.some((p) => p.hash === activeHash))) {
         setActiveHash(res[0].hash);
         setSelectedHashes(new Set([res[0].hash]));
@@ -611,6 +962,7 @@ export function useLibraryState() {
       setError(String(err));
     } finally {
       setIsScanningFolder(false);
+      setScanProgress(null);
     }
   }
 
@@ -619,15 +971,25 @@ export function useLibraryState() {
     try {
       setError("");
       setIsScanningFolder(true);
+      setScanProgress({
+        stage: "Deep Reprocessing thumbnails, dHash & focus scores...",
+        current_file: folder,
+        completed: 0,
+        total: 100,
+        percent: 10,
+        done: false,
+      });
       const res = await invoke<PhotoItem[]>("scan_folder", {
         folderPath: folder,
         forceReprocess: true,
       });
       setPhotos(res);
+      addLog("LIBRARY", `Deep reprocessed library (${res.length} items)`, folder);
     } catch (err) {
       setError(String(err));
     } finally {
       setIsScanningFolder(false);
+      setScanProgress(null);
     }
   }
 
@@ -656,10 +1018,16 @@ export function useLibraryState() {
             location: hit.location || p.location,
             latitude: hit.latitude ?? p.latitude,
             longitude: hit.longitude ?? p.longitude,
+            focal_length: hit.focal_length ?? p.focal_length,
+            aperture: hit.aperture ?? p.aperture,
+            shutter_speed: hit.shutter_speed ?? p.shutter_speed,
+            iso: hit.iso ?? p.iso,
+            lens_model: hit.lens_model ?? p.lens_model,
           };
         })
       );
       refreshTimeline();
+      addLog("LIBRARY", `Refreshed EXIF headers on ${results.length} photo(s)`);
       const first = results[0];
       if (first) {
         setAutoMatchNotice(
@@ -687,6 +1055,7 @@ export function useLibraryState() {
       setPhotos((prev) =>
         prev.map((p) => (p.hash === activePhoto.hash ? { ...p, faces: detected } : p))
       );
+      addLog("FACE", `Detected ${detected.length} face(s) in ${activePhoto.name}`);
       setAutoMatchNotice(
         detected.length > 0
           ? `ONNX Neural Detector found ${detected.length} human face(s) in ${activePhoto.name}!`
@@ -712,6 +1081,7 @@ export function useLibraryState() {
         auto_matched: 0,
         done: false,
       });
+      addLog("FACE", `Started batch ONNX Face Scan on ${hashes.length} photos`);
       await invoke<number>("scan_library_faces_batch", { hashes });
     } catch (err) {
       setFaceScanProgress(null);
@@ -722,9 +1092,20 @@ export function useLibraryState() {
   async function handleSetFlag(flag: "pick" | "reject" | null) {
     if (selectedHashes.size === 0) return;
     try {
-      const hashes = Array.from(selectedHashes);
+      const hashes = expandWithRawPairs(Array.from(selectedHashes), photos);
+      const hashSet = new Set(hashes);
+      const before = captureSnapshots(photos, hashSet);
+      const after = before.map((s: PhotoActionSnapshot) => ({ ...s, flag }));
+      undo.pushUndoEntry({
+        description: `Flag (${flag || "unflag"}) on ${hashes.length} photo(s)`,
+        previousActiveHash: activeHash,
+        previousSelectedHashes: hashes,
+        before,
+        after,
+      });
       await invoke("set_photo_flag", { hashes, flag });
-      setPhotos((prev) => prev.map((p) => (selectedHashes.has(p.hash) ? { ...p, flag } : p)));
+      setPhotos((prev) => prev.map((p) => (hashSet.has(p.hash) ? { ...p, flag } : p)));
+      addLog("TRIAGE", `Set flag "${flag || "unflagged"}" on ${hashes.length} photo(s)`);
     } catch (err) {
       setError(String(err));
     }
@@ -733,11 +1114,22 @@ export function useLibraryState() {
   async function handleSetColorLabel(color: "red" | "yellow" | "green" | "blue" | null) {
     if (selectedHashes.size === 0) return;
     try {
-      const hashes = Array.from(selectedHashes);
+      const hashes = expandWithRawPairs(Array.from(selectedHashes), photos);
+      const hashSet = new Set(hashes);
+      const before = captureSnapshots(photos, hashSet);
+      const after = before.map((s: PhotoActionSnapshot) => ({ ...s, color_label: color }));
+      undo.pushUndoEntry({
+        description: `Color label (${color || "clear"}) on ${hashes.length} photo(s)`,
+        previousActiveHash: activeHash,
+        previousSelectedHashes: hashes,
+        before,
+        after,
+      });
       await invoke("set_photo_color_label", { hashes, color });
       setPhotos((prev) =>
-        prev.map((p) => (selectedHashes.has(p.hash) ? { ...p, color_label: color } : p))
+        prev.map((p) => (hashSet.has(p.hash) ? { ...p, color_label: color } : p))
       );
+      addLog("TRIAGE", `Set color label "${color || "none"}" on ${hashes.length} photo(s)`);
     } catch (err) {
       setError(String(err));
     }
@@ -746,7 +1138,7 @@ export function useLibraryState() {
   async function handleRotateSelection(deltaDegrees: number) {
     if (selectedHashes.size === 0) return;
     try {
-      const hashes = Array.from(selectedHashes);
+      const hashes = expandWithRawPairs(Array.from(selectedHashes), photos);
       const res = await invoke<Record<string, number>>("set_photo_rotation", {
         hashes,
         deltaDegrees,
@@ -754,6 +1146,7 @@ export function useLibraryState() {
       setPhotos((prev) =>
         prev.map((p) => (res[p.hash] !== undefined ? { ...p, rotation: res[p.hash] } : p))
       );
+      addLog("TRIAGE", `Rotated ${hashes.length} photo(s) by ${deltaDegrees}°`);
     } catch (err) {
       setError(String(err));
     }
@@ -762,9 +1155,20 @@ export function useLibraryState() {
   async function handleBatchRate(rating: number) {
     if (selectedHashes.size === 0) return;
     try {
-      const hashes = Array.from(selectedHashes);
+      const hashes = expandWithRawPairs(Array.from(selectedHashes), photos);
+      const hashSet = new Set(hashes);
+      const before = captureSnapshots(photos, hashSet);
+      const after = before.map((s: PhotoActionSnapshot) => ({ ...s, rating }));
+      undo.pushUndoEntry({
+        description: `Rating (${rating}★) on ${hashes.length} photo(s)`,
+        previousActiveHash: activeHash,
+        previousSelectedHashes: hashes,
+        before,
+        after,
+      });
       await invoke("set_photos_rating", { hashes, rating });
-      setPhotos((prev) => prev.map((p) => (selectedHashes.has(p.hash) ? { ...p, rating } : p)));
+      setPhotos((prev) => prev.map((p) => (hashSet.has(p.hash) ? { ...p, rating } : p)));
+      addLog("TRIAGE", `Rated ${hashes.length} photo(s) ${rating}★`);
     } catch (err) {
       setError(String(err));
     }
@@ -773,15 +1177,17 @@ export function useLibraryState() {
   async function handleBatchAddTag(tag: string) {
     if (!tag.trim() || selectedHashes.size === 0) return;
     try {
-      const hashes = Array.from(selectedHashes);
+      const hashes = expandWithRawPairs(Array.from(selectedHashes), photos);
+      const hashSet = new Set(hashes);
       const clean = await invoke<string>("add_tag_batch", { hashes, tag });
       setPhotos((prev) =>
         prev.map((p) =>
-          selectedHashes.has(p.hash) && !p.tags.includes(clean)
+          hashSet.has(p.hash) && !p.tags.includes(clean)
             ? { ...p, tags: [...p.tags, clean].sort() }
             : p
         )
       );
+      addLog("TRIAGE", `Added tag "#${clean}" to ${hashes.length} photo(s)`);
       setTagInput("");
       setBulkInput("");
       setActiveBulkPopover(null);
@@ -793,14 +1199,26 @@ export function useLibraryState() {
   async function handleBatchStageMove(targetSub: string | null) {
     if (selectedHashes.size === 0) return;
     try {
-      const ops = Array.from(selectedHashes).map((hash) => ({
+      const hashes = expandWithRawPairs(Array.from(selectedHashes), photos);
+      const hashSet = new Set(hashes);
+      const before = captureSnapshots(photos, hashSet);
+      const after = before.map((s: PhotoActionSnapshot) => ({ ...s, staged_target: targetSub }));
+      undo.pushUndoEntry({
+        description: `Stage move (${targetSub || "clear"}) on ${hashes.length} photo(s)`,
+        previousActiveHash: activeHash,
+        previousSelectedHashes: hashes,
+        before,
+        after,
+      });
+      const ops = hashes.map((hash) => ({
         hash,
         target_subfolder: targetSub,
       }));
       await invoke("stage_photos_move", { ops });
       setPhotos((prev) =>
-        prev.map((p) => (selectedHashes.has(p.hash) ? { ...p, staged_target: targetSub } : p))
+        prev.map((p) => (hashSet.has(p.hash) ? { ...p, staged_target: targetSub } : p))
       );
+      addLog("DISK", `Staged ${hashes.length} photo(s) for move`, targetSub || "Cleared");
       setBulkInput("");
       setActiveBulkPopover(null);
     } catch (err) {
@@ -844,6 +1262,7 @@ export function useLibraryState() {
             : p
         )
       );
+      addLog("TRIAGE", `Assigned location "${locStr}" to ${targets.length} photo(s)`);
       setActiveBulkPopover(null);
       setIsEditingInspectorLocation(false);
       setCitySearchResults([]);
@@ -883,6 +1302,7 @@ export function useLibraryState() {
             : p
         )
       );
+      addLog("TRIAGE", `Set custom location "${clean || "cleared"}" on ${targets.length} photo(s)`);
       setIsEditingInspectorLocation(false);
       setActiveBulkPopover(null);
       setInspectorLocationQuery("");
@@ -943,6 +1363,7 @@ export function useLibraryState() {
             : p
         )
       );
+      addLog("FACE", `Assigned face "${cleanName}" on ${activePhoto.name}`);
       setFaceNameInput("");
       setDrawnBox(null);
       setSelectedFaceId(null);
@@ -954,10 +1375,11 @@ export function useLibraryState() {
 
   async function handleDismissAllStaged() {
     try {
-      await invoke<number>("clear_all_staged", { rootFolder: folder || null });
+      const count = await invoke<number>("clear_all_staged", { rootFolder: folder || null });
       setPhotos((prev) => prev.map((p) => (p.staged_target ? { ...p, staged_target: null } : p)));
       setIsCommitModalOpen(false);
       if (smartFilter === "STAGED") setSmartFilter("ALL");
+      addLog("DISK", `Dismissed ${count} staged move(s)`);
     } catch (err) {
       setError(String(err));
     }
@@ -980,6 +1402,7 @@ export function useLibraryState() {
             updates.has(p.hash) ? { ...p, staged_target: updates.get(p.hash)! } : p
           )
         );
+        addLog("DISK", `Auto-staged ${ops.length} photos using preset ${autoStagePreset}`);
       }
     } catch (err) {
       setError(String(err));
@@ -989,7 +1412,7 @@ export function useLibraryState() {
   async function handleCommitAllStaged() {
     if (!folder) return;
     try {
-      await invoke<number>("commit_staged_operations", {
+      const movedCount = await invoke<number>("commit_staged_operations", {
         rootFolder: folder,
         smartRename: smartRenameOnCommit,
       });
@@ -999,6 +1422,11 @@ export function useLibraryState() {
       });
       setPhotos(res);
       setIsCommitModalOpen(false);
+      addLog(
+        "DISK",
+        `Committed ${movedCount} physical file move(s) to disk`,
+        smartRenameOnCommit ? "With Smart Chronological Rename" : "Original filenames"
+      );
     } catch (err) {
       setError(String(err));
     }
@@ -1007,13 +1435,20 @@ export function useLibraryState() {
   async function handleToggleBasketSelection() {
     if (selectedHashes.size === 0) return;
     try {
-      const hashes = Array.from(selectedHashes);
-      const anyNotInBasket = photos.some((p) => selectedHashes.has(p.hash) && !p.in_basket);
+      const hashes = expandWithRawPairs(Array.from(selectedHashes), photos);
+      const hashSet = new Set(hashes);
+      const anyNotInBasket = photos.some((p) => hashSet.has(p.hash) && !p.in_basket);
       await invoke("set_photo_basket", { hashes, inBasket: anyNotInBasket });
       setPhotos((prev) =>
         prev.map((p) =>
-          selectedHashes.has(p.hash) ? { ...p, in_basket: anyNotInBasket } : p
+          hashSet.has(p.hash) ? { ...p, in_basket: anyNotInBasket } : p
         )
+      );
+      addLog(
+        "TRIAGE",
+        `${anyNotInBasket ? "Pinned" : "Unpinned"} ${hashes.length} photo(s) ${
+          anyNotInBasket ? "to" : "from"
+        } Basket`
       );
     } catch (err) {
       setError(String(err));
@@ -1036,6 +1471,7 @@ export function useLibraryState() {
       });
       setPhotos(res);
       setIsPickingMapLocation(false);
+      addLog("TRIAGE", `Assigned map GPS (${lat.toFixed(4)}, ${lon.toFixed(4)}) to ${hashes.length} photo(s)`);
       setAutoMatchNotice(
         `Assigned GPS (${lat.toFixed(4)}, ${lon.toFixed(4)}) to ${hashes.length} photo(s)!`
       );
@@ -1062,6 +1498,7 @@ export function useLibraryState() {
       );
       refreshTimeline();
       setActiveBulkPopover(null);
+      addLog("TRIAGE", `Shifted timestamps on ${shifted.length} photo(s) by ${totalMinutes} min`);
       setAutoMatchNotice(
         `Shifted ${shifted.length} timestamp(s) by ${
           totalMinutes > 0 ? `+${totalMinutes}` : totalMinutes
@@ -1091,6 +1528,7 @@ export function useLibraryState() {
       const hashes =
         onlySelected && selectedHashes.size > 0 ? Array.from(selectedHashes) : null;
       const count = await invoke<number>("export_xmp_sidecars", { hashes });
+      addLog("DISK", `Exported ${count} Adobe/Lightroom .xmp sidecar file(s)`);
       setAutoMatchNotice(`Exported ${count} Adobe/Lightroom .xmp sidecar file(s)!`);
       setTimeout(() => setAutoMatchNotice(""), 5000);
     } catch (err) {
@@ -1107,6 +1545,7 @@ export function useLibraryState() {
         rootFolder: folder || null,
       });
       setHealthStats(stats);
+      addLog("DISK", `Pruned ${removed} orphaned cache file(s)`);
       setAutoMatchNotice(`Pruned ${removed} orphaned cache file(s)!`);
       setTimeout(() => setAutoMatchNotice(""), 4000);
     } catch (err) {
@@ -1134,6 +1573,42 @@ export function useLibraryState() {
             : p
         )
       );
+      addLog("TRIAGE", `Kept sharpest in all burst groups & staged ${toTrash.length} extras for _Trash`);
+    } catch (err) {
+      setError(String(err));
+    }
+  }
+
+  // Native OS Context Menu Actions
+  async function handleOpenInDefaultViewer(path: string) {
+    try {
+      await invoke("open_in_default_app", { path });
+      addLog("LIBRARY", `Opened in default viewer: ${path.split(/[\\/]/).pop()}`);
+    } catch (err) {
+      setError(String(err));
+    }
+  }
+
+  async function handleRevealInFileManager(path: string) {
+    try {
+      await invoke("reveal_in_file_manager", { path });
+      addLog("LIBRARY", `Revealed in file manager: ${path}`);
+    } catch (err) {
+      setError(String(err));
+    }
+  }
+
+  async function handleCreateSubfolder(relativePath: string) {
+    if (!folder || !relativePath.trim()) return;
+    try {
+      const created = await invoke<string>("create_library_subfolder", {
+        rootFolder: folder,
+        relativePath: relativePath.trim(),
+      });
+      addLog("DISK", `Created new subfolder: ${relativePath.trim()}`, created);
+      setAutoMatchNotice(`Created folder: ${relativePath.trim()}`);
+      setTimeout(() => setAutoMatchNotice(""), 3500);
+      await handleRescanFolder();
     } catch (err) {
       setError(String(err));
     }
@@ -1165,6 +1640,7 @@ export function useLibraryState() {
             : p
         )
       );
+      addLog("AI", `AI analyzed ${activePhoto.name}`, `${res.tags.length} tags generated`);
       refreshPeople();
     } catch (err) {
       setError(`AI Error on ${activePhoto.name}: ${String(err)}`);
@@ -1177,90 +1653,124 @@ export function useLibraryState() {
     }
   }
 
+  // Resilient Batch AI Runner with Automatic Retry (up to 3 attempts) & Post-Run Report Modal
   async function runBatchAiOnList(targets: PhotoItem[]) {
     if (aiBatchProgress || targets.length === 0) return;
 
     cancelBatchRef.current = false;
     setError("");
-    setAiBatchProgress({ current: 0, total: targets.length, succeeded: 0, failed: 0 });
+    setAiBatchReport(null);
+    setAiBatchProgress({
+      current: 0,
+      total: targets.length,
+      succeeded: 0,
+      failed: 0,
+      currentFile: targets[0]?.name,
+    });
+
+    addLog("AI", `Started Batch AI on ${targets.length} photo(s) using ${aiModel}`);
 
     let completedCount = 0;
     let succeededCount = 0;
-    let failedCount = 0;
-    let firstErrorMsg = "";
-    const CONCURRENCY = 1;
+    const failures: AiFailureItem[] = [];
+    const MAX_ATTEMPTS = 3;
 
-    for (let i = 0; i < targets.length; i += CONCURRENCY) {
+    for (let i = 0; i < targets.length; i++) {
       if (cancelBatchRef.current) break;
-      const chunk = targets.slice(i, i + CONCURRENCY);
+      const photo = targets[i];
 
-      setAnalyzingHashes((prev) => {
-        const next = new Set(prev);
-        chunk.forEach((c) => next.add(c.hash));
-        return next;
+      setAnalyzingHashes((prev) => new Set(prev).add(photo.hash));
+      setAiBatchProgress({
+        current: completedCount,
+        total: targets.length,
+        succeeded: succeededCount,
+        failed: failures.length,
+        currentFile: photo.name,
       });
 
-      await Promise.all(
-        chunk.map(async (photo) => {
-          if (cancelBatchRef.current) return;
-          try {
-            const res = await invoke<AiAnalysisResult>("ai_analyze_photo", {
-              hash: photo.hash,
-              imagePathForAi: photo.path,
-              modelName: aiModel,
-              existingTags: allLibraryTags,
-            });
-            succeededCount++;
-            setPhotos((prev) =>
-              prev.map((p) =>
-                p.hash === photo.hash
-                  ? {
-                      ...p,
-                      tags: res.tags,
-                      people: res.people,
-                      faces: res.faces,
-                      ai_caption: res.caption,
-                      ocr_text: res.ocr_text,
-                    }
-                  : p
-              )
-            );
-          } catch (err) {
-            failedCount++;
-            if (!firstErrorMsg) firstErrorMsg = String(err);
-            console.error(`Batch AI error on ${photo.name}:`, err);
-          } finally {
-            completedCount++;
-            setAnalyzingHashes((prev) => {
-              const next = new Set(prev);
-              next.delete(photo.hash);
-              return next;
-            });
-            setAiBatchProgress({
-              current: completedCount,
-              total: targets.length,
-              succeeded: succeededCount,
-              failed: failedCount,
-            });
+      let attempt = 0;
+      let success = false;
+      let lastErr = "";
+
+      while (attempt < MAX_ATTEMPTS && !success && !cancelBatchRef.current) {
+        attempt++;
+        try {
+          const res = await invoke<AiAnalysisResult>("ai_analyze_photo", {
+            hash: photo.hash,
+            imagePathForAi: photo.path,
+            modelName: aiModel,
+            existingTags: allLibraryTags,
+          });
+          success = true;
+          succeededCount++;
+          setPhotos((prev) =>
+            prev.map((p) =>
+              p.hash === photo.hash
+                ? {
+                    ...p,
+                    tags: res.tags,
+                    people: res.people,
+                    faces: res.faces,
+                    ai_caption: res.caption,
+                    ocr_text: res.ocr_text,
+                  }
+                : p
+            )
+          );
+        } catch (err) {
+          lastErr = String(err);
+          if (attempt < MAX_ATTEMPTS && !cancelBatchRef.current) {
+            await new Promise((r) => setTimeout(r, 450 * attempt));
           }
-        })
-      );
+        }
+      }
+
+      if (!success && !cancelBatchRef.current) {
+        failures.push({
+          photo,
+          error: lastErr || "Unknown AI error",
+          attempts: attempt,
+        });
+      }
+
+      completedCount++;
+      setAnalyzingHashes((prev) => {
+        const next = new Set(prev);
+        next.delete(photo.hash);
+        return next;
+      });
+      setAiBatchProgress({
+        current: completedCount,
+        total: targets.length,
+        succeeded: succeededCount,
+        failed: failures.length,
+        currentFile: photo.name,
+      });
 
       if (succeededCount > 0 && completedCount % 6 === 0) {
         refreshPeople();
       }
     }
 
-    if (failedCount > 0 && succeededCount === 0) {
-      setError(`AI Tagging failed (${failedCount} errors). First error: ${firstErrorMsg}`);
-    }
-
     setAnalyzingHashes(new Set());
     setAiBatchProgress(null);
     refreshPeople();
+
+    addLog(
+      "AI",
+      `Finished Batch AI: ${succeededCount} succeeded, ${failures.length} failed`
+    );
+
+    if (targets.length > 1 || failures.length > 0) {
+      setAiBatchReport({
+        succeededCount,
+        failures,
+      });
+    }
   }
 
   return {
+    isAppReady,
     folder,
     setFolder,
     photos,
@@ -1294,6 +1804,7 @@ export function useLibraryState() {
     inspectorLocationQuery,
     setInspectorLocationQuery,
     faceScanProgress,
+    scanProgress,
     isDetectingSingleFace,
     autoAdvance,
     setAutoAdvance,
@@ -1332,6 +1843,13 @@ export function useLibraryState() {
     setIsHealthModalOpen,
     healthStats,
     isExportingXmp,
+    sessionLogs,
+    addLog,
+    clearSessionLogs,
+    isSessionLogModalOpen,
+    setIsSessionLogModalOpen,
+    aiBatchReport,
+    setAiBatchReport,
     activeBulkPopover,
     setActiveBulkPopover,
     bulkInput,
@@ -1411,7 +1929,23 @@ export function useLibraryState() {
     handleExportXmp,
     handlePruneCache,
     handleKeepSharpestInAllGroups,
+    handleOpenInDefaultViewer,
+    handleRevealInFileManager,
+    handleCreateSubfolder,
     handleAiAnalyzeSingle,
     runBatchAiOnList,
+    recentFolders,
+    simpleMode,
+    toggleSimpleMode,
+    isShortcutsModalOpen,
+    setIsShortcutsModalOpen,
+    ollamaPullProgress,
+    handleLoadFolderPath,
+    handlePullDefaultAiModel,
+    handleEmptyTrashToRecycleBin,
+    canUndo: undo.canUndo,
+    canRedo: undo.canRedo,
+    handleUndo: undo.handleUndo,
+    handleRedo: undo.handleRedo,
   };
 }

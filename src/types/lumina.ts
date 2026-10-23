@@ -26,6 +26,15 @@ export interface FaceScanProgress {
   done: boolean;
 }
 
+export interface ScanProgressEvent {
+  stage: string;
+  current_file: string;
+  completed: number;
+  total: number;
+  percent: number;
+  done: boolean;
+}
+
 export interface PhotoItem {
   hash: string;
   name: string;
@@ -55,6 +64,13 @@ export interface PhotoItem {
   sharpness: number;
   duplicate_group?: number | null;
   staged_target?: string | null;
+  // Phase 6 Pro Telemetry & RAW Pair Linking
+  focal_length?: string | null;
+  aperture?: string | null;
+  shutter_speed?: string | null;
+  iso?: string | null;
+  lens_model?: string | null;
+  pair_raw_path?: string | null;
 }
 
 export interface PersonItem {
@@ -88,6 +104,11 @@ export interface ExifRefreshResult {
   location: string;
   latitude?: number | null;
   longitude?: number | null;
+  focal_length?: string | null;
+  aperture?: string | null;
+  shutter_speed?: string | null;
+  iso?: string | null;
+  lens_model?: string | null;
 }
 
 export interface TimelineBucket {
@@ -135,6 +156,17 @@ export interface AiAnalysisResult {
   ocr_text: string;
 }
 
+export interface AiFailureItem {
+  photo: PhotoItem;
+  error: string;
+  attempts: number;
+}
+
+export interface AiBatchReport {
+  succeededCount: number;
+  failures: AiFailureItem[];
+}
+
 export interface OllamaStatus {
   running: boolean;
   active_vram_model: string | null;
@@ -175,4 +207,39 @@ export interface FolderTreeNode {
   directCount: number;
   totalCount: number;
   children: FolderTreeNode[];
+}
+
+export interface OllamaPullProgress {
+  model: string;
+  status: string;
+  completed_mb: number;
+  total_mb: number;
+  percent: number;
+  done: boolean;
+}
+
+export interface PhotoActionSnapshot {
+  hash: string;
+  flag: "pick" | "reject" | null;
+  rating: number;
+  color_label: "red" | "yellow" | "green" | "blue" | null;
+  staged_target: string | null;
+  in_basket: boolean;
+  rotation: number;
+}
+
+export interface UndoHistoryEntry {
+  description: string;
+  previousActiveHash: string | null;
+  previousSelectedHashes: string[];
+  before: PhotoActionSnapshot[];
+  after: PhotoActionSnapshot[];
+}
+
+export interface SessionLogEntry {
+  id: string;
+  timestamp: string;
+  category: "LIBRARY" | "TRIAGE" | "FACE" | "AI" | "DISK";
+  message: string;
+  details?: string;
 }

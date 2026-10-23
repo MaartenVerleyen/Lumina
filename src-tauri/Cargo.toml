@@ -1,6 +1,6 @@
 [package]
 name = "Lumina"
-version = "3.1.0"
+version = "3.6.0"
 description = "A Local AI supported photo organisation and finder app"
 authors = ["Maarten"]
 edition = "2024"
@@ -33,6 +33,7 @@ base64 = "0.22"
 kamadak-exif = "0.5"
 reverse_geocoder = "4.1"
 tract-onnx = "0.21"
+trash = "5"
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]

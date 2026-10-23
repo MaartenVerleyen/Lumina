@@ -58,6 +58,16 @@ pub struct FaceScanProgress {
 }
 
 #[derive(Serialize, Clone)]
+pub struct ScanProgressEvent {
+    pub stage: String,
+    pub current_file: String,
+    pub completed: usize,
+    pub total: usize,
+    pub percent: usize,
+    pub done: bool,
+}
+
+#[derive(Serialize, Clone)]
 pub struct PhotoItem {
     pub hash: String,
     pub name: String,
@@ -87,6 +97,12 @@ pub struct PhotoItem {
     pub sharpness: f64,
     pub duplicate_group: Option<usize>,
     pub staged_target: Option<String>,
+    pub focal_length: Option<String>,
+    pub aperture: Option<String>,
+    pub shutter_speed: Option<String>,
+    pub iso: Option<String>,
+    pub lens_model: Option<String>,
+    pub pair_raw_path: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -132,6 +148,11 @@ pub struct ExifRefreshResult {
     pub location: String,
     pub latitude: Option<f64>,
     pub longitude: Option<f64>,
+    pub focal_length: Option<String>,
+    pub aperture: Option<String>,
+    pub shutter_speed: Option<String>,
+    pub iso: Option<String>,
+    pub lens_model: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -205,6 +226,16 @@ pub struct OllamaStatus {
     pub running: bool,
     pub active_vram_model: Option<String>,
     pub installed_models: Vec<OllamaModelInfo>,
+}
+
+#[derive(Serialize, Clone)]
+pub struct OllamaPullProgress {
+    pub model: String,
+    pub status: String,
+    pub completed_mb: f64,
+    pub total_mb: f64,
+    pub percent: usize,
+    pub done: bool,
 }
 
 fn get_app_storage_dir(app: &AppHandle) -> PathBuf {
@@ -306,6 +337,11 @@ fn open_global_db(app: &AppHandle) -> Result<Connection, String> {
     let _ = conn.execute("ALTER TABLE photos ADD COLUMN exif_checked INTEGER DEFAULT 0", []);
     let _ = conn.execute("ALTER TABLE photos ADD COLUMN width INTEGER DEFAULT 0", []);
     let _ = conn.execute("ALTER TABLE photos ADD COLUMN height INTEGER DEFAULT 0", []);
+    let _ = conn.execute("ALTER TABLE photos ADD COLUMN focal_length TEXT DEFAULT NULL", []);
+    let _ = conn.execute("ALTER TABLE photos ADD COLUMN aperture TEXT DEFAULT NULL", []);
+    let _ = conn.execute("ALTER TABLE photos ADD COLUMN shutter_speed TEXT DEFAULT NULL", []);
+    let _ = conn.execute("ALTER TABLE photos ADD COLUMN iso TEXT DEFAULT NULL", []);
+    let _ = conn.execute("ALTER TABLE photos ADD COLUMN lens_model TEXT DEFAULT NULL", []);
     // Repair any previously shifted dates that used colons instead of hyphens in YYYY-MM-DD
     let _ = conn.execute(
         "UPDATE photos SET captured_at = substr(replace(captured_at, ':', '-'), 1, 10) || substr(captured_at, 11) WHERE length(captured_at) >= 10 AND substr(captured_at, 5, 1) = ':'",
@@ -516,8 +552,10 @@ fn has_bilateral_face_structure(face_img: &DynamicImage) -> bool {
 type OnnxPlan = SimplePlan<TypedFact, Box<dyn TypedOp>, Graph<TypedFact, Box<dyn TypedOp>>>;
 
 static ULTRAFACE_PLAN: LazyLock<Mutex<Option<OnnxPlan>>> = LazyLock::new(|| Mutex::new(None));
+static MOBILEFACENET_PLAN: LazyLock<Mutex<Option<OnnxPlan>>> = LazyLock::new(|| Mutex::new(None));
 
 const ULTRAFACE_URL: &str = "https://github.com/onnx/models/raw/main/validated/vision/body_analysis/ultraface/models/version-RFB-320.onnx";
+const MOBILEFACENET_URL: &str = "https://huggingface.co/WePrompt/buffalo_sc/resolve/main/w600k_mbf.onnx";
 
 fn get_models_dir(app: &AppHandle) -> PathBuf {
     let dir = get_app_storage_dir(app).join("models");
@@ -543,7 +581,44 @@ async fn ensure_neural_face_models(app: AppHandle) -> Result<String, String> {
         fs::write(&detector_path, &bytes).map_err(|e| e.to_string())?;
     }
 
-    Ok("Neural ONNX face detector ready".to_string())
+    // Also attempt to cache MobileFaceNet (w600k_mbf.onnx) for 512-D ArcFace biometric embeddings
+    let embedder_path = models_dir.join("w600k_mbf.onnx");
+    if !embedder_path.exists() || embedder_path.metadata().map(|m| m.len() < 500_000).unwrap_or(true) {
+        if let Ok(resp) = HTTP_CLIENT.get(MOBILEFACENET_URL).send().await {
+            if resp.status().is_success() {
+                if let Ok(bytes) = resp.bytes().await {
+                    let _ = fs::write(&embedder_path, &bytes);
+                }
+            }
+        }
+    }
+
+    Ok("Neural ONNX face models ready".to_string())
+}
+
+fn get_or_load_mobilefacenet(app: &AppHandle) -> Option<OnnxPlan> {
+    let mut guard = MOBILEFACENET_PLAN.lock().ok()?;
+    if let Some(ref plan) = *guard {
+        return Some(plan.clone());
+    }
+
+    let embedder_path = get_models_dir(app).join("w600k_mbf.onnx");
+    if !embedder_path.exists() || embedder_path.metadata().map(|m| m.len() < 500_000).unwrap_or(true) {
+        return None;
+    }
+
+    let model = tract_onnx::onnx()
+        .model_for_path(&embedder_path)
+        .ok()?
+        .with_input_fact(0, f32::fact([1, 3, 112, 112]).into())
+        .ok()?
+        .into_optimized()
+        .ok()?
+        .into_runnable()
+        .ok()?;
+
+    *guard = Some(model.clone());
+    Some(model)
 }
 
 fn get_or_load_ultraface(app: &AppHandle) -> Option<OnnxPlan> {
@@ -699,6 +774,33 @@ fn detect_faces_with_onnx(app: &AppHandle, img: &DynamicImage) -> Vec<(f64, f64,
 // Computes a 384-D illumination-invariant biometric descriptor (LBP + Multi-Scale HOG + Lab Chrominance)
 // on the aligned inner face region
 fn compute_face_embedding(face_img: &DynamicImage) -> Vec<f32> {
+    // Phase 6: If MobileFaceNet ONNX plan is loaded in memory, compute 512-D L2-normalized ArcFace embedding
+    if let Ok(guard) = MOBILEFACENET_PLAN.lock() {
+        if let Some(ref plan) = *guard {
+            let resized = face_img.resize_exact(112, 112, FilterType::Triangle).to_rgb8();
+            let tensor = tract_ndarray::Array4::from_shape_fn((1, 3, 112, 112), |(_, c, y, x)| {
+                let px = resized.get_pixel(x as u32, y as u32)[c] as f32;
+                (px - 127.5) / 128.0
+            })
+            .into_tensor();
+
+            if let Ok(outputs) = plan.run(tvec!(tensor.into())) {
+                if let Some(first) = outputs.first() {
+                    if let Ok(view) = first.to_array_view::<f32>() {
+                        let mut emb: Vec<f32> = view.iter().copied().collect();
+                        if emb.len() >= 128 {
+                            let norm = emb.iter().map(|v| v * v).sum::<f32>().sqrt().max(1e-6);
+                            for v in &mut emb {
+                                *v /= norm;
+                            }
+                            return emb;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // Tight inner crop (removes hair/background border around the head)
     let w = face_img.width();
     let h = face_img.height();
@@ -1124,7 +1226,73 @@ fn apply_exif_orientation(img: DynamicImage, orientation: u32) -> DynamicImage {
     }
 }
 
+fn is_raw_or_heic_ext(ext: &str) -> bool {
+    matches!(
+        ext,
+        "cr2" | "cr3" | "nef" | "arw" | "dng" | "orf" | "rw2" | "heic"
+    )
+}
+
+fn extract_embedded_raw_jpeg(file_path: &Path) -> Option<DynamicImage> {
+    let mut file = File::open(file_path).ok()?;
+    let file_len = file.metadata().ok()?.len();
+    if file_len < 32768 {
+        return None;
+    }
+
+    let read_size = (file_len as usize).min(8 * 1024 * 1024);
+    let mut buffer = vec![0u8; read_size];
+    let bytes_read = file.read(&mut buffer).ok()?;
+    let slice = &buffer[..bytes_read];
+
+    let mut best_slice: Option<&[u8]> = None;
+    let mut max_len = 0usize;
+    let n = slice.len();
+    let mut i = 0;
+
+    while i < n.saturating_sub(3) {
+        if slice[i] == 0xFF && slice[i + 1] == 0xD8 && slice[i + 2] == 0xFF {
+            let start = i;
+            i += 3;
+            while i < n.saturating_sub(1) {
+                if slice[i] == 0xFF && slice[i + 1] == 0xD9 {
+                    let end = i + 2;
+                    let len = end - start;
+                    if len > 32768 && len > max_len {
+                        max_len = len;
+                        best_slice = Some(&slice[start..end]);
+                    }
+                    i = end;
+                    break;
+                }
+                i += 1;
+            }
+        } else {
+            i += 1;
+        }
+    }
+
+    if let Some(jpeg_bytes) = best_slice {
+        if let Ok(img) = image::load_from_memory_with_format(jpeg_bytes, ImageFormat::Jpeg) {
+            return Some(img);
+        }
+    }
+    None
+}
+
 fn open_and_orient_image(file_path: &Path) -> Result<DynamicImage, String> {
+    let ext = file_path
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+
+    if is_raw_or_heic_ext(&ext) {
+        if let Some(raw_preview) = extract_embedded_raw_jpeg(file_path) {
+            let orientation = read_exif_orientation(file_path);
+            return Ok(apply_exif_orientation(raw_preview, orientation));
+        }
+    }
+
     let reader = image::ImageReader::open(file_path).map_err(|e| e.to_string())?;
     let reader_guessed = reader.with_guessed_format().map_err(|e| e.to_string())?;
     let img = reader_guessed.decode().map_err(|e| e.to_string())?;
@@ -1253,6 +1421,86 @@ fn extract_exif_metadata(file_path: &Path) -> (String, String, String, Option<f6
     (date_str, camera, location, raw_lat, raw_lon)
 }
 
+fn extract_camera_telemetry(
+    file_path: &Path,
+) -> (
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+) {
+    let mut focal = None;
+    let mut aperture = None;
+    let mut shutter = None;
+    let mut iso = None;
+    let mut lens = None;
+
+    if let Ok(file) = File::open(file_path) {
+        let mut bufreader = BufReader::new(file);
+        let exifreader = Reader::new();
+        if let Ok(exif) = exifreader.read_from_container(&mut bufreader) {
+            for f in exif.fields() {
+                match f.tag {
+                    Tag::FocalLength | Tag::FocalLengthIn35mmFilm => {
+                        if focal.is_none() {
+                            let val = f.display_value().to_string().replace('"', "").trim().to_string();
+                            if !val.is_empty() {
+                                focal = Some(if val.ends_with("mm") {
+                                    val
+                                } else {
+                                    format!("{}mm", val.split_whitespace().next().unwrap_or(&val))
+                                });
+                            }
+                        }
+                    }
+                    Tag::FNumber => {
+                        if aperture.is_none() {
+                            let val = f.display_value().to_string().replace('"', "").trim().to_string();
+                            if !val.is_empty() {
+                                let clean = val.trim_start_matches("f/").trim_start_matches('F').trim();
+                                aperture = Some(format!("f/{}", clean.split_whitespace().next().unwrap_or(clean)));
+                            }
+                        }
+                    }
+                    Tag::ExposureTime => {
+                        if shutter.is_none() {
+                            let val = f.display_value().to_string().replace('"', "").trim().to_string();
+                            if !val.is_empty() {
+                                let token = val.split_whitespace().next().unwrap_or(&val);
+                                shutter = Some(if token.ends_with('s') {
+                                    token.to_string()
+                                } else {
+                                    format!("{}s", token)
+                                });
+                            }
+                        }
+                    }
+                    Tag::PhotographicSensitivity => {
+                        if iso.is_none() {
+                            let val = f.display_value().to_string().replace('"', "").trim().to_string();
+                            if !val.is_empty() {
+                                iso = Some(format!("ISO {}", val.split_whitespace().next().unwrap_or(&val)));
+                            }
+                        }
+                    }
+                    Tag::LensModel => {
+                        if lens.is_none() {
+                            let val = f.display_value().to_string().replace('"', "").trim().to_string();
+                            if !val.is_empty() {
+                                lens = Some(val);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    (focal, aperture, shutter, iso, lens)
+}
+
 fn get_relative_subfolder(root: &Path, file_path: &Path) -> String {
     if let Some(parent) = file_path.parent() {
         if let Ok(rel) = parent.strip_prefix(root) {
@@ -1291,6 +1539,11 @@ struct CachedRow {
     sharpness: f64,
     staged_target: Option<String>,
     exif_checked: i32,
+    focal_length: Option<String>,
+    aperture: Option<String>,
+    shutter_speed: Option<String>,
+    iso: Option<String>,
+    lens_model: Option<String>,
 }
 
 #[tauri::command]
@@ -1318,7 +1571,8 @@ async fn scan_folder(
                             COALESCE(location, ''), latitude, longitude,
                             COALESCE(dhash, ''), COALESCE(sharpness, 0.0), staged_target,
                             COALESCE(exif_checked, 0), flag, color_label, COALESCE(rotation, 0), COALESCE(in_basket, 0),
-                            COALESCE(width, 0), COALESCE(height, 0)
+                            COALESCE(width, 0), COALESCE(height, 0),
+                            focal_length, aperture, shutter_speed, iso, lens_model
                      FROM photos",
                 )
                 .map_err(|e| e.to_string())?;
@@ -1348,6 +1602,11 @@ async fn scan_folder(
                             in_basket: row.get::<_, i32>(19).unwrap_or(0) != 0,
                             width: row.get::<_, u32>(20).unwrap_or(0),
                             height: row.get::<_, u32>(21).unwrap_or(0),
+                            focal_length: row.get(22).ok().flatten(),
+                            aperture: row.get(23).ok().flatten(),
+                            shutter_speed: row.get(24).ok().flatten(),
+                            iso: row.get(25).ok().flatten(),
+                            lens_model: row.get(26).ok().flatten(),
                         },
                     ))
                 })
@@ -1427,7 +1686,12 @@ async fn scan_folder(
                 }
                 let file_path = entry.into_path();
                 let ext = file_path.extension()?.to_str()?.to_lowercase();
-                if !["jpg", "jpeg", "png", "webp", "bmp", "gif", "tiff"].contains(&ext.as_str()) {
+                if ![
+                    "jpg", "jpeg", "png", "webp", "bmp", "gif", "tiff", "cr2", "cr3", "nef",
+                    "arw", "dng", "orf", "rw2", "heic",
+                ]
+                .contains(&ext.as_str())
+                {
                     return None;
                 }
 
@@ -1519,6 +1783,23 @@ async fn scan_folder(
                     tags.sort();
                 }
 
+                let (focal_length, aperture, shutter_speed, iso, lens_model) =
+                    if let Some(c) = cache_map.get(&path_str) {
+                        if !force && c.focal_length.is_some() {
+                            (
+                                c.focal_length.clone(),
+                                c.aperture.clone(),
+                                c.shutter_speed.clone(),
+                                c.iso.clone(),
+                                c.lens_model.clone(),
+                            )
+                        } else {
+                            extract_camera_telemetry(&file_path)
+                        }
+                    } else {
+                        extract_camera_telemetry(&file_path)
+                    };
+
                 let people = people_map.get(&hash).cloned().unwrap_or_default();
                 let faces = faces_map.get(&hash).cloned().unwrap_or_default();
 
@@ -1551,6 +1832,12 @@ async fn scan_folder(
                     sharpness,
                     duplicate_group: None,
                     staged_target,
+                    focal_length,
+                    aperture,
+                    shutter_speed,
+                    iso,
+                    lens_model,
+                    pair_raw_path: None,
                 })
             })
             .collect();
@@ -1567,8 +1854,8 @@ async fn scan_folder(
                     .unwrap_or(0);
 
                 let _ = tx.execute(
-                    "INSERT INTO photos (hash, current_path, subfolder, file_size, modified_time, width, height, rating, flag, color_label, rotation, ai_caption, ocr_text, captured_at, camera_model, location, latitude, longitude, dhash, sharpness, staged_target, exif_checked)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, 1)
+                    "INSERT INTO photos (hash, current_path, subfolder, file_size, modified_time, width, height, rating, flag, color_label, rotation, ai_caption, ocr_text, captured_at, camera_model, location, latitude, longitude, dhash, sharpness, staged_target, exif_checked, focal_length, aperture, shutter_speed, iso, lens_model)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, 1, ?22, ?23, ?24, ?25, ?26)
                      ON CONFLICT(hash) DO UPDATE SET
                         current_path = excluded.current_path,
                         subfolder = excluded.subfolder,
@@ -1582,13 +1869,18 @@ async fn scan_folder(
                         latitude = excluded.latitude,
                         longitude = excluded.longitude,
                         staged_target = excluded.staged_target,
+                        focal_length = COALESCE(excluded.focal_length, photos.focal_length),
+                        aperture = COALESCE(excluded.aperture, photos.aperture),
+                        shutter_speed = COALESCE(excluded.shutter_speed, photos.shutter_speed),
+                        iso = COALESCE(excluded.iso, photos.iso),
+                        lens_model = COALESCE(excluded.lens_model, photos.lens_model),
                         exif_checked = 1",
                     params![
                         p.hash, p.path, p.subfolder, size_bytes, mtime, p.width, p.height, p.rating,
                         p.flag, p.color_label, p.rotation,
                         p.ai_caption, p.ocr_text, p.captured_at, p.camera_model,
                         p.location, p.latitude, p.longitude, p.dhash, p.sharpness,
-                        p.staged_target
+                        p.staged_target, p.focal_length, p.aperture, p.shutter_speed, p.iso, p.lens_model
                     ],
                 );
 
@@ -1601,6 +1893,61 @@ async fn scan_folder(
             }
             let _ = tx.commit();
         }
+
+        // Phase 6: Link RAW + JPEG pairs sharing the same filename stem in the same subfolder
+        let mut raw_stem_map: HashMap<(String, String), String> = HashMap::new();
+        let mut jpg_stem_map: HashMap<(String, String), String> = HashMap::new();
+        for p in &photos {
+            let path_obj = Path::new(&p.path);
+            let stem = path_obj
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_lowercase())
+                .unwrap_or_default();
+            let ext = path_obj
+                .extension()
+                .map(|e| e.to_string_lossy().to_lowercase())
+                .unwrap_or_default();
+            if stem.is_empty() {
+                continue;
+            }
+            if is_raw_or_heic_ext(&ext) {
+                raw_stem_map.insert((p.subfolder.clone(), stem), p.path.clone());
+            } else if matches!(ext.as_str(), "jpg" | "jpeg") {
+                jpg_stem_map.insert((p.subfolder.clone(), stem), p.path.clone());
+            }
+        }
+        for p in &mut photos {
+            let path_obj = Path::new(&p.path);
+            let stem = path_obj
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_lowercase())
+                .unwrap_or_default();
+            let ext = path_obj
+                .extension()
+                .map(|e| e.to_string_lossy().to_lowercase())
+                .unwrap_or_default();
+            if matches!(ext.as_str(), "jpg" | "jpeg") {
+                if let Some(raw_p) = raw_stem_map.get(&(p.subfolder.clone(), stem)) {
+                    p.pair_raw_path = Some(raw_p.clone());
+                }
+            } else if is_raw_or_heic_ext(&ext) {
+                if let Some(jpg_p) = jpg_stem_map.get(&(p.subfolder.clone(), stem)) {
+                    p.pair_raw_path = Some(jpg_p.clone());
+                }
+            }
+        }
+
+        let _ = app.emit(
+            "scan-progress",
+            ScanProgressEvent {
+                stage: "Ready".to_string(),
+                current_file: String::new(),
+                completed: photos.len(),
+                total: photos.len(),
+                percent: 100,
+                done: true,
+            },
+        );
 
         photos.sort_by(|a, b| a.subfolder.cmp(&b.subfolder).then(a.name.cmp(&b.name)));
         assign_duplicate_groups(&mut photos);
@@ -1746,7 +2093,9 @@ fn rescan_exif_batch(app: AppHandle, hashes: Vec<String>) -> Result<Vec<ExifRefr
                 .ok();
 
             if let Some((path_str, old_date, old_cam, old_loc, old_lat, old_lon)) = row_opt {
-                let (d, cam, loc, lat, lon) = extract_exif_metadata(Path::new(&path_str));
+                let path_obj = Path::new(&path_str);
+                let (d, cam, loc, lat, lon) = extract_exif_metadata(path_obj);
+                let (focal, aperture, shutter, iso, lens) = extract_camera_telemetry(path_obj);
 
                 let final_date = if !d.is_empty() { d } else { old_date };
                 let final_cam = if !cam.is_empty() { cam } else { old_cam };
@@ -1761,9 +2110,17 @@ fn rescan_exif_batch(app: AppHandle, hashes: Vec<String>) -> Result<Vec<ExifRefr
                         location = ?3,
                         latitude = ?4,
                         longitude = ?5,
+                        focal_length = COALESCE(?6, focal_length),
+                        aperture = COALESCE(?7, aperture),
+                        shutter_speed = COALESCE(?8, shutter_speed),
+                        iso = COALESCE(?9, iso),
+                        lens_model = COALESCE(?10, lens_model),
                         exif_checked = 1
-                     WHERE hash = ?6",
-                    params![final_date, final_cam, final_loc, final_lat, final_lon, h],
+                     WHERE hash = ?11",
+                    params![
+                        final_date, final_cam, final_loc, final_lat, final_lon,
+                        focal, aperture, shutter, iso, lens, h
+                    ],
                 );
 
                 results.push(ExifRefreshResult {
@@ -1773,6 +2130,11 @@ fn rescan_exif_batch(app: AppHandle, hashes: Vec<String>) -> Result<Vec<ExifRefr
                     location: final_loc,
                     latitude: final_lat,
                     longitude: final_lon,
+                    focal_length: focal,
+                    aperture,
+                    shutter_speed: shutter,
+                    iso,
+                    lens_model: lens,
                 });
             }
         }
@@ -2355,7 +2717,7 @@ fn export_xmp_sidecars(app: AppHandle, hashes: Option<Vec<String>>) -> Result<us
       xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\"\n\
       xmlns:dc=\"http://purl.org/dc/elements/1.1/\"\n\
       xmlns:exif=\"http://ns.adobe.com/exif/1.0/\"\n\
-      xmp:CreatorTool=\"Lumina v3.1\"\n\
+      xmp:CreatorTool=\"Lumina v3.6\"\n\
       xmp:Rating=\"{}\"\n\
       xmp:Label=\"{}\"\n\
       xmp:CreateDate=\"{}\"\n\
@@ -2582,8 +2944,9 @@ async fn scan_library_faces_batch(
             return;
         };
 
-        // Pre-warm the ONNX model plan once before entering the parallel Rayon pool
+        // Pre-warm the ONNX model plans once before entering the parallel Rayon pool
         let _ = get_or_load_ultraface(&app_clone);
+        let _ = get_or_load_mobilefacenet(&app_clone);
 
         // Load all known named face embeddings so we can auto-match newly detected ONNX faces on the fly
         let mut known_people_embeddings: Vec<(String, Vec<f32>)> = Vec::new();
@@ -3103,6 +3466,190 @@ async fn unload_ollama_vram(model_name: String) -> Result<String, String> {
     Ok("Model unloaded from VRAM".to_string())
 }
 
+#[tauri::command]
+async fn pull_ollama_model(app: AppHandle, model_name: String) -> Result<String, String> {
+    let clean_model = model_name.trim().to_string();
+    if clean_model.is_empty() {
+        return Err("Model name cannot be empty".into());
+    }
+
+    let _ = app.emit(
+        "ollama-pull-progress",
+        OllamaPullProgress {
+            model: clean_model.clone(),
+            status: "Connecting to Ollama registry...".to_string(),
+            completed_mb: 0.0,
+            total_mb: 0.0,
+            percent: 5,
+            done: false,
+        },
+    );
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(3600))
+        .build()
+        .unwrap_or_default();
+
+    let payload = json!({
+        "name": clean_model,
+        "stream": true
+    });
+
+    let mut res = client
+        .post("http://127.0.0.1:11434/api/pull")
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to reach Ollama to download model: {e}"))?;
+
+    if !res.status().is_success() {
+        return Err(format!("Ollama pull failed with HTTP {}", res.status()));
+    }
+
+    let mut buffer = String::new();
+    while let Ok(Some(chunk)) = res.chunk().await {
+        buffer.push_str(&String::from_utf8_lossy(&chunk));
+        while let Some(pos) = buffer.find('\n') {
+            let line = buffer[..pos].trim().to_string();
+            buffer = buffer[pos + 1..].to_string();
+            if line.is_empty() {
+                continue;
+            }
+            if let Ok(val) = serde_json::from_str::<JsonValue>(&line) {
+                let status = val["status"].as_str().unwrap_or("Downloading...").to_string();
+                let completed = val["completed"].as_f64().unwrap_or(0.0);
+                let total = val["total"].as_f64().unwrap_or(0.0);
+                let percent = if total > 0.0 {
+                    ((completed / total) * 100.0).round() as usize
+                } else {
+                    15
+                };
+                let _ = app.emit(
+                    "ollama-pull-progress",
+                    OllamaPullProgress {
+                        model: clean_model.clone(),
+                        status,
+                        completed_mb: (completed / (1024.0 * 1024.0) * 10.0).round() / 10.0,
+                        total_mb: (total / (1024.0 * 1024.0) * 10.0).round() / 10.0,
+                        percent: percent.min(99),
+                        done: false,
+                    },
+                );
+            }
+        }
+    }
+
+    let _ = app.emit(
+        "ollama-pull-progress",
+        OllamaPullProgress {
+            model: clean_model.clone(),
+            status: "Ready".to_string(),
+            completed_mb: 0.0,
+            total_mb: 0.0,
+            percent: 100,
+            done: true,
+        },
+    );
+
+    Ok(format!("Successfully installed {}", clean_model))
+}
+
+fn move_file_to_os_trash(p: &Path) -> bool {
+    if !p.exists() {
+        return true;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        let escaped = p.to_string_lossy().replace('\'', "''");
+        let ps_cmd = format!(
+            "Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile('{}', 'OnlyErrorDialogs', 'SendToRecycleBin')",
+            escaped
+        );
+        if let Ok(status) = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &ps_cmd])
+            .creation_flags(CREATE_NO_WINDOW)
+            .status()
+        {
+            if status.success() {
+                return true;
+            }
+        }
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        if let Ok(status) = std::process::Command::new("gio")
+            .arg("trash")
+            .arg(p.as_os_str())
+            .status()
+        {
+            if status.success() {
+                return true;
+            }
+        }
+        if let Ok(status) = std::process::Command::new("kioclient5")
+            .args(["move", &p.to_string_lossy(), "trash:/"])
+            .status()
+        {
+            if status.success() {
+                return true;
+            }
+        }
+    }
+    fs::remove_file(p).is_ok()
+}
+
+#[tauri::command]
+fn empty_library_trash_to_os(app: AppHandle, root_folder: String) -> Result<usize, String> {
+    let mut conn = open_global_db(&app)?;
+    let prefix = make_folder_prefix(Some(&root_folder));
+
+    let targets: Vec<(String, String)> = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT hash, current_path FROM photos
+                 WHERE (subfolder = '_Trash' OR staged_target = '_Trash') AND current_path LIKE ?1",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params![prefix], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map_err(|e| e.to_string())?;
+        rows.flatten().collect()
+    };
+
+    if targets.is_empty() {
+        return Ok(0);
+    }
+
+    let mut deleted_hashes = Vec::new();
+    for (hash, path_str) in targets {
+        let p = Path::new(&path_str);
+        if move_file_to_os_trash(p) {
+            deleted_hashes.push(hash);
+        }
+    }
+
+    let count = deleted_hashes.len();
+    if let Ok(tx) = conn.transaction() {
+        for h in &deleted_hashes {
+            let _ = tx.execute("DELETE FROM photos WHERE hash = ?1", params![h]);
+            let _ = tx.execute("DELETE FROM photo_tags WHERE hash = ?1", params![h]);
+            let _ = tx.execute("DELETE FROM photo_people WHERE hash = ?1", params![h]);
+            let _ = tx.execute("DELETE FROM photo_faces WHERE hash = ?1", params![h]);
+        }
+        let _ = tx.commit();
+    }
+
+    // If the physical _Trash directory is now empty, remove it cleanly
+    let trash_dir = Path::new(&root_folder).join("_Trash");
+    if trash_dir.exists() {
+        let _ = fs::remove_dir(&trash_dir);
+    }
+
+    Ok(count)
+}
+
 // ----------------- CORE DATA COMMANDS -----------------
 
 #[tauri::command]
@@ -3598,6 +4145,101 @@ async fn ai_analyze_photo(
     })
 }
 
+
+#[tauri::command]
+fn open_in_default_app(path: String) -> Result<(), String> {
+    let p = Path::new(&path);
+    if !p.exists() {
+        return Err("File does not exist on disk".into());
+    }
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg(p.as_os_str())
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(p.as_os_str())
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(p.as_os_str())
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn reveal_in_file_manager(path: String) -> Result<(), String> {
+    let p = Path::new(&path);
+    #[cfg(target_os = "windows")]
+    {
+        if p.is_dir() {
+            std::process::Command::new("explorer")
+                .arg(p.as_os_str())
+                .spawn()
+                .map_err(|e| e.to_string())?;
+        } else {
+            std::process::Command::new("explorer")
+                .arg("/select,")
+                .arg(p.as_os_str())
+                .spawn()
+                .map_err(|e| e.to_string())?;
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg("-R")
+            .arg(p.as_os_str())
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+    {
+        let target = if p.is_dir() { p } else { p.parent().unwrap_or(p) };
+        std::process::Command::new("xdg-open")
+            .arg(target.as_os_str())
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn create_library_subfolder(root_folder: String, relative_path: String) -> Result<String, String> {
+    let clean_rel = relative_path.trim().replace('\\', "/");
+    if clean_rel.is_empty() {
+        return Err("Folder name cannot be empty".into());
+    }
+    let mut target = PathBuf::from(&root_folder);
+    for part in clean_rel.split('/').map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        target = target.join(part);
+    }
+    fs::create_dir_all(&target).map_err(|e| e.to_string())?;
+    Ok(target.to_string_lossy().to_string())
+}
+
+
+#[tauri::command]
+fn close_splashscreen(app: AppHandle) -> Result<(), String> {
+    if let Some(splash) = app.get_webview_window("splashscreen") {
+        let _ = splash.close();
+    }
+    if let Some(main_win) = app.get_webview_window("main") {
+        let _ = main_win.show();
+        let _ = main_win.set_focus();
+    }
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -3643,7 +4285,13 @@ pub fn run() {
             check_ollama_status,
             start_ollama_service,
             preload_ollama_vram,
-            unload_ollama_vram
+            unload_ollama_vram,
+            pull_ollama_model,
+            empty_library_trash_to_os,
+            open_in_default_app,
+            reveal_in_file_manager,
+            create_library_subfolder,
+            close_splashscreen
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
