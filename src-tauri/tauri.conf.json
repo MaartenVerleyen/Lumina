@@ -11,7 +11,7 @@
   "app": {
     "windows": [
       {
-        "title": "Lumina \u2014 AI Photo Triage",
+        "title": "Lumina \u2014 AI Photo Manager",
         "label": "main",
         "width": 1440,
         "height": 900,
@@ -51,6 +51,15 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "windows": {
+      "nsis": {
+        "template": "",
+        "installerIcon": "icons/icon.ico",
+        "uninstallerIcon": "icons/icon.ico",
+        "compression": "lzma",
+        "installMode": "perMachine"
+      }
+    }
   }
 }
