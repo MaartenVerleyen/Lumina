@@ -15,6 +15,7 @@ import {
   Smartphone,
   Sparkles,
   Star,
+  Trash2,
   XCircle,
 } from "lucide-react";
 
@@ -44,6 +45,10 @@ interface LeftSidebarProps {
   setExpandedFolders: React.Dispatch<React.SetStateAction<Set<string>>>;
   autoEvents: [string, number][];
   allLibraryTags: string[];
+  // Optional props for Simple Mode & Empty Trash / Context Menu
+  simpleMode?: boolean;
+  handleEmptyTrashToRecycleBin?: () => Promise<void>;
+  onFolderContextMenu?: (folderRelPath: string, e: React.MouseEvent) => void;
 }
 
 export default function LeftSidebar({
@@ -72,6 +77,9 @@ export default function LeftSidebar({
   setExpandedFolders,
   autoEvents,
   allLibraryTags,
+  simpleMode = false,
+  handleEmptyTrashToRecycleBin,
+  onFolderContextMenu,
 }: LeftSidebarProps) {
   function toggleFolderExpand(fullPath: string, e: React.MouseEvent) {
     e.stopPropagation();
@@ -92,10 +100,18 @@ export default function LeftSidebar({
       return (
         <div key={node.fullPath} className="flex flex-col">
           <div
+            data-folder-path={node.fullPath}
             onClick={() => {
               setActiveSubfolder(isSelected ? "ALL" : node.fullPath);
               if (hasChildren && !isExpanded) {
                 setExpandedFolders((prev) => new Set(prev).add(node.fullPath));
+              }
+            }}
+            onContextMenu={(e) => {
+              if (onFolderContextMenu) {
+                e.preventDefault();
+                e.stopPropagation();
+                onFolderContextMenu(node.fullPath, e);
               }
             }}
             style={{ paddingLeft: `${depth * 14 + 8}px` }}
@@ -104,6 +120,7 @@ export default function LeftSidebar({
                 ? "bg-emerald-500/15 text-emerald-300 font-medium border border-emerald-500/30"
                 : "text-zinc-400 hover:bg-zinc-900/70 hover:text-zinc-200 border border-transparent"
             }`}
+            title="Left-click to filter • Right-click for folder options"
           >
             <div className="flex items-center gap-1.5 truncate">
               {hasChildren ? (
@@ -142,84 +159,102 @@ export default function LeftSidebar({
     });
   }
 
+  const trashFolderCount = photos.filter(
+    (p) => p.subfolder === "_Trash" || p.staged_target === "_Trash"
+  ).length;
+
   const filterItems = [
     {
       id: "ALL",
       label: "All Photos",
       count: photos.length,
       icon: <Camera className="w-3.5 h-3.5 text-emerald-400" />,
+      hideInSimple: false,
     },
     {
       id: "PICKS",
-      label: "Picks (P)",
+      label: simpleMode ? "Kept Photos (P)" : "Picks (P)",
       count: picksCount,
       icon: <Flag className="w-3.5 h-3.5 text-emerald-400" />,
+      hideInSimple: false,
     },
     {
       id: "BASKET",
-      label: "Pinboard Basket (B)",
+      label: simpleMode ? "Saved to Pinboard" : "Pinboard Basket (B)",
       count: basketCount,
       icon: <Pin className="w-3.5 h-3.5 text-cyan-400" />,
+      hideInSimple: false,
     },
     {
       id: "REJECTS",
-      label: "Rejects (X)",
+      label: simpleMode ? "To Delete (X)" : "Rejects (X)",
       count: rejectsCount,
       icon: <XCircle className="w-3.5 h-3.5 text-red-400" />,
+      hideInSimple: false,
     },
     {
       id: "FAVORITES",
       label: "Favorites (4★+)",
       count: photos.filter((p) => p.rating >= 4).length,
       icon: <Star className="w-3.5 h-3.5 text-amber-400 fill-amber-400/20" />,
+      hideInSimple: false,
     },
     {
       id: "AI_TAGGED",
       label: "AI Tagged",
       count: photos.filter((p) => p.tags.length > 0 || p.ai_caption.length > 0).length,
       icon: <BrainCircuit className="w-3.5 h-3.5 text-indigo-400" />,
+      hideInSimple: true,
     },
     {
       id: "UNTAGGED",
       label: "Untagged",
       count: photos.filter((p) => p.tags.length === 0 && !p.ai_caption).length,
       icon: <Sparkles className="w-3.5 h-3.5 text-purple-400" />,
+      hideInSimple: true,
     },
     {
       id: "SCREENSHOTS",
       label: "Screenshots",
       count: screenshotPhotosCount,
       icon: <Smartphone className="w-3.5 h-3.5 text-zinc-400" />,
+      hideInSimple: false,
     },
     {
       id: "DUPLICATES",
-      label: `Burst Groups (${totalBurstGroups})`,
+      label: simpleMode
+        ? `Similar Shots (${totalBurstGroups})`
+        : `Burst Groups (${totalBurstGroups})`,
       count: duplicatePhotosCount,
       icon: <Layers className="w-3.5 h-3.5 text-amber-400" />,
+      hideInSimple: false,
     },
     {
       id: "HAS_OCR",
-      label: "Has Text (OCR)",
+      label: simpleMode ? "Photos with Text" : "Has Text (OCR)",
       count: photos.filter((p) => p.ocr_text).length,
       icon: <FileText className="w-3.5 h-3.5 text-indigo-400" />,
+      hideInSimple: false,
     },
     {
       id: "HAS_GPS",
-      label: "Has GPS Location",
+      label: simpleMode ? "Photos on Map" : "Has GPS Location",
       count: gpsPhotosCount,
       icon: <MapPin className="w-3.5 h-3.5 text-emerald-400" />,
+      hideInSimple: false,
     },
     ...(stagedPhotosCount > 0
       ? [
           {
             id: "STAGED",
-            label: "Staged Moves",
+            label: simpleMode ? "Pending Folder Moves" : "Staged Moves",
             count: stagedPhotosCount,
             icon: <Package className="w-3.5 h-3.5 text-emerald-400" />,
+            hideInSimple: false,
           },
         ]
       : []),
-  ];
+  ].filter((it) => !(simpleMode && it.hideInSimple));
 
   return (
     <aside
@@ -228,7 +263,7 @@ export default function LeftSidebar({
     >
       <div>
         <span className="text-[10px] font-bold text-zinc-500 tracking-wider uppercase">
-          Culling & Triage
+          {simpleMode ? "Quick Filters" : "Culling & Triage"}
         </span>
         <div className="mt-2 flex flex-col gap-0.5 text-xs">
           {filterItems.map((item) => {
@@ -262,6 +297,18 @@ export default function LeftSidebar({
             );
           })}
         </div>
+
+        {/* 1-Click Empty _Trash to OS Recycle Bin */}
+        {trashFolderCount > 0 && handleEmptyTrashToRecycleBin && (
+          <button
+            onClick={handleEmptyTrashToRecycleBin}
+            className="mt-2.5 w-full px-2.5 py-1.5 bg-red-950/40 hover:bg-red-900/60 border border-red-800/50 text-red-300 rounded-lg text-xs font-medium flex items-center justify-center gap-1.5 transition"
+            title="Safely move all _Trash photos to your Windows/Linux Recycle Bin"
+          >
+            <Trash2 className="w-3.5 h-3.5 text-red-400" />
+            <span>Empty _Trash to Recycle Bin ({trashFolderCount})</span>
+          </button>
+        )}
       </div>
 
       {/* Hierarchical Folder Tree */}
@@ -284,14 +331,23 @@ export default function LeftSidebar({
           <div className="mt-2 flex flex-col gap-0.5 max-h-56 overflow-y-auto pr-1">
             {folderTree.rootCount > 0 && (
               <div
+                data-folder-path="Root"
                 onClick={() =>
                   setActiveSubfolder(activeSubfolder === "Root" ? "ALL" : "Root")
                 }
+                onContextMenu={(e) => {
+                  if (onFolderContextMenu) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    onFolderContextMenu("Root", e);
+                  }
+                }}
                 className={`flex items-center justify-between px-2.5 py-1.5 rounded-md text-xs cursor-pointer border transition ${
                   activeSubfolder === "Root"
                     ? "bg-emerald-500/15 text-emerald-300 font-medium border-emerald-500/30"
                     : "text-zinc-400 hover:bg-zinc-900/70 hover:text-zinc-200 border-transparent"
                 }`}
+                title="Left-click to filter • Right-click for folder options"
               >
                 <div className="flex items-center gap-1.5 truncate">
                   <span className="w-4" />
@@ -337,7 +393,7 @@ export default function LeftSidebar({
         </div>
       )}
 
-      {/* Object Tags (Indigo Semantic Accent for AI/Tag Taxonomy) */}
+      {/* Object Tags */}
       {allLibraryTags.length > 0 && (
         <div>
           <span className="text-[10px] font-bold text-zinc-500 tracking-wider uppercase">

@@ -1,5 +1,14 @@
 import { useEffect, useRef } from "react";
-import { Copy, ExternalLink, Eye, Folder, FolderPlus, Trash2 } from "lucide-react";
+import {
+  Copy,
+  ExternalLink,
+  Eye,
+  FileText,
+  Flag,
+  Folder,
+  FolderPlus,
+  Trash2,
+} from "lucide-react";
 
 export interface ContextMenuPosition {
   x: number;
@@ -13,6 +22,9 @@ interface PhotoContextMenuProps {
   onRevealInFolder: () => void;
   onCopyFullImage: () => void;
   onStageTrash: () => void;
+  // Optional callbacks for quick Pick & Copy Path
+  onPickPhoto?: () => void;
+  onCopyPath?: () => void;
 }
 
 export function PhotoContextMenu({
@@ -22,6 +34,8 @@ export function PhotoContextMenu({
   onRevealInFolder,
   onCopyFullImage,
   onStageTrash,
+  onPickPhoto,
+  onCopyPath,
 }: PhotoContextMenuProps) {
   const ref = useRef<HTMLDivElement>(null);
 
@@ -31,8 +45,15 @@ export function PhotoContextMenu({
         onClose();
       }
     }
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
     window.addEventListener("mousedown", handleClickOutside);
-    return () => window.removeEventListener("mousedown", handleClickOutside);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("mousedown", handleClickOutside);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
   }, [onClose]);
 
   if (!position) return null;
@@ -41,10 +62,10 @@ export function PhotoContextMenu({
     <div
       ref={ref}
       style={{
-        left: `${Math.min(window.innerWidth - 220, position.x)}px`,
-        top: `${Math.min(window.innerHeight - 200, position.y)}px`,
+        left: `${Math.min(window.innerWidth - 230, position.x)}px`,
+        top: `${Math.min(window.innerHeight - 230, position.y)}px`,
       }}
-      className="fixed z-[99999] w-52 bg-[#12141d]/95 backdrop-blur-md border border-zinc-700/80 rounded-xl shadow-2xl p-1 text-xs select-none animate-in fade-in zoom-in-95"
+      className="fixed z-[99999] w-56 bg-[#12141d]/95 backdrop-blur-md border border-zinc-700/80 rounded-xl shadow-2xl p-1 text-xs select-none animate-in fade-in zoom-in-95"
     >
       <button
         onClick={() => {
@@ -65,7 +86,7 @@ export function PhotoContextMenu({
         className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-zinc-800 text-zinc-200 transition text-left"
       >
         <ExternalLink className="w-3.5 h-3.5 text-cyan-400" />
-        <span>Reveal in File Manager</span>
+        <span>Reveal in File Explorer</span>
       </button>
 
       <button
@@ -79,7 +100,33 @@ export function PhotoContextMenu({
         <span>Copy Image (Full Resolution)</span>
       </button>
 
+      {onCopyPath && (
+        <button
+          onClick={() => {
+            onCopyPath();
+            onClose();
+          }}
+          className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-zinc-800 text-zinc-300 transition text-left"
+        >
+          <FileText className="w-3.5 h-3.5 text-zinc-400" />
+          <span>Copy File Path</span>
+        </button>
+      )}
+
       <div className="h-[1px] bg-zinc-800 my-1" />
+
+      {onPickPhoto && (
+        <button
+          onClick={() => {
+            onPickPhoto();
+            onClose();
+          }}
+          className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-emerald-950/60 text-emerald-300 transition text-left"
+        >
+          <Flag className="w-3.5 h-3.5 text-emerald-400" />
+          <span>Mark as Pick (P)</span>
+        </button>
+      )}
 
       <button
         onClick={() => {
@@ -89,7 +136,7 @@ export function PhotoContextMenu({
         className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-red-950/60 text-red-300 transition text-left"
       >
         <Trash2 className="w-3.5 h-3.5 text-red-400" />
-        <span>Stage for _Trash (X)</span>
+        <span>Reject & Stage for _Trash (X)</span>
       </button>
     </div>
   );
@@ -118,8 +165,15 @@ export function FolderContextMenu({
         onClose();
       }
     }
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
     window.addEventListener("mousedown", handleClickOutside);
-    return () => window.removeEventListener("mousedown", handleClickOutside);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("mousedown", handleClickOutside);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
   }, [onClose]);
 
   if (!position) return null;
@@ -128,13 +182,13 @@ export function FolderContextMenu({
     <div
       ref={ref}
       style={{
-        left: `${Math.min(window.innerWidth - 220, position.x)}px`,
-        top: `${Math.min(window.innerHeight - 150, position.y)}px`,
+        left: `${Math.min(window.innerWidth - 230, position.x)}px`,
+        top: `${Math.min(window.innerHeight - 160, position.y)}px`,
       }}
-      className="fixed z-[99999] w-52 bg-[#12141d]/95 backdrop-blur-md border border-zinc-700/80 rounded-xl shadow-2xl p-1 text-xs select-none animate-in fade-in zoom-in-95"
+      className="fixed z-[99999] w-56 bg-[#12141d]/95 backdrop-blur-md border border-zinc-700/80 rounded-xl shadow-2xl p-1 text-xs select-none animate-in fade-in zoom-in-95"
     >
-      <div className="px-2.5 py-1 text-[10px] text-zinc-500 font-mono truncate border-b border-zinc-800 mb-1">
-        {folderPath}
+      <div className="px-2.5 py-1 text-[10px] text-zinc-400 font-mono truncate border-b border-zinc-800 mb-1">
+        📂 {folderPath || "Root"}
       </div>
 
       <button
@@ -145,7 +199,7 @@ export function FolderContextMenu({
         className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-zinc-800 text-zinc-200 transition text-left"
       >
         <Folder className="w-3.5 h-3.5 text-emerald-400" />
-        <span>Open in File Manager</span>
+        <span>Open Folder in Explorer</span>
       </button>
 
       <button
@@ -156,7 +210,7 @@ export function FolderContextMenu({
         className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-zinc-800 text-zinc-200 transition text-left"
       >
         <FolderPlus className="w-3.5 h-3.5 text-indigo-400" />
-        <span>New Subfolder Here...</span>
+        <span>Create New Subfolder Here...</span>
       </button>
     </div>
   );

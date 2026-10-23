@@ -1,7 +1,12 @@
 import { useState, useRef, useEffect, RefObject } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import luminaMark from "../../assets/lumina-mark.svg";
-import { OllamaStatus, FaceScanProgress, PhotoItem } from "../../types/lumina";
+import {
+  OllamaStatus,
+  OllamaPullProgress,
+  FaceScanProgress,
+  PhotoItem,
+} from "../../types/lumina";
 import {
   FolderOpen,
   MapPin,
@@ -24,6 +29,12 @@ import {
   HardDrive,
   ChevronDown,
   X,
+  Undo2,
+  Redo2,
+  HelpCircle,
+  Download,
+  Sliders,
+  FileText,
 } from "lucide-react";
 
 interface TopHeaderBarProps {
@@ -56,6 +67,7 @@ interface TopHeaderBarProps {
     total: number;
     succeeded: number;
     failed: number;
+    currentFile?: string;
   } | null;
   cancelBatchRef: RefObject<boolean>;
   handleOpenFolder: () => Promise<void>;
@@ -66,6 +78,18 @@ interface TopHeaderBarProps {
   handleDismissAllStaged: () => Promise<void>;
   handleBatchScanFacesOnnx: () => Promise<void>;
   runBatchAiOnList: (targets: PhotoItem[]) => Promise<void>;
+  // Optional extended props so TopHeaderBar works seamlessly with both App.tsx signatures
+  simpleMode?: boolean;
+  toggleSimpleMode?: () => void;
+  canUndo?: boolean;
+  canRedo?: boolean;
+  handleUndo?: () => Promise<void>;
+  handleRedo?: () => Promise<void>;
+  setIsShortcutsModalOpen?: React.Dispatch<React.SetStateAction<boolean>>;
+  setIsSessionLogModalOpen?: React.Dispatch<React.SetStateAction<boolean>>;
+  sessionLogsCount?: number;
+  ollamaPullProgress?: OllamaPullProgress | null;
+  handlePullDefaultAiModel?: (modelName?: string) => Promise<void>;
 }
 
 export default function TopHeaderBar({
@@ -103,6 +127,17 @@ export default function TopHeaderBar({
   handleDismissAllStaged,
   handleBatchScanFacesOnnx,
   runBatchAiOnList,
+  simpleMode = false,
+  toggleSimpleMode,
+  canUndo,
+  canRedo,
+  handleUndo,
+  handleRedo,
+  setIsShortcutsModalOpen,
+  setIsSessionLogModalOpen,
+  sessionLogsCount = 0,
+  ollamaPullProgress,
+  handlePullDefaultAiModel,
 }: TopHeaderBarProps) {
   const [isRescanMenuOpen, setIsRescanMenuOpen] = useState(false);
   const [isAiMenuOpen, setIsAiMenuOpen] = useState(false);
@@ -121,6 +156,19 @@ export default function TopHeaderBar({
     window.addEventListener("mousedown", handleClickOutside);
     return () => window.removeEventListener("mousedown", handleClickOutside);
   }, []);
+
+  const hasVisionModel = (ollamaStatus?.installed_models.length ?? 0) > 0;
+
+  async function triggerModelPull(model = "qwen3-vl:8b") {
+    if (handlePullDefaultAiModel) {
+      await handlePullDefaultAiModel(model);
+    } else {
+      await invoke("pull_ollama_model", { modelName: model });
+      const s = await invoke<OllamaStatus>("check_ollama_status");
+      setOllamaStatus(s);
+      setAiModel(model);
+    }
+  }
 
   return (
     <header className="flex items-center justify-between px-4 py-2 bg-[#10121a]/90 backdrop-blur-md border-b border-zinc-800/70 z-30 gap-3 shrink-0">
@@ -142,7 +190,7 @@ export default function TopHeaderBar({
           <img src={luminaMark} alt="Lumina" className="w-6 h-6 object-contain" />
           <span className="text-zinc-100 font-bold tracking-tight text-sm">Lumina</span>
           <span className="text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/25 px-1.5 py-0.2 rounded font-mono">
-            v3.4
+            v3.6
           </span>
         </div>
 
@@ -151,7 +199,7 @@ export default function TopHeaderBar({
           className="flex items-center gap-1.5 px-3 py-1.5 bg-zinc-800/90 hover:bg-zinc-700/90 text-zinc-100 border border-zinc-700/60 rounded-lg text-xs font-medium transition shadow-sm"
         >
           <FolderOpen className="w-3.5 h-3.5 text-emerald-400" />
-          <span>Open Library</span>
+          <span>{simpleMode ? "Open Photos" : "Open Library"}</span>
         </button>
 
         {/* Streamlined Split-Button Rescan Dropdown */}
@@ -169,7 +217,7 @@ export default function TopHeaderBar({
                     isScanningFolder ? "animate-spin" : ""
                   }`}
                 />
-                <span>Rescan</span>
+                <span>{simpleMode ? "Refresh" : "Rescan"}</span>
               </button>
               <button
                 onClick={() => setIsRescanMenuOpen((p) => !p)}
@@ -218,6 +266,28 @@ export default function TopHeaderBar({
           </div>
         )}
 
+        {/* Optional Undo / Redo Buttons if passed */}
+        {handleUndo && handleRedo && photos.length > 0 && (
+          <div className="flex items-center bg-zinc-900 border border-zinc-800 rounded-lg p-0.5">
+            <button
+              onClick={handleUndo}
+              disabled={!canUndo}
+              className="p-1.5 rounded-md text-zinc-400 hover:text-white disabled:opacity-30 disabled:pointer-events-none transition"
+              title="Undo Last Action (Ctrl+Z)"
+            >
+              <Undo2 className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={handleRedo}
+              disabled={!canRedo}
+              className="p-1.5 rounded-md text-zinc-400 hover:text-white disabled:opacity-30 disabled:pointer-events-none transition"
+              title="Redo Action (Ctrl+Y)"
+            >
+              <Redo2 className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+
         {/* Unified Emerald View Mode Switcher */}
         <div className="flex bg-zinc-900/90 p-0.5 rounded-lg border border-zinc-800">
           <button
@@ -262,7 +332,7 @@ export default function TopHeaderBar({
           </button>
         </div>
 
-        {photos.length > 0 && (
+        {!simpleMode && photos.length > 0 && (
           <button
             onClick={handleOpenHealthDashboard}
             className="flex items-center gap-1.5 px-2.5 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-800 rounded-lg text-xs font-medium transition"
@@ -270,6 +340,22 @@ export default function TopHeaderBar({
           >
             <HardDrive className="w-3.5 h-3.5 text-emerald-400" />
             <span className="hidden 2xl:inline">Health & XMP</span>
+          </button>
+        )}
+
+        {setIsSessionLogModalOpen && (
+          <button
+            onClick={() => setIsSessionLogModalOpen(true)}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-800 rounded-lg text-xs font-medium transition"
+            title="Open Session Activity Log (Ctrl+L)"
+          >
+            <FileText className="w-3.5 h-3.5 text-emerald-400" />
+            <span className="hidden xl:inline">Log</span>
+            {sessionLogsCount > 0 && (
+              <span className="px-1.5 py-0.2 rounded-full bg-emerald-500/15 text-emerald-300 font-mono text-[10px]">
+                {sessionLogsCount}
+              </span>
+            )}
           </button>
         )}
       </div>
@@ -283,7 +369,11 @@ export default function TopHeaderBar({
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search objects, OCR, people, places... (Ctrl+K)"
+            placeholder={
+              simpleMode
+                ? "Search people, places, or objects... (Ctrl+K)"
+                : "Search objects, OCR, people, places... (Ctrl+K)"
+            }
             className="w-full bg-zinc-900/90 border border-zinc-800 hover:border-zinc-700 focus:border-emerald-500/80 rounded-full pl-9 pr-8 py-1.5 text-xs text-zinc-200 focus:outline-none transition placeholder-zinc-500"
           />
           {searchQuery && (
@@ -306,7 +396,11 @@ export default function TopHeaderBar({
               className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/40 rounded-lg text-xs font-semibold shadow-sm transition"
             >
               <CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Commit ({stagedPhotosCount})</span>
+              <span>
+                {simpleMode
+                  ? `Apply ${stagedPhotosCount} Change${stagedPhotosCount === 1 ? "" : "s"}`
+                  : `Commit (${stagedPhotosCount})`}
+              </span>
             </button>
             <button
               onClick={handleDismissAllStaged}
@@ -318,110 +412,174 @@ export default function TopHeaderBar({
           </div>
         )}
 
-        {/* Compact Ollama Hardware Pill + Popover */}
-        <div ref={aiMenuRef} className="relative">
-          {ollamaStatus?.running ? (
+        {/* Segmented Simple | Pro Switch if toggleSimpleMode is passed */}
+        {toggleSimpleMode && (
+          <div
+            className="flex items-center bg-zinc-900 border border-zinc-800 rounded-lg p-0.5 text-xs"
+            title="Switch between Simple Mode (Plain English) and Pro Mode (Full technical controls)"
+          >
             <button
-              onClick={() => setIsAiMenuOpen((p) => !p)}
-              className="flex items-center gap-2 px-2.5 py-1.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-lg text-xs transition"
-              title="Configure Local AI Model & GPU VRAM"
+              onClick={() => {
+                if (!simpleMode) toggleSimpleMode();
+              }}
+              className={`px-2 py-1 rounded-md font-medium transition ${
+                simpleMode
+                  ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
+                  : "text-zinc-400 hover:text-zinc-200"
+              }`}
             >
-              <span
-                className={`w-2 h-2 rounded-full ${
-                  ollamaStatus.active_vram_model
-                    ? "bg-indigo-400 shadow-[0_0_8px_rgba(129,140,248,0.8)]"
-                    : "bg-emerald-500"
-                }`}
-              />
-              <span className="font-mono text-[11px] text-zinc-200 max-w-[110px] truncate">
-                {aiModel.split(":")[0]}
-              </span>
-              {ollamaStatus.active_vram_model && (
-                <span className="text-[9px] bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 px-1 rounded font-mono">
-                  VRAM
-                </span>
-              )}
-              <ChevronDown className="w-3 h-3 text-zinc-500" />
+              Simple
             </button>
-          ) : (
             <button
-              onClick={() => invoke("start_ollama_service")}
-              className="flex items-center gap-1.5 text-xs bg-red-950/40 border border-red-800/60 text-red-300 px-2.5 py-1.5 rounded-lg hover:bg-red-900/60 transition"
+              onClick={() => {
+                if (simpleMode) toggleSimpleMode();
+              }}
+              className={`px-2 py-1 rounded-md font-medium transition flex items-center gap-1 ${
+                !simpleMode
+                  ? "bg-indigo-500/20 text-indigo-300 border border-indigo-500/40"
+                  : "text-zinc-400 hover:text-zinc-200"
+              }`}
             >
-              <Power className="w-3.5 h-3.5" />
-              <span>Start Ollama</span>
+              <Sliders className="w-3 h-3" />
+              <span>Pro</span>
             </button>
-          )}
+          </div>
+        )}
 
-          {isAiMenuOpen && ollamaStatus?.running && (
-            <div className="absolute right-0 top-full mt-1.5 w-64 bg-[#12141d] border border-zinc-700/80 rounded-xl shadow-2xl p-3 z-50 flex flex-col gap-2.5 text-xs">
-              <div className="flex items-center justify-between text-zinc-400 font-semibold text-[11px]">
-                <span className="flex items-center gap-1.5">
-                  <Cpu className="w-3.5 h-3.5 text-indigo-400" />
-                  Ollama Vision Engine
-                </span>
-                <span className="text-[10px] text-emerald-400 font-mono">Online</span>
+        {/* Compact Ollama Hardware Pill + 1-Click Model Downloader Popover */}
+        {!simpleMode && (
+          <div ref={aiMenuRef} className="relative">
+            {ollamaPullProgress ? (
+              <div className="flex items-center gap-2 px-2.5 py-1.5 bg-indigo-950/80 border border-indigo-500/50 rounded-lg text-xs text-indigo-200 font-mono">
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-400" />
+                <span>Pulling AI: {ollamaPullProgress.percent}%</span>
               </div>
-
-              <div className="flex flex-col gap-1">
-                <label className="text-[10px] text-zinc-500 uppercase font-bold">
-                  Active Model
-                </label>
-                <select
-                  value={aiModel}
-                  onChange={(e) => setAiModel(e.target.value)}
-                  className="bg-zinc-950 border border-zinc-800 rounded-lg px-2 py-1.5 text-zinc-200 font-mono text-[11px] focus:outline-none focus:border-indigo-500"
-                >
-                  {ollamaStatus.installed_models.map((m) => (
-                    <option key={m.name} value={m.name} className="bg-zinc-900 text-zinc-200">
-                      {m.name} ({m.size_gb}GB)
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="pt-1 border-t border-zinc-800/80 flex items-center justify-between">
-                <span className="text-[11px] text-zinc-400">
-                  {ollamaStatus.active_vram_model ? "Loaded in GPU VRAM" : "Model in Disk Cache"}
+            ) : ollamaStatus?.running ? (
+              <button
+                onClick={() => setIsAiMenuOpen((p) => !p)}
+                className="flex items-center gap-2 px-2.5 py-1.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-lg text-xs transition"
+                title="Configure Local AI Model & GPU VRAM"
+              >
+                <span
+                  className={`w-2 h-2 rounded-full ${
+                    ollamaStatus.active_vram_model
+                      ? "bg-indigo-400 shadow-[0_0_8px_rgba(129,140,248,0.8)]"
+                      : hasVisionModel
+                      ? "bg-emerald-500"
+                      : "bg-amber-400"
+                  }`}
+                />
+                <span className="font-mono text-[11px] text-zinc-200 max-w-[110px] truncate">
+                  {hasVisionModel ? aiModel.split(":")[0] : "Setup AI"}
                 </span>
-                {ollamaStatus.active_vram_model ? (
-                  <button
-                    onClick={async () => {
-                      if (ollamaStatus.active_vram_model) {
-                        await invoke("unload_ollama_vram", {
-                          modelName: ollamaStatus.active_vram_model,
-                        });
-                        const s = await invoke<OllamaStatus>("check_ollama_status");
-                        setOllamaStatus(s);
-                      }
-                    }}
-                    className="flex items-center gap-1 text-[11px] bg-red-950/60 border border-red-800/50 text-red-300 hover:bg-red-900/60 px-2.5 py-1 rounded-lg transition font-medium"
-                  >
-                    <Power className="w-3 h-3" />
-                    <span>Eject VRAM</span>
-                  </button>
+                {ollamaStatus.active_vram_model && (
+                  <span className="text-[9px] bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 px-1 rounded font-mono">
+                    VRAM
+                  </span>
+                )}
+                <ChevronDown className="w-3 h-3 text-zinc-500" />
+              </button>
+            ) : (
+              <button
+                onClick={() => invoke("start_ollama_service")}
+                className="flex items-center gap-1.5 text-xs bg-red-950/40 border border-red-800/60 text-red-300 px-2.5 py-1.5 rounded-lg hover:bg-red-900/60 transition"
+              >
+                <Power className="w-3.5 h-3.5" />
+                <span>Start Ollama</span>
+              </button>
+            )}
+
+            {isAiMenuOpen && ollamaStatus?.running && (
+              <div className="absolute right-0 top-full mt-1.5 w-72 bg-[#12141d] border border-zinc-700/80 rounded-xl shadow-2xl p-3 z-50 flex flex-col gap-2.5 text-xs">
+                <div className="flex items-center justify-between text-zinc-400 font-semibold text-[11px]">
+                  <span className="flex items-center gap-1.5">
+                    <Cpu className="w-3.5 h-3.5 text-indigo-400" />
+                    Ollama Vision Engine
+                  </span>
+                  <span className="text-[10px] text-emerald-400 font-mono">Online</span>
+                </div>
+
+                {hasVisionModel ? (
+                  <>
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[10px] text-zinc-500 uppercase font-bold">
+                        Active Model
+                      </label>
+                      <select
+                        value={aiModel}
+                        onChange={(e) => setAiModel(e.target.value)}
+                        className="bg-zinc-950 border border-zinc-800 rounded-lg px-2 py-1.5 text-zinc-200 font-mono text-[11px] focus:outline-none focus:border-indigo-500"
+                      >
+                        {ollamaStatus.installed_models.map((m) => (
+                          <option key={m.name} value={m.name} className="bg-zinc-900 text-zinc-200">
+                            {m.name} ({m.size_gb}GB)
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="pt-1 border-t border-zinc-800/80 flex items-center justify-between">
+                      <span className="text-[11px] text-zinc-400">
+                        {ollamaStatus.active_vram_model ? "Loaded in GPU VRAM" : "In Disk Cache"}
+                      </span>
+                      {ollamaStatus.active_vram_model ? (
+                        <button
+                          onClick={async () => {
+                            if (ollamaStatus.active_vram_model) {
+                              await invoke("unload_ollama_vram", {
+                                modelName: ollamaStatus.active_vram_model,
+                              });
+                              const s = await invoke<OllamaStatus>("check_ollama_status");
+                              setOllamaStatus(s);
+                            }
+                          }}
+                          className="flex items-center gap-1 text-[11px] bg-red-950/60 border border-red-800/50 text-red-300 hover:bg-red-900/60 px-2.5 py-1 rounded-lg transition font-medium"
+                        >
+                          <Power className="w-3 h-3" />
+                          <span>Eject VRAM</span>
+                        </button>
+                      ) : (
+                        <button
+                          onClick={async () => {
+                            setIsLoadingVram(true);
+                            await invoke("preload_ollama_vram", { modelName: aiModel });
+                            const s = await invoke<OllamaStatus>("check_ollama_status");
+                            setOllamaStatus(s);
+                            setIsLoadingVram(false);
+                          }}
+                          disabled={isLoadingVram}
+                          className="flex items-center gap-1 text-[11px] bg-indigo-950/60 border border-indigo-500/40 text-indigo-300 hover:bg-indigo-900/60 px-2.5 py-1 rounded-lg transition font-medium"
+                        >
+                          <Cpu className="w-3 h-3" />
+                          <span>{isLoadingVram ? "Loading..." : "Warm Up VRAM"}</span>
+                        </button>
+                      )}
+                    </div>
+                  </>
                 ) : (
-                  <button
-                    onClick={async () => {
-                      setIsLoadingVram(true);
-                      await invoke("preload_ollama_vram", { modelName: aiModel });
-                      const s = await invoke<OllamaStatus>("check_ollama_status");
-                      setOllamaStatus(s);
-                      setIsLoadingVram(false);
-                    }}
-                    disabled={isLoadingVram}
-                    className="flex items-center gap-1 text-[11px] bg-indigo-950/60 border border-indigo-500/40 text-indigo-300 hover:bg-indigo-900/60 px-2.5 py-1 rounded-lg transition font-medium"
-                  >
-                    <Cpu className="w-3 h-3" />
-                    <span>{isLoadingVram ? "Loading..." : "Warm Up VRAM"}</span>
-                  </button>
+                  <div className="flex flex-col gap-2 py-1">
+                    <p className="text-[11px] text-zinc-300 leading-relaxed">
+                      No vision models found in Ollama yet. Click below to install{" "}
+                      <code className="text-indigo-300">qwen3-vl:8b</code> automatically:
+                    </p>
+                    <button
+                      onClick={() => {
+                        setIsAiMenuOpen(false);
+                        triggerModelPull("qwen3-vl:8b");
+                      }}
+                      className="w-full py-2 px-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-semibold flex items-center justify-center gap-1.5 shadow transition"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span>Download Smart Photo AI (qwen3-vl:8b)</span>
+                    </button>
+                  </div>
                 )}
               </div>
-            </div>
-          )}
-        </div>
+            )}
+          </div>
+        )}
 
-        {/* Neural & AI Batch Actions (Strictly Indigo/Violet Semantic Palette) */}
+        {/* Neural & AI Batch Actions */}
         {photos.length > 0 && (
           <>
             {!faceScanProgress ? (
@@ -431,7 +589,9 @@ export default function TopHeaderBar({
                 title="Run local ONNX Neural Face Detector across visible photos & auto-match known people"
               >
                 <ScanFace className="w-3.5 h-3.5 text-indigo-400" />
-                <span className="hidden xl:inline">Scan Faces</span>
+                <span className="hidden xl:inline">
+                  {simpleMode ? "Find People" : "Scan Faces"}
+                </span>
               </button>
             ) : (
               <span className="flex items-center gap-1.5 px-2.5 py-1.5 bg-indigo-950/90 border border-indigo-500/50 text-indigo-300 rounded-lg text-xs font-mono">
@@ -445,6 +605,10 @@ export default function TopHeaderBar({
             {!aiBatchProgress ? (
               <button
                 onClick={() => {
+                  if (ollamaStatus?.running && !hasVisionModel) {
+                    triggerModelPull("qwen3-vl:8b");
+                    return;
+                  }
                   const targets = visiblePhotos.filter(
                     (p) => p.tags.length === 0 && !p.ai_caption
                   );
@@ -454,7 +618,7 @@ export default function TopHeaderBar({
                 title="Run Qwen3-VL AI Vision tagging across untagged visible photos"
               >
                 <Sparkles className="w-3.5 h-3.5" />
-                <span>Batch AI</span>
+                <span>{simpleMode ? "Auto-Tag Photos" : "Batch AI"}</span>
               </button>
             ) : (
               <button
@@ -470,6 +634,16 @@ export default function TopHeaderBar({
               </button>
             )}
           </>
+        )}
+
+        {setIsShortcutsModalOpen && (
+          <button
+            onClick={() => setIsShortcutsModalOpen(true)}
+            className="p-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 border border-zinc-800 transition"
+            title="Keyboard Shortcuts Cheat Sheet (?)"
+          >
+            <HelpCircle className="w-4 h-4" />
+          </button>
         )}
 
         <button

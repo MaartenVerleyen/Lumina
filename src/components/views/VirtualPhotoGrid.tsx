@@ -32,6 +32,9 @@ interface VirtualPhotoGridProps {
   setActiveHash: React.Dispatch<React.SetStateAction<string | null>>;
   setIsLoupeOpen: React.Dispatch<React.SetStateAction<boolean>>;
   toggleBurstGroupExpand: (groupNum: number, e: React.MouseEvent) => void;
+  // Optional props for Simple Mode & explicit Right-Click Context Menu callback
+  simpleMode?: boolean;
+  onPhotoContextMenu?: (photo: PhotoItem, e: React.MouseEvent) => void;
 }
 
 export default function VirtualPhotoGrid({
@@ -51,6 +54,8 @@ export default function VirtualPhotoGrid({
   setActiveHash,
   setIsLoupeOpen,
   toggleBurstGroupExpand,
+  simpleMode = false,
+  onPhotoContextMenu,
 }: VirtualPhotoGridProps) {
   return (
     <div ref={gridContainerRef} className="flex-1 overflow-y-auto p-4">
@@ -96,7 +101,15 @@ export default function VirtualPhotoGrid({
                 return (
                   <div
                     key={photo.hash}
+                    data-photo-hash={photo.hash}
                     onClick={(e) => handlePhotoClick(globalIndex, photo.hash, e)}
+                    onContextMenu={(e) => {
+                      if (onPhotoContextMenu) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        onPhotoContextMenu(photo, e);
+                      }
+                    }}
                     onDoubleClick={() => {
                       setActiveHash(photo.hash);
                       setIsLoupeOpen(true);
@@ -157,7 +170,7 @@ export default function VirtualPhotoGrid({
                         </div>
                       )}
 
-                      {/* Top-Left Badges (Crisp Lucide Icons) */}
+                      {/* Top-Left Badges */}
                       <div className="absolute top-2 left-2 flex items-center gap-1 z-20">
                         {photo.in_basket && (
                           <span
@@ -191,6 +204,15 @@ export default function VirtualPhotoGrid({
                           </div>
                         )}
 
+                        {photo.pair_raw_path && (
+                          <span
+                            className="px-1.5 py-0.5 rounded bg-amber-950/90 border border-amber-500/40 text-amber-300 text-[9px] font-mono font-bold backdrop-blur-md"
+                            title={`Linked RAW+JPEG Pair: ${photo.pair_raw_path}`}
+                          >
+                            RAW+J
+                          </span>
+                        )}
+
                         {grp && burstCount > 1 && (
                           <button
                             onClick={(e) => toggleBurstGroupExpand(grp, e)}
@@ -212,7 +234,9 @@ export default function VirtualPhotoGrid({
                                 {isSharpestPick ? `Best (#${grp}) ▾` : `Burst #${grp} ▾`}
                               </span>
                             ) : (
-                              <span>{burstCount} Burst ▸</span>
+                              <span>
+                                {burstCount} {simpleMode ? "Similar" : "Burst"} ▸
+                              </span>
                             )}
                           </button>
                         )}
@@ -257,7 +281,7 @@ export default function VirtualPhotoGrid({
                             <MapPin className="w-2.5 h-2.5 text-emerald-400" />
                             <span>{photo.location.split(",")[0]}</span>
                           </>
-                        ) : photo.sharpness > 0 ? (
+                        ) : !simpleMode && photo.sharpness > 0 ? (
                           <>
                             <span>{photo.sharpness}</span>
                             <Crosshair className="w-2.5 h-2.5 text-zinc-600" />

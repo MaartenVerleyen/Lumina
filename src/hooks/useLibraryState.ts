@@ -194,6 +194,7 @@ function expandWithRawPairs(hashes: string[], photos: PhotoItem[]): string[] {
 
 export function useLibraryState() {
   const [isAppReady, setIsAppReady] = useState<boolean>(false);
+  const splashClosedRef = useRef<boolean>(false);
   const [folder, setFolder] = useState<string>("");
   const [photos, setPhotos] = useState<PhotoItem[]>([]);
   const [recentFolders, setRecentFolders] = useState<string[]>(() => {
@@ -315,8 +316,15 @@ export function useLibraryState() {
   const [error, setError] = useState<string>("");
   const [tagInput, setTagInput] = useState<string>("");
 
+  const lastLogRef = useRef<{ key: string; time: number }>({ key: "", time: 0 });
   const addLog = useCallback(
     (category: SessionLogEntry["category"], message: string, details?: string) => {
+      const now = Date.now();
+      const dedupKey = `${category}:${message}:${details || ""}`;
+      if (lastLogRef.current.key === dedupKey && now - lastLogRef.current.time < 400) {
+        return;
+      }
+      lastLogRef.current = { key: dedupKey, time: now };
       const entry: SessionLogEntry = {
         id: Math.random().toString(36).substring(2, 9),
         timestamp: new Date().toLocaleTimeString(),
@@ -339,14 +347,12 @@ export function useLibraryState() {
   );
 
   function toggleSimpleMode() {
-    setSimpleMode((prev) => {
-      const next = !prev;
-      try {
-        localStorage.setItem("lumina_simple_mode", String(next));
-      } catch {}
-      addLog("LIBRARY", `Switched UI to ${next ? "Simple Mode" : "Pro Studio Mode"}`);
-      return next;
-    });
+    const next = !simpleMode;
+    setSimpleMode(next);
+    try {
+      localStorage.setItem("lumina_simple_mode", String(next));
+    } catch {}
+    addLog("LIBRARY", `Switched UI to ${next ? "Simple Mode" : "Pro Studio Mode"}`);
   }
 
   function saveRecentFolder(path: string) {
@@ -410,7 +416,8 @@ export function useLibraryState() {
         if (!mounted) return;
         setOllamaStatus({ running: false, active_vram_model: null, installed_models: [] });
       } finally {
-        if (mounted) {
+        if (mounted && !splashClosedRef.current) {
+          splashClosedRef.current = true;
           setIsAppReady(true);
           invoke("close_splashscreen").catch(() => {});
         }
@@ -547,8 +554,13 @@ export function useLibraryState() {
               ? Array.from(new Set([...p.tags, ...hit.auto_tags])).sort()
               : p.tags;
 
+          const isRawOrHeic = /\.(cr2|cr3|nef|arw|dng|orf|rw2|heic|heif|pef|raf)$/i.test(p.name);
+          const displayPath =
+            isRawOrHeic && !p.path.endsWith("_preview.jpg") ? hit.thumb_path : p.path;
+
           return {
             ...p,
+            path: displayPath,
             thumb_path: hit.thumb_path,
             dhash: hit.dhash,
             sharpness: hit.sharpness,
@@ -809,6 +821,31 @@ export function useLibraryState() {
     setFaceNameInput("");
     setIsEditingInspectorLocation(false);
   }, [activeHash]);
+
+  // On-Demand 1920px High-Res Preview Generation for RAW & HEIC when viewing in Loupe or Compare
+  useEffect(() => {
+    if (!activePhoto) return;
+    const isRawOrHeic = /\.(cr2|cr3|nef|arw|dng|orf|rw2|heic|heif|pef|raf)$/i.test(
+      activePhoto.name
+    );
+    if (!isRawOrHeic || activePhoto.path.endsWith("_preview.jpg")) return;
+    if (!isLoupeOpen && viewMode !== "compare") return;
+
+    const rawDiskPath = activePhoto.pair_raw_path || activePhoto.path;
+    const targetHash = activePhoto.hash;
+    invoke<string>("ensure_high_res_preview", {
+      hash: targetHash,
+      sourcePath: rawDiskPath,
+    })
+      .then((previewPath) => {
+        if (previewPath) {
+          setPhotos((prev) =>
+            prev.map((p) => (p.hash === targetHash ? { ...p, path: previewPath } : p))
+          );
+        }
+      })
+      .catch(() => {});
+  }, [activePhoto?.hash, activePhoto?.path, isLoupeOpen, viewMode]);
 
   function handlePhotoClick(index: number, hash: string, e: React.MouseEvent) {
     setActiveHash(hash);

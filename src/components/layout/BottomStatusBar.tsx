@@ -1,6 +1,7 @@
 import { FaceScanProgress } from "../../types/lumina";
 import {
   CheckSquare,
+  FileText,
   Grid,
   Images,
   Loader2,
@@ -24,7 +25,11 @@ interface BottomStatusBarProps {
     total: number;
     succeeded: number;
     failed: number;
+    currentFile?: string;
   } | null;
+  // Optional Session Log trigger in the status bar
+  sessionLogsCount?: number;
+  onOpenSessionLog?: () => void;
 }
 
 export default function BottomStatusBar({
@@ -37,6 +42,8 @@ export default function BottomStatusBar({
   progress,
   faceScanProgress,
   aiBatchProgress,
+  sessionLogsCount = 0,
+  onOpenSessionLog,
 }: BottomStatusBarProps) {
   return (
     <footer className="h-7 px-4 bg-[#0c0d14] border-t border-zinc-800/80 flex items-center justify-between text-[11px] text-zinc-400 select-none shrink-0 z-20">
@@ -83,6 +90,7 @@ export default function BottomStatusBar({
             <Sparkles className="w-3 h-3 text-purple-400" />
             <span>
               AI Tagging: {aiBatchProgress.current}/{aiBatchProgress.total}
+              {aiBatchProgress.currentFile ? ` (${aiBatchProgress.currentFile})` : ""}
             </span>
           </span>
         )}
@@ -126,10 +134,27 @@ export default function BottomStatusBar({
           </kbd>{" "}
           AI Tag
         </span>
+        <span>
+          <kbd className="px-1 py-0.2 bg-zinc-900 border border-zinc-800 rounded text-zinc-400">
+            Ctrl+L
+          </kbd>{" "}
+          Log
+        </span>
       </div>
 
-      {/* Right: Grid Thumbnail Zoom Slider */}
-      <div className="flex items-center gap-2 shrink-0">
+      {/* Right: Session Log Quick-Button & Grid Thumbnail Zoom Slider */}
+      <div className="flex items-center gap-3 shrink-0">
+        {onOpenSessionLog && (
+          <button
+            onClick={onOpenSessionLog}
+            className="flex items-center gap-1 text-[10px] text-zinc-400 hover:text-emerald-300 font-mono transition"
+            title="Open Session Activity Log (Ctrl+L)"
+          >
+            <FileText className="w-3 h-3 text-emerald-400" />
+            <span>Session Log ({sessionLogsCount})</span>
+          </button>
+        )}
+
         {viewMode === "grid" && (
           <div className="flex items-center gap-2">
             <button
