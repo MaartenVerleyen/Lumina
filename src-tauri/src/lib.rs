@@ -10,13 +10,14 @@ use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{BufReader, Cursor, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{LazyLock, Mutex};
 use tract_onnx::prelude::*;
 use tauri::{AppHandle, Emitter, Manager};
 use walkdir::WalkDir;
 
 static GEOCODER: LazyLock<ReverseGeocoder> = LazyLock::new(ReverseGeocoder::new);
+static DB_SCHEMA_READY: AtomicBool = AtomicBool::new(false);
 
 static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
     reqwest::Client::builder()
@@ -51,6 +52,8 @@ pub struct FaceScanProgress {
     pub total: usize,
     pub faces_found: usize,
     pub auto_matched: usize,
+    pub batch_faces: HashMap<String, Vec<FaceInstance>>,
+    pub batch_people: HashMap<String, Vec<String>>,
     pub done: bool,
 }
 
@@ -223,8 +226,18 @@ fn open_global_db(app: &AppHandle) -> Result<Connection, String> {
 
     conn.execute_batch(
         "PRAGMA journal_mode = WAL;
-        PRAGMA synchronous = NORMAL;
-        CREATE TABLE IF NOT EXISTS photos (
+         PRAGMA synchronous = NORMAL;
+         PRAGMA temp_store = MEMORY;
+         PRAGMA cache_size = -32000;",
+    )
+    .map_err(|e| e.to_string())?;
+
+    if DB_SCHEMA_READY.load(Ordering::Acquire) {
+        return Ok(conn);
+    }
+
+        conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS photos (
             hash TEXT PRIMARY KEY,
             current_path TEXT,
             subfolder TEXT,
@@ -314,6 +327,20 @@ fn open_global_db(app: &AppHandle) -> Result<Connection, String> {
         "DELETE FROM photo_faces WHERE (person_name IS NULL OR person_name = '') AND source != 'onnx'",
         [],
     );
+
+    // Phase 2: Create high-speed covering indexes for folder-scoped & hash lookups
+    let _ = conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_photos_path ON photos(current_path);
+         CREATE INDEX IF NOT EXISTS idx_photos_captured ON photos(captured_at);
+         CREATE INDEX IF NOT EXISTS idx_photos_staged ON photos(staged_target);
+         CREATE INDEX IF NOT EXISTS idx_photos_subfolder ON photos(subfolder);
+         CREATE INDEX IF NOT EXISTS idx_tags_tag ON photo_tags(tag);
+         CREATE INDEX IF NOT EXISTS idx_tags_hash ON photo_tags(hash);
+         CREATE INDEX IF NOT EXISTS idx_people_hash ON photo_people(hash);
+         CREATE INDEX IF NOT EXISTS idx_faces_hash ON photo_faces(hash);",
+    );
+
+    DB_SCHEMA_READY.store(true, Ordering::Release);
 
     Ok(conn)
 }
@@ -1928,6 +1955,12 @@ fn set_photo_rotation(app: AppHandle, hashes: Vec<String>, delta_degrees: i32) -
 
 // ----------------- NON-DESTRUCTIVE STAGING & DISMISS -----------------
 
+#[derive(Deserialize)]
+pub struct StagedMoveInput {
+    pub hash: String,
+    pub target_subfolder: Option<String>,
+}
+
 #[tauri::command]
 fn stage_photo_move(app: AppHandle, hash: String, target_subfolder: Option<String>) -> Result<(), String> {
     let conn = open_global_db(&app)?;
@@ -1937,6 +1970,25 @@ fn stage_photo_move(app: AppHandle, hash: String, target_subfolder: Option<Strin
     )
     .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+#[tauri::command]
+fn stage_photos_move(app: AppHandle, ops: Vec<StagedMoveInput>) -> Result<usize, String> {
+    if ops.is_empty() {
+        return Ok(0);
+    }
+    let mut conn = open_global_db(&app)?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    {
+        let mut stmt = tx
+            .prepare("UPDATE photos SET staged_target = ?1 WHERE hash = ?2")
+            .map_err(|e| e.to_string())?;
+        for op in &ops {
+            let _ = stmt.execute(params![op.target_subfolder, op.hash]);
+        }
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(ops.len())
 }
 
 #[tauri::command]
@@ -2510,6 +2562,11 @@ async fn detect_faces_in_photo(
     .map_err(|e| e.to_string())?
 }
 
+struct PendingFaceWrite {
+    face: FaceInstance,
+    emb_json: String,
+}
+
 #[tauri::command]
 async fn scan_library_faces_batch(
     app: AppHandle,
@@ -2521,11 +2578,14 @@ async fn scan_library_faces_batch(
     let total_hashes = hashes.len();
     let app_clone = app.clone();
     std::thread::spawn(move || {
-        let Ok(conn) = open_global_db(&app_clone) else {
+        let Ok(mut conn) = open_global_db(&app_clone) else {
             return;
         };
 
-        // Load all known named face embeddings so we can auto-match newly detected ONNX faces on the fly!
+        // Pre-warm the ONNX model plan once before entering the parallel Rayon pool
+        let _ = get_or_load_ultraface(&app_clone);
+
+        // Load all known named face embeddings so we can auto-match newly detected ONNX faces on the fly
         let mut known_people_embeddings: Vec<(String, Vec<f32>)> = Vec::new();
         if let Ok(mut stmt) = conn.prepare(
             "SELECT person_name, embedding FROM photo_faces WHERE person_name IS NOT NULL AND person_name != ''",
@@ -2541,95 +2601,207 @@ async fn scan_library_faces_batch(
             }
         }
 
+        // Pre-fetch current_path for all requested hashes in one pass
+        let mut path_map: HashMap<String, String> = HashMap::with_capacity(hashes.len());
+        if let Ok(mut stmt) = conn.prepare("SELECT hash, current_path FROM photos") {
+            if let Ok(rows) = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))) {
+                for (h, p) in rows.flatten() {
+                    path_map.insert(h, p);
+                }
+            }
+        }
+
+        let app_dir = get_app_storage_dir(&app_clone);
+        let thumbs_dir = app_dir.join("thumbnails");
+        let faces_dir = app_dir.join("faces");
+        let _ = fs::create_dir_all(&faces_dir);
+
         let total = hashes.len();
+        let mut completed_count = 0usize;
         let mut faces_found = 0usize;
         let mut auto_matched = 0usize;
-        let thumbs_dir = get_app_storage_dir(&app_clone).join("thumbnails");
 
-        for (idx, h) in hashes.iter().enumerate() {
-            let path_opt: Option<String> = conn
-                .query_row("SELECT current_path FROM photos WHERE hash = ?1", params![h], |r| r.get(0))
-                .ok();
+        let num_threads = (std::thread::available_parallelism()
+            .map(|n| (n.get() * 3) / 4)
+            .unwrap_or(6))
+            .max(2);
 
-            if let Some(orig_path) = path_opt {
-                // Use 360px cached thumbnail if available for 10x faster decoding (UltraFace takes 320x240!)
-                let thumb_path = thumbs_dir.join(format!("{}.jpg", h));
-                let load_path = if thumb_path.exists() {
-                    thumb_path.to_string_lossy().to_string()
-                } else {
-                    orig_path.clone()
-                };
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(num_threads)
+            .build()
+            .unwrap();
 
-                if let Ok(img) = open_and_orient_image(Path::new(&load_path)) {
-                    let boxes = detect_faces_with_onnx(&app_clone, &img);
-                    if !boxes.is_empty() {
-                        // Delete old unnamed boxes for this photo
-                        let _ = conn.execute(
-                            "DELETE FROM photo_faces WHERE hash = ?1 AND (person_name IS NULL OR person_name = '')",
-                            params![h],
-                        );
+        pool.install(|| {
+            for chunk in hashes.chunks(24) {
+                let chunk_results: Vec<(String, Vec<PendingFaceWrite>)> = chunk
+                    .par_iter()
+                    .filter_map(|h| {
+                        let orig_path = path_map.get(h)?;
+                        let thumb_path = thumbs_dir.join(format!("{}.jpg", h));
+                        let load_path = if thumb_path.exists() {
+                            thumb_path.to_string_lossy().to_string()
+                        } else {
+                            orig_path.clone()
+                        };
+
+                        let img = open_and_orient_image(Path::new(&load_path)).ok()?;
+                        let (img_w, img_h) = img.dimensions();
+                        if img_w < 16 || img_h < 16 {
+                            return None;
+                        }
+
+                        let boxes = detect_faces_with_onnx(&app_clone, &img);
+                        if boxes.is_empty() {
+                            return None;
+                        }
+
+                        let mut writes = Vec::with_capacity(boxes.len());
                         for (bx, by, bw, bh, _conf) in boxes {
-                            if let Some(saved) = save_cropped_face_and_record(
-                                &app_clone,
-                                &conn,
-                                h,
-                                &img,
-                                (bx, by, bw, bh),
-                                None,
-                                "onnx",
-                            ) {
-                                faces_found += 1;
+                            let x = ((bx.clamp(0.0, 0.95)) * img_w as f64) as u32;
+                            let y = ((by.clamp(0.0, 0.95)) * img_h as f64) as u32;
+                            let w = ((bw.clamp(0.03, 1.0)) * img_w as f64)
+                                .min((img_w - x) as f64)
+                                .max(16.0) as u32;
+                            let ht = ((bh.clamp(0.03, 1.0)) * img_h as f64)
+                                .min((img_h - y) as f64)
+                                .max(16.0) as u32;
 
-                                // Compare against known named people embeddings!
-                                if !known_people_embeddings.is_empty() {
-                                    if let Ok(emb_str) = conn.query_row(
-                                        "SELECT embedding FROM photo_faces WHERE face_id = ?1",
-                                        params![saved.face_id],
-                                        |r| r.get::<_, String>(0),
-                                    ) {
-                                        if let Ok(cand_emb) = serde_json::from_str::<Vec<f32>>(&emb_str) {
-                                            let mut best_match: Option<(String, f32)> = None;
-                                            for (pname, ref_emb) in &known_people_embeddings {
-                                                let sim = cosine_similarity(ref_emb, &cand_emb);
-                                                if sim >= 0.86 {
-                                                    if best_match.as_ref().map(|b| sim > b.1).unwrap_or(true) {
-                                                        best_match = Some((pname.clone(), sim));
-                                                    }
-                                                }
-                                            }
-                                            if let Some((matched_name, best_sim)) = best_match {
-                                                let _ = conn.execute(
-                                                    "UPDATE photo_faces SET person_name = ?1, confidence = ?2 WHERE face_id = ?3",
-                                                    params![matched_name, best_sim as f64, saved.face_id],
-                                                );
-                                                let _ = conn.execute(
-                                                    "INSERT OR IGNORE INTO photo_people (hash, person_name) VALUES (?1, ?2)",
-                                                    params![h, matched_name],
-                                                );
-                                                auto_matched += 1;
-                                            }
+                            let cropped = img.crop_imm(x, y, w, ht);
+                            let embedding = compute_face_embedding(&cropped);
+                            let emb_json =
+                                serde_json::to_string(&embedding).unwrap_or_else(|_| "[]".to_string());
+
+                            let face_id = format!(
+                                "{}_{}_{}",
+                                h,
+                                (bx * 100.0).round() as i32,
+                                (by * 100.0).round() as i32
+                            );
+                            let face_thumb_path = faces_dir.join(format!("{}.jpg", face_id));
+                            let thumb_96 = cropped.resize_to_fill(96, 96, FilterType::Triangle).to_rgb8();
+                            let _ = thumb_96.save(&face_thumb_path);
+                            let face_thumb_str = face_thumb_path.to_string_lossy().to_string();
+
+                            // Match against known people embeddings in parallel
+                            let mut matched_person: Option<String> = None;
+                            let mut matched_conf = 1.0f64;
+                            if !known_people_embeddings.is_empty() {
+                                let mut best: Option<(String, f32)> = None;
+                                for (pname, ref_emb) in &known_people_embeddings {
+                                    let sim = cosine_similarity(ref_emb, &embedding);
+                                    if sim >= 0.86 {
+                                        if best.as_ref().map(|b| sim > b.1).unwrap_or(true) {
+                                            best = Some((pname.clone(), sim));
                                         }
                                     }
                                 }
+                                if let Some((best_name, best_sim)) = best {
+                                    matched_person = Some(best_name);
+                                    matched_conf = best_sim as f64;
+                                }
+                            }
+
+                            writes.push(PendingFaceWrite {
+                                face: FaceInstance {
+                                    face_id,
+                                    hash: h.clone(),
+                                    bbox_x: bx,
+                                    bbox_y: by,
+                                    bbox_w: bw,
+                                    bbox_h: bh,
+                                    person_name: matched_person,
+                                    face_thumb: face_thumb_str,
+                                    confidence: matched_conf,
+                                },
+                                emb_json,
+                            });
+                        }
+
+                        Some((h.clone(), writes))
+                    })
+                    .collect();
+
+                completed_count += chunk.len();
+                let mut batch_faces: HashMap<String, Vec<FaceInstance>> = HashMap::new();
+                let mut batch_people: HashMap<String, Vec<String>> = HashMap::new();
+
+                if !chunk_results.is_empty() {
+                    if let Ok(tx) = conn.transaction() {
+                        for (h, writes) in &chunk_results {
+                            let _ = tx.execute(
+                                "DELETE FROM photo_faces WHERE hash = ?1 AND (person_name IS NULL OR person_name = '')",
+                                params![h],
+                            );
+                            for item in writes {
+                                faces_found += 1;
+                                let f = &item.face;
+                                let _ = tx.execute(
+                                    "INSERT INTO photo_faces (face_id, hash, bbox_x, bbox_y, bbox_w, bbox_h, person_name, face_thumb, embedding, confidence, source)
+                                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'onnx')
+                                     ON CONFLICT(face_id) DO UPDATE SET
+                                        bbox_x = excluded.bbox_x,
+                                        bbox_y = excluded.bbox_y,
+                                        bbox_w = excluded.bbox_w,
+                                        bbox_h = excluded.bbox_h,
+                                        person_name = COALESCE(photo_faces.person_name, excluded.person_name),
+                                        face_thumb = excluded.face_thumb,
+                                        embedding = excluded.embedding,
+                                        confidence = excluded.confidence,
+                                        source = 'onnx'",
+                                    params![
+                                        f.face_id,
+                                        f.hash,
+                                        f.bbox_x,
+                                        f.bbox_y,
+                                        f.bbox_w,
+                                        f.bbox_h,
+                                        f.person_name,
+                                        f.face_thumb,
+                                        item.emb_json,
+                                        f.confidence
+                                    ],
+                                );
+                                if let Some(ref matched_name) = f.person_name {
+                                    auto_matched += 1;
+                                    let _ = tx.execute(
+                                        "INSERT OR IGNORE INTO photo_people (hash, person_name) VALUES (?1, ?2)",
+                                        params![h, matched_name],
+                                    );
+                                }
                             }
                         }
+                        let _ = tx.commit();
+                    }
+
+                    for (h, _) in &chunk_results {
+                        let all_faces = get_faces_for_hash(&conn, h);
+                        let mut p_list: Vec<String> = all_faces
+                            .iter()
+                            .filter_map(|f| f.person_name.clone())
+                            .collect();
+                        p_list.sort();
+                        p_list.dedup();
+                        if !p_list.is_empty() {
+                            batch_people.insert(h.clone(), p_list);
+                        }
+                        batch_faces.insert(h.clone(), all_faces);
                     }
                 }
-            }
 
-            if (idx + 1) % 10 == 0 || idx + 1 == total {
                 let _ = app_clone.emit(
                     "face-scan-progress",
                     FaceScanProgress {
-                        completed: idx + 1,
+                        completed: completed_count,
                         total,
                         faces_found,
                         auto_matched,
-                        done: idx + 1 == total,
+                        batch_faces,
+                        batch_people,
+                        done: completed_count >= total,
                     },
                 );
             }
-        }
+        });
     });
 
     Ok(total_hashes)
@@ -2945,6 +3117,25 @@ fn set_rating(app: AppHandle, hash: String, rating: i32) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn set_photos_rating(app: AppHandle, hashes: Vec<String>, rating: i32) -> Result<(), String> {
+    if hashes.is_empty() {
+        return Ok(());
+    }
+    let mut conn = open_global_db(&app)?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    {
+        let mut stmt = tx
+            .prepare("UPDATE photos SET rating = ?1 WHERE hash = ?2")
+            .map_err(|e| e.to_string())?;
+        for h in &hashes {
+            let _ = stmt.execute(params![rating, h]);
+        }
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
 fn add_tag(app: AppHandle, hash: String, tag: String) -> Result<Vec<String>, String> {
     let clean_tag = tag.trim().to_lowercase();
     if clean_tag.is_empty() {
@@ -2958,6 +3149,29 @@ fn add_tag(app: AppHandle, hash: String, tag: String) -> Result<Vec<String>, Str
     .map_err(|e| e.to_string())?;
 
     get_tags_for_hash(&conn, &hash)
+}
+
+#[tauri::command]
+fn add_tag_batch(app: AppHandle, hashes: Vec<String>, tag: String) -> Result<String, String> {
+    let clean_tag = tag.trim().to_lowercase();
+    if clean_tag.is_empty() {
+        return Err("Tag cannot be empty".into());
+    }
+    if hashes.is_empty() {
+        return Ok(clean_tag);
+    }
+    let mut conn = open_global_db(&app)?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    {
+        let mut stmt = tx
+            .prepare("INSERT OR IGNORE INTO photo_tags (hash, tag) VALUES (?1, ?2)")
+            .map_err(|e| e.to_string())?;
+        for h in &hashes {
+            let _ = stmt.execute(params![h, clean_tag]);
+        }
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(clean_tag)
 }
 
 #[tauri::command]
@@ -2984,8 +3198,24 @@ fn get_tags_for_hash(conn: &Connection, hash: &str) -> Result<Vec<String>, Strin
 
 // ----------------- FAST ASSISTANT-PREFILLED QWEN3-VL VISION PIPELINE -----------------
 
-fn encode_fast_ai_buffer(image_path: &str) -> Result<String, String> {
-    if let Ok(img) = open_and_orient_image(Path::new(image_path)) {
+fn encode_fast_ai_buffer(app: &AppHandle, hash: &str, image_path: &str) -> Result<String, String> {
+    let orig_path = Path::new(image_path);
+    // Phase 2 Fast Path: If not a screenshot and the pre-oriented 360px cached thumbnail exists,
+    // read its raw JPEG bytes directly (<0.2ms) instead of decoding a 20MB+ camera image from disk!
+    if !is_likely_screenshot(orig_path, "", None) {
+        let thumb_path = get_app_storage_dir(app)
+            .join("thumbnails")
+            .join(format!("{}.jpg", hash));
+        if let Ok(meta) = thumb_path.metadata() {
+            if meta.len() > 512 {
+                if let Ok(thumb_bytes) = fs::read(&thumb_path) {
+                    return Ok(general_purpose::STANDARD.encode(&thumb_bytes));
+                }
+            }
+        }
+    }
+
+    if let Ok(img) = open_and_orient_image(orig_path) {
         let small = img.thumbnail(640, 640).to_rgb8();
         let mut buf = Cursor::new(Vec::new());
         if small.write_to(&mut buf, ImageFormat::Jpeg).is_ok() {
@@ -3156,9 +3386,13 @@ async fn ai_analyze_photo(
     existing_tags: Vec<String>,
 ) -> Result<AiAnalysisResult, String> {
     let img_path_clone = image_path_for_ai.clone();
-    let base64_img = tauri::async_runtime::spawn_blocking(move || encode_fast_ai_buffer(&img_path_clone))
-        .await
-        .map_err(|e| e.to_string())??;
+    let app_for_buf = app.clone();
+    let hash_for_buf = hash.clone();
+    let base64_img = tauri::async_runtime::spawn_blocking(move || {
+        encode_fast_ai_buffer(&app_for_buf, &hash_for_buf, &img_path_clone)
+    })
+    .await
+    .map_err(|e| e.to_string())??;
 
     let vocab_hint = if existing_tags.is_empty() {
         String::new()
@@ -3190,7 +3424,7 @@ async fn ai_analyze_photo(
         "stream": false,
         "options": {
             "temperature": 0.1,
-            "num_predict": 450
+            "num_predict": 220
         },
         "keep_alive": "30m"
     });
@@ -3230,7 +3464,7 @@ async fn ai_analyze_photo(
             "stream": false,
             "options": {
                 "temperature": 0.1,
-                "num_predict": 1024
+                "num_predict": 450
             },
             "keep_alive": "30m"
         });
@@ -3250,67 +3484,12 @@ async fn ai_analyze_photo(
 
     let ai_result = parse_resilient_ai_json(&full_json_str)?;
 
-    let conn = open_global_db(&app)?;
+    let mut conn = open_global_db(&app)?;
 
     let banned_placeholders = [
         "none", "unknown", "null", "tag1", "tag2", "tag3", "object1", "object2", "item1", "item2",
         "analyze", "first", "got", "let", "step", "<lowercase noun>",
     ];
-
-    let _ = conn.execute(
-        "DELETE FROM photo_tags WHERE hash = ?1 AND tag IN ('tag1', 'tag2', 'tag3', 'analyze', 'first', 'got', 'let', 'step')",
-        params![hash],
-    );
-
-    for raw_tag in &ai_result.objects {
-        let mut clean = raw_tag
-            .trim()
-            .trim_matches(|c| c == '<' || c == '>' || c == '"')
-            .to_lowercase();
-        for prefix in ["illustration of ", "picture of ", "photo of ", "image of "] {
-            if let Some(stripped) = clean.strip_prefix(prefix) {
-                clean = stripped.trim().to_string();
-            }
-        }
-        if clean.starts_with("text ") {
-            continue;
-        }
-        if !clean.is_empty()
-            && clean.len() <= 28
-            && !clean.contains("lowercase")
-            && !clean.contains('|')
-            && !banned_placeholders.contains(&clean.as_str())
-        {
-            let _ = conn.execute(
-                "INSERT OR IGNORE INTO photo_tags (hash, tag) VALUES (?1, ?2)",
-                params![hash, clean],
-            );
-        }
-    }
-
-    if !ai_result.scene.is_empty() {
-        let first_scene_word = ai_result
-            .scene
-            .split(|c: char| !c.is_alphanumeric())
-            .find(|w| !w.is_empty())
-            .unwrap_or("")
-            .to_lowercase();
-        if ["indoor", "outdoor", "screenshot", "document", "nature", "street", "beach", "kitchen", "studio", "night"]
-            .contains(&first_scene_word.as_str())
-        {
-            let _ = conn.execute(
-                "INSERT OR IGNORE INTO photo_tags (hash, tag) VALUES (?1, ?2)",
-                params![hash, first_scene_word],
-            );
-        }
-    }
-
-    if ai_result.is_screenshot {
-        let _ = conn.execute(
-            "INSERT OR IGNORE INTO photo_tags (hash, tag) VALUES (?1, 'screenshot')",
-            params![hash],
-        );
-    }
 
     let clean_ocr = if ai_result.ocr_text.contains("<transcribe") {
         String::new()
@@ -3319,14 +3498,81 @@ async fn ai_analyze_photo(
     };
     let clean_caption = ai_result.caption.trim().to_string();
 
-    let _ = conn.execute(
-        "UPDATE photos SET ai_caption = ?1, ocr_text = ?2 WHERE hash = ?3",
-        params![clean_caption, clean_ocr, hash],
-    );
+    if let Ok(tx) = conn.transaction() {
+        let _ = tx.execute(
+            "DELETE FROM photo_tags WHERE hash = ?1 AND tag IN ('tag1', 'tag2', 'tag3', 'analyze', 'first', 'got', 'let', 'step')",
+            params![hash],
+        );
 
-    // Delegate face detection to pure-Rust ONNX UltraFace if no faces are recorded yet
+        for raw_tag in &ai_result.objects {
+            let mut clean = raw_tag
+                .trim()
+                .trim_matches(|c| c == '<' || c == '>' || c == '"')
+                .to_lowercase();
+            for prefix in ["illustration of ", "picture of ", "photo of ", "image of "] {
+                if let Some(stripped) = clean.strip_prefix(prefix) {
+                    clean = stripped.trim().to_string();
+                }
+            }
+            if clean.starts_with("text ") {
+                continue;
+            }
+            if !clean.is_empty()
+                && clean.len() <= 28
+                && !clean.contains("lowercase")
+                && !clean.contains('|')
+                && !banned_placeholders.contains(&clean.as_str())
+            {
+                let _ = tx.execute(
+                    "INSERT OR IGNORE INTO photo_tags (hash, tag) VALUES (?1, ?2)",
+                    params![hash, clean],
+                );
+            }
+        }
+
+        if !ai_result.scene.is_empty() {
+            let first_scene_word = ai_result
+                .scene
+                .split(|c: char| !c.is_alphanumeric())
+                .find(|w| !w.is_empty())
+                .unwrap_or("")
+                .to_lowercase();
+            if ["indoor", "outdoor", "screenshot", "document", "nature", "street", "beach", "kitchen", "studio", "night"]
+                .contains(&first_scene_word.as_str())
+            {
+                let _ = tx.execute(
+                    "INSERT OR IGNORE INTO photo_tags (hash, tag) VALUES (?1, ?2)",
+                    params![hash, first_scene_word],
+                );
+            }
+        }
+
+        if ai_result.is_screenshot {
+            let _ = tx.execute(
+                "INSERT OR IGNORE INTO photo_tags (hash, tag) VALUES (?1, 'screenshot')",
+                params![hash],
+            );
+        }
+
+        let _ = tx.execute(
+            "UPDATE photos SET ai_caption = ?1, ocr_text = ?2 WHERE hash = ?3",
+            params![clean_caption, clean_ocr, hash],
+        );
+
+        let _ = tx.commit();
+    }
+
+    // Delegate face detection to pure-Rust ONNX UltraFace if no faces are recorded yet (using fast 360px thumb if available)
     if get_faces_for_hash(&conn, &hash).is_empty() {
-        if let Ok(img) = open_and_orient_image(Path::new(&image_path_for_ai)) {
+        let thumb_candidate = get_app_storage_dir(&app)
+            .join("thumbnails")
+            .join(format!("{}.jpg", hash));
+        let face_load_path = if thumb_candidate.exists() {
+            thumb_candidate
+        } else {
+            PathBuf::from(&image_path_for_ai)
+        };
+        if let Ok(img) = open_and_orient_image(&face_load_path) {
             let onnx_boxes = detect_faces_with_onnx(&app, &img);
             for (bx, by, bw, bh, _score) in onnx_boxes {
                 let _ = save_cropped_face_and_record(&app, &conn, &hash, &img, (bx, by, bw, bh), None, "onnx");
@@ -3357,10 +3603,16 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            let _ = open_global_db(app.handle());
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             scan_folder,
             set_rating,
+            set_photos_rating,
             add_tag,
+            add_tag_batch,
             remove_tag,
             set_photo_flag,
             set_photo_color_label,
@@ -3370,6 +3622,7 @@ pub fn run() {
             search_cities_offline,
             set_manual_location,
             stage_photo_move,
+            stage_photos_move,
             clear_all_staged,
             get_staged_operations,
             commit_staged_operations,

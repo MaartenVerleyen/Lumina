@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { MapContainer, TileLayer, Marker, Popup, useMapEvents } from "react-leaflet";
 import L from "leaflet";
 import { convertFileSrc } from "@tauri-apps/api/core";
+import { Calendar, MapPin } from "lucide-react";
 
 // Offline-safe inline SVG DivIcon marker (Zero external network dependency!)
 const markerIcon = L.divIcon({
@@ -110,10 +111,16 @@ export default function PhotoMap({
                   className="w-full h-24 object-cover rounded"
                 />
                 <div className="font-bold truncate">{p.name}</div>
-                {p.location && <div className="text-[11px] text-emerald-700">📍 {p.location}</div>}
+                {p.location && (
+                  <div className="text-[11px] text-emerald-700 flex items-center gap-1">
+                    <MapPin className="w-3 h-3 shrink-0" />
+                    <span className="truncate">{p.location}</span>
+                  </div>
+                )}
                 {p.captured_at && (
-                  <div className="text-[10px] text-slate-500">
-                    📅 {p.captured_at.split(" ")[0].replace(/:/g, "-")}
+                  <div className="text-[10px] text-slate-500 flex items-center gap-1">
+                    <Calendar className="w-3 h-3 shrink-0" />
+                    <span>{p.captured_at.split(" ")[0].replace(/:/g, "-")}</span>
                   </div>
                 )}
               </div>
