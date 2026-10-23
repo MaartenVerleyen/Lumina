@@ -1,7 +1,7 @@
 {
   "productName": "Lumina",
   "version": "3.6.0",
-  "identifier": "com.phototriage.app",
+  "identifier": "com.amazhr.lumina",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -11,7 +11,7 @@
   "app": {
     "windows": [
       {
-        "title": "Lumina \u2014 AI Photo Manager",
+        "title": "Lumina \u2014 AI Photo Triage",
         "label": "main",
         "width": 1440,
         "height": 900,
@@ -44,7 +44,12 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": [
+      "nsis",
+      "msi"
+    ],
+    "publisher": "amazHR",
+    "shortDescription": "Local AI Photo Culling & Studio Organizer",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -54,11 +59,12 @@
     ],
     "windows": {
       "nsis": {
-        "template": "",
+        "template": "installer.nsi",
         "installerIcon": "icons/icon.ico",
-        "uninstallerIcon": "icons/icon.ico",
-        "compression": "lzma",
-        "installMode": "perMachine"
+        "headerImage": "icons/nsis-header.bmp",
+        "sidebarImage": "icons/nsis-sidebar.bmp",
+        "installMode": "perMachine",
+        "compression": "lzma"
       }
     }
   }

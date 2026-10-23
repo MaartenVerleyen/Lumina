@@ -1455,8 +1455,6 @@ fn batch_decode_heic_thumbs_windows(_jobs: &[(String, String, u32)]) {}
 
 #[cfg(target_os = "windows")]
 fn decode_via_windows_wic(file_path: &Path, max_dim: u32) -> Option<(DynamicImage, u32)> {
-    use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x08000000;
 
     let seq = WIC_COUNTER.fetch_add(1, Ordering::Relaxed);
     let tmp_jpg = std::env::temp_dir().join(format!(
