@@ -250,6 +250,11 @@ export interface SimilarFaceCandidate {
   hash: string;
   face_thumb: string;
   photo_name: string;
+  photo_path: string;
+  bbox_x: number;
+  bbox_y: number;
+  bbox_w: number;
+  bbox_h: number;
   current_person?: string | null;
   similarity: number;
 }

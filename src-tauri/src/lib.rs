@@ -323,6 +323,11 @@ fn open_global_db(app: &AppHandle) -> Result<Connection, String> {
             embedding TEXT NOT NULL,
             confidence REAL DEFAULT 1.0,
             source TEXT DEFAULT 'user'
+        );
+        CREATE TABLE IF NOT EXISTS face_rejections (
+            face_id TEXT NOT NULL,
+            person_name TEXT NOT NULL,
+            PRIMARY KEY (face_id, person_name)
         );",
     )
     .map_err(|e| e.to_string())?;
@@ -945,6 +950,48 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
         return 0.0;
     }
     a.iter().zip(b.iter()).map(|(x, y)| x * y).sum()
+}
+
+fn compute_normalized_centroid(embeddings: &[Vec<f32>], dim: usize) -> Option<Vec<f32>> {
+    let valid: Vec<&Vec<f32>> = embeddings.iter().filter(|e| e.len() == dim).collect();
+    if valid.is_empty() {
+        return None;
+    }
+    let mut centroid = vec![0.0f32; dim];
+    for emb in &valid {
+        for (i, &val) in emb.iter().enumerate() {
+            centroid[i] += val;
+        }
+    }
+    let norm = centroid.iter().map(|v| v * v).sum::<f32>().sqrt().max(1e-6);
+    for v in &mut centroid {
+        *v /= norm;
+    }
+    Some(centroid)
+}
+
+fn score_against_person_profile(
+    cand_emb: &[f32],
+    ref_embeddings: &[Vec<f32>],
+    centroid_512: Option<&Vec<f32>>,
+    centroid_384: Option<&Vec<f32>>,
+) -> f32 {
+    let best_exemplar = ref_embeddings
+        .iter()
+        .map(|r| cosine_similarity(r, cand_emb))
+        .fold(0.0f32, f32::max);
+    let centroid_sim = if cand_emb.len() == 512 {
+        centroid_512.map(|c| cosine_similarity(c, cand_emb)).unwrap_or(0.0)
+    } else if cand_emb.len() == 384 {
+        centroid_384.map(|c| cosine_similarity(c, cand_emb)).unwrap_or(0.0)
+    } else {
+        0.0
+    };
+    if centroid_sim > 0.0 {
+        best_exemplar.max(0.65 * best_exemplar + 0.35 * centroid_sim)
+    } else {
+        best_exemplar
+    }
 }
 
 fn find_overlapping_face_id(
@@ -3951,16 +3998,23 @@ fn assign_face_region_and_automatch(
     )
     .ok_or("Failed to crop face region")?;
 
-    let ref_emb_str: String = conn
-        .query_row(
-            "SELECT embedding FROM photo_faces WHERE face_id = ?1",
-            params![saved_face.face_id],
-            |r| r.get(0),
-        )
-        .unwrap_or_else(|_| "[]".to_string());
-    let ref_emb: Vec<f32> = serde_json::from_str(&ref_emb_str).unwrap_or_default();
+    // Load all confirmed embeddings for this person (multi-prototype + centroid matching!)
+    let mut ref_embeddings: Vec<Vec<f32>> = Vec::new();
+    if let Ok(mut stmt) = conn.prepare(
+        "SELECT embedding FROM photo_faces WHERE lower(person_name) = lower(?1)",
+    ) {
+        if let Ok(rows) = stmt.query_map(params![clean_name], |r| r.get::<_, String>(0)) {
+            for emb_str in rows.flatten() {
+                if let Ok(vec) = serde_json::from_str::<Vec<f32>>(&emb_str) {
+                    if !vec.is_empty() {
+                        ref_embeddings.push(vec);
+                    }
+                }
+            }
+        }
+    }
 
-    if !ref_emb.is_empty() {
+    if !ref_embeddings.is_empty() {
         let app_clone = app.clone();
         let target_name = clean_name.clone();
         let source_hash = hash.clone();
@@ -3970,22 +4024,35 @@ fn assign_face_region_and_automatch(
                 return;
             };
 
+            let centroid_512 = compute_normalized_centroid(&ref_embeddings, 512);
+            let centroid_384 = compute_normalized_centroid(&ref_embeddings, 384);
+
             let mut matched_hashes: Vec<String> = Vec::new();
             if let Ok(mut stmt) = bg_conn.prepare(
-                "SELECT face_id, hash, embedding FROM photo_faces
-                 WHERE hash != ?1 AND (person_name IS NULL OR person_name = '')",
+                "SELECT pf.face_id, pf.hash, pf.embedding FROM photo_faces pf
+                 WHERE pf.hash != ?1
+                   AND (pf.person_name IS NULL OR pf.person_name = '')
+                   AND NOT EXISTS (
+                       SELECT 1 FROM face_rejections fr
+                       WHERE fr.face_id = pf.face_id AND lower(fr.person_name) = lower(?2)
+                   )",
             ) {
-                if let Ok(rows) = stmt.query_map(params![source_hash], |r| {
+                if let Ok(rows) = stmt.query_map(params![source_hash, target_name], |r| {
                     Ok((
                         r.get::<_, String>(0)?,
                         r.get::<_, String>(1)?,
                         r.get::<_, String>(2)?,
                     ))
                 }) {
-                    let thresh = if ref_emb.len() == 512 { 0.54 } else { 0.68 };
                     for (fid, fhash, femb_str) in rows.flatten() {
                         if let Ok(cand_emb) = serde_json::from_str::<Vec<f32>>(&femb_str) {
-                            let sim = cosine_similarity(&ref_emb, &cand_emb);
+                            let thresh = if cand_emb.len() == 512 { 0.54 } else { 0.68 };
+                            let sim = score_against_person_profile(
+                                &cand_emb,
+                                &ref_embeddings,
+                                centroid_512.as_ref(),
+                                centroid_384.as_ref(),
+                            );
                             if sim >= thresh {
                                 let _ = bg_conn.execute(
                                     "UPDATE photo_faces SET person_name = ?1, confidence = ?2 WHERE face_id = ?3",
@@ -4128,6 +4195,11 @@ pub struct SimilarFaceCandidate {
     pub hash: String,
     pub face_thumb: String,
     pub photo_name: String,
+    pub photo_path: String,
+    pub bbox_x: f64,
+    pub bbox_y: f64,
+    pub bbox_w: f64,
+    pub bbox_h: f64,
     pub current_person: Option<String>,
     pub similarity: f32,
 }
@@ -4163,12 +4235,23 @@ fn find_similar_faces(
         return Ok(Vec::new());
     }
 
+    let centroid_512 = compute_normalized_centroid(&ref_embeddings, 512);
+    let centroid_384 = compute_normalized_centroid(&ref_embeddings, 384);
+
+    let thumbs_dir = get_app_storage_dir(&app).join("thumbnails");
+    let previews_dir = get_app_storage_dir(&app).join("previews");
+
     let mut stmt = conn
         .prepare(
-            "SELECT pf.face_id, pf.hash, pf.face_thumb, pf.person_name, pf.embedding, COALESCE(p.current_path, '')
+            "SELECT pf.face_id, pf.hash, pf.face_thumb, pf.person_name, pf.embedding,
+                    COALESCE(p.current_path, ''), pf.bbox_x, pf.bbox_y, pf.bbox_w, pf.bbox_h
              FROM photo_faces pf
              LEFT JOIN photos p ON pf.hash = p.hash
-             WHERE pf.person_name IS NULL OR lower(pf.person_name) != lower(?1)",
+             WHERE (pf.person_name IS NULL OR pf.person_name = '' OR lower(pf.person_name) != lower(?1))
+               AND NOT EXISTS (
+                   SELECT 1 FROM face_rejections fr
+                   WHERE fr.face_id = pf.face_id AND lower(fr.person_name) = lower(?1)
+               )",
         )
         .map_err(|e| e.to_string())?;
 
@@ -4181,38 +4264,68 @@ fn find_similar_faces(
                 r.get::<_, Option<String>>(3)?,
                 r.get::<_, String>(4)?,
                 r.get::<_, String>(5)?,
+                r.get::<_, f64>(6)?,
+                r.get::<_, f64>(7)?,
+                r.get::<_, f64>(8)?,
+                r.get::<_, f64>(9)?,
             ))
         })
         .map_err(|e| e.to_string())?;
 
     let mut candidates = Vec::new();
-    for (face_id, hash, face_thumb, cur_person, emb_str, photo_path) in rows.flatten() {
+    for (face_id, hash, face_thumb, cur_person, emb_str, photo_path, bx, by, bw, bh) in rows.flatten() {
         let Ok(cand_emb) = serde_json::from_str::<Vec<f32>>(&emb_str) else {
             continue;
         };
         if cand_emb.is_empty() {
             continue;
         }
-        let default_thresh = if cand_emb.len() == 512 { 0.45 } else { 0.65 };
+        let default_thresh = if cand_emb.len() == 512 { 0.44 } else { 0.64 };
         let thresh = min_similarity.unwrap_or(default_thresh);
 
-        let best_sim = ref_embeddings
-            .iter()
-            .map(|r| cosine_similarity(r, &cand_emb))
-            .fold(0.0f32, f32::max);
+        let best_sim = score_against_person_profile(
+            &cand_emb,
+            &ref_embeddings,
+            centroid_512.as_ref(),
+            centroid_384.as_ref(),
+        );
 
         if best_sim >= thresh {
-            let photo_name = Path::new(&photo_path)
+            let path_obj = Path::new(&photo_path);
+            let photo_name = path_obj
                 .file_name()
                 .map(|f| f.to_string_lossy().to_string())
                 .unwrap_or_else(|| hash.clone());
+            let ext = path_obj
+                .extension()
+                .map(|e| e.to_string_lossy().to_lowercase())
+                .unwrap_or_default();
+            let display_photo_path = if is_raw_or_heic_ext(&ext) {
+                let prev = previews_dir.join(format!("{}_preview.jpg", hash));
+                let th = thumbs_dir.join(format!("{}.jpg", hash));
+                if prev.exists() {
+                    prev.to_string_lossy().to_string()
+                } else if th.exists() {
+                    th.to_string_lossy().to_string()
+                } else {
+                    photo_path
+                }
+            } else {
+                photo_path
+            };
+
             candidates.push(SimilarFaceCandidate {
                 face_id,
                 hash,
                 face_thumb,
                 photo_name,
+                photo_path: display_photo_path,
+                bbox_x: bx,
+                bbox_y: by,
+                bbox_w: bw,
+                bbox_h: bh,
                 current_person: cur_person,
-                similarity: (best_sim * 1000.0).round() / 10.0, // percentage e.g. 78.4%
+                similarity: (best_sim * 1000.0).round() / 10.0,
             });
         }
     }
@@ -4222,8 +4335,126 @@ fn find_similar_faces(
             .partial_cmp(&a.similarity)
             .unwrap_or(std::cmp::Ordering::Equal)
     });
-    candidates.truncate(60);
+    candidates.truncate(120);
     Ok(candidates)
+}
+
+#[tauri::command]
+fn reject_face_candidates_batch(
+    app: AppHandle,
+    face_ids: Vec<String>,
+    person_name: String,
+) -> Result<usize, String> {
+    let clean = person_name.trim().to_string();
+    if clean.is_empty() || face_ids.is_empty() {
+        return Ok(0);
+    }
+    let mut conn = open_global_db(&app)?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    for fid in &face_ids {
+        let _ = tx.execute(
+            "INSERT OR IGNORE INTO face_rejections (face_id, person_name) VALUES (?1, ?2)",
+            params![fid, clean],
+        );
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(face_ids.len())
+}
+
+#[tauri::command]
+fn get_pending_face_match_counts(
+    app: AppHandle,
+    root_folder: Option<String>,
+) -> Result<HashMap<String, usize>, String> {
+    let conn = open_global_db(&app)?;
+    let prefix = make_folder_prefix(root_folder.as_deref());
+
+    // 1. Load all confirmed face embeddings grouped by person_name
+    let mut person_refs: HashMap<String, Vec<Vec<f32>>> = HashMap::new();
+    {
+        let mut stmt = conn
+            .prepare(
+                "SELECT person_name, embedding FROM photo_faces
+                 WHERE person_name IS NOT NULL AND person_name != ''",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+            .map_err(|e| e.to_string())?;
+        for (pname, emb_str) in rows.flatten() {
+            if let Ok(vec) = serde_json::from_str::<Vec<f32>>(&emb_str) {
+                if !vec.is_empty() {
+                    person_refs.entry(pname).or_default().push(vec);
+                }
+            }
+        }
+    }
+
+    if person_refs.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    // 2. Load all rejected (face_id, lower_person_name) pairs
+    let mut rejected_set: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
+    if let Ok(mut stmt) = conn.prepare("SELECT face_id, lower(person_name) FROM face_rejections") {
+        if let Ok(rows) = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))) {
+            for pair in rows.flatten() {
+                rejected_set.insert(pair);
+            }
+        }
+    }
+
+    // 3. Load all unassigned faces within the active folder
+    let mut unassigned: Vec<(String, Vec<f32>)> = Vec::new();
+    {
+        let mut stmt = conn
+            .prepare(
+                "SELECT pf.face_id, pf.embedding
+                 FROM photo_faces pf
+                 JOIN photos p ON pf.hash = p.hash
+                 WHERE (pf.person_name IS NULL OR pf.person_name = '')
+                   AND p.current_path LIKE ?1",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params![prefix], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+            .map_err(|e| e.to_string())?;
+        for (fid, emb_str) in rows.flatten() {
+            if let Ok(vec) = serde_json::from_str::<Vec<f32>>(&emb_str) {
+                if !vec.is_empty() {
+                    unassigned.push((fid, vec));
+                }
+            }
+        }
+    }
+
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    if unassigned.is_empty() {
+        return Ok(counts);
+    }
+
+    for (pname, refs) in &person_refs {
+        let lower_p = pname.to_lowercase();
+        let c512 = compute_normalized_centroid(refs, 512);
+        let c384 = compute_normalized_centroid(refs, 384);
+        let mut cnt = 0usize;
+
+        for (fid, cand_emb) in &unassigned {
+            if rejected_set.contains(&(fid.clone(), lower_p.clone())) {
+                continue;
+            }
+            let thresh = if cand_emb.len() == 512 { 0.45 } else { 0.65 };
+            let sim = score_against_person_profile(cand_emb, refs, c512.as_ref(), c384.as_ref());
+            if sim >= thresh {
+                cnt += 1;
+            }
+        }
+        if cnt > 0 {
+            counts.insert(pname.clone(), cnt);
+        }
+    }
+
+    Ok(counts)
 }
 
 #[tauri::command]
@@ -5253,6 +5484,8 @@ pub fn run() {
             remove_person_from_photo,
             find_similar_faces,
             assign_faces_to_person_batch,
+            reject_face_candidates_batch,
+            get_pending_face_match_counts,
             ensure_neural_face_models,
             detect_faces_in_photo,
             scan_library_faces_batch,

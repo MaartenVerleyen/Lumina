@@ -1,7 +1,15 @@
-import { useRef } from "react";
+import { useRef, useMemo } from "react";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { PhotoItem } from "../../types/lumina";
-import { Columns, Star, Trophy, ZoomIn, ZoomOut } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  Columns,
+  Star,
+  Trophy,
+  ZoomIn,
+  ZoomOut,
+} from "lucide-react";
 
 interface CompareViewProps {
   comparePhotos: PhotoItem[];
@@ -13,6 +21,9 @@ interface CompareViewProps {
   setComparePan: React.Dispatch<React.SetStateAction<{ x: number; y: number }>>;
   setViewMode: React.Dispatch<React.SetStateAction<"grid" | "map" | "compare">>;
   setPhotos: React.Dispatch<React.SetStateAction<PhotoItem[]>>;
+  photos?: PhotoItem[];
+  setSelectedHashes?: React.Dispatch<React.SetStateAction<Set<string>>>;
+  setAutoMatchNotice?: React.Dispatch<React.SetStateAction<string>>;
 }
 
 export default function CompareView({
@@ -25,23 +36,103 @@ export default function CompareView({
   setComparePan,
   setViewMode,
   setPhotos,
+  photos = [],
+  setSelectedHashes,
+  setAutoMatchNotice,
 }: CompareViewProps) {
   const isPanningCompareRef = useRef<boolean>(false);
   const panStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
 
+  // Identify all unresolved burst groups in the library (groups with >= 2 un-trashed photos and no "pick" chosen yet)
+  const unresolvedBurstGroups = useMemo(() => {
+    const groups = new Map<number, PhotoItem[]>();
+    for (const p of photos) {
+      if (!p.duplicate_group || p.subfolder === "_Trash" || p.staged_target === "_Trash") {
+        continue;
+      }
+      const list = groups.get(p.duplicate_group) || [];
+      list.push(p);
+      groups.set(p.duplicate_group, list);
+    }
+    const out: { groupId: number; members: PhotoItem[] }[] = [];
+    for (const [groupId, members] of Array.from(groups.entries()).sort((a, b) => a[0] - b[0])) {
+      if (members.length >= 2) {
+        out.push({
+          groupId,
+          members: [...members].sort((a, b) => b.sharpness - a.sharpness),
+        });
+      }
+    }
+    return out;
+  }, [photos]);
+
+  const currentGroupId = comparePhotos[0]?.duplicate_group ?? null;
+  const currentBurstIdx = useMemo(() => {
+    if (!currentGroupId) return -1;
+    return unresolvedBurstGroups.findIndex((g) => g.groupId === currentGroupId);
+  }, [currentGroupId, unresolvedBurstGroups]);
+
+  function jumpToBurstGroup(targetGroup: { groupId: number; members: PhotoItem[] }) {
+    const lead = targetGroup.members[0];
+    if (!lead) return;
+    if (setSelectedHashes) {
+      setSelectedHashes(new Set([lead.hash]));
+    }
+    setActiveHash(lead.hash);
+    setCompareZoom(1);
+    setComparePan({ x: 0, y: 0 });
+  }
+
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-[#07080c]">
       {/* Synchronized Compare Toolbar */}
-      <div className="bg-[#0c0d14] border-b border-zinc-800 px-4 py-2 flex items-center justify-between text-xs">
+      <div className="bg-[#0c0d14] border-b border-zinc-800 px-4 py-2 flex items-center justify-between text-xs gap-3 flex-wrap">
         <div className="flex items-center gap-3">
           <span className="font-semibold text-emerald-300 flex items-center gap-1.5">
             <Columns className="w-4 h-4 text-emerald-400" />
-            Synchronized Compare ({comparePhotos.length} photos)
+            <span>Synchronized Compare ({comparePhotos.length} photos)</span>
           </span>
-          <span className="text-zinc-500">
+
+          {currentBurstIdx >= 0 && unresolvedBurstGroups.length > 0 && (
+            <div className="flex items-center gap-1.5 bg-amber-500/10 border border-amber-500/30 text-amber-300 px-2.5 py-0.5 rounded-lg font-mono text-[11px]">
+              <span>
+                Burst #{currentGroupId} ({currentBurstIdx + 1} of {unresolvedBurstGroups.length} remaining)
+              </span>
+              <button
+                onClick={() => {
+                  const prev =
+                    unresolvedBurstGroups[
+                      (currentBurstIdx - 1 + unresolvedBurstGroups.length) %
+                        unresolvedBurstGroups.length
+                    ];
+                  if (prev) jumpToBurstGroup(prev);
+                }}
+                className="p-0.5 hover:bg-amber-500/20 rounded"
+                title="Previous Burst Group"
+              >
+                <ChevronLeft className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={() => {
+                  const next =
+                    unresolvedBurstGroups[
+                      (currentBurstIdx + 1) % unresolvedBurstGroups.length
+                    ];
+                  if (next) jumpToBurstGroup(next);
+                }}
+                className="p-0.5 hover:bg-amber-500/20 rounded"
+                title="Skip to Next Burst Group"
+              >
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+
+          <span className="text-zinc-500 hidden xl:inline">
             Scroll wheel or click +/- to zoom all • Drag any image to pan all simultaneously
           </span>
         </div>
+
         <div className="flex items-center gap-2">
           <button
             onClick={() => setCompareZoom((z) => Math.max(1, +(z - 0.5).toFixed(1)))}
@@ -151,6 +242,15 @@ export default function CompareView({
                   <button
                     onClick={async (e) => {
                       e.stopPropagation();
+                      // Find the next unresolved burst group BEFORE updating state
+                      const remainingGroups = unresolvedBurstGroups.filter(
+                        (g) => g.groupId !== currentGroupId
+                      );
+                      const nextGroup =
+                        remainingGroups.find((g) => g.groupId > (currentGroupId ?? 0)) ||
+                        remainingGroups[0] ||
+                        null;
+
                       await invoke("set_photo_flag", { hashes: [cp.hash], flag: "pick" });
                       const others = comparePhotos.filter((o) => o.hash !== cp.hash);
                       if (others.length > 0) {
@@ -175,10 +275,34 @@ export default function CompareView({
                           return p;
                         })
                       );
-                      setViewMode("grid");
+
+                      // Auto-advance to the next burst group if we were comparing a burst!
+                      if (currentGroupId && nextGroup && nextGroup.members.length > 0) {
+                        jumpToBurstGroup(nextGroup);
+                        if (setAutoMatchNotice) {
+                          setAutoMatchNotice(
+                            `Kept "${cp.name}" • Auto-advanced to Burst #${nextGroup.groupId} (${remainingGroups.length} remaining)`
+                          );
+                          setTimeout(() => setAutoMatchNotice(""), 3500);
+                        }
+                      } else {
+                        if (setSelectedHashes) {
+                          setSelectedHashes(new Set([cp.hash]));
+                        }
+                        setActiveHash(cp.hash);
+                        setViewMode("grid");
+                        if (setAutoMatchNotice) {
+                          setAutoMatchNotice(
+                            currentGroupId
+                              ? `Kept "${cp.name}" — All burst groups resolved!`
+                              : `Kept "${cp.name}" and staged ${others.length} other photo(s) for _Trash.`
+                          );
+                          setTimeout(() => setAutoMatchNotice(""), 4000);
+                        }
+                      }
                     }}
                     className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-[11px] font-semibold shadow transition flex items-center gap-1.5"
-                    title="Keep this photo as Pick and stage the other compared photos for _Trash"
+                    title="Keep this photo as Pick, stage the rest for _Trash, and auto-advance to the next burst group"
                   >
                     <Trophy className="w-3.5 h-3.5" />
                     <span>Keep This & Trash Rest</span>

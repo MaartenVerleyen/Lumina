@@ -216,6 +216,8 @@ export function useLibraryState() {
   const [ollamaPullProgress, setOllamaPullProgress] = useState<OllamaPullProgress | null>(null);
   const [people, setPeople] = useState<PersonItem[]>([]);
   const [selectedPerson, setSelectedPerson] = useState<string | null>(null);
+  const [pendingFaceCounts, setPendingFaceCounts] = useState<Record<string, number>>({});
+  const [faceReviewPerson, setFaceReviewPerson] = useState<string | null>(null);
 
   const [smartFilter, setSmartFilter] = useState<SmartFilter>("ALL");
   const [orientationFilter, setOrientationFilter] = useState<OrientationFilter>("ALL");
@@ -441,6 +443,10 @@ export function useLibraryState() {
         rootFolder: currentFolder || null,
       });
       setPeople(res);
+      const pending = await invoke<Record<string, number>>("get_pending_face_match_counts", {
+        rootFolder: currentFolder || null,
+      });
+      setPendingFaceCounts(pending || {});
     } catch {}
   }
 
@@ -1881,6 +1887,9 @@ export function useLibraryState() {
     people,
     selectedPerson,
     setSelectedPerson,
+    pendingFaceCounts,
+    faceReviewPerson,
+    setFaceReviewPerson,
     smartFilter,
     setSmartFilter,
     orientationFilter,

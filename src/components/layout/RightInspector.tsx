@@ -1,10 +1,9 @@
-import { useState, useEffect, useRef } from "react";
+import { useEffect, useRef } from "react";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import {
   CitySearchResult,
   FaceInstance,
   PhotoItem,
-  SimilarFaceCandidate,
 } from "../../types/lumina";
 import {
   Aperture,
@@ -182,6 +181,7 @@ interface RightInspectorProps {
   handleAssignCustomLocationText: (customLoc: string) => Promise<void>;
   handleBatchAddTag: (tag: string) => Promise<void>;
   refreshPeople?: () => Promise<void>;
+  onOpenFaceReviewModal?: (personName: string) => void;
 }
 
 export default function RightInspector({
@@ -226,6 +226,7 @@ export default function RightInspector({
   handleAssignCustomLocationText,
   handleBatchAddTag,
   refreshPeople,
+  onOpenFaceReviewModal,
 }: RightInspectorProps) {
   const previewImgWrapRef = useRef<HTMLDivElement>(null);
   const faceInputRef = useRef<HTMLInputElement>(null);
@@ -259,72 +260,7 @@ export default function RightInspector({
     setTimeout(() => faceInputRef.current?.focus(), 10);
   }
 
-  const [similarCandidates, setSimilarCandidates] = useState<SimilarFaceCandidate[]>([]);
-  const [selectedCandidateIds, setSelectedCandidateIds] = useState<Set<string>>(new Set());
-  const [matchingPersonName, setMatchingPersonName] = useState<string>("");
-  const [isSearchingSimilar, setIsSearchingSimilar] = useState<boolean>(false);
 
-  // Reset similar-faces drawer when switching photos
-  useEffect(() => {
-    setSimilarCandidates([]);
-    setSelectedCandidateIds(new Set());
-    setMatchingPersonName("");
-  }, [activePhoto.hash]);
-
-  async function handleFindSimilarFaces(personName: string) {
-    const clean = personName.trim();
-    if (!clean) return;
-    setIsSearchingSimilar(true);
-    setMatchingPersonName(clean);
-    try {
-      const res = await invoke<SimilarFaceCandidate[]>("find_similar_faces", {
-        personName: clean,
-        minSimilarity: 0.45,
-      });
-      setSimilarCandidates(res);
-      setSelectedCandidateIds(
-        new Set(res.filter((c) => c.similarity >= 58).map((c) => c.face_id))
-      );
-    } catch {
-      setSimilarCandidates([]);
-    } finally {
-      setIsSearchingSimilar(false);
-    }
-  }
-
-  async function handleGroupSelectedCandidates() {
-    if (!matchingPersonName || selectedCandidateIds.size === 0) return;
-    const faceIds = Array.from(selectedCandidateIds);
-    const idSet = new Set(faceIds);
-    const updatedHashes = await invoke<string[]>("assign_faces_to_person_batch", {
-      faceIds,
-      personName: matchingPersonName,
-    });
-    const hashSet = new Set(updatedHashes);
-    setPhotos((prev) =>
-      prev.map((p) => {
-        if (!hashSet.has(p.hash)) return p;
-        const nextFaces = p.faces.map((f) =>
-          idSet.has(f.face_id) ? { ...f, person_name: matchingPersonName } : f
-        );
-        const nextPeople = p.people.includes(matchingPersonName)
-          ? p.people
-          : [...p.people, matchingPersonName].sort();
-        return {
-          ...p,
-          faces: nextFaces,
-          people: nextPeople,
-        };
-      })
-    );
-    setSimilarCandidates((prev) =>
-      prev.filter((c) => !selectedCandidateIds.has(c.face_id))
-    );
-    setSelectedCandidateIds(new Set());
-    if (refreshPeople) {
-      await refreshPeople();
-    }
-  }
 
   const previewSource = activePhoto.thumb_ready
     ? activePhoto.thumb_path
@@ -619,99 +555,22 @@ export default function RightInspector({
             </button>
           </form>
 
-          {/* Button to check other photos for faces matching the active/typed name */}
-          {(faceNameInput.trim() || activePhoto.people.length > 0) && (
-            <div className="flex items-center justify-between pt-1">
+          {/* Pop-out Button to open the Full-Screen Face Match Review Studio */}
+          {(faceNameInput.trim() || activePhoto.people.length > 0) &&
+            onOpenFaceReviewModal && (
               <button
                 type="button"
                 onClick={() =>
-                  handleFindSimilarFaces(faceNameInput.trim() || activePhoto.people[0])
+                  onOpenFaceReviewModal(faceNameInput.trim() || activePhoto.people[0])
                 }
-                disabled={isSearchingSimilar}
-                className="text-[11px] text-indigo-300 hover:text-indigo-200 font-medium flex items-center gap-1"
+                className="mt-1 w-full py-1.5 px-2.5 rounded-lg bg-indigo-950/60 hover:bg-indigo-900/80 border border-indigo-500/40 text-indigo-200 text-[11px] font-semibold flex items-center justify-center gap-1.5 transition shadow-sm"
               >
-                <ScanFace className="w-3 h-3 text-indigo-400" />
+                <ScanFace className="w-3.5 h-3.5 text-indigo-400" />
                 <span>
-                  {isSearchingSimilar
-                    ? "Searching library faces..."
-                    : `Find other faces matching "${faceNameInput.trim() || activePhoto.people[0]}"`}
+                  Review Similar Faces for "{faceNameInput.trim() || activePhoto.people[0]}" ↗
                 </span>
               </button>
-              {matchingPersonName && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSimilarCandidates([]);
-                    setMatchingPersonName("");
-                  }}
-                  className="text-[10px] text-zinc-500 hover:text-zinc-300"
-                >
-                  Close
-                </button>
-              )}
-            </div>
-          )}
-
-          {/* Similar Faces Review & Batch Grouping Grid */}
-          {matchingPersonName && (
-            <div className="mt-1 p-2 bg-zinc-950 border border-indigo-500/30 rounded-lg flex flex-col gap-2">
-              <div className="flex items-center justify-between text-[11px]">
-                <span className="text-zinc-300 font-semibold">
-                  Matches for "{matchingPersonName}" ({similarCandidates.length})
-                </span>
-                {similarCandidates.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={handleGroupSelectedCandidates}
-                    disabled={selectedCandidateIds.size === 0}
-                    className="px-2 py-0.5 bg-emerald-600 hover:bg-emerald-500 disabled:bg-zinc-800 text-white rounded text-[10px] font-semibold"
-                  >
-                    Group Selected ({selectedCandidateIds.size})
-                  </button>
-                )}
-              </div>
-
-              {similarCandidates.length === 0 ? (
-                <span className="text-[11px] text-zinc-500 italic py-1">
-                  No additional unassigned face matches found. (Run "Scan Faces" in the top bar to index more photos!)
-                </span>
-              ) : (
-                <div className="grid grid-cols-4 gap-1.5 max-h-44 overflow-y-auto pr-1">
-                  {similarCandidates.map((cand) => {
-                    const checked = selectedCandidateIds.has(cand.face_id);
-                    return (
-                      <div
-                        key={cand.face_id}
-                        onClick={() => {
-                          setSelectedCandidateIds((prev) => {
-                            const next = new Set(prev);
-                            if (next.has(cand.face_id)) next.delete(cand.face_id);
-                            else next.add(cand.face_id);
-                            return next;
-                          });
-                        }}
-                        className={`relative rounded-lg overflow-hidden border-2 cursor-pointer transition ${
-                          checked
-                            ? "border-emerald-500 ring-1 ring-emerald-500"
-                            : "border-zinc-800 opacity-65 hover:opacity-100"
-                        }`}
-                        title={`${cand.photo_name} (${cand.similarity}% match)`}
-                      >
-                        <img
-                          src={convertFileSrc(cand.face_thumb)}
-                          alt={cand.photo_name}
-                          className="w-full h-14 object-cover"
-                        />
-                        <span className="absolute bottom-0 inset-x-0 bg-black/80 text-[9px] font-mono text-center text-emerald-300 py-0.2">
-                          {cand.similarity}%
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          )}
+            )}
         </div>
       </div>
 
