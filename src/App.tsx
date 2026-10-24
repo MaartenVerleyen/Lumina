@@ -888,6 +888,7 @@ export default function App() {
             handleToggleBasketSelection={lib.handleToggleBasketSelection}
             handleForceRescanExifSelected={lib.handleForceRescanExifSelected}
             runBatchAiOnList={lib.runBatchAiOnList}
+            handleBatchAssignPerson={lib.handleBatchAssignPerson}
           />
         </main>
 
@@ -944,6 +945,7 @@ export default function App() {
               handleAssignCity={lib.handleAssignCity}
               handleAssignCustomLocationText={lib.handleAssignCustomLocationText}
               handleBatchAddTag={lib.handleBatchAddTag}
+              refreshPeople={lib.refreshPeople}
             />
           </>
         )}

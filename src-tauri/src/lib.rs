@@ -132,6 +132,7 @@ pub struct ThumbBatchItem {
     pub width: u32,
     pub height: u32,
     pub auto_tags: Vec<String>,
+    pub thumb_ok: bool,
 }
 
 #[derive(Serialize, Clone)]
@@ -595,7 +596,61 @@ async fn ensure_neural_face_models(app: AppHandle) -> Result<String, String> {
         }
     }
 
+    // Upgrade any legacy 384-D face embeddings in SQLite to 512-D ArcFace embeddings using saved 96x96 face crops
+    let app_for_upgrade = app.clone();
+    let _ = tauri::async_runtime::spawn_blocking(move || {
+        upgrade_legacy_face_embeddings(&app_for_upgrade);
+    })
+    .await;
+
     Ok("Neural ONNX face models ready".to_string())
+}
+
+fn upgrade_legacy_face_embeddings(app: &AppHandle) {
+    if get_or_load_mobilefacenet(app).is_none() {
+        return;
+    }
+    let Ok(mut conn) = open_global_db(app) else {
+        return;
+    };
+    let mut legacy_rows: Vec<(String, String)> = Vec::new();
+    if let Ok(mut stmt) = conn.prepare("SELECT face_id, face_thumb, embedding FROM photo_faces") {
+        if let Ok(rows) = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+            ))
+        }) {
+            for (fid, thumb, emb_str) in rows.flatten() {
+                let is_512 = serde_json::from_str::<Vec<f32>>(&emb_str)
+                    .map(|v| v.len() == 512)
+                    .unwrap_or(false);
+                if !is_512 && Path::new(&thumb).exists() {
+                    legacy_rows.push((fid, thumb));
+                }
+            }
+        }
+    }
+    if legacy_rows.is_empty() {
+        return;
+    }
+    if let Ok(tx) = conn.transaction() {
+        for (fid, thumb) in legacy_rows {
+            if let Ok(img) = image::open(&thumb) {
+                let new_emb = compute_face_embedding(&img);
+                if new_emb.len() == 512 {
+                    if let Ok(emb_json) = serde_json::to_string(&new_emb) {
+                        let _ = tx.execute(
+                            "UPDATE photo_faces SET embedding = ?1 WHERE face_id = ?2",
+                            params![emb_json, fid],
+                        );
+                    }
+                }
+            }
+        }
+        let _ = tx.commit();
+    }
 }
 
 fn get_or_load_mobilefacenet(app: &AppHandle) -> Option<OnnxPlan> {
@@ -753,14 +808,28 @@ fn detect_faces_with_onnx(app: &AppHandle, img: &DynamicImage) -> Vec<(f64, f64,
 
     for cand in candidates {
         let (bx, by, bw, bh, _) = cand;
+        let bcx = bx + bw * 0.5;
+        let bcy = by + bh * 0.5;
+
         let overlaps = kept.iter().any(|&(kx, ky, kw, kh, _)| {
             let ix1 = bx.max(kx);
             let iy1 = by.max(ky);
             let ix2 = (bx + bw).min(kx + kw);
             let iy2 = (by + bh).min(ky + kh);
             let inter = (ix2 - ix1).max(0.0) * (iy2 - iy1).max(0.0);
-            let union = bw * bh + kw * kh - inter;
-            union > 0.0 && (inter / union) > 0.30
+            let area_b = bw * bh;
+            let area_k = kw * kh;
+            let union = area_b + area_k - inter;
+            let min_area = area_b.min(area_k);
+
+            let kcx = kx + kw * 0.5;
+            let kcy = ky + kh * 0.5;
+            let center_dist = ((bcx - kcx).powi(2) + (bcy - kcy).powi(2)).sqrt();
+            let min_radius = (bw.min(kw) + bh.min(kh)) * 0.25;
+
+            (union > 0.0 && (inter / union) > 0.25)
+                || (min_area > 0.0 && (inter / min_area) > 0.55)
+                || center_dist < min_radius
         });
         if !overlaps {
             kept.push(cand);
@@ -878,6 +947,81 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     a.iter().zip(b.iter()).map(|(x, y)| x * y).sum()
 }
 
+fn find_overlapping_face_id(
+    conn: &Connection,
+    hash: &str,
+    bbox: (f64, f64, f64, f64),
+    claimed_ids: Option<&std::collections::HashSet<String>>,
+) -> Option<(String, Option<String>)> {
+    let existing = get_faces_for_hash(conn, hash);
+    let (bx, by, bw, bh) = bbox;
+    let bcx = bx + bw * 0.5;
+    let bcy = by + bh * 0.5;
+
+    let mut best_match: Option<(String, Option<String>, f64)> = None;
+
+    for f in existing {
+        if let Some(claimed) = claimed_ids {
+            if claimed.contains(&f.face_id) {
+                continue;
+            }
+        }
+        let ix1 = bx.max(f.bbox_x);
+        let iy1 = by.max(f.bbox_y);
+        let ix2 = (bx + bw).min(f.bbox_x + f.bbox_w);
+        let iy2 = (by + bh).min(f.bbox_y + f.bbox_h);
+        let inter = (ix2 - ix1).max(0.0) * (iy2 - iy1).max(0.0);
+        let area_a = bw * bh;
+        let area_b = f.bbox_w * f.bbox_h;
+        let union = area_a + area_b - inter;
+        let min_area = area_a.min(area_b);
+
+        let fcx = f.bbox_x + f.bbox_w * 0.5;
+        let fcy = f.bbox_y + f.bbox_h * 0.5;
+        let center_dist = ((bcx - fcx).powi(2) + (bcy - fcy).powi(2)).sqrt();
+        let min_radius = (bw.min(f.bbox_w) + bh.min(f.bbox_h)) * 0.18;
+
+        let iou = if union > 0.0 { inter / union } else { 0.0 };
+        let containment = if min_area > 0.0 { inter / min_area } else { 0.0 };
+
+        if iou > 0.30 || containment > 0.60 || center_dist < min_radius {
+            let score = iou.max(containment);
+            if best_match.as_ref().map(|b| score > b.2).unwrap_or(true) {
+                best_match = Some((f.face_id, f.person_name, score));
+            }
+        }
+    }
+    best_match.map(|(id, name, _)| (id, name))
+}
+
+fn sync_photo_people_from_faces(conn: &Connection, hash: &str, previous_face_person: Option<&str>) {
+    // Ensure all currently named faces on this photo exist in photo_people
+    let faces = get_faces_for_hash(conn, hash);
+    let active_face_names: std::collections::HashSet<String> = faces
+        .iter()
+        .filter_map(|f| f.person_name.as_ref().map(|s| s.trim().to_string()))
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    for name in &active_face_names {
+        let _ = conn.execute(
+            "INSERT OR IGNORE INTO photo_people (hash, person_name) VALUES (?1, ?2)",
+            params![hash, name],
+        );
+    }
+
+    // If a face was renamed or removed, remove the old person_name from photo_people if no other face on this photo still has it
+    if let Some(prev_name) = previous_face_person {
+        let clean_prev = prev_name.trim();
+        if !clean_prev.is_empty() && !active_face_names.iter().any(|n| n.eq_ignore_ascii_case(clean_prev)) {
+            let _ = conn.execute(
+                "DELETE FROM photo_people WHERE hash = ?1 AND lower(person_name) = lower(?2)",
+                params![hash, clean_prev],
+            );
+        }
+    }
+}
+
 fn save_cropped_face_and_record(
     app: &AppHandle,
     conn: &Connection,
@@ -907,15 +1051,28 @@ fn save_cropped_face_and_record(
         return None;
     }
 
+    // Ensure MobileFaceNet is warmed up so we always generate 512-D embeddings consistently
+    let _ = get_or_load_mobilefacenet(app);
     let embedding = compute_face_embedding(&cropped);
     let emb_json = serde_json::to_string(&embedding).unwrap_or_else(|_| "[]".to_string());
 
-    let face_id = format!(
-        "{}_{}_{}",
-        hash,
-        (bbox.0 * 100.0).round() as i32,
-        (bbox.1 * 100.0).round() as i32
-    );
+    // Check if this box overlaps an already-recorded face on this photo
+    let mut previous_person: Option<String> = None;
+    let (face_id, resolved_person_name) =
+        if let Some((existing_id, existing_name)) = find_overlapping_face_id(conn, hash, bbox, None) {
+            previous_person = existing_name.clone();
+            (existing_id, person_name.or(existing_name))
+        } else {
+            (
+                format!(
+                    "{}_{}_{}",
+                    hash,
+                    (bbox.0 * 100.0).round() as i32,
+                    (bbox.1 * 100.0).round() as i32
+                ),
+                person_name,
+            )
+        };
 
     let faces_dir = get_app_storage_dir(app).join("faces");
     let _ = fs::create_dir_all(&faces_dir);
@@ -944,14 +1101,14 @@ fn save_cropped_face_and_record(
             bbox.1,
             bbox.2,
             bbox.3,
-            person_name,
+            resolved_person_name,
             face_thumb_str,
             emb_json,
             source
         ],
     );
 
-    if let Some(ref p_name) = person_name {
+    if let Some(ref p_name) = resolved_person_name {
         let clean = p_name.trim().to_string();
         if !clean.is_empty() {
             let _ = conn.execute(
@@ -959,12 +1116,10 @@ fn save_cropped_face_and_record(
                  ON CONFLICT(name) DO UPDATE SET cover_face_thumb = excluded.cover_face_thumb",
                 params![clean, face_thumb_str],
             );
-            let _ = conn.execute(
-                "INSERT OR IGNORE INTO photo_people (hash, person_name) VALUES (?1, ?2)",
-                params![hash, clean],
-            );
         }
     }
+
+    sync_photo_people_from_faces(conn, hash, previous_person.as_deref());
 
     Some(FaceInstance {
         face_id,
@@ -973,7 +1128,7 @@ fn save_cropped_face_and_record(
         bbox_y: bbox.1,
         bbox_w: bbox.2,
         bbox_h: bbox.3,
-        person_name,
+        person_name: resolved_person_name,
         face_thumb: face_thumb_str,
         confidence: 1.0,
     })
@@ -1260,6 +1415,7 @@ fn is_raw_or_heic_ext(ext: &str) -> bool {
 }
 
 // Fast JPEG SOF0/SOF2 dimension sniffer (~0.001ms — reads width & height from JPEG header bytes without decoding pixels!)
+#[allow(dead_code)]
 fn sniff_jpeg_dimensions(jpeg_bytes: &[u8]) -> Option<(u32, u32)> {
     let n = jpeg_bytes.len();
     if n < 32 || jpeg_bytes[0] != 0xFF || jpeg_bytes[1] != 0xD8 {
@@ -1313,91 +1469,121 @@ fn extract_embedded_raw_jpeg_sized(
     }
 
     let max_read = if prefer_fast_thumb {
-        4 * 1024 * 1024
+        6 * 1024 * 1024
     } else {
-        48 * 1024 * 1024
+        36 * 1024 * 1024
     };
     let read_size = (file_len as usize).min(max_read);
     let mut buffer = vec![0u8; read_size];
     let bytes_read = file.read(&mut buffer).ok()?;
     let slice = &buffer[..bytes_read];
 
-    let mut starts = Vec::new();
-    for i in 0..slice.len().saturating_sub(4) {
+    let mut candidates: Vec<(usize, usize, u32, u32)> = Vec::new();
+    let mut i = 0;
+    let limit = slice.len().saturating_sub(4);
+
+    while i < limit {
+        // Look for valid JPEG SOI followed by APP0/APP1/DQT/SOF
         if slice[i] == 0xFF
             && slice[i + 1] == 0xD8
             && slice[i + 2] == 0xFF
-            && matches!(slice[i + 3], 0xE0 | 0xE1 | 0xDB | 0xC0 | 0xC2 | 0xEE | 0xFE)
+            && matches!(slice[i + 3], 0xE0 | 0xE1 | 0xDB | 0xC0 | 0xC2 | 0xEE)
         {
-            starts.push(i);
-        }
-    }
+            let start = i;
+            // Walk JPEG segments to find SOF dimensions and EOI (FF D9) cleanly
+            let mut cursor = start + 2;
+            let mut found_dims: Option<(u32, u32)> = None;
+            let mut end_pos: Option<usize> = None;
 
-    let mut ends = Vec::new();
-    for i in 0..slice.len().saturating_sub(1) {
-        if slice[i] == 0xFF && slice[i + 1] == 0xD9 {
-            ends.push(i + 2);
-        }
-    }
+            while cursor + 4 < slice.len() {
+                if slice[cursor] != 0xFF {
+                    break;
+                }
+                let marker = slice[cursor + 1];
+                if marker == 0xFF {
+                    cursor += 1;
+                    continue;
+                }
+                if marker == 0xD9 {
+                    end_pos = Some(cursor + 2);
+                    break;
+                }
+                if marker == 0xD8 || marker == 0x01 || (0xD0..=0xD7).contains(&marker) {
+                    cursor += 2;
+                    continue;
+                }
+                let seg_len = ((slice[cursor + 2] as usize) << 8) | (slice[cursor + 3] as usize);
+                if seg_len < 2 || cursor + 2 + seg_len > slice.len() {
+                    break;
+                }
+                if matches!(marker, 0xC0 | 0xC1 | 0xC2) && seg_len >= 7 {
+                    let h = ((slice[cursor + 5] as u32) << 8) | (slice[cursor + 6] as u32);
+                    let w = ((slice[cursor + 7] as u32) << 8) | (slice[cursor + 8] as u32);
+                    if w >= 200 && h >= 200 {
+                        found_dims = Some((w, h));
+                    }
+                }
+                cursor += 2 + seg_len;
+                if marker == 0xDA {
+                    // Inside SOS entropy stream: scan forward to the first real EOI (FF D9)
+                    let mut scan = cursor;
+                    while scan + 1 < slice.len() {
+                        if slice[scan] == 0xFF && slice[scan + 1] == 0xD9 {
+                            end_pos = Some(scan + 2);
+                            break;
+                        }
+                        scan += 1;
+                    }
+                    break;
+                }
+            }
 
-    let mut pairs: Vec<(usize, usize)> = Vec::new();
-    let min_bytes = if prefer_fast_thumb { 8192 } else { 16384 };
-    for &s in &starts {
-        for &e in &ends {
-            if e > s + min_bytes && (e - s) <= 35 * 1024 * 1024 {
-                pairs.push((s, e));
+            if let (Some((w, h)), Some(end)) = (found_dims, end_pos) {
+                if end > start + 8192 {
+                    candidates.push((start, end, w, h));
+                    // Fast exit: if we only need a 360px thumb and found a 300..2000px preview, decode immediately!
+                    if prefer_fast_thumb && w >= 300 && w <= 2048 {
+                        break;
+                    }
+                    i = end;
+                    continue;
+                }
             }
         }
+        i += 1;
     }
 
     if prefer_fast_thumb {
-        // Sort medium-sized slices first (30KB..650KB) so we decode a ~640px-1280px preview in <1.5ms instead of a 24MP JPEG!
-        pairs.sort_by_key(|&(s, e)| {
-            let len = e - s;
-            if (28_000..=650_000).contains(&len) {
-                0usize
-            } else if len < 28_000 {
-                1usize
-            } else {
-                2usize
-            }
+        candidates.sort_by_key(|&(_, _, w, h)| {
+            let max_d = w.max(h);
+            if (320..=1920).contains(&max_d) { 0 } else { 1 }
         });
     } else {
-        pairs.sort_by(|a, b| (b.1 - b.0).cmp(&(a.1 - a.0)));
+        candidates.sort_by(|a, b| (b.2 * b.3).cmp(&(a.2 * a.3)));
     }
 
     let outer_orientation = read_exif_orientation(file_path);
 
-    for (s, e) in pairs.into_iter().take(16) {
+    for (s, e, _, _) in candidates.into_iter().take(4) {
         let jpeg_slice = &slice[s..e];
-        if prefer_fast_thumb {
-            if let Some((sw, sh)) = sniff_jpeg_dimensions(jpeg_slice) {
-                if sw < 200 || sh < 200 {
-                    continue; // skip tiny 160x120 IFD1 stamp if a better preview exists
-                }
-            }
-        }
         if let Ok(img) = image::load_from_memory_with_format(jpeg_slice, ImageFormat::Jpeg) {
             let (w, h) = img.dimensions();
-            if w >= 200 && h >= 200 {
-                let embedded_orient = read_exif_orientation_from_bytes(jpeg_slice);
-                let final_orient = match embedded_orient {
-                    Some(o) if o != 1 => o,
-                    _ => {
-                        if h > w && matches!(outer_orientation, 5 | 6 | 7 | 8) {
-                            1
-                        } else {
-                            outer_orientation
-                        }
+            let embedded_orient = read_exif_orientation_from_bytes(jpeg_slice);
+            let final_orient = match embedded_orient {
+                Some(o) if o != 1 => o,
+                _ => {
+                    if h > w && matches!(outer_orientation, 5 | 6 | 7 | 8) {
+                        1
+                    } else {
+                        outer_orientation
                     }
-                };
-                return Some((img, final_orient));
-            }
+                }
+            };
+            return Some((img, final_orient));
         }
     }
 
-    // If fast 4MB scan didn't find a medium preview (e.g. embedded preview sits after 4MB offset), retry full scan
-    if prefer_fast_thumb && file_len > 4 * 1024 * 1024 {
+    if prefer_fast_thumb && file_len > 6 * 1024 * 1024 {
         return extract_embedded_raw_jpeg_sized(file_path, false);
     }
 
@@ -1406,8 +1592,6 @@ fn extract_embedded_raw_jpeg_sized(
 
 #[cfg(target_os = "windows")]
 fn batch_decode_heic_thumbs_windows(jobs: &[(String, String, u32)]) {
-    // Ultra-fast batch HEIC -> 360px thumbnail converter!
-    // Uses WIC DecodePixelWidth = $max_dim so Windows WIC decodes directly at 1/8th scale in hardware (~12ms per HEIC instead of decoding 12MP!)
     if jobs.is_empty() {
         return;
     }
@@ -1423,13 +1607,7 @@ fn batch_decode_heic_thumbs_windows(jobs: &[(String, String, u32)]) {
 
     let json_items: Vec<JsonValue> = jobs
         .iter()
-        .map(|(src, dst, max_dim)| {
-            json!({
-                "src": src,
-                "dst": dst,
-                "dim": max_dim
-            })
-        })
+        .map(|(src, dst, max_dim)| json!({ "src": src, "dst": dst, "dim": max_dim }))
         .collect();
 
     if fs::write(&manifest_path, serde_json::to_string(&json_items).unwrap_or_default()).is_err() {
@@ -1438,7 +1616,45 @@ fn batch_decode_heic_thumbs_windows(jobs: &[(String, String, u32)]) {
 
     let manifest_escaped = manifest_path.to_string_lossy().replace('\'', "''");
     let ps_script = format!(
-        "$ErrorActionPreference = 'SilentlyContinue';          Add-Type -AssemblyName PresentationCore;          Add-Type -AssemblyName WindowsBase;          $items = Get-Content -Raw -LiteralPath '{manifest}' | ConvertFrom-Json;          foreach ($it in $items) {{            try {{              $s = [System.IO.File]::Open($it.src, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite);              $d = [System.Windows.Media.Imaging.BitmapDecoder]::Create($s, [System.Windows.Media.Imaging.BitmapCreateOptions]::IgnoreColorProfile, [System.Windows.Media.Imaging.BitmapCacheOption]::OnDemand);              $frame = $d.Frames[0];              $angle = 0;              try {{                $meta = $frame.Metadata;                if ($meta -ne $null -and $meta.ContainsQuery('/app1/ifd/{{ushort=274}}')) {{                  $o = $meta.GetQuery('/app1/ifd/{{ushort=274}}');                  if ($o -eq 6) {{ $angle = 90 }} elseif ($o -eq 3) {{ $angle = 180 }} elseif ($o -eq 8) {{ $angle = 270 }}                }}              }} catch {{}}              $ targetThumb = $frame.Thumbnail;              $srcBmp = if ($targetThumb -ne $null -and $it.dim -le 360 -and [Math]::Max($targetThumb.PixelWidth, $targetThumb.PixelHeight) -ge 240) {{ $targetThumb }} else {{ $frame }};              $pw = $srcBmp.PixelWidth; $ph = $srcBmp.PixelHeight;              $maxDim = [Math]::Max($pw, $ph);              $scale = if ($maxDim -gt $it.dim) {{ [double]$it.dim / $maxDim }} else {{ 1.0 }};              $tg = New-Object System.Windows.Media.TransformGroup;              if ($scale -lt 1.0) {{ $tg.Children.Add((New-Object System.Windows.Media.ScaleTransform($scale, $scale))) }};              if ($angle -ne 0) {{ $tg.Children.Add((New-Object System.Windows.Media.RotateTransform($angle))) }};              $bmp = if ($tg.Children.Count -gt 0) {{ New-Object System.Windows.Media.Imaging.TransformedBitmap($srcBmp, $tg) }} else {{ $srcBmp }};              $e = New-Object System.Windows.Media.Imaging.JpegBitmapEncoder;              $e.QualityLevel = 85;              $e.Frames.Add([System.Windows.Media.Imaging.BitmapFrame]::Create($bmp));              $o = [System.IO.File]::Create($it.dst);              $e.Save($o);              $o.Close();              $s.Close();            }} catch {{              if ($o -ne $null) {{ try {{ $o.Close() }} catch {{}} }};              if ($s -ne $null) {{ try {{ $s.Close() }} catch {{}} }};            }}          }}",
+        r#"$ErrorActionPreference = 'Stop';
+Add-Type -AssemblyName PresentationCore;
+Add-Type -AssemblyName WindowsBase;
+$rawJson = Get-Content -Raw -LiteralPath '{manifest}' | ConvertFrom-Json;
+$items = @($rawJson);
+foreach ($it in $items) {{
+  $s = $null; $o = $null;
+  try {{
+    $s = [System.IO.File]::Open($it.src, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite);
+    $d = [System.Windows.Media.Imaging.BitmapDecoder]::Create($s, [System.Windows.Media.Imaging.BitmapCreateOptions]::IgnoreColorProfile, [System.Windows.Media.Imaging.BitmapCacheOption]::OnDemand);
+    $frame = $d.Frames[0];
+    $angle = 0;
+    try {{
+      $meta = $frame.Metadata;
+      if ($meta -ne $null -and $meta.ContainsQuery('/app1/ifd/{{ushort=274}}')) {{
+        $orient = $meta.GetQuery('/app1/ifd/{{ushort=274}}');
+        if ($orient -eq 6) {{ $angle = 90 }} elseif ($orient -eq 3) {{ $angle = 180 }} elseif ($orient -eq 8) {{ $angle = 270 }}
+      }}
+    }} catch {{}}
+    $targetThumb = $frame.Thumbnail;
+    $srcBmp = if ($targetThumb -ne $null -and $it.dim -le 360 -and [Math]::Max($targetThumb.PixelWidth, $targetThumb.PixelHeight) -ge 200) {{ $targetThumb }} else {{ $frame }};
+    $pw = $srcBmp.PixelWidth; $ph = $srcBmp.PixelHeight;
+    $maxDim = [Math]::Max($pw, $ph);
+    $scale = if ($maxDim -gt $it.dim) {{ [double]$it.dim / $maxDim }} else {{ 1.0 }};
+    $tg = New-Object System.Windows.Media.TransformGroup;
+    if ($scale -lt 1.0) {{ $tg.Children.Add((New-Object System.Windows.Media.ScaleTransform($scale, $scale))) }};
+    if ($angle -ne 0) {{ $tg.Children.Add((New-Object System.Windows.Media.RotateTransform($angle))) }};
+    $bmp = if ($tg.Children.Count -gt 0) {{ New-Object System.Windows.Media.Imaging.TransformedBitmap($srcBmp, $tg) }} else {{ $srcBmp }};
+    $e = New-Object System.Windows.Media.Imaging.JpegBitmapEncoder;
+    $e.QualityLevel = 85;
+    $e.Frames.Add([System.Windows.Media.Imaging.BitmapFrame]::Create($bmp));
+    $o = [System.IO.File]::Create($it.dst);
+    $e.Save($o);
+  }} catch {{
+  }} finally {{
+    if ($o -ne $null) {{ try {{ $o.Close() }} catch {{}} }}
+    if ($s -ne $null) {{ try {{ $s.Close() }} catch {{}} }}
+  }}
+}}"#,
         manifest = manifest_escaped
     );
 
@@ -2466,6 +2682,7 @@ async fn scan_folder(
                                     auto_tags.push("screenshot".to_string());
                                 }
 
+                                let thumb_ok = Path::new(&final_thumb_path).exists();
                                 completed.fetch_add(1, Ordering::Relaxed);
 
                                 ThumbBatchItem {
@@ -2476,6 +2693,7 @@ async fn scan_folder(
                                     width: computed_w,
                                     height: computed_h,
                                     auto_tags,
+                                    thumb_ok,
                                 }
                             })
                             .collect();
@@ -2799,6 +3017,31 @@ fn set_photo_rotation(app: AppHandle, hashes: Vec<String>, delta_degrees: i32) -
     }
 
     Ok(out)
+}
+
+#[derive(Deserialize)]
+pub struct RotationResetInput {
+    pub hash: String,
+    pub rotation: i32,
+}
+
+#[tauri::command]
+fn set_photos_rotation_exact(app: AppHandle, ops: Vec<RotationResetInput>) -> Result<(), String> {
+    if ops.is_empty() {
+        return Ok(());
+    }
+    let mut conn = open_global_db(&app)?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    {
+        let mut stmt = tx
+            .prepare("UPDATE photos SET rotation = ?1 WHERE hash = ?2")
+            .map_err(|e| e.to_string())?;
+        for op in &ops {
+            let _ = stmt.execute(params![op.rotation.rem_euclid(360), op.hash]);
+        }
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 // ----------------- NON-DESTRUCTIVE STAGING & DISMISS -----------------
@@ -3531,14 +3774,15 @@ async fn scan_library_faces_batch(
                             let _ = thumb_96.save(&face_thumb_path);
                             let face_thumb_str = face_thumb_path.to_string_lossy().to_string();
 
-                            // Match against known people embeddings in parallel
+                            // Match against known people embeddings in parallel (dimension-aware threshold)
                             let mut matched_person: Option<String> = None;
                             let mut matched_conf = 1.0f64;
                             if !known_people_embeddings.is_empty() {
+                                let thresh = if embedding.len() == 512 { 0.54 } else { 0.68 };
                                 let mut best: Option<(String, f32)> = None;
                                 for (pname, ref_emb) in &known_people_embeddings {
                                     let sim = cosine_similarity(ref_emb, &embedding);
-                                    if sim >= 0.86 {
+                                    if sim >= thresh {
                                         if best.as_ref().map(|b| sim > b.1).unwrap_or(true) {
                                             best = Some((pname.clone(), sim));
                                         }
@@ -3581,13 +3825,34 @@ async fn scan_library_faces_batch(
                                 "DELETE FROM photo_faces WHERE hash = ?1 AND (person_name IS NULL OR person_name = '')",
                                 params![h],
                             );
+                            let mut claimed_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
                             for item in writes {
                                 faces_found += 1;
                                 let f = &item.face;
+
+                                // Check if this ONNX box overlaps an existing (e.g. already-named) face on this photo
+                                let (target_face_id, target_person) = if let Some((existing_id, existing_name)) =
+                                    find_overlapping_face_id(&tx, h, (f.bbox_x, f.bbox_y, f.bbox_w, f.bbox_h), Some(&claimed_ids))
+                                {
+                                    claimed_ids.insert(existing_id.clone());
+                                    (existing_id, existing_name.or_else(|| f.person_name.clone()))
+                                } else {
+                                    claimed_ids.insert(f.face_id.clone());
+                                    (f.face_id.clone(), f.person_name.clone())
+                                };
+
+                                let target_thumb_str = if target_face_id != f.face_id {
+                                    let existing_thumb = faces_dir.join(format!("{}.jpg", target_face_id));
+                                    let _ = fs::copy(&f.face_thumb, &existing_thumb);
+                                    existing_thumb.to_string_lossy().to_string()
+                                } else {
+                                    f.face_thumb.clone()
+                                };
+
                                 let _ = tx.execute(
                                     "INSERT INTO photo_faces (face_id, hash, bbox_x, bbox_y, bbox_w, bbox_h, person_name, face_thumb, embedding, confidence, source)
-                                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'onnx')
-                                     ON CONFLICT(face_id) DO UPDATE SET
+                                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'onnx')
+                                    ON CONFLICT(face_id) DO UPDATE SET
                                         bbox_x = excluded.bbox_x,
                                         bbox_y = excluded.bbox_y,
                                         bbox_w = excluded.bbox_w,
@@ -3598,19 +3863,19 @@ async fn scan_library_faces_batch(
                                         confidence = excluded.confidence,
                                         source = 'onnx'",
                                     params![
-                                        f.face_id,
+                                        target_face_id,
                                         f.hash,
                                         f.bbox_x,
                                         f.bbox_y,
                                         f.bbox_w,
                                         f.bbox_h,
-                                        f.person_name,
-                                        f.face_thumb,
+                                        target_person,
+                                        target_thumb_str,
                                         item.emb_json,
                                         f.confidence
                                     ],
                                 );
-                                if let Some(ref matched_name) = f.person_name {
+                                if let Some(ref matched_name) = target_person {
                                     auto_matched += 1;
                                     let _ = tx.execute(
                                         "INSERT OR IGNORE INTO photo_people (hash, person_name) VALUES (?1, ?2)",
@@ -3717,10 +3982,11 @@ fn assign_face_region_and_automatch(
                         r.get::<_, String>(2)?,
                     ))
                 }) {
+                    let thresh = if ref_emb.len() == 512 { 0.54 } else { 0.68 };
                     for (fid, fhash, femb_str) in rows.flatten() {
                         if let Ok(cand_emb) = serde_json::from_str::<Vec<f32>>(&femb_str) {
                             let sim = cosine_similarity(&ref_emb, &cand_emb);
-                            if sim >= 0.86 {
+                            if sim >= thresh {
                                 let _ = bg_conn.execute(
                                     "UPDATE photo_faces SET person_name = ?1, confidence = ?2 WHERE face_id = ?3",
                                     params![target_name, sim as f64, fid],
@@ -3755,7 +4021,16 @@ fn assign_face_region_and_automatch(
 #[tauri::command]
 fn remove_face_box(app: AppHandle, face_id: String, hash: String) -> Result<Vec<FaceInstance>, String> {
     let conn = open_global_db(&app)?;
+    let prev_person: Option<String> = conn
+        .query_row(
+            "SELECT person_name FROM photo_faces WHERE face_id = ?1",
+            params![face_id],
+            |r| r.get(0),
+        )
+        .ok()
+        .flatten();
     let _ = conn.execute("DELETE FROM photo_faces WHERE face_id = ?1", params![face_id]);
+    sync_photo_people_from_faces(&conn, &hash, prev_person.as_deref());
     Ok(get_faces_for_hash(&conn, &hash))
 }
 
@@ -3845,6 +4120,161 @@ fn remove_person_from_photo(app: AppHandle, hash: String, name: String) -> Resul
         .map_err(|e| e.to_string())?;
     let rows = stmt.query_map(params![hash], |r| r.get(0)).map_err(|e| e.to_string())?;
     Ok(rows.flatten().collect())
+}
+
+#[derive(Serialize, Clone)]
+pub struct SimilarFaceCandidate {
+    pub face_id: String,
+    pub hash: String,
+    pub face_thumb: String,
+    pub photo_name: String,
+    pub current_person: Option<String>,
+    pub similarity: f32,
+}
+
+#[tauri::command]
+fn find_similar_faces(
+    app: AppHandle,
+    person_name: String,
+    min_similarity: Option<f32>,
+) -> Result<Vec<SimilarFaceCandidate>, String> {
+    let conn = open_global_db(&app)?;
+    let clean_name = person_name.trim().to_string();
+
+    // Load all verified embeddings for this person
+    let mut ref_embeddings: Vec<Vec<f32>> = Vec::new();
+    {
+        let mut stmt = conn
+            .prepare("SELECT embedding FROM photo_faces WHERE lower(person_name) = lower(?1)")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params![clean_name], |r| r.get::<_, String>(0))
+            .map_err(|e| e.to_string())?;
+        for emb_str in rows.flatten() {
+            if let Ok(vec) = serde_json::from_str::<Vec<f32>>(&emb_str) {
+                if !vec.is_empty() {
+                    ref_embeddings.push(vec);
+                }
+            }
+        }
+    }
+
+    if ref_embeddings.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT pf.face_id, pf.hash, pf.face_thumb, pf.person_name, pf.embedding, COALESCE(p.current_path, '')
+             FROM photo_faces pf
+             LEFT JOIN photos p ON pf.hash = p.hash
+             WHERE pf.person_name IS NULL OR lower(pf.person_name) != lower(?1)",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let rows = stmt
+        .query_map(params![clean_name], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, Option<String>>(3)?,
+                r.get::<_, String>(4)?,
+                r.get::<_, String>(5)?,
+            ))
+        })
+        .map_err(|e| e.to_string())?;
+
+    let mut candidates = Vec::new();
+    for (face_id, hash, face_thumb, cur_person, emb_str, photo_path) in rows.flatten() {
+        let Ok(cand_emb) = serde_json::from_str::<Vec<f32>>(&emb_str) else {
+            continue;
+        };
+        if cand_emb.is_empty() {
+            continue;
+        }
+        let default_thresh = if cand_emb.len() == 512 { 0.45 } else { 0.65 };
+        let thresh = min_similarity.unwrap_or(default_thresh);
+
+        let best_sim = ref_embeddings
+            .iter()
+            .map(|r| cosine_similarity(r, &cand_emb))
+            .fold(0.0f32, f32::max);
+
+        if best_sim >= thresh {
+            let photo_name = Path::new(&photo_path)
+                .file_name()
+                .map(|f| f.to_string_lossy().to_string())
+                .unwrap_or_else(|| hash.clone());
+            candidates.push(SimilarFaceCandidate {
+                face_id,
+                hash,
+                face_thumb,
+                photo_name,
+                current_person: cur_person,
+                similarity: (best_sim * 1000.0).round() / 10.0, // percentage e.g. 78.4%
+            });
+        }
+    }
+
+    candidates.sort_by(|a, b| {
+        b.similarity
+            .partial_cmp(&a.similarity)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    candidates.truncate(60);
+    Ok(candidates)
+}
+
+#[tauri::command]
+fn assign_faces_to_person_batch(
+    app: AppHandle,
+    face_ids: Vec<String>,
+    person_name: String,
+) -> Result<Vec<String>, String> {
+    let clean = person_name.trim().to_string();
+    if clean.is_empty() || face_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut conn = open_global_db(&app)?;
+    let mut updated_hashes = Vec::new();
+    let mut old_names_by_hash: Vec<(String, Option<String>)> = Vec::new();
+
+    if let Ok(tx) = conn.transaction() {
+        let _ = tx.execute(
+            "INSERT OR IGNORE INTO people (name) VALUES (?1)",
+            params![clean],
+        );
+        for fid in &face_ids {
+            if let Ok((h, thumb, old_person)) = tx.query_row(
+                "SELECT hash, face_thumb, person_name FROM photo_faces WHERE face_id = ?1",
+                params![fid],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?)),
+            ) {
+                let _ = tx.execute(
+                    "UPDATE photo_faces SET person_name = ?1 WHERE face_id = ?2",
+                    params![clean, fid],
+                );
+                let _ = tx.execute(
+                    "INSERT OR IGNORE INTO photo_people (hash, person_name) VALUES (?1, ?2)",
+                    params![h, clean],
+                );
+                let _ = tx.execute(
+                    "UPDATE people SET cover_face_thumb = ?1 WHERE name = ?2 AND (cover_face_thumb IS NULL OR cover_face_thumb = '')",
+                    params![thumb, clean],
+                );
+                old_names_by_hash.push((h.clone(), old_person));
+                if !updated_hashes.contains(&h) {
+                    updated_hashes.push(h);
+                }
+            }
+        }
+        let _ = tx.commit();
+    }
+    for (h, old_p) in old_names_by_hash {
+        sync_photo_people_from_faces(&conn, &h, old_p.as_deref());
+    }
+    Ok(updated_hashes)
 }
 
 // ----------------- OLLAMA LIFECYCLE -----------------
@@ -4339,66 +4769,99 @@ fn parse_resilient_ai_json(raw: &str) -> Result<AiVisionResponse, String> {
     if let Some(end_think) = cleaned.rfind("</think>") {
         cleaned = cleaned[(end_think + 8)..].trim().to_string();
     }
+    cleaned = cleaned
+        .trim_start_matches("```json")
+        .trim_start_matches("```")
+        .trim_end_matches("```")
+        .trim()
+        .to_string();
 
-    let bytes = cleaned.as_bytes();
-    let mut last_close = None;
-    for i in (0..bytes.len()).rev() {
-        if bytes[i] == b'}' {
-            last_close = Some(i);
-            break;
+    // Auto-repair truncated JSON if model hit token limit during long OCR text
+    if cleaned.starts_with('{') && !cleaned.ends_with('}') {
+        let quote_count = cleaned.chars().filter(|&c| c == '"').count();
+        if quote_count % 2 != 0 {
+            cleaned.push('"');
+        }
+        let open_brackets = cleaned.chars().filter(|&c| c == '[').count();
+        let close_brackets = cleaned.chars().filter(|&c| c == ']').count();
+        for _ in 0..open_brackets.saturating_sub(close_brackets) {
+            cleaned.push(']');
+        }
+        cleaned.push('}');
+    }
+
+    let extract_from_obj = |val: &JsonValue| -> Option<AiVisionResponse> {
+        let obj = val
+            .get("analysis")
+            .or_else(|| val.get("result"))
+            .or_else(|| val.get("image"))
+            .filter(|v| v.is_object())
+            .unwrap_or(val);
+
+        let objects = json_value_to_string_list(
+            obj.get("objects")
+                .or_else(|| obj.get("tags"))
+                .or_else(|| obj.get("keywords"))
+                .or_else(|| obj.get("labels"))
+                .or_else(|| obj.get("items")),
+        );
+        let scene = json_value_to_string(
+            obj.get("scene")
+                .or_else(|| obj.get("setting"))
+                .or_else(|| obj.get("category")),
+        );
+        let is_screenshot = obj
+            .get("is_screenshot")
+            .and_then(|v| v.as_bool())
+            .unwrap_or_else(|| scene.to_lowercase().contains("screenshot"));
+        let people_present = json_value_to_string_list(
+            obj.get("people_present")
+                .or_else(|| obj.get("people"))
+                .or_else(|| obj.get("persons")),
+        );
+        let face_boxes = parse_face_boxes(
+            obj.get("face_boxes")
+                .or_else(|| obj.get("faces"))
+                .or_else(|| obj.get("face_locations")),
+        );
+        let ocr_text = json_value_to_string(
+            obj.get("ocr_text")
+                .or_else(|| obj.get("text"))
+                .or_else(|| obj.get("visible_text")),
+        );
+        let caption = json_value_to_string(
+            obj.get("caption")
+                .or_else(|| obj.get("description"))
+                .or_else(|| obj.get("summary"))
+                .or_else(|| obj.get("title")),
+        );
+
+        if !caption.is_empty() || !objects.is_empty() || !ocr_text.is_empty() {
+            Some(AiVisionResponse {
+                objects,
+                scene,
+                is_screenshot,
+                people_present,
+                face_boxes,
+                ocr_text,
+                caption,
+            })
+        } else {
+            None
+        }
+    };
+
+    if let Ok(val) = serde_json::from_str::<JsonValue>(&cleaned) {
+        if let Some(res) = extract_from_obj(&val) {
+            return Ok(res);
         }
     }
 
-    if let Some(end_idx) = last_close {
-        for start_idx in 0..end_idx {
-            if bytes[start_idx] == b'{' {
-                let candidate = &cleaned[start_idx..=end_idx];
-                if let Ok(val) = serde_json::from_str::<JsonValue>(candidate) {
-                    if val.is_object() {
-                        let objects = json_value_to_string_list(
-                            val.get("objects")
-                                .or_else(|| val.get("tags"))
-                                .or_else(|| val.get("labels"))
-                                .or_else(|| val.get("items")),
-                        );
-                        let scene = json_value_to_string(val.get("scene").or_else(|| val.get("setting")));
-                        let is_screenshot = val
-                            .get("is_screenshot")
-                            .and_then(|v| v.as_bool())
-                            .unwrap_or_else(|| scene.to_lowercase().contains("screenshot"));
-                        let people_present = json_value_to_string_list(
-                            val.get("people_present")
-                                .or_else(|| val.get("people"))
-                                .or_else(|| val.get("persons")),
-                        );
-                        let face_boxes = parse_face_boxes(
-                            val.get("face_boxes")
-                                .or_else(|| val.get("faces"))
-                                .or_else(|| val.get("face_locations")),
-                        );
-                        let ocr_text = json_value_to_string(
-                            val.get("ocr_text")
-                                .or_else(|| val.get("text"))
-                                .or_else(|| val.get("visible_text")),
-                        );
-                        let caption = json_value_to_string(
-                            val.get("caption")
-                                .or_else(|| val.get("description"))
-                                .or_else(|| val.get("summary")),
-                        );
-
-                        if !caption.is_empty() || !objects.is_empty() || !ocr_text.is_empty() {
-                            return Ok(AiVisionResponse {
-                                objects,
-                                scene,
-                                is_screenshot,
-                                people_present,
-                                face_boxes,
-                                ocr_text,
-                                caption,
-                            });
-                        }
-                    }
+    if let (Some(start_idx), Some(end_idx)) = (cleaned.find('{'), cleaned.rfind('}')) {
+        if start_idx < end_idx {
+            if let Ok(val) = serde_json::from_str::<JsonValue>(&cleaned[start_idx..=end_idx]) {
+                if let Some(res) = extract_from_obj(&val) {
+                    return Ok(res);
                 }
             }
         }
@@ -4437,10 +4900,29 @@ async fn ai_analyze_photo(
     };
 
     let prompt = format!(
-        "Analyze this image and return JSON with keys: caption (1 sentence), objects (array of short lowercase nouns, e.g. card, dog, mug, sofa), scene (1 word: indoor, outdoor, screenshot, document, nature, street), is_screenshot (boolean), ocr_text (exact visible text in image, or empty string). {vocab_hint}"
+        "Analyze this image. Keep ocr_text under 300 characters. {vocab_hint}"
     );
 
-    let prefill = "{\"caption\": \"";
+    let schema = json!({
+        "type": "object",
+        "properties": {
+            "caption": { "type": "string", "description": "One concise sentence describing the photo" },
+            "objects": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "5 to 10 short lowercase object/subject tags"
+            },
+            "scene": {
+                "type": "string",
+                "enum": ["indoor", "outdoor", "screenshot", "document", "nature", "street", "beach", "kitchen", "studio", "night"]
+            },
+            "is_screenshot": { "type": "boolean" },
+            "ocr_text": { "type": "string", "description": "Main visible text in the image, max 300 chars, or empty string" }
+        },
+        "required": ["caption", "objects", "scene", "is_screenshot", "ocr_text"]
+    });
+
+    // Test 3 Winning Approach: Closed think prefill + schema + 8192 context window
     let payload = json!({
         "model": model_name.trim(),
         "messages": [
@@ -4451,13 +4933,15 @@ async fn ai_analyze_photo(
             },
             {
                 "role": "assistant",
-                "content": prefill
+                "content": "<think>\n\n</think>\n\n"
             }
         ],
+        "format": schema,
         "stream": false,
         "options": {
             "temperature": 0.1,
-            "num_predict": 220
+            "num_ctx": 8192,
+            "num_predict": 768
         },
         "keep_alive": "30m"
     });
@@ -4475,47 +4959,12 @@ async fn ai_analyze_photo(
     }
 
     let body: JsonValue = res.json().await.map_err(|e| e.to_string())?;
-
     let raw_content = body["message"]["content"]
         .as_str()
         .unwrap_or_default()
         .trim();
 
-    let mut full_json_str = if raw_content.starts_with('{') {
-        raw_content.to_string()
-    } else {
-        format!("{}{}", prefill, raw_content)
-    };
-
-    if raw_content.is_empty() {
-        let gen_payload = json!({
-            "model": model_name.trim(),
-            "prompt": prompt,
-            "images": [base64_img],
-            "format": "json",
-            "think": false,
-            "stream": false,
-            "options": {
-                "temperature": 0.1,
-                "num_predict": 450
-            },
-            "keep_alive": "30m"
-        });
-        if let Ok(gen_res) = HTTP_CLIENT
-            .post("http://127.0.0.1:11434/api/generate")
-            .json(&gen_payload)
-            .send()
-            .await
-        {
-            if let Ok(gen_body) = gen_res.json::<JsonValue>().await {
-                if let Some(resp_str) = gen_body["response"].as_str() {
-                    full_json_str = resp_str.trim().to_string();
-                }
-            }
-        }
-    }
-
-    let ai_result = parse_resilient_ai_json(&full_json_str)?;
+    let ai_result = parse_resilient_ai_json(raw_content)?;
 
     let mut conn = open_global_db(&app)?;
 
@@ -4595,7 +5044,6 @@ async fn ai_analyze_photo(
         let _ = tx.commit();
     }
 
-    // Delegate face detection to pure-Rust ONNX UltraFace if no faces are recorded yet (using fast 360px thumb if available)
     if get_faces_for_hash(&conn, &hash).is_empty() {
         let thumb_candidate = get_app_storage_dir(&app)
             .join("thumbnails")
@@ -4785,6 +5233,7 @@ pub fn run() {
             set_photo_flag,
             set_photo_color_label,
             set_photo_rotation,
+            set_photos_rotation_exact,
             rescan_exif_batch,
             get_timeline_distribution,
             search_cities_offline,
@@ -4802,6 +5251,8 @@ pub fn run() {
             get_people,
             add_person_to_photo,
             remove_person_from_photo,
+            find_similar_faces,
+            assign_faces_to_person_batch,
             ensure_neural_face_models,
             detect_faces_in_photo,
             scan_library_faces_batch,

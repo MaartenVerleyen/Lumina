@@ -15,6 +15,7 @@ import {
   Star,
   Tag as TagIcon,
   Trash2,
+  User,
   X,
   XCircle,
 } from "lucide-react";
@@ -50,6 +51,7 @@ interface BulkActionDockProps {
   handleToggleBasketSelection: () => Promise<void>;
   handleForceRescanExifSelected: () => Promise<void>;
   runBatchAiOnList: (targets: PhotoItem[]) => Promise<void>;
+  handleBatchAssignPerson?: (personName: string) => Promise<void>;
 }
 
 export default function BulkActionDock({
@@ -81,6 +83,7 @@ export default function BulkActionDock({
   handleToggleBasketSelection,
   handleForceRescanExifSelected,
   runBatchAiOnList,
+  handleBatchAssignPerson,
 }: BulkActionDockProps) {
   if (selectedHashes.size <= 1) return null;
 
@@ -92,6 +95,7 @@ export default function BulkActionDock({
           <div className="flex justify-between items-center text-zinc-300 font-semibold">
             <span>
               {activeBulkPopover === "tag" && "Add Tag to Selection"}
+              {activeBulkPopover === "person" && "Assign Person to Selection"}
               {activeBulkPopover === "move" && "Stage Move Selection"}
               {activeBulkPopover === "location" && "Set Manual Location (City/GPS)"}
               {activeBulkPopover === "time" && "Shift Capture Timestamps (± Hours / Min)"}
@@ -115,9 +119,10 @@ export default function BulkActionDock({
               <input
                 type="text"
                 value={bulkInput}
+                onKeyDown={(e) => e.stopPropagation()}
                 onChange={(e) => setBulkInput(e.target.value)}
                 placeholder="e.g. vacation, portrait..."
-                className="flex-1 bg-zinc-950 border border-zinc-800 rounded px-2.5 py-1 text-xs text-zinc-200 focus:outline-none focus:border-indigo-500"
+                className="flex-1 bg-zinc-950 border border-zinc-800 rounded px-2.5 py-1 text-xs text-zinc-200 select-text focus:outline-none focus:border-indigo-500"
                 autoFocus
               />
               <button
@@ -125,6 +130,32 @@ export default function BulkActionDock({
                 className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded font-medium"
               >
                 Add
+              </button>
+            </form>
+          )}
+
+          {activeBulkPopover === "person" && handleBatchAssignPerson && (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleBatchAssignPerson(bulkInput);
+              }}
+              className="flex gap-1.5"
+            >
+              <input
+                type="text"
+                value={bulkInput}
+                onKeyDown={(e) => e.stopPropagation()}
+                onChange={(e) => setBulkInput(e.target.value)}
+                placeholder="Person name..."
+                className="flex-1 bg-zinc-950 border border-zinc-800 rounded px-2.5 py-1 text-xs text-zinc-200 select-text focus:outline-none focus:border-indigo-500"
+                autoFocus
+              />
+              <button
+                type="submit"
+                className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded font-medium"
+              >
+                Assign
               </button>
             </form>
           )}
@@ -141,6 +172,7 @@ export default function BulkActionDock({
                 type="text"
                 value={bulkInput}
                 onChange={(e) => setBulkInput(e.target.value)}
+                onKeyDown={(e) => e.stopPropagation()}
                 placeholder="e.g. 2026/Holiday"
                 className="flex-1 bg-zinc-950 border border-zinc-800 rounded px-2.5 py-1 text-xs text-zinc-200 focus:outline-none focus:border-emerald-500"
                 autoFocus
@@ -160,6 +192,7 @@ export default function BulkActionDock({
                 type="text"
                 value={bulkInput}
                 onChange={(e) => handleSearchCities(e.target.value)}
+                onKeyDown={(e) => e.stopPropagation()}
                 placeholder="Search city (e.g. Meise, Paris, Brussels)..."
                 className="bg-zinc-950 border border-zinc-800 rounded px-2.5 py-1 text-xs text-zinc-200 focus:outline-none focus:border-emerald-500"
                 autoFocus
@@ -343,6 +376,20 @@ export default function BulkActionDock({
           <TagIcon className="w-3.5 h-3.5 text-indigo-400" />
           <span>Tag</span>
         </button>
+
+        {handleBatchAssignPerson && (
+          <button
+            onClick={() => {
+              setActiveBulkPopover(activeBulkPopover === "person" ? null : "person");
+              setBulkInput("");
+            }}
+            className="flex items-center gap-1 text-zinc-300 hover:text-white"
+            title="Assign Person to selected photos"
+          >
+            <User className="w-3.5 h-3.5 text-indigo-400" />
+            <span>Person</span>
+          </button>
+        )}
 
         <button
           onClick={() => {

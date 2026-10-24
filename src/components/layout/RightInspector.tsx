@@ -1,6 +1,11 @@
-import { useEffect, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
-import { CitySearchResult, FaceInstance, PhotoItem } from "../../types/lumina";
+import {
+  CitySearchResult,
+  FaceInstance,
+  PhotoItem,
+  SimilarFaceCandidate,
+} from "../../types/lumina";
 import {
   Aperture,
   Calendar,
@@ -176,6 +181,7 @@ interface RightInspectorProps {
   handleAssignCity: (c: CitySearchResult) => Promise<void>;
   handleAssignCustomLocationText: (customLoc: string) => Promise<void>;
   handleBatchAddTag: (tag: string) => Promise<void>;
+  refreshPeople?: () => Promise<void>;
 }
 
 export default function RightInspector({
@@ -219,8 +225,10 @@ export default function RightInspector({
   handleAssignCity,
   handleAssignCustomLocationText,
   handleBatchAddTag,
+  refreshPeople,
 }: RightInspectorProps) {
   const previewImgWrapRef = useRef<HTMLDivElement>(null);
+  const faceInputRef = useRef<HTMLInputElement>(null);
 
   function handlePreviewMouseDown(e: React.MouseEvent<HTMLDivElement>) {
     if (!isDrawingFace || !previewImgWrapRef.current) return;
@@ -248,6 +256,74 @@ export default function RightInspector({
     if (!isDrawingFace || !drawStart) return;
     setDrawStart(null);
     setIsDrawingFace(false);
+    setTimeout(() => faceInputRef.current?.focus(), 10);
+  }
+
+  const [similarCandidates, setSimilarCandidates] = useState<SimilarFaceCandidate[]>([]);
+  const [selectedCandidateIds, setSelectedCandidateIds] = useState<Set<string>>(new Set());
+  const [matchingPersonName, setMatchingPersonName] = useState<string>("");
+  const [isSearchingSimilar, setIsSearchingSimilar] = useState<boolean>(false);
+
+  // Reset similar-faces drawer when switching photos
+  useEffect(() => {
+    setSimilarCandidates([]);
+    setSelectedCandidateIds(new Set());
+    setMatchingPersonName("");
+  }, [activePhoto.hash]);
+
+  async function handleFindSimilarFaces(personName: string) {
+    const clean = personName.trim();
+    if (!clean) return;
+    setIsSearchingSimilar(true);
+    setMatchingPersonName(clean);
+    try {
+      const res = await invoke<SimilarFaceCandidate[]>("find_similar_faces", {
+        personName: clean,
+        minSimilarity: 0.45,
+      });
+      setSimilarCandidates(res);
+      setSelectedCandidateIds(
+        new Set(res.filter((c) => c.similarity >= 58).map((c) => c.face_id))
+      );
+    } catch {
+      setSimilarCandidates([]);
+    } finally {
+      setIsSearchingSimilar(false);
+    }
+  }
+
+  async function handleGroupSelectedCandidates() {
+    if (!matchingPersonName || selectedCandidateIds.size === 0) return;
+    const faceIds = Array.from(selectedCandidateIds);
+    const idSet = new Set(faceIds);
+    const updatedHashes = await invoke<string[]>("assign_faces_to_person_batch", {
+      faceIds,
+      personName: matchingPersonName,
+    });
+    const hashSet = new Set(updatedHashes);
+    setPhotos((prev) =>
+      prev.map((p) => {
+        if (!hashSet.has(p.hash)) return p;
+        const nextFaces = p.faces.map((f) =>
+          idSet.has(f.face_id) ? { ...f, person_name: matchingPersonName } : f
+        );
+        const nextPeople = p.people.includes(matchingPersonName)
+          ? p.people
+          : [...p.people, matchingPersonName].sort();
+        return {
+          ...p,
+          faces: nextFaces,
+          people: nextPeople,
+        };
+      })
+    );
+    setSimilarCandidates((prev) =>
+      prev.filter((c) => !selectedCandidateIds.has(c.face_id))
+    );
+    setSelectedCandidateIds(new Set());
+    if (refreshPeople) {
+      await refreshPeople();
+    }
   }
 
   const previewSource = activePhoto.thumb_ready
@@ -267,7 +343,8 @@ export default function RightInspector({
             onMouseDown={handlePreviewMouseDown}
             onMouseMove={handlePreviewMouseMove}
             onMouseUp={handlePreviewMouseUp}
-            className={`relative inline-block max-w-full ${
+            style={{ transform: `rotate(${activePhoto.rotation}deg)` }}
+            className={`relative inline-block max-w-full transition-transform duration-150 ${
               isDrawingFace ? "cursor-crosshair ring-2 ring-indigo-500 rounded" : ""
             }`}
           >
@@ -275,8 +352,7 @@ export default function RightInspector({
               src={convertFileSrc(previewSource)}
               alt={activePhoto.name}
               draggable={false}
-              style={{ transform: `rotate(${activePhoto.rotation}deg)` }}
-              className="block max-w-full w-auto h-auto max-h-[44vh] object-contain rounded select-none pointer-events-none transition-transform duration-150"
+              className="block max-w-full w-auto h-auto max-h-[44vh] object-contain rounded select-none pointer-events-none"
             />
 
             {/* Face Boxes */}
@@ -290,6 +366,7 @@ export default function RightInspector({
                     setSelectedFaceId(face.face_id);
                     setDrawnBox(null);
                     setFaceNameInput(face.person_name || "");
+                    setTimeout(() => faceInputRef.current?.focus(), 10);
                   }}
                   style={{
                     left: `${face.bbox_x * 100}%`,
@@ -454,6 +531,7 @@ export default function RightInspector({
                       setSelectedFaceId(isSel ? null : f.face_id);
                       setDrawnBox(null);
                       setFaceNameInput(f.person_name || "");
+                      setTimeout(() => faceInputRef.current?.focus(), 10);
                     }}
                     className={`relative flex items-center gap-1.5 p-1 pr-2 rounded-full border cursor-pointer transition shrink-0 ${
                       isSel
@@ -474,15 +552,36 @@ export default function RightInspector({
                     <button
                       onClick={async (e) => {
                         e.stopPropagation();
+                        const removedPerson = f.person_name;
                         const rem = await invoke<FaceInstance[]>("remove_face_box", {
                           faceId: f.face_id,
                           hash: activePhoto.hash,
                         });
-                        setPhotos((prev) =>
-                          prev.map((p) =>
-                            p.hash === activePhoto.hash ? { ...p, faces: rem } : p
-                          )
+                        const remainingNames = new Set(
+                          rem
+                            .map((x) => x.person_name?.trim().toLowerCase())
+                            .filter(Boolean)
                         );
+                        setPhotos((prev) =>
+                          prev.map((p) => {
+                            if (p.hash !== activePhoto.hash) return p;
+                            const nextPeople = removedPerson
+                              ? p.people.filter(
+                                  (pe) =>
+                                    pe.toLowerCase() !== removedPerson.toLowerCase() ||
+                                    remainingNames.has(pe.toLowerCase())
+                                )
+                              : p.people;
+                            return { ...p, faces: rem, people: nextPeople };
+                          })
+                        );
+                        if (selectedFaceId === f.face_id) {
+                          setSelectedFaceId(rem[0]?.face_id ?? null);
+                          setFaceNameInput(rem[0]?.person_name || "");
+                        }
+                        if (refreshPeople) {
+                          await refreshPeople();
+                        }
                       }}
                       className="text-zinc-500 hover:text-red-400 ml-0.5 text-xs"
                     >
@@ -496,15 +595,21 @@ export default function RightInspector({
 
           <form onSubmit={handleSaveFaceAndAutomatch} className="flex gap-1.5">
             <input
+              ref={faceInputRef}
               type="text"
               value={faceNameInput}
+              onClick={(e) => {
+                e.stopPropagation();
+                faceInputRef.current?.focus();
+              }}
+              onKeyDown={(e) => e.stopPropagation()}
               onChange={(e) => setFaceNameInput(e.target.value)}
               placeholder={
                 selectedFaceId || drawnBox
                   ? "Enter name to auto-match..."
                   : "Click face or 'Draw Face Box'..."
               }
-              className="flex-1 bg-zinc-950 border border-zinc-800 rounded-lg px-2.5 py-1 text-xs text-zinc-200 focus:outline-none focus:border-indigo-500"
+              className="flex-1 bg-zinc-950 border border-zinc-800 rounded-lg px-2.5 py-1 text-xs text-zinc-200 select-text cursor-text focus:outline-none focus:border-indigo-500"
             />
             <button
               type="submit"
@@ -513,6 +618,100 @@ export default function RightInspector({
               Save & Match
             </button>
           </form>
+
+          {/* Button to check other photos for faces matching the active/typed name */}
+          {(faceNameInput.trim() || activePhoto.people.length > 0) && (
+            <div className="flex items-center justify-between pt-1">
+              <button
+                type="button"
+                onClick={() =>
+                  handleFindSimilarFaces(faceNameInput.trim() || activePhoto.people[0])
+                }
+                disabled={isSearchingSimilar}
+                className="text-[11px] text-indigo-300 hover:text-indigo-200 font-medium flex items-center gap-1"
+              >
+                <ScanFace className="w-3 h-3 text-indigo-400" />
+                <span>
+                  {isSearchingSimilar
+                    ? "Searching library faces..."
+                    : `Find other faces matching "${faceNameInput.trim() || activePhoto.people[0]}"`}
+                </span>
+              </button>
+              {matchingPersonName && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSimilarCandidates([]);
+                    setMatchingPersonName("");
+                  }}
+                  className="text-[10px] text-zinc-500 hover:text-zinc-300"
+                >
+                  Close
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Similar Faces Review & Batch Grouping Grid */}
+          {matchingPersonName && (
+            <div className="mt-1 p-2 bg-zinc-950 border border-indigo-500/30 rounded-lg flex flex-col gap-2">
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="text-zinc-300 font-semibold">
+                  Matches for "{matchingPersonName}" ({similarCandidates.length})
+                </span>
+                {similarCandidates.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleGroupSelectedCandidates}
+                    disabled={selectedCandidateIds.size === 0}
+                    className="px-2 py-0.5 bg-emerald-600 hover:bg-emerald-500 disabled:bg-zinc-800 text-white rounded text-[10px] font-semibold"
+                  >
+                    Group Selected ({selectedCandidateIds.size})
+                  </button>
+                )}
+              </div>
+
+              {similarCandidates.length === 0 ? (
+                <span className="text-[11px] text-zinc-500 italic py-1">
+                  No additional unassigned face matches found. (Run "Scan Faces" in the top bar to index more photos!)
+                </span>
+              ) : (
+                <div className="grid grid-cols-4 gap-1.5 max-h-44 overflow-y-auto pr-1">
+                  {similarCandidates.map((cand) => {
+                    const checked = selectedCandidateIds.has(cand.face_id);
+                    return (
+                      <div
+                        key={cand.face_id}
+                        onClick={() => {
+                          setSelectedCandidateIds((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(cand.face_id)) next.delete(cand.face_id);
+                            else next.add(cand.face_id);
+                            return next;
+                          });
+                        }}
+                        className={`relative rounded-lg overflow-hidden border-2 cursor-pointer transition ${
+                          checked
+                            ? "border-emerald-500 ring-1 ring-emerald-500"
+                            : "border-zinc-800 opacity-65 hover:opacity-100"
+                        }`}
+                        title={`${cand.photo_name} (${cand.similarity}% match)`}
+                      >
+                        <img
+                          src={convertFileSrc(cand.face_thumb)}
+                          alt={cand.photo_name}
+                          className="w-full h-14 object-cover"
+                        />
+                        <span className="absolute bottom-0 inset-x-0 bg-black/80 text-[9px] font-mono text-center text-emerald-300 py-0.2">
+                          {cand.similarity}%
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
@@ -778,12 +977,13 @@ export default function RightInspector({
               <input
                 type="text"
                 value={inspectorLocationQuery}
+                onKeyDown={(e) => e.stopPropagation()}
                 onChange={(e) => {
                   setInspectorLocationQuery(e.target.value);
                   handleSearchCities(e.target.value);
                 }}
                 placeholder="City or place (e.g. Meise, Paris)..."
-                className="flex-1 bg-zinc-950 border border-zinc-800 rounded-lg px-2.5 py-1 text-xs text-zinc-200 focus:outline-none focus:border-emerald-500"
+                className="flex-1 bg-zinc-950 border border-zinc-800 rounded-lg px-2.5 py-1 text-xs text-zinc-200 select-text focus:outline-none focus:border-emerald-500"
                 autoFocus
               />
               <button
@@ -880,9 +1080,10 @@ export default function RightInspector({
             <input
               type="text"
               value={tagInput}
+              onKeyDown={(e) => e.stopPropagation()}
               onChange={(e) => setTagInput(e.target.value)}
               placeholder="Add tag..."
-              className="flex-1 bg-zinc-950 border border-zinc-800 rounded-lg px-2.5 py-1 text-xs text-zinc-200 focus:outline-none focus:border-indigo-500"
+              className="flex-1 bg-zinc-950 border border-zinc-800 rounded-lg px-2.5 py-1 text-xs text-zinc-200 select-text focus:outline-none focus:border-indigo-500"
             />
             <button
               type="submit"

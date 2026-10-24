@@ -106,6 +106,10 @@ async function applySnapshotsToBackend(
   if (stageOps.length > 0) {
     await invoke("stage_photos_move", { ops: stageOps });
   }
+  const rotOps = snapshots.map((s) => ({ hash: s.hash, rotation: s.rotation }));
+  if (rotOps.length > 0) {
+    await invoke("set_photos_rotation_exact", { ops: rotOps });
+  }
 
   const snapMap = new Map(snapshots.map((s: PhotoActionSnapshot) => [s.hash, s]));
   setPhotos((prev) =>
@@ -567,7 +571,7 @@ export function useLibraryState() {
             width: hit.width || p.width,
             height: hit.height || p.height,
             tags: mergedTags,
-            thumb_ready: true,
+            thumb_ready: hit.thumb_ok,
             duplicate_group: nextDup,
           };
         })
@@ -815,37 +819,37 @@ export function useLibraryState() {
   }, [selectedHashes, visiblePhotos, activePhoto, photos, activeHash]);
 
   useEffect(() => {
-    setSelectedFaceId(null);
+    const firstFace = activePhoto?.faces?.[0];
+    setSelectedFaceId(firstFace ? firstFace.face_id : null);
     setDrawnBox(null);
     setIsDrawingFace(false);
-    setFaceNameInput("");
+    setFaceNameInput(firstFace?.person_name || "");
     setIsEditingInspectorLocation(false);
   }, [activeHash]);
 
   // On-Demand 1920px High-Res Preview Generation for RAW & HEIC when viewing in Loupe or Compare
   useEffect(() => {
-    if (!activePhoto) return;
-    const isRawOrHeic = /\.(cr2|cr3|nef|arw|dng|orf|rw2|heic|heif|pef|raf)$/i.test(
-      activePhoto.name
-    );
-    if (!isRawOrHeic || activePhoto.path.endsWith("_preview.jpg")) return;
     if (!isLoupeOpen && viewMode !== "compare") return;
-
-    const rawDiskPath = activePhoto.pair_raw_path || activePhoto.path;
-    const targetHash = activePhoto.hash;
-    invoke<string>("ensure_high_res_preview", {
-      hash: targetHash,
-      sourcePath: rawDiskPath,
-    })
-      .then((previewPath) => {
-        if (previewPath) {
-          setPhotos((prev) =>
-            prev.map((p) => (p.hash === targetHash ? { ...p, path: previewPath } : p))
-          );
-        }
+    const candidates = viewMode === "compare" ? comparePhotos : activePhoto ? [activePhoto] : [];
+    for (const item of candidates) {
+      const isRawOrHeic = /\.(cr2|cr3|nef|arw|dng|orf|rw2|heic|heif|pef|raf)$/i.test(item.name);
+      if (!isRawOrHeic || item.path.endsWith("_preview.jpg")) continue;
+      const rawDiskPath = item.pair_raw_path || item.path;
+      const targetHash = item.hash;
+      invoke<string>("ensure_high_res_preview", {
+        hash: targetHash,
+        sourcePath: rawDiskPath,
       })
-      .catch(() => {});
-  }, [activePhoto?.hash, activePhoto?.path, isLoupeOpen, viewMode]);
+        .then((previewPath) => {
+          if (previewPath) {
+            setPhotos((prev) =>
+              prev.map((p) => (p.hash === targetHash ? { ...p, path: previewPath } : p))
+            );
+          }
+        })
+        .catch(() => {});
+    }
+  }, [activePhoto?.hash, activePhoto?.path, comparePhotos, isLoupeOpen, viewMode]);
 
   function handlePhotoClick(index: number, hash: string, e: React.MouseEvent) {
     setActiveHash(hash);
@@ -1086,12 +1090,16 @@ export function useLibraryState() {
       setIsDetectingSingleFace(true);
       const detected = await invoke<FaceInstance[]>("detect_faces_in_photo", {
         hash: activePhoto.hash,
-        imagePath: activePhoto.path,
+        imagePath: activePhoto.pair_raw_path || activePhoto.path,
         forceOnnx: true,
       });
       setPhotos((prev) =>
         prev.map((p) => (p.hash === activePhoto.hash ? { ...p, faces: detected } : p))
       );
+      if (detected.length > 0) {
+        setSelectedFaceId(detected[0].face_id);
+        setFaceNameInput(detected[0].person_name || "");
+      }
       addLog("FACE", `Detected ${detected.length} face(s) in ${activePhoto.name}`);
       setAutoMatchNotice(
         detected.length > 0
@@ -1176,9 +1184,22 @@ export function useLibraryState() {
     if (selectedHashes.size === 0) return;
     try {
       const hashes = expandWithRawPairs(Array.from(selectedHashes), photos);
+      const hashSet = new Set(hashes);
+      const before = captureSnapshots(photos, hashSet);
       const res = await invoke<Record<string, number>>("set_photo_rotation", {
         hashes,
         deltaDegrees,
+      });
+      const after = before.map((s: PhotoActionSnapshot) => ({
+        ...s,
+        rotation: res[s.hash] !== undefined ? res[s.hash] : (s.rotation + deltaDegrees + 360) % 360,
+      }));
+      undo.pushUndoEntry({
+        description: `Rotate (${deltaDegrees > 0 ? "+" : ""}${deltaDegrees}°) on ${hashes.length} photo(s)`,
+        previousActiveHash: activeHash,
+        previousSelectedHashes: hashes,
+        before,
+        after,
       });
       setPhotos((prev) =>
         prev.map((p) => (res[p.hash] !== undefined ? { ...p, rotation: res[p.hash] } : p))
@@ -1355,11 +1376,14 @@ export function useLibraryState() {
     const cleanName = faceNameInput.trim();
 
     let targetBbox: { x: number; y: number; w: number; h: number } | null = null;
+    let previousFacePerson: string | null = null;
+
     if (drawnBox) {
       targetBbox = drawnBox;
     } else if (selectedFaceId) {
       const found = activePhoto.faces.find((f) => f.face_id === selectedFaceId);
       if (found) {
+        previousFacePerson = found.person_name || null;
         targetBbox = {
           x: found.bbox_x,
           y: found.bbox_y,
@@ -1367,11 +1391,17 @@ export function useLibraryState() {
           h: found.bbox_h,
         };
       }
-    }
-
-    if (!targetBbox) {
-      setError("Please click an AI face box or draw a box over the person's face first!");
-      return;
+    } else if (activePhoto.faces.length > 0) {
+      const found = activePhoto.faces[0];
+      previousFacePerson = found.person_name || null;
+      targetBbox = {
+        x: found.bbox_x,
+        y: found.bbox_y,
+        w: found.bbox_w,
+        h: found.bbox_h,
+      };
+    } else {
+      targetBbox = { x: 0.3, y: 0.3, w: 0.4, h: 0.4 };
     }
 
     try {
@@ -1379,7 +1409,7 @@ export function useLibraryState() {
       setAutoMatchNotice(`Saving "${cleanName}" & matching against verified faces...`);
       const updatedFaces = await invoke<FaceInstance[]>("assign_face_region_and_automatch", {
         hash: activePhoto.hash,
-        imagePath: activePhoto.path,
+        imagePath: activePhoto.pair_raw_path || activePhoto.path,
         bboxX: targetBbox.x,
         bboxY: targetBbox.y,
         bboxW: targetBbox.w,
@@ -1387,23 +1417,59 @@ export function useLibraryState() {
         personName: cleanName,
       });
 
-      setPhotos((prev) =>
-        prev.map((p) =>
-          p.hash === activePhoto.hash
-            ? {
-                ...p,
-                faces: updatedFaces,
-                people: p.people.includes(cleanName)
-                  ? p.people
-                  : [...p.people, cleanName].sort(),
-              }
-            : p
+      const activeFaceNames = Array.from(
+        new Set(
+          updatedFaces
+            .map((f) => f.person_name?.trim())
+            .filter((n): n is string => Boolean(n))
         )
+      );
+
+      setPhotos((prev) =>
+        prev.map((p) => {
+          if (p.hash !== activePhoto.hash) return p;
+          const remainingManual = p.people.filter(
+            (pe) => !previousFacePerson || pe.toLowerCase() !== previousFacePerson.toLowerCase()
+          );
+          const mergedPeople = Array.from(
+            new Set([...remainingManual, ...activeFaceNames, cleanName])
+          ).sort();
+          return {
+            ...p,
+            faces: updatedFaces,
+            people: mergedPeople,
+          };
+        })
       );
       addLog("FACE", `Assigned face "${cleanName}" on ${activePhoto.name}`);
       setFaceNameInput("");
       setDrawnBox(null);
       setSelectedFaceId(null);
+      refreshPeople();
+    } catch (err) {
+      setError(String(err));
+    }
+  }
+
+  async function handleBatchAssignPerson(personName: string) {
+    const clean = personName.trim();
+    if (!clean || selectedHashes.size === 0) return;
+    try {
+      const hashes = expandWithRawPairs(Array.from(selectedHashes), photos);
+      const hashSet = new Set(hashes);
+      for (const h of hashes) {
+        await invoke<string[]>("add_person_to_photo", { hash: h, name: clean });
+      }
+      setPhotos((prev) =>
+        prev.map((p) =>
+          hashSet.has(p.hash) && !p.people.includes(clean)
+            ? { ...p, people: [...p.people, clean].sort() }
+            : p
+        )
+      );
+      addLog("FACE", `Assigned person "${clean}" to ${hashes.length} selected photo(s)`);
+      setBulkInput("");
+      setActiveBulkPopover(null);
       refreshPeople();
     } catch (err) {
       setError(String(err));
@@ -1956,6 +2022,8 @@ export function useLibraryState() {
     handleAssignCity,
     handleAssignCustomLocationText,
     handleSaveFaceAndAutomatch,
+    handleBatchAssignPerson,
+    refreshPeople,
     handleDismissAllStaged,
     handleAutoOrganizeByPreset,
     handleCommitAllStaged,

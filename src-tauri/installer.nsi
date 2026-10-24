@@ -86,11 +86,6 @@ InstallDirRegKey HKLM "Software\${MANUFACTURER}\${PRODUCTNAME}" "InstallDir"
 
 !insertmacro MUI_LANGUAGE "English"
 
-; Apply Obsidian dark theme to inner controls on GUI init
-Function .onGUIInit
-  SetCtlColors $HWNDPARENT 0xF1F5F9 0x090A0F
-FunctionEnd
-
 Section "Install" SEC01
   !if "${INSTALLMODE}" == "perMachine"
     SetShellVarContext all

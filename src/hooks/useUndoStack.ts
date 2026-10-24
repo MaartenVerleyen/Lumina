@@ -74,6 +74,10 @@ async function applySnapshotsToBackend(
   if (stageOps.length > 0) {
     await invoke("stage_photos_move", { ops: stageOps });
   }
+  const rotOps = snapshots.map((s) => ({ hash: s.hash, rotation: s.rotation }));
+  if (rotOps.length > 0) {
+    await invoke("set_photos_rotation_exact", { ops: rotOps });
+  }
 
   const snapMap = new Map(snapshots.map((s) => [s.hash, s]));
   setPhotos((prev) =>

@@ -88,6 +88,7 @@ export interface ThumbBatchItem {
   width: number;
   height: number;
   auto_tags: string[];
+  thumb_ok: boolean;
 }
 
 export interface ThumbBatchProgress {
@@ -242,4 +243,13 @@ export interface SessionLogEntry {
   category: "LIBRARY" | "TRIAGE" | "FACE" | "AI" | "DISK";
   message: string;
   details?: string;
+}
+
+export interface SimilarFaceCandidate {
+  face_id: string;
+  hash: string;
+  face_thumb: string;
+  photo_name: string;
+  current_person?: string | null;
+  similarity: number;
 }
