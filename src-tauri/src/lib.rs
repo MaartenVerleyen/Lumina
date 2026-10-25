@@ -34,6 +34,8 @@ mod fastdecode;
 mod thumbs;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod face_eval;
 
 use db::*;
 use imaging::*;

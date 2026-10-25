@@ -155,8 +155,8 @@ fn run_face_scan(app_clone: &AppHandle, hashes: Vec<String>) -> FaceScanOutcome 
 
         // Pre-warm the ONNX model plans once before entering the parallel Rayon pool
         let model_load_started = Instant::now();
-        let _ = get_or_load_ultraface(&app_clone);
-        let _ = get_or_load_mobilefacenet(&app_clone);
+        let detector = get_or_load_ultraface(app_clone);
+        let _ = get_or_load_mobilefacenet(app_clone);
         let model_load_ms = elapsed_ms(model_load_started);
 
         // Remember rejected unnamed faces before they are deleted, so their rejections can be re-attached
@@ -219,41 +219,10 @@ fn run_face_scan(app_clone: &AppHandle, hashes: Vec<String>) -> FaceScanOutcome 
                         };
 
                         let img = open_and_orient_image(Path::new(&load_path)).ok()?;
-                        let (img_w, img_h) = img.dimensions();
-                        if img_w < 32 || img_h < 32 {
-                            return Some((h.clone(), Vec::new()));
-                        }
+                        let faces = detect_and_embed_faces(detector.as_ref()?, &img);
 
-                        let boxes = detect_faces_with_onnx(&app_clone, &img);
-                        if boxes.is_empty() {
-                            return Some((h.clone(), Vec::new()));
-                        }
-
-                        let mut writes = Vec::with_capacity(boxes.len());
-                        for (bx, by, bw, bh, _conf) in boxes {
-                            let x = ((bx.clamp(0.0, 0.95)) * img_w as f64) as u32;
-                            let y = ((by.clamp(0.0, 0.95)) * img_h as f64) as u32;
-                            let w = ((bw.clamp(0.03, 1.0)) * img_w as f64)
-                                .min((img_w - x) as f64)
-                                .max(16.0) as u32;
-                            let ht = ((bh.clamp(0.03, 1.0)) * img_h as f64)
-                                .min((img_h - y) as f64)
-                                .max(16.0) as u32;
-
-                            let aspect = (w as f64) / (ht as f64).max(1.0);
-                            if !(0.55..=1.45).contains(&aspect) {
-                                continue;
-                            }
-
-                            let cropped = img.crop_imm(x, y, w, ht);
-                            if !has_bilateral_face_structure(&cropped) {
-                                continue;
-                            }
-
-                            let embedding = compute_face_embedding(&cropped);
-                            if embedding.len() != 512 {
-                                continue;
-                            }
+                        let mut writes = Vec::with_capacity(faces.len());
+                        for DetectedFace { bbox: (bx, by, bw, bh), crop: cropped, embedding, .. } in faces {
                             let emb_json =
                                 serde_json::to_string(&embedding).unwrap_or_else(|_| "[]".to_string());
 

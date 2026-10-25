@@ -206,12 +206,17 @@ pub fn upgrade_legacy_face_embeddings(app: &AppHandle) {
 }
 
 pub fn get_or_load_mobilefacenet(app: &AppHandle) -> Option<Arc<OnnxPlan>> {
+    get_or_load_mobilefacenet_from(&get_models_dir(app))
+}
+
+// Loader that only needs the models folder (also used by the face_eval benchmark, which has no AppHandle)
+pub fn get_or_load_mobilefacenet_from(models_dir: &Path) -> Option<Arc<OnnxPlan>> {
     let mut guard = MOBILEFACENET_PLAN.lock().ok()?;
     if let Some(ref plan) = *guard {
         return Some(plan.clone());
     }
 
-    let embedder_path = get_models_dir(app).join("w600k_mbf.onnx");
+    let embedder_path = models_dir.join("w600k_mbf.onnx");
     if !embedder_path.exists() || embedder_path.metadata().map(|m| m.len() < 500_000).unwrap_or(true) {
         return None;
     }
@@ -242,12 +247,16 @@ pub fn get_or_load_mobilefacenet(app: &AppHandle) -> Option<Arc<OnnxPlan>> {
 }
 
 pub fn get_or_load_ultraface(app: &AppHandle) -> Option<Arc<OnnxPlan>> {
+    get_or_load_ultraface_from(&get_models_dir(app))
+}
+
+pub fn get_or_load_ultraface_from(models_dir: &Path) -> Option<Arc<OnnxPlan>> {
     let mut guard = ULTRAFACE_PLAN.lock().ok()?;
     if let Some(ref plan) = *guard {
         return Some(plan.clone());
     }
 
-    let detector_path = get_models_dir(app).join("version-RFB-320.onnx");
+    let detector_path = models_dir.join("version-RFB-320.onnx");
     if !detector_path.exists() || detector_path.metadata().map(|m| m.len() < 100_000).unwrap_or(true) {
         return None;
     }
@@ -307,6 +316,10 @@ pub fn detect_faces_with_onnx(app: &AppHandle, img: &DynamicImage) -> Vec<(f64, 
     let Some(plan) = get_or_load_ultraface(app) else {
         return Vec::new();
     };
+    detect_faces_with_plan(&plan, img)
+}
+
+pub fn detect_faces_with_plan(plan: &OnnxPlan, img: &DynamicImage) -> Vec<(f64, f64, f64, f64, f64)> {
 
     let resized = img.resize_exact(320, 240, FilterType::Triangle).to_rgb8();
     let tensor = tract_ndarray::Array4::from_shape_fn((1, 3, 240, 320), |(_, c, y, x)| {
@@ -758,4 +771,47 @@ pub fn get_faces_for_hash(conn: &Connection, hash: &str) -> Vec<FaceInstance> {
     };
 
     rows.flatten().collect()
+}
+
+// ----------------- FACE PIPELINE (shared by Scan Faces and the face_eval benchmark) -----------------
+
+pub struct DetectedFace {
+    // Normalized (x, y, w, h) in the oriented image
+    pub bbox: (f64, f64, f64, f64),
+    // Detector confidence (reported by the face_eval benchmark)
+    #[allow(dead_code)]
+    pub score: f64,
+    pub crop: DynamicImage,
+    pub embedding: Vec<f32>,
+}
+
+// Detection -> crop -> sanity filters -> 512-D embedding. Faces that fail a filter or produce no embedding
+// are dropped. Requires the embedder to be loaded (get_or_load_mobilefacenet*).
+pub fn detect_and_embed_faces(detector: &OnnxPlan, img: &DynamicImage) -> Vec<DetectedFace> {
+    let (img_w, img_h) = img.dimensions();
+    if img_w < 32 || img_h < 32 {
+        return Vec::new();
+    }
+    let mut faces = Vec::new();
+    for (bx, by, bw, bh, score) in detect_faces_with_plan(detector, img) {
+        let x = ((bx.clamp(0.0, 0.95)) * img_w as f64) as u32;
+        let y = ((by.clamp(0.0, 0.95)) * img_h as f64) as u32;
+        let w = ((bw.clamp(0.03, 1.0)) * img_w as f64).min((img_w - x) as f64).max(16.0) as u32;
+        let ht = ((bh.clamp(0.03, 1.0)) * img_h as f64).min((img_h - y) as f64).max(16.0) as u32;
+
+        let aspect = (w as f64) / (ht as f64).max(1.0);
+        if !(0.55..=1.45).contains(&aspect) {
+            continue;
+        }
+        let cropped = img.crop_imm(x, y, w, ht);
+        if !has_bilateral_face_structure(&cropped) {
+            continue;
+        }
+        let embedding = compute_face_embedding(&cropped);
+        if embedding.len() != 512 {
+            continue;
+        }
+        faces.push(DetectedFace { bbox: (bx, by, bw, bh), score, crop: cropped, embedding });
+    }
+    faces
 }
