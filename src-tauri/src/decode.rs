@@ -306,7 +306,26 @@ pub fn decode_via_windows_wic(_file_path: &Path, _max_dim: u32) -> Option<(Dynam
     None
 }
 
-pub fn open_and_orient_image_for_thumb(file_path: &Path) -> Result<DynamicImage, String> {
+// `image` rejects damaged files (e.g. truncated progressive JPEGs from interrupted downloads) that Windows'
+// own decoder still renders from the data that is present. Returns (image, recovered_from_damaged_file).
+fn decode_standard_or_recover(file_path: &Path, wic_max_dim: u32) -> Result<(DynamicImage, bool), String> {
+    let decoded = image::ImageReader::open(file_path)
+        .map_err(|e| e.to_string())?
+        .with_guessed_format()
+        .map_err(|e| e.to_string())?
+        .decode();
+    match decoded {
+        Ok(img) => Ok((apply_exif_orientation(img, read_exif_orientation(file_path)), false)),
+        Err(e) => match decode_via_windows_wic(file_path, wic_max_dim) {
+            // The WIC helper already applies EXIF orientation and reports 1
+            Some((img, orient)) => Ok((apply_exif_orientation(img, orient), true)),
+            None => Err(e.to_string()),
+        },
+    }
+}
+
+// Returns (thumbnail-ready image, file was damaged and only partially recovered)
+pub fn open_and_orient_image_for_thumb(file_path: &Path) -> Result<(DynamicImage, bool), String> {
     let ext = file_path
         .extension()
         .map(|e| e.to_string_lossy().to_lowercase())
@@ -316,23 +335,19 @@ pub fn open_and_orient_image_for_thumb(file_path: &Path) -> Result<DynamicImage,
         if ext != "heic" && ext != "heif" {
             // Fast 4MB medium-preview extraction for RAW thumbnails!
             if let Some((raw_preview, orient)) = extract_embedded_raw_jpeg_sized(file_path, true) {
-                return Ok(apply_exif_orientation(raw_preview, orient));
+                return Ok((apply_exif_orientation(raw_preview, orient), false));
             }
         }
         // Fast 360px WIC thumbnail extraction for HEIC
         if let Some((wic_img, orient)) = decode_via_windows_wic(file_path, 360) {
-            return Ok(apply_exif_orientation(wic_img, orient));
+            return Ok((apply_exif_orientation(wic_img, orient), false));
         }
         if let Some((heic_preview, orient)) = extract_embedded_raw_jpeg_sized(file_path, true) {
-            return Ok(apply_exif_orientation(heic_preview, orient));
+            return Ok((apply_exif_orientation(heic_preview, orient), false));
         }
     }
 
-    let reader = image::ImageReader::open(file_path).map_err(|e| e.to_string())?;
-    let reader_guessed = reader.with_guessed_format().map_err(|e| e.to_string())?;
-    let img = reader_guessed.decode().map_err(|e| e.to_string())?;
-    let orientation = read_exif_orientation(file_path);
-    Ok(apply_exif_orientation(img, orientation))
+    decode_standard_or_recover(file_path, 360)
 }
 
 pub fn open_and_orient_image(file_path: &Path) -> Result<DynamicImage, String> {
@@ -355,11 +370,7 @@ pub fn open_and_orient_image(file_path: &Path) -> Result<DynamicImage, String> {
         }
     }
 
-    let reader = image::ImageReader::open(file_path).map_err(|e| e.to_string())?;
-    let reader_guessed = reader.with_guessed_format().map_err(|e| e.to_string())?;
-    let img = reader_guessed.decode().map_err(|e| e.to_string())?;
-    let orientation = read_exif_orientation(file_path);
-    Ok(apply_exif_orientation(img, orientation))
+    decode_standard_or_recover(file_path, 1920).map(|(img, _)| img)
 }
 
 

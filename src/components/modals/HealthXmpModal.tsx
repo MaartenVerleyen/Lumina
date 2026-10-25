@@ -1,5 +1,5 @@
 import { LibraryHealthStats } from "../../types/lumina";
-import { Camera, FileCode, HardDrive, Trash2, X } from "lucide-react";
+import { AlertTriangle, Camera, FileCode, HardDrive, Trash2, X } from "lucide-react";
 
 interface HealthXmpModalProps {
   isOpen: boolean;
@@ -74,6 +74,31 @@ export default function HealthXmpModal({
                 </div>
               </div>
             </div>
+
+            {healthStats.damaged_count > 0 && (
+              <div className="p-3.5 bg-orange-950/40 border border-orange-500/40 rounded-xl flex flex-col gap-1.5">
+                <span className="text-[10px] font-bold text-orange-300 uppercase tracking-wider flex items-center gap-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5" />
+                  {healthStats.damaged_count} damaged file(s)
+                </span>
+                <span className="text-zinc-400 text-[11px]">
+                  These files are incomplete or corrupt (often an interrupted download). Lumina shows
+                  what is present, but you may want to replace them from the original source.
+                </span>
+                <div className="flex flex-col gap-0.5 font-mono text-[10px] text-zinc-300 max-h-28 overflow-y-auto">
+                  {healthStats.damaged_files.map((f) => (
+                    <span key={f} className="truncate" title={f}>
+                      {f}
+                    </span>
+                  ))}
+                  {healthStats.damaged_count > healthStats.damaged_files.length && (
+                    <span className="text-zinc-500">
+                      …and {healthStats.damaged_count - healthStats.damaged_files.length} more
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
 
             {/* Camera Model Breakdown */}
             <div className="p-3.5 bg-zinc-900/60 border border-zinc-800 rounded-xl flex flex-col gap-2">

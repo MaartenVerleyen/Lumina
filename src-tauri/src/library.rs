@@ -212,7 +212,7 @@ pub fn clear_all_staged(app: AppHandle, root_folder: Option<String>) -> Result<u
     let prefix = make_folder_prefix(root_folder.as_deref());
     let count = conn
         .execute(
-            "UPDATE photos SET staged_target = NULL WHERE staged_target IS NOT NULL AND current_path LIKE ?1",
+            "UPDATE photos SET staged_target = NULL WHERE staged_target IS NOT NULL AND current_path LIKE ?1 ESCAPE '!'",
             params![prefix],
         )
         .map_err(|e| e.to_string())?;
@@ -224,7 +224,7 @@ pub fn get_staged_operations(app: AppHandle, root_folder: Option<String>) -> Res
     let conn = open_global_db(&app)?;
     let prefix = make_folder_prefix(root_folder.as_deref());
     let mut stmt = conn
-        .prepare("SELECT hash, current_path, staged_target FROM photos WHERE staged_target IS NOT NULL AND current_path LIKE ?1")
+        .prepare("SELECT hash, current_path, staged_target FROM photos WHERE staged_target IS NOT NULL AND current_path LIKE ?1 ESCAPE '!'")
         .map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map(params![prefix], |row| {

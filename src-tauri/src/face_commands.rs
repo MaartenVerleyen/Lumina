@@ -11,7 +11,7 @@ pub async fn detect_faces_in_photo(
 ) -> Result<Vec<FaceInstance>, String> {
     let run_neural = force_onnx.unwrap_or(false);
     if run_neural {
-        let _ = ensure_neural_face_models(app.clone()).await;
+        ensure_neural_face_models(app.clone()).await?;
     }
 
     tauri::async_runtime::spawn_blocking(move || {
@@ -23,6 +23,7 @@ pub async fn detect_faces_in_photo(
 
         if let Ok(img) = open_and_orient_image(Path::new(&image_path)) {
             let onnx_boxes = detect_faces_with_onnx(&app, &img);
+            let old_rejected = rejected_unnamed_faces(&conn, &hash);
             // Clear any old un-named boxes on this photo before inserting fresh ONNX boxes
             let _ = conn.execute(
                 "DELETE FROM photo_faces WHERE hash = ?1 AND (person_name IS NULL OR person_name = '')",
@@ -30,6 +31,13 @@ pub async fn detect_faces_in_photo(
             );
             for (bx, by, bw, bh, _score) in onnx_boxes {
                 let _ = save_cropped_face_and_record(&app, &conn, &hash, &img, (bx, by, bw, bh), None, "onnx");
+            }
+            if !old_rejected.is_empty() {
+                let new_faces: Vec<(String, (f64, f64, f64, f64))> = get_faces_for_hash(&conn, &hash)
+                    .into_iter()
+                    .map(|f| (f.face_id, (f.bbox_x, f.bbox_y, f.bbox_w, f.bbox_h)))
+                    .collect();
+                carry_over_rejections(&conn, &old_rejected, &new_faces);
             }
         }
 
@@ -54,10 +62,95 @@ pub async fn scan_library_faces_batch(
 
     let total_hashes = hashes.len();
     let app_clone = app.clone();
+    FACE_SCAN_CANCEL.store(false, Ordering::Release);
     std::thread::spawn(move || {
+        let outcome = run_face_scan(&app_clone, hashes);
+        // However the scan ended (finished, cancelled, DB error, empty list), the UI must get a final `done`
+        if !outcome.done_sent {
+            let _ = app_clone.emit(
+                "face-scan-progress",
+                FaceScanProgress {
+                    completed: outcome.completed,
+                    total: total_hashes,
+                    faces_found: outcome.faces_found,
+                    auto_matched: outcome.auto_matched,
+                    batch_faces: HashMap::new(),
+                    batch_people: HashMap::new(),
+                    done: true,
+                    cancelled: outcome.cancelled,
+                },
+            );
+        }
+    });
+
+    Ok(total_hashes)
+}
+
+pub static FACE_SCAN_CANCEL: AtomicBool = AtomicBool::new(false);
+
+#[tauri::command]
+pub fn cancel_face_scan() {
+    FACE_SCAN_CANCEL.store(true, Ordering::Release);
+}
+
+#[derive(Default)]
+struct FaceScanOutcome {
+    completed: usize,
+    faces_found: usize,
+    auto_matched: usize,
+    done_sent: bool,
+    cancelled: bool,
+}
+
+// Re-detection replaces unnamed faces with new face_ids; move each old (face, person) rejection onto the
+// new face covering the same spot, so a "this is not Anna" decision survives a rescan.
+pub fn carry_over_rejections(
+    conn: &Connection,
+    old_rejected: &[(String, (f64, f64, f64, f64))],
+    new_faces: &[(String, (f64, f64, f64, f64))],
+) {
+    for (old_id, old_box) in old_rejected {
+        let best = new_faces
+            .iter()
+            .map(|(id, b)| (id, bbox_iou(*old_box, *b)))
+            .filter(|(_, iou)| *iou >= 0.3)
+            .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+        match best {
+            Some((new_id, _)) if new_id != old_id => {
+                let _ = conn.execute(
+                    "INSERT OR IGNORE INTO face_rejections (face_id, person_name)
+                     SELECT ?1, person_name FROM face_rejections WHERE face_id = ?2",
+                    params![new_id, old_id],
+                );
+                let _ = conn.execute("DELETE FROM face_rejections WHERE face_id = ?1", params![old_id]);
+            }
+            Some(_) => {}
+            None => {
+                let _ = conn.execute("DELETE FROM face_rejections WHERE face_id = ?1", params![old_id]);
+            }
+        }
+    }
+}
+
+// Unnamed faces of `hash` that carry at least one rejection (the ones whose decisions must survive re-detection)
+pub fn rejected_unnamed_faces(conn: &Connection, hash: &str) -> Vec<(String, (f64, f64, f64, f64))> {
+    let Ok(mut stmt) = conn.prepare_cached(
+        "SELECT DISTINCT pf.face_id, pf.bbox_x, pf.bbox_y, pf.bbox_w, pf.bbox_h
+         FROM photo_faces pf JOIN face_rejections fr ON fr.face_id = pf.face_id
+         WHERE pf.hash = ?1 AND (pf.person_name IS NULL OR pf.person_name = '')",
+    ) else {
+        return Vec::new();
+    };
+    stmt.query_map(params![hash], |r| Ok((r.get(0)?, (r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))))
+        .map(|rows| rows.flatten().collect())
+        .unwrap_or_default()
+}
+
+fn run_face_scan(app_clone: &AppHandle, hashes: Vec<String>) -> FaceScanOutcome {
+    {
         let face_scan_started = Instant::now();
-        let Ok(mut conn) = open_global_db(&app_clone) else {
-            return;
+        let Ok(mut conn) = open_global_db(app_clone) else {
+            return FaceScanOutcome::default();
         };
 
         // Pre-warm the ONNX model plans once before entering the parallel Rayon pool
@@ -66,16 +159,15 @@ pub async fn scan_library_faces_batch(
         let _ = get_or_load_mobilefacenet(&app_clone);
         let model_load_ms = elapsed_ms(model_load_started);
 
-        // 1. Immediately remove all non-confirmed faces for these photos while keeping confirmed faces!
-        if let Ok(tx) = conn.transaction() {
-            for h in &hashes {
-                let _ = tx.execute(
-                    "DELETE FROM photo_faces WHERE hash = ?1 AND (person_name IS NULL OR person_name = '')",
-                    params![h],
-                );
-            }
-            let _ = tx.commit();
-        }
+        // Remember rejected unnamed faces before they are deleted, so their rejections can be re-attached
+        let old_rejected: HashMap<String, Vec<(String, (f64, f64, f64, f64))>> = hashes
+            .iter()
+            .map(|h| (h.clone(), rejected_unnamed_faces(&conn, h)))
+            .filter(|(_, v)| !v.is_empty())
+            .collect();
+
+        // Unnamed faces are replaced photo by photo as each chunk is processed (not all up front),
+        // so cancelling a scan leaves the photos it never reached exactly as they were.
         if let Ok(mut g) = FACE_EMBEDDING_CACHE.lock() {
             g.clear();
         }
@@ -114,8 +206,14 @@ pub async fn scan_library_faces_batch(
             .build()
             .unwrap();
 
+        let mut done_sent = false;
+        let mut cancelled = false;
         pool.install(|| {
             for chunk in hashes.chunks(24) {
+                if FACE_SCAN_CANCEL.load(Ordering::Acquire) {
+                    cancelled = true;
+                    break;
+                }
                 let chunk_results: Vec<(String, Vec<PendingFaceWrite>)> = chunk
                     .par_iter()
                     .filter_map(|h| {
@@ -212,6 +310,7 @@ pub async fn scan_library_faces_batch(
                                 params![h],
                             );
                             let mut claimed_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+                            let mut inserted: Vec<(String, (f64, f64, f64, f64))> = Vec::new();
                             for item in writes {
                                 faces_found += 1;
                                 let f = &item.face;
@@ -273,6 +372,10 @@ pub async fn scan_library_faces_batch(
                                         params![h, matched_name],
                                     );
                                 }
+                                inserted.push((target_face_id, (f.bbox_x, f.bbox_y, f.bbox_w, f.bbox_h)));
+                            }
+                            if let Some(old) = old_rejected.get(h) {
+                                carry_over_rejections(&tx, old, &inserted);
                             }
                         }
                         let _ = tx.commit();
@@ -303,28 +406,36 @@ pub async fn scan_library_faces_batch(
                         batch_faces,
                         batch_people,
                         done: completed_count >= total,
+                        cancelled: false,
                     },
                 );
+                done_sent = completed_count >= total;
             }
         });
 
         let total_ms = elapsed_ms(face_scan_started);
         emit_perf(
-            &app_clone,
-            "Face scan (UltraFace + MobileFaceNet)",
+            app_clone,
+            if cancelled { "Face scan (cancelled)" } else { "Face scan (UltraFace + MobileFaceNet)" },
             face_scan_started,
-            total,
+            completed_count,
             format!(
                 "{} photos/s on {} threads · {} faces found · model load {} ms",
-                per_second(total, total_ms),
+                per_second(completed_count, total_ms),
                 num_threads,
                 faces_found,
                 model_load_ms
             ),
         );
-    });
 
-    Ok(total_hashes)
+        FaceScanOutcome {
+            completed: completed_count,
+            faces_found,
+            auto_matched,
+            done_sent,
+            cancelled,
+        }
+    }
 }
 
 #[tauri::command]
@@ -405,7 +516,7 @@ pub async fn get_people(app: AppHandle, root_folder: Option<String>) -> Result<V
                  FROM people p
                  JOIN photo_people pp ON p.name = pp.person_name
                  JOIN photos ph_main ON pp.hash = ph_main.hash
-                 WHERE ph_main.current_path LIKE ?1
+                 WHERE ph_main.current_path LIKE ?1 ESCAPE '!'
                  GROUP BY p.name
                  HAVING cnt > 0
                  ORDER BY cnt DESC",
@@ -539,12 +650,14 @@ pub async fn find_similar_faces(
     force_refresh: Option<bool>,
 ) -> Result<Vec<SimilarFaceCandidate>, String> {
     let clean_name = person_name.trim().to_string();
-    let lower_key = clean_name.to_lowercase();
+    let cache_key = pending_cache_key(&clean_name, root_folder.as_deref());
+    // Only results at the standard threshold are cached, so a custom threshold never pollutes the badge counts
+    let uses_standard_threshold = min_similarity.is_none();
 
     // Fast path (<0.1ms): if get_pending_face_match_counts already precomputed the candidates for this person, return them immediately!
-    if !force_refresh.unwrap_or(false) {
+    if !force_refresh.unwrap_or(false) && uses_standard_threshold {
         if let Ok(guard) = PENDING_CANDIDATES_CACHE.lock() {
-            if let Some(cached) = guard.get(&lower_key) {
+            if let Some(cached) = guard.get(&cache_key) {
                 return Ok(cached.clone());
             }
         }
@@ -584,7 +697,7 @@ pub async fn find_similar_faces(
                  FROM photo_faces pf
                  JOIN photos p ON pf.hash = p.hash
                  WHERE (pf.person_name IS NULL OR pf.person_name = '')
-                   AND p.current_path LIKE ?2
+                   AND p.current_path LIKE ?2 ESCAPE '!'
                    AND NOT EXISTS (
                        SELECT 1 FROM face_rejections fr
                        WHERE fr.face_id = pf.face_id AND lower(fr.person_name) = lower(?1)
@@ -633,8 +746,7 @@ pub async fn find_similar_faces(
             let Some(cand_emb) = cache_guard.get(&face_id) else {
                 continue;
             };
-            let default_thresh = if cand_emb.len() == 512 { 0.60 } else { 0.78 };
-            let thresh = min_similarity.unwrap_or(default_thresh);
+            let thresh = min_similarity.unwrap_or(FACE_MATCH_MIN_SIMILARITY);
 
             let best_sim = score_against_person_profile(
                 cand_emb,
@@ -671,8 +783,10 @@ pub async fn find_similar_faces(
         });
         candidates.truncate(120);
 
-        if let Ok(mut pending_guard) = PENDING_CANDIDATES_CACHE.lock() {
-            pending_guard.insert(lower_key, candidates.clone());
+        if uses_standard_threshold {
+            if let Ok(mut pending_guard) = PENDING_CANDIDATES_CACHE.lock() {
+                pending_guard.insert(cache_key, candidates.clone());
+            }
         }
 
         Ok(candidates)
@@ -833,9 +947,12 @@ pub async fn reject_face_candidates_batch(
         }
         tx.commit().map_err(|e| e.to_string())?;
         if let Ok(mut g) = PENDING_CANDIDATES_CACHE.lock() {
-            if let Some(list) = g.get_mut(&clean.to_lowercase()) {
-                let id_set: std::collections::HashSet<&String> = face_ids.iter().collect();
-                list.retain(|c| !id_set.contains(&c.face_id));
+            let person_prefix = format!("{}|", clean.to_lowercase());
+            let id_set: std::collections::HashSet<&String> = face_ids.iter().collect();
+            for (key, list) in g.iter_mut() {
+                if key.starts_with(&person_prefix) {
+                    list.retain(|c| !id_set.contains(&c.face_id));
+                }
             }
         }
         Ok(face_ids.len())
@@ -864,6 +981,8 @@ pub async fn unreject_face_candidates_batch(
             );
         }
         tx.commit().map_err(|e| e.to_string())?;
+        // Restored faces must show up as candidates again on the next lookup
+        invalidate_pending_for_person(&clean);
         Ok(face_ids.len())
     })
     .await
@@ -945,9 +1064,7 @@ pub async fn get_pending_face_match_counts(
         }
 
         if person_ref_ids.is_empty() {
-            if let Ok(mut g) = PENDING_CANDIDATES_CACHE.lock() {
-                g.clear();
-            }
+            replace_pending_for_folder(root_folder.as_deref(), HashMap::new());
             return Ok(HashMap::new());
         }
 
@@ -986,7 +1103,7 @@ pub async fn get_pending_face_match_counts(
                      FROM photo_faces pf
                      JOIN photos p ON pf.hash = p.hash
                      WHERE (pf.person_name IS NULL OR pf.person_name = '')
-                       AND p.current_path LIKE ?1",
+                       AND p.current_path LIKE ?1 ESCAPE '!'",
                 )
                 .map_err(|e| e.to_string())?;
             let rows = stmt
@@ -1024,9 +1141,7 @@ pub async fn get_pending_face_match_counts(
         let mut new_pending_cache: HashMap<String, Vec<SimilarFaceCandidate>> = HashMap::new();
 
         if unassigned_items.is_empty() {
-            if let Ok(mut g) = PENDING_CANDIDATES_CACHE.lock() {
-                g.clear();
-            }
+            replace_pending_for_folder(root_folder.as_deref(), HashMap::new());
             return Ok(counts);
         }
 
@@ -1071,10 +1186,9 @@ pub async fn get_pending_face_match_counts(
                 if cand_emb.len() != 512 {
                     continue;
                 }
-                // Strict 512-D ArcFace threshold (0.60) so badge count and modal match 100%
-                let thresh = 0.60;
+                // Same threshold as find_similar_faces, so the badge count and the modal always agree
                 let sim = score_against_person_profile(cand_emb, &refs, c512.as_ref(), None);
-                if sim >= thresh {
+                if sim >= FACE_MATCH_MIN_SIMILARITY {
                     person_candidates.push(SimilarFaceCandidate {
                         face_id: item.face_id.clone(),
                         hash: item.hash.clone(),
@@ -1099,15 +1213,12 @@ pub async fn get_pending_face_match_counts(
                 });
                 person_candidates.truncate(120);
                 counts.insert(pname.clone(), person_candidates.len());
-                new_pending_cache.insert(lower_p, person_candidates);
+                new_pending_cache.insert(pending_cache_key(pname, root_folder.as_deref()), person_candidates);
             }
         }
         drop(cache_guard);
 
-        if let Ok(mut g) = PENDING_CANDIDATES_CACHE.lock() {
-            *g = new_pending_cache;
-        }
-
+        replace_pending_for_folder(root_folder.as_deref(), new_pending_cache);
         Ok(counts)
     })
     .await

@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{BufReader, Cursor, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{LazyLock, Mutex};
 use std::time::Instant;
 use tract_onnx::prelude::*;
@@ -90,6 +90,7 @@ pub struct FaceScanProgress {
     pub batch_faces: HashMap<String, Vec<FaceInstance>>,
     pub batch_people: HashMap<String, Vec<String>>,
     pub done: bool,
+    pub cancelled: bool,
 }
 
 #[derive(Serialize, Clone)]
@@ -138,6 +139,7 @@ pub struct PhotoItem {
     pub iso: Option<String>,
     pub lens_model: Option<String>,
     pub pair_raw_path: Option<String>,
+    pub damaged: bool,
 }
 
 #[derive(Serialize, Clone)]
@@ -166,6 +168,7 @@ pub struct ThumbBatchItem {
     pub height: u32,
     pub auto_tags: Vec<String>,
     pub thumb_ok: bool,
+    pub damaged: bool,
 }
 
 #[derive(Serialize, Clone)]
@@ -174,6 +177,8 @@ pub struct ThumbBatchProgress {
     pub duplicate_groups: HashMap<String, usize>,
     pub completed: usize,
     pub total: usize,
+    // Folder this pass belongs to, so the UI can ignore batches from a folder it has since left
+    pub folder: String,
 }
 
 #[derive(Serialize, Clone)]
@@ -223,6 +228,9 @@ pub struct LibraryHealthStats {
     pub cache_size_mb: f64,
     pub orphaned_cache_count: usize,
     pub camera_breakdown: Vec<(String, usize)>,
+    pub damaged_count: usize,
+    // First 50 damaged file paths, for the Library Health list
+    pub damaged_files: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
@@ -336,6 +344,8 @@ pub fn run() {
             face_engine::ensure_neural_face_models,
             face_commands::detect_faces_in_photo,
             face_commands::scan_library_faces_batch,
+            face_commands::cancel_face_scan,
+            face_engine::get_face_match_config,
             face_commands::assign_face_region_and_automatch,
             face_commands::remove_face_box,
             ai::ai_analyze_photo,

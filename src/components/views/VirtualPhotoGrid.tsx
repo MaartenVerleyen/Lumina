@@ -13,6 +13,7 @@ import {
   Star,
   Trophy,
   XCircle,
+  AlertTriangle,
 } from "lucide-react";
 
 interface VirtualPhotoGridProps {
@@ -215,6 +216,16 @@ export default function VirtualPhotoGrid({
                             title={`Linked RAW+JPEG Pair: ${photo.pair_raw_path}`}
                           >
                             RAW+J
+                          </span>
+                        )}
+
+                        {photo.damaged && (
+                          <span
+                            className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-orange-950/90 border border-orange-500/50 text-orange-300 text-[9px] font-mono font-bold backdrop-blur-md"
+                            title="Damaged file: it is incomplete or corrupt (for example an interrupted download). The preview shows only the data that is present. Replace it from the original source if you can."
+                          >
+                            <AlertTriangle className="w-3 h-3" />
+                            Damaged
                           </span>
                         )}
 

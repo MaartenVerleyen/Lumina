@@ -74,7 +74,7 @@ pub fn compute_db_duplicate_groups(conn: &Connection, root_folder: Option<&str>)
     let Ok(mut stmt) = conn.prepare(
         "SELECT hash, dhash, COALESCE(camera_model, ''), COALESCE(subfolder, ''), COALESCE(current_path, '')
          FROM photos
-         WHERE length(dhash) = 16 AND COALESCE(subfolder, '') != '_Trash' AND current_path LIKE ?1
+         WHERE length(dhash) = 16 AND COALESCE(subfolder, '') != '_Trash' AND current_path LIKE ?1 ESCAPE '!'
          ORDER BY COALESCE(captured_at, '') ASC, current_path ASC",
     ) else {
         return map;
@@ -126,6 +126,53 @@ pub fn compute_db_duplicate_groups(conn: &Connection, root_folder: Option<&str>)
     map
 }
 
+pub static SCAN_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+pub fn salt_hash_with_path(hash: &str, disk_path: &str) -> String {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(hash.as_bytes());
+    hasher.update(disk_path.to_lowercase().as_bytes());
+    hasher.finalize().to_hex()[..16].to_string()
+}
+
+// Identical copies of a file share a content hash, but `hash` is the photos PRIMARY KEY.
+// The copy that already owns the DB row keeps the hash; every other copy gets a path-salted hash
+// so each copy is its own photo (dHash still groups them as duplicates).
+// A row whose file no longer exists is inherited, so moving a file outside Lumina keeps its metadata.
+// `entries` are (hash, disk path, is new or changed); returns index -> salted hash.
+pub fn resolve_hash_collisions(conn: &Connection, entries: &[(String, String, bool)]) -> HashMap<usize, String> {
+    let mut by_hash: HashMap<&str, Vec<usize>> = HashMap::new();
+    for (idx, (hash, _, _)) in entries.iter().enumerate() {
+        by_hash.entry(hash.as_str()).or_default().push(idx);
+    }
+
+    let mut salted = HashMap::new();
+    let Ok(mut stmt) = conn.prepare_cached("SELECT current_path FROM photos WHERE hash = ?1") else {
+        return salted;
+    };
+
+    for (hash, idxs) in by_hash {
+        // A unique, unchanged cache hit already owns its row
+        if idxs.len() == 1 && !entries[idxs[0]].2 {
+            continue;
+        }
+        let db_path: Option<String> = stmt.query_row(params![hash], |r| r.get(0)).ok();
+        let owner = match &db_path {
+            Some(dp) if idxs.iter().any(|&i| entries[i].1.eq_ignore_ascii_case(dp)) => {
+                idxs.iter().copied().find(|&i| entries[i].1.eq_ignore_ascii_case(dp))
+            }
+            Some(dp) if Path::new(dp).exists() => None,
+            _ => idxs.iter().copied().min_by(|&a, &b| entries[a].1.cmp(&entries[b].1)),
+        };
+        for &idx in &idxs {
+            if Some(idx) != owner {
+                salted.insert(idx, salt_hash_with_path(hash, &entries[idx].1));
+            }
+        }
+    }
+    salted
+}
+
 #[derive(Clone)]
 pub struct CachedRow {
     pub size: u64,
@@ -154,6 +201,7 @@ pub struct CachedRow {
     pub shutter_speed: Option<String>,
     pub iso: Option<String>,
     pub lens_model: Option<String>,
+    pub damaged: bool,
 }
 
 #[tauri::command]
@@ -163,6 +211,8 @@ pub async fn scan_folder(
     force_reprocess: Option<bool>,
 ) -> Result<Vec<PhotoItem>, String> {
     let force = force_reprocess.unwrap_or(false);
+    // Every scan supersedes any background thumbnail pass still running from an earlier scan
+    let generation = SCAN_GENERATION.fetch_add(1, Ordering::AcqRel) + 1;
     tauri::async_runtime::spawn_blocking(move || {
         let scan_started = Instant::now();
         let input_path = PathBuf::from(&folder_path);
@@ -211,8 +261,9 @@ pub async fn scan_folder(
                             COALESCE(dhash, ''), COALESCE(sharpness, 0.0), staged_target,
                             COALESCE(exif_checked, 0), flag, color_label, COALESCE(rotation, 0), COALESCE(in_basket, 0),
                             COALESCE(width, 0), COALESCE(height, 0),
-                            focal_length, aperture, shutter_speed, iso, lens_model
-                     FROM photos WHERE current_path LIKE ?1",
+                            focal_length, aperture, shutter_speed, iso, lens_model,
+                            COALESCE(damaged, 0)
+                     FROM photos WHERE current_path LIKE ?1 ESCAPE '!'",
                 )
                 .map_err(|e| e.to_string())?;
             let rows = stmt
@@ -246,6 +297,7 @@ pub async fn scan_folder(
                             shutter_speed: row.get(24).ok().flatten(),
                             iso: row.get(25).ok().flatten(),
                             lens_model: row.get(26).ok().flatten(),
+                            damaged: row.get::<_, i32>(27).unwrap_or(0) != 0,
                         },
                     ))
                 })
@@ -261,7 +313,7 @@ pub async fn scan_folder(
                 .prepare(
                     "SELECT pt.hash, pt.tag FROM photo_tags pt
                      JOIN photos p ON pt.hash = p.hash
-                     WHERE p.current_path LIKE ?1
+                     WHERE p.current_path LIKE ?1 ESCAPE '!'
                      ORDER BY pt.tag ASC",
                 )
                 .map_err(|e| e.to_string())?;
@@ -281,7 +333,7 @@ pub async fn scan_folder(
                 .prepare(
                     "SELECT pp.hash, pp.person_name FROM photo_people pp
                      JOIN photos p ON pp.hash = p.hash
-                     WHERE p.current_path LIKE ?1
+                     WHERE p.current_path LIKE ?1 ESCAPE '!'
                      ORDER BY pp.person_name ASC",
                 )
                 .map_err(|e| e.to_string())?;
@@ -301,7 +353,7 @@ pub async fn scan_folder(
                 "SELECT pf.face_id, pf.hash, pf.bbox_x, pf.bbox_y, pf.bbox_w, pf.bbox_h, pf.person_name, pf.face_thumb, pf.confidence
                  FROM photo_faces pf
                  JOIN photos p ON pf.hash = p.hash
-                 WHERE p.current_path LIKE ?1
+                 WHERE p.current_path LIKE ?1 ESCAPE '!'
                  ORDER BY pf.bbox_x ASC",
             ) {
                 if let Ok(rows) = stmt.query_map(params![folder_prefix], |row| {
@@ -606,6 +658,11 @@ pub async fn scan_folder(
                         } else {
                             None
                         },
+                        // Only trust the stored flag while the file is unchanged (a re-download may have fixed it)
+                        damaged: cache_map
+                            .get(&orig_path_str)
+                            .map(|c| c.damaged && c.size == size_bytes && c.mtime == modified_time)
+                            .unwrap_or(false),
                     },
                     orig_path_str,
                     size_bytes,
@@ -614,6 +671,29 @@ pub async fn scan_folder(
                 ))
             })
             .collect();
+
+        let mut indexed_results = indexed_results;
+        let collision_entries: Vec<(String, String, bool)> = indexed_results
+            .iter()
+            .map(|(p, disk_path, _, _, upsert)| (p.hash.clone(), disk_path.clone(), *upsert))
+            .collect();
+        for (idx, salted_hash) in resolve_hash_collisions(&conn, &collision_entries) {
+            let (p, _, _, _, needs_upsert) = &mut indexed_results[idx];
+            let thumb_file = thumbs_dir.join(format!("{}.jpg", salted_hash));
+            let preview_file = previews_dir.join(format!("{}_preview.jpg", salted_hash));
+            p.thumb_ready = !force && thumb_file.metadata().map(|m| m.len() > 256).unwrap_or(false);
+            if p.pair_raw_path.is_some() {
+                p.path = if preview_file.exists() { &preview_file } else { &thumb_file }
+                    .to_string_lossy()
+                    .to_string();
+            }
+            p.thumb_path = thumb_file.to_string_lossy().to_string();
+            p.tags.retain(|t| t == "screenshot");
+            p.people.clear();
+            p.faces.clear();
+            p.hash = salted_hash;
+            *needs_upsert = true;
+        }
 
         let index_ms = elapsed_ms(index_started);
         let db_started = Instant::now();
@@ -754,6 +834,7 @@ pub async fn scan_folder(
                 let mut heic_count = 0usize;
                 let mut heic_ms = 0u64;
                 let mut failed_count = 0usize;
+                let mut damaged_count = 0usize;
                 let mut db_write_ms = 0u64;
 
                 let num_threads = (std::thread::available_parallelism()
@@ -766,8 +847,13 @@ pub async fn scan_folder(
                     .build()
                     .unwrap();
 
+                let mut superseded = false;
                 pool.install(|| {
                     for chunk in needs_processing.chunks(48) {
+                        if SCAN_GENERATION.load(Ordering::Acquire) != generation {
+                            superseded = true;
+                            break;
+                        }
                         // 1. Batch-convert any HEIC/HEIF files in this chunk directly to 360px thumbnails in ONE PowerShell call!
                         //    (Uses embedded $frame.Thumbnail when available, so it takes ~10ms per HEIC instead of decoding 12MP!)
                         let heic_thumb_jobs: Vec<(String, String, u32)> = chunk
@@ -830,7 +916,10 @@ pub async fn scan_folder(
                                     original_path
                                 };
 
-                                if let Ok(img) = open_and_orient_image_for_thumb(decode_target) {
+                                // Damaged = unreadable, or only recoverable from partial data (see decode_standard_or_recover)
+                                let mut damaged = true;
+                                if let Ok((img, recovered)) = open_and_orient_image_for_thumb(decode_target) {
+                                    damaged = recovered;
                                     let (iw, ih) = img.dimensions();
                                     if computed_w == 0 || computed_h == 0 {
                                         computed_w = iw;
@@ -873,6 +962,7 @@ pub async fn scan_folder(
                                     height: computed_h,
                                     auto_tags,
                                     thumb_ok,
+                                    damaged,
                                 }
                             })
                             .collect();
@@ -880,14 +970,15 @@ pub async fn scan_folder(
                         let done = completed.load(Ordering::Relaxed);
                         let mut dup_groups = HashMap::new();
                         failed_count += batch_items.iter().filter(|i| !i.thumb_ok).count();
+                        damaged_count += batch_items.iter().filter(|i| i.damaged).count();
 
                         let db_started = Instant::now();
                         if let Ok(mut db_conn) = open_global_db(&app_clone) {
                             if let Ok(tx) = db_conn.transaction() {
                                 for item in &batch_items {
                                     let _ = tx.execute(
-                                        "UPDATE photos SET dhash = ?1, sharpness = ?2, width = CASE WHEN ?3 > 0 THEN ?3 ELSE width END, height = CASE WHEN ?4 > 0 THEN ?4 ELSE height END WHERE hash = ?5",
-                                        params![item.dhash, item.sharpness, item.width, item.height, item.hash],
+                                        "UPDATE photos SET dhash = ?1, sharpness = ?2, width = CASE WHEN ?3 > 0 THEN ?3 ELSE width END, height = CASE WHEN ?4 > 0 THEN ?4 ELSE height END, damaged = ?6 WHERE hash = ?5",
+                                        params![item.dhash, item.sharpness, item.width, item.height, item.hash, item.damaged],
                                     );
                                     if !item.auto_tags.is_empty() {
                                         let _ = tx.execute(
@@ -912,11 +1003,16 @@ pub async fn scan_folder(
                                 duplicate_groups: dup_groups,
                                 completed: done,
                                 total,
+                                folder: folder_scope.clone(),
                             },
                         );
                     }
                 });
 
+                if superseded {
+                    eprintln!("[scan] thumbnail pass for {folder_scope} stopped: a newer scan started");
+                    return;
+                }
                 let total_ms = elapsed_ms(thumbs_started);
                 emit_perf(
                     &app_clone,
@@ -924,13 +1020,14 @@ pub async fn scan_folder(
                     thumbs_started,
                     total,
                     format!(
-                        "{}/s on {} threads · HEIC {} files in {} ms (PowerShell) · db {} ms · {} failed",
+                        "{}/s on {} threads · HEIC {} files in {} ms (PowerShell) · db {} ms · {} failed · {} damaged",
                         per_second(total, total_ms),
                         num_threads,
                         heic_count,
                         heic_ms,
                         db_write_ms,
-                        failed_count
+                        failed_count,
+                        damaged_count
                     ),
                 );
             });
@@ -1026,7 +1123,7 @@ pub async fn get_timeline_distribution(app: AppHandle, root_folder: Option<Strin
             .prepare(
                 "SELECT substr(replace(captured_at, ':', '-'), 1, 10) as period, count(*)
                  FROM photos
-                 WHERE captured_at IS NOT NULL AND length(captured_at) >= 10 AND current_path LIKE ?1
+                 WHERE captured_at IS NOT NULL AND length(captured_at) >= 10 AND current_path LIKE ?1 ESCAPE '!'
                  GROUP BY period
                  ORDER BY period ASC",
             )

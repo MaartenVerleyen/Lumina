@@ -3,7 +3,6 @@ import { invoke } from "@tauri-apps/api/core";
 import luminaMark from "../../assets/lumina-mark.svg";
 import {
   OllamaStatus,
-  OllamaPullProgress,
   FaceScanProgress,
   PhotoItem,
 } from "../../types/lumina";
@@ -29,6 +28,7 @@ import {
   HardDrive,
   ChevronDown,
   X,
+  XCircle,
   Undo2,
   Redo2,
   HelpCircle,
@@ -77,6 +77,7 @@ interface TopHeaderBarProps {
   setIsCommitModalOpen: React.Dispatch<React.SetStateAction<boolean>>;
   handleDismissAllStaged: () => Promise<void>;
   handleBatchScanFacesOnnx: () => Promise<void>;
+  handleCancelFaceScan: () => Promise<void>;
   runBatchAiOnList: (targets: PhotoItem[]) => Promise<void>;
   simpleMode?: boolean;
   toggleSimpleMode?: () => void;
@@ -87,7 +88,6 @@ interface TopHeaderBarProps {
   setIsShortcutsModalOpen?: React.Dispatch<React.SetStateAction<boolean>>;
   setIsSessionLogModalOpen?: React.Dispatch<React.SetStateAction<boolean>>;
   sessionLogsCount?: number;
-  ollamaPullProgress?: OllamaPullProgress | null;
   handlePullDefaultAiModel?: (modelName?: string) => Promise<void>;
   totalPendingFaceMatches?: number;
   onOpenFaceReviewStudio?: () => void;
@@ -127,6 +127,7 @@ export default function TopHeaderBar({
   setIsCommitModalOpen,
   handleDismissAllStaged,
   handleBatchScanFacesOnnx,
+  handleCancelFaceScan,
   runBatchAiOnList,
   simpleMode = false,
   toggleSimpleMode,
@@ -137,7 +138,6 @@ export default function TopHeaderBar({
   setIsShortcutsModalOpen,
   setIsSessionLogModalOpen,
   sessionLogsCount = 0,
-  ollamaPullProgress,
   handlePullDefaultAiModel,
   totalPendingFaceMatches = 0,
   onOpenFaceReviewStudio,
@@ -404,12 +404,20 @@ export default function TopHeaderBar({
                   <span>
                     Faces {faceScanProgress.completed}/{faceScanProgress.total}
                   </span>
+                  <button
+                    onClick={handleCancelFaceScan}
+                    className="ml-1 p-0.5 rounded hover:bg-indigo-800/80 text-indigo-300 hover:text-white transition"
+                    title="Stop the face scan after the current batch (photos not yet scanned keep their faces)"
+                    aria-label="Stop face scan"
+                  >
+                    <XCircle className="w-3.5 h-3.5" />
+                  </button>
                 </span>
               ) : (
                 <button
                   onClick={handleBatchScanFacesOnnx}
                   className="flex items-center gap-1.5 px-2.5 py-1.5 hover:bg-indigo-900/80 text-indigo-200 text-xs font-medium transition border-r border-indigo-500/30"
-                  title="Scan visible photos with ONNX Neural Face Detector & match against confirmed people"
+                  title="Scan every photo in this folder with the ONNX face detector & match against confirmed people"
                 >
                   <ScanFace className="w-3.5 h-3.5 text-indigo-400" />
                   <span>Scan Faces</span>

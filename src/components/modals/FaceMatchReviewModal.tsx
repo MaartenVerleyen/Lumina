@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import {
   FaceInstance,
@@ -31,6 +31,7 @@ interface FaceMatchReviewModalProps {
   pendingCounts: Record<string, number>;
   setPhotos: React.Dispatch<React.SetStateAction<PhotoItem[]>>;
   refreshPeople: (currentFolder?: string, skipPendingScan?: boolean) => Promise<void>;
+  folder: string;
 }
 
 type StatusTab = "pending" | "confirmed" | "denied";
@@ -49,8 +50,15 @@ export default function FaceMatchReviewModal({
   pendingCounts,
   setPhotos,
   refreshPeople,
+  folder,
 }: FaceMatchReviewModalProps) {
   const [activePerson, setActivePerson] = useState<string>("");
+  // The person the currently displayed lists were loaded for. Accept/Deny always act on THIS person,
+  // so a slow response for a previously selected person can never be assigned to the new one.
+  const [listPerson, setListPerson] = useState<string>("");
+  const loadRequestRef = useRef(0);
+  const [actionError, setActionError] = useState<string>("");
+  const [strongMatchPercent, setStrongMatchPercent] = useState<number>(62);
   const [statusTab, setStatusTab] = useState<StatusTab>("pending");
   const [candidates, setCandidates] = useState<SimilarFaceCandidate[]>([]);
   const [confirmedFaces, setConfirmedFaces] = useState<SimilarFaceCandidate[]>([]);
@@ -103,15 +111,19 @@ export default function FaceMatchReviewModal({
     ) => {
       const clean = personName.trim();
       if (!clean) return;
+      const requestId = ++loadRequestRef.current;
+      const isStale = () => requestId !== loadRequestRef.current;
       setActivePerson(clean);
       setIsLoading(true);
+      setActionError("");
       try {
         if (tab === "pending") {
           const res = await invoke<SimilarFaceCandidate[]>("find_similar_faces", {
             personName: clean,
-            minSimilarity: 0.50,
+            rootFolder: folder || null,
             forceRefresh,
           });
+          if (isStale()) return;
           setCandidates(res);
           // Do NOT pre-select all candidates automatically: only confirm what the user explicitly selects or clicks!
           setSelectedIds(new Set());
@@ -121,6 +133,7 @@ export default function FaceMatchReviewModal({
             "get_confirmed_faces_for_person",
             { personName: clean }
           );
+          if (isStale()) return;
           setConfirmedFaces(res);
           setSelectedIds(new Set());
         } else if (tab === "denied") {
@@ -128,18 +141,34 @@ export default function FaceMatchReviewModal({
             "get_rejected_faces_for_person",
             { personName: clean }
           );
+          if (isStale()) return;
           setDeniedFaces(res);
           setSelectedIds(new Set());
         }
-      } catch {
+        setListPerson(clean);
+      } catch (err) {
+        if (isStale()) return;
         setCandidates([]);
+        setConfirmedFaces([]);
+        setDeniedFaces([]);
         setSelectedIds(new Set());
+        setListPerson(clean);
+        setActionError(`Could not load faces for "${clean}": ${String(err)}`);
       } finally {
-        setIsLoading(false);
+        if (!isStale()) setIsLoading(false);
       }
     },
-    [statusTab]
+    [statusTab, folder]
   );
+
+  useEffect(() => {
+    if (!isOpen) return;
+    invoke<{ min_similarity_percent: number; strong_similarity_percent: number }>(
+      "get_face_match_config"
+    )
+      .then((cfg) => setStrongMatchPercent(cfg.strong_similarity_percent))
+      .catch(() => {});
+  }, [isOpen]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -168,7 +197,8 @@ export default function FaceMatchReviewModal({
   // Accept 1 or more pending candidates WITHOUT triggering a full re-scan on every click!
   const handleAcceptBatch = useCallback(
     async (faceIds: string[], recordHistory = true) => {
-      if (!activePerson || faceIds.length === 0) return;
+      const person = listPerson;
+      if (!person || isLoading || faceIds.length === 0) return;
       const idSet = new Set(faceIds);
       const affectedItems = candidates.filter((c) => idSet.has(c.face_id));
 
@@ -184,30 +214,35 @@ export default function FaceMatchReviewModal({
         return next;
       });
 
-      if (recordHistory && affectedItems.length > 0) {
-        setHistoryStack((prev) => [
-          ...prev.slice(-29),
-          { action: "accept", person: activePerson, candidates: affectedItems },
-        ]);
-      }
-
-      const updatedFacesMap = await invoke<Record<string, FaceInstance[]>>(
-        "assign_faces_to_person_batch",
-        {
-          faceIds,
-          personName: activePerson,
+      try {
+        const updatedFacesMap = await invoke<Record<string, FaceInstance[]>>(
+          "assign_faces_to_person_batch",
+          {
+            faceIds,
+            personName: person,
+          }
+        );
+        if (recordHistory && affectedItems.length > 0) {
+          setHistoryStack((prev) => [
+            ...prev.slice(-29),
+            { action: "accept", person, candidates: affectedItems },
+          ]);
         }
-      );
-      syncUpdatedFacesToPhotos(updatedFacesMap);
-      await refreshPeople(undefined, true);
+        syncUpdatedFacesToPhotos(updatedFacesMap);
+        await refreshPeople(undefined, true);
+      } catch (err) {
+        restoreCandidates(affectedItems);
+        setActionError(`Could not confirm ${faceIds.length} face(s) as "${person}": ${String(err)}`);
+      }
     },
-    [activePerson, candidates, syncUpdatedFacesToPhotos, refreshPeople]
+    [listPerson, isLoading, candidates, syncUpdatedFacesToPhotos, refreshPeople]
   );
 
   // Deny 1 or more pending candidates WITHOUT triggering a full re-scan on every click!
   const handleDenyBatch = useCallback(
     async (faceIds: string[], recordHistory = true) => {
-      if (!activePerson || faceIds.length === 0) return;
+      const person = listPerson;
+      if (!person || isLoading || faceIds.length === 0) return;
       const idSet = new Set(faceIds);
       const affectedItems = candidates.filter((c) => idSet.has(c.face_id));
 
@@ -222,44 +257,64 @@ export default function FaceMatchReviewModal({
         return next;
       });
 
-      if (recordHistory && affectedItems.length > 0) {
-        setHistoryStack((prev) => [
-          ...prev.slice(-29),
-          { action: "deny", person: activePerson, candidates: affectedItems },
-        ]);
+      try {
+        await invoke<number>("reject_face_candidates_batch", {
+          faceIds,
+          personName: person,
+        });
+        if (recordHistory && affectedItems.length > 0) {
+          setHistoryStack((prev) => [
+            ...prev.slice(-29),
+            { action: "deny", person, candidates: affectedItems },
+          ]);
+        }
+        await refreshPeople(undefined, true);
+      } catch (err) {
+        restoreCandidates(affectedItems);
+        setActionError(`Could not deny ${faceIds.length} face(s) for "${person}": ${String(err)}`);
       }
-
-      await invoke<number>("reject_face_candidates_batch", {
-        faceIds,
-        personName: activePerson,
-      });
-      await refreshPeople(undefined, true);
     },
-    [activePerson, candidates, refreshPeople]
+    [listPerson, isLoading, candidates, refreshPeople]
   );
+
+  // Puts optimistically removed candidates back after a failed backend call
+  function restoreCandidates(items: SimilarFaceCandidate[]) {
+    setCandidates((prev) => {
+      const existingIds = new Set(prev.map((x) => x.face_id));
+      return [...items.filter((x) => !existingIds.has(x.face_id)), ...prev].sort(
+        (a, b) => b.similarity - a.similarity
+      );
+    });
+  }
 
   // Undo the last Accept or Deny action inside the modal!
   const handleUndoLastDecision = useCallback(async () => {
     if (historyStack.length === 0) return;
     const last = historyStack[historyStack.length - 1];
-    setHistoryStack((prev) => prev.slice(0, -1));
     const faceIds = last.candidates.map((c) => c.face_id);
 
-    if (last.action === "accept") {
-      const updatedMap = await invoke<Record<string, FaceInstance[]>>(
-        "unassign_faces_batch",
-        {
+    try {
+      if (last.action === "accept") {
+        const updatedMap = await invoke<Record<string, FaceInstance[]>>(
+          "unassign_faces_batch",
+          {
+            faceIds,
+            personName: last.person,
+          }
+        );
+        syncUpdatedFacesToPhotos(updatedMap);
+      } else {
+        await invoke<number>("unreject_face_candidates_batch", {
           faceIds,
           personName: last.person,
-        }
-      );
-      syncUpdatedFacesToPhotos(updatedMap);
-    } else {
-      await invoke<number>("unreject_face_candidates_batch", {
-        faceIds,
-        personName: last.person,
-      });
+        });
+      }
+    } catch (err) {
+      setActionError(`Could not undo the last decision: ${String(err)}`);
+      return;
     }
+    // Pop only after the backend succeeded, so a failed undo can simply be retried
+    setHistoryStack((prev) => prev.slice(0, -1));
 
     if (last.person.toLowerCase() === activePerson.toLowerCase() && statusTab === "pending") {
       setCandidates((prev) => {
@@ -274,55 +329,69 @@ export default function FaceMatchReviewModal({
   // Unassign a face from the "Confirmed Faces" tab (if you accidentally confirmed someone)
   const handleUnassignConfirmed = useCallback(
     async (faceIds: string[]) => {
-      if (!activePerson || faceIds.length === 0) return;
+      const person = listPerson;
+      if (!person || isLoading || faceIds.length === 0) return;
       const idSet = new Set(faceIds);
+      const removed = confirmedFaces.filter((c) => idSet.has(c.face_id));
       setConfirmedFaces((prev) => prev.filter((c) => !idSet.has(c.face_id)));
       setSelectedIds((prev) => {
         const next = new Set(prev);
         for (const id of faceIds) next.delete(id);
         return next;
       });
-      const updatedMap = await invoke<Record<string, FaceInstance[]>>(
-        "unassign_faces_batch",
-        {
-          faceIds,
-          personName: activePerson,
-        }
-      );
-      syncUpdatedFacesToPhotos(updatedMap);
-      await refreshPeople();
+      try {
+        const updatedMap = await invoke<Record<string, FaceInstance[]>>(
+          "unassign_faces_batch",
+          {
+            faceIds,
+            personName: person,
+          }
+        );
+        syncUpdatedFacesToPhotos(updatedMap);
+        await refreshPeople();
+      } catch (err) {
+        setConfirmedFaces((prev) => [...removed, ...prev]);
+        setActionError(`Could not unassign ${faceIds.length} face(s) from "${person}": ${String(err)}`);
+      }
     },
-    [activePerson, syncUpdatedFacesToPhotos, refreshPeople]
+    [listPerson, isLoading, confirmedFaces, syncUpdatedFacesToPhotos, refreshPeople]
   );
 
   // Restore a face from the "Denied / Ignored" tab (if you accidentally denied someone)
   const handleRestoreDenied = useCallback(
     async (faceIds: string[], alsoAccept = false) => {
-      if (!activePerson || faceIds.length === 0) return;
+      const person = listPerson;
+      if (!person || isLoading || faceIds.length === 0) return;
       const idSet = new Set(faceIds);
+      const removed = deniedFaces.filter((c) => idSet.has(c.face_id));
       setDeniedFaces((prev) => prev.filter((c) => !idSet.has(c.face_id)));
       setSelectedIds((prev) => {
         const next = new Set(prev);
         for (const id of faceIds) next.delete(id);
         return next;
       });
-      await invoke<number>("unreject_face_candidates_batch", {
-        faceIds,
-        personName: activePerson,
-      });
-      if (alsoAccept) {
-        const updatedMap = await invoke<Record<string, FaceInstance[]>>(
-          "assign_faces_to_person_batch",
-          {
-            faceIds,
-            personName: activePerson,
-          }
-        );
-        syncUpdatedFacesToPhotos(updatedMap);
+      try {
+        await invoke<number>("unreject_face_candidates_batch", {
+          faceIds,
+          personName: person,
+        });
+        if (alsoAccept) {
+          const updatedMap = await invoke<Record<string, FaceInstance[]>>(
+            "assign_faces_to_person_batch",
+            {
+              faceIds,
+              personName: person,
+            }
+          );
+          syncUpdatedFacesToPhotos(updatedMap);
+        }
+        await refreshPeople();
+      } catch (err) {
+        setDeniedFaces((prev) => [...removed, ...prev]);
+        setActionError(`Could not restore ${faceIds.length} face(s) for "${person}": ${String(err)}`);
       }
-      await refreshPeople();
     },
-    [activePerson, syncUpdatedFacesToPhotos, refreshPeople]
+    [listPerson, isLoading, deniedFaces, syncUpdatedFacesToPhotos, refreshPeople]
   );
 
   // Keyboard shortcuts inside the modal (Spotlight, Ctrl+Z Undo & Escape)
@@ -686,6 +755,22 @@ export default function FaceMatchReviewModal({
               )}
             </div>
 
+            {actionError && (
+              <div
+                role="alert"
+                className="mx-6 mt-3 px-3 py-2 rounded-lg bg-red-950/70 border border-red-500/40 text-red-200 text-xs flex items-start gap-2"
+              >
+                <span className="flex-1">{actionError}</span>
+                <button
+                  onClick={() => setActionError("")}
+                  className="text-red-300 hover:text-white"
+                  aria-label="Dismiss error"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+
             {/* Content Area */}
             {isLoading ? (
               <div className="flex-1 flex flex-col items-center justify-center gap-3 text-zinc-400">
@@ -770,7 +855,7 @@ export default function FaceMatchReviewModal({
                           {statusTab === "pending" && (
                             <span
                               className={`absolute top-2.5 left-2.5 px-2 py-0.5 rounded-md text-[11px] font-mono font-bold backdrop-blur-md shadow ${
-                                cand.similarity >= 62
+                                cand.similarity >= strongMatchPercent
                                   ? "bg-emerald-950/90 text-emerald-300 border border-emerald-500/40"
                                   : "bg-amber-950/90 text-amber-300 border border-amber-500/40"
                               }`}

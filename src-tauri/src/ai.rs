@@ -518,7 +518,26 @@ pub async fn ai_analyze_photo(
 
     let ai_result = parse_resilient_ai_json(raw_content)?;
 
-    let mut conn = open_global_db(&app)?;
+    // DB writes and ONNX face detection are blocking work: keep them off the async runtime threads
+    let mut stored = tauri::async_runtime::spawn_blocking(move || {
+        store_ai_result(&app, &hash, &image_path_for_ai, ai_result)
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+
+    perf.post_ms = elapsed_ms(post_started);
+    perf.total_ms = elapsed_ms(ai_started);
+    stored.perf = perf;
+    Ok(stored)
+}
+
+fn store_ai_result(
+    app: &AppHandle,
+    hash: &str,
+    image_path_for_ai: &str,
+    ai_result: AiVisionResponse,
+) -> Result<AiAnalysisResult, String> {
+    let mut conn = open_global_db(app)?;
 
     let banned_placeholders = [
         "none", "unknown", "null", "tag1", "tag2", "tag3", "object1", "object2", "item1", "item2",
@@ -596,25 +615,25 @@ pub async fn ai_analyze_photo(
         let _ = tx.commit();
     }
 
-    if get_faces_for_hash(&conn, &hash).is_empty() {
-        let thumb_candidate = get_app_storage_dir(&app)
+    if get_faces_for_hash(&conn, hash).is_empty() {
+        let thumb_candidate = get_app_storage_dir(app)
             .join("thumbnails")
             .join(format!("{}.jpg", hash));
         let face_load_path = if thumb_candidate.exists() {
             thumb_candidate
         } else {
-            PathBuf::from(&image_path_for_ai)
+            PathBuf::from(image_path_for_ai)
         };
         if let Ok(img) = open_and_orient_image(&face_load_path) {
-            let onnx_boxes = detect_faces_with_onnx(&app, &img);
+            let onnx_boxes = detect_faces_with_onnx(app, &img);
             for (bx, by, bw, bh, _score) in onnx_boxes {
-                let _ = save_cropped_face_and_record(&app, &conn, &hash, &img, (bx, by, bw, bh), None, "onnx");
+                let _ = save_cropped_face_and_record(app, &conn, hash, &img, (bx, by, bw, bh), None, "onnx");
             }
         }
     }
 
-    let current_faces = get_faces_for_hash(&conn, &hash);
-    let updated_tags = get_tags_for_hash(&conn, &hash)?;
+    let current_faces = get_faces_for_hash(&conn, hash);
+    let updated_tags = get_tags_for_hash(&conn, hash)?;
 
     let mut stmt = conn
         .prepare("SELECT person_name FROM photo_people WHERE hash = ?1 ORDER BY person_name ASC")
@@ -622,15 +641,12 @@ pub async fn ai_analyze_photo(
     let rows = stmt.query_map(params![hash], |r| r.get(0)).map_err(|e| e.to_string())?;
     let updated_people: Vec<String> = rows.flatten().collect();
 
-    perf.post_ms = elapsed_ms(post_started);
-    perf.total_ms = elapsed_ms(ai_started);
-
     Ok(AiAnalysisResult {
         tags: updated_tags,
         people: updated_people,
         faces: current_faces,
         caption: clean_caption,
         ocr_text: clean_ocr,
-        perf,
+        perf: AiPerf::default(),
     })
 }

@@ -23,6 +23,9 @@ import {
   AiAnalysisResult,
   AiPerf,
   PerfLogEvent,
+  XmpExportResult,
+  CommitResult,
+  TrashResult,
   OllamaPullProgress,
   ScanProgressEvent,
   AiFailureItem,
@@ -38,6 +41,12 @@ import {
 } from "../utils/photoHelpers";
 
 const MAX_UNDO_STEPS = 20;
+
+// Windows paths: compare case-insensitively and ignore a trailing separator
+function isSameFolder(a: string, b: string): boolean {
+  const norm = (p: string) => p.replace(/[\\/]+$/, "").toLowerCase();
+  return norm(a) === norm(b);
+}
 
 // Averages per-photo AI timings into one Session Log line (tokens/s use summed tokens over summed durations)
 function summarizeAiPerf(perfs: AiPerf[]): string {
@@ -603,11 +612,19 @@ export function useLibraryState() {
 
       if (prog.done) {
         setFaceScanProgress(null);
-        addLog(
-          "FACE",
-          `Completed ONNX Face Scan on ${prog.total} photos`,
-          `${prog.faces_found} faces found — analyzing potential matches in background...`
-        );
+        if (prog.cancelled) {
+          addLog(
+            "FACE",
+            `Cancelled ONNX Face Scan after ${prog.completed} of ${prog.total} photos`,
+            `${prog.faces_found} faces found; photos not reached keep their previous faces`
+          );
+        } else {
+          addLog(
+            "FACE",
+            `Completed ONNX Face Scan on ${prog.total} photos`,
+            `${prog.faces_found} faces found — analyzing potential matches in background...`
+          );
+        }
         refreshPeople(folder, false).then(() => {
           setAutoMatchNotice(
             `Face Scan complete: detected ${prog.faces_found} face(s) & updated potential match badges!`
@@ -623,9 +640,18 @@ export function useLibraryState() {
     };
   }, [folder, addLog]);
 
+  // Current folder for event listeners registered once (avoids stale-closure comparisons)
+  const folderRef = useRef(folder);
+  useEffect(() => {
+    folderRef.current = folder;
+    setProgress(null);
+  }, [folder]);
+
   useEffect(() => {
     const unlisten = listen<ThumbBatchProgress>("thumb-batch-ready", (event) => {
-      const { items, duplicate_groups, completed, total } = event.payload;
+      const { items, duplicate_groups, completed, total, folder: batchFolder } = event.payload;
+      // A batch from a folder we've since left would overwrite this folder's duplicate groups
+      if (!isSameFolder(batchFolder, folderRef.current)) return;
       setProgress(completed < total ? { completed, total } : null);
 
       const batchMap = new Map<string, ThumbBatchItem>();
@@ -660,6 +686,7 @@ export function useLibraryState() {
             height: hit.height || p.height,
             tags: mergedTags,
             thumb_ready: hit.thumb_ok,
+            damaged: hit.damaged,
             duplicate_group: nextDup,
           };
         })
@@ -1073,9 +1100,18 @@ export function useLibraryState() {
     if (!folder) return;
     try {
       setError("");
-      const count = await invoke<number>("empty_library_trash_to_os", {
+      const result = await invoke<TrashResult>("empty_library_trash_to_os", {
         rootFolder: folder,
       });
+      const count = result.recycled;
+      for (const f of result.failures) {
+        addLog("DISK", `Could not recycle ${f.file}`, f.error);
+      }
+      if (result.failures.length > 0) {
+        setError(
+          `${result.failures.length} file(s) could not be moved to the Recycle Bin and were left in place. See the Session Log.`
+        );
+      }
       if (count > 0) {
         const res = await invoke<PhotoItem[]>("scan_folder", {
           folderPath: folder,
@@ -1230,18 +1266,12 @@ export function useLibraryState() {
   }
 
   async function handleBatchScanFacesOnnx() {
-    const targetList = photos.length > 0 ? photos : visiblePhotos;
-    if (faceScanProgress || targetList.length === 0) return;
+    if (faceScanProgress || photos.length === 0) return;
     try {
       setError("");
-      const hashes = targetList.map((p) => p.hash);
-      // Immediately strip unconfirmed faces in UI while keeping confirmed faces
-      setPhotos((prev) =>
-        prev.map((p) => ({
-          ...p,
-          faces: p.faces.filter((f) => Boolean(f.person_name && f.person_name.trim())),
-        }))
-      );
+      const hashes = photos.map((p) => p.hash);
+      // Unconfirmed faces are replaced photo by photo as results arrive (face-scan-progress),
+      // so a cancelled scan leaves the photos it never reached untouched.
       setPendingFaceCounts({});
       setFaceScanProgress({
         completed: 0,
@@ -1249,11 +1279,21 @@ export function useLibraryState() {
         faces_found: 0,
         auto_matched: 0,
         done: false,
+        cancelled: false,
       });
       addLog("FACE", `Started full ONNX Face Rescan on ${hashes.length} photos`);
       await invoke<number>("scan_library_faces_batch", { hashes });
     } catch (err) {
       setFaceScanProgress(null);
+      setError(String(err));
+    }
+  }
+
+  async function handleCancelFaceScan() {
+    try {
+      await invoke("cancel_face_scan");
+      addLog("FACE", "Stopping face scan after the current batch...");
+    } catch (err) {
       setError(String(err));
     }
   }
@@ -1636,10 +1676,12 @@ export function useLibraryState() {
     }
   }
 
+  const isCommittingRef = useRef(false);
   async function handleCommitAllStaged() {
-    if (!folder) return;
+    if (!folder || isCommittingRef.current) return;
+    isCommittingRef.current = true;
     try {
-      const movedCount = await invoke<number>("commit_staged_operations", {
+      const result = await invoke<CommitResult>("commit_staged_operations", {
         rootFolder: folder,
         smartRename: smartRenameOnCommit,
       });
@@ -1651,11 +1693,21 @@ export function useLibraryState() {
       setIsCommitModalOpen(false);
       addLog(
         "DISK",
-        `Committed ${movedCount} physical file move(s) to disk`,
+        `Committed ${result.moved} physical file move(s) to disk`,
         smartRenameOnCommit ? "With Smart Chronological Rename" : "Original filenames"
       );
+      for (const f of result.failures) {
+        addLog("DISK", `Could not move ${f.file}`, f.error);
+      }
+      if (result.failures.length > 0) {
+        setError(
+          `${result.failures.length} file(s) could not be moved (they stay staged). See the Session Log for details.`
+        );
+      }
     } catch (err) {
       setError(String(err));
+    } finally {
+      isCommittingRef.current = false;
     }
   }
 
@@ -1754,10 +1806,20 @@ export function useLibraryState() {
       setIsExportingXmp(true);
       const hashes =
         onlySelected && selectedHashes.size > 0 ? Array.from(selectedHashes) : null;
-      const count = await invoke<number>("export_xmp_sidecars", { hashes });
-      addLog("DISK", `Exported ${count} Adobe/Lightroom .xmp sidecar file(s)`);
-      setAutoMatchNotice(`Exported ${count} Adobe/Lightroom .xmp sidecar file(s)!`);
-      setTimeout(() => setAutoMatchNotice(""), 5000);
+      const res = await invoke<XmpExportResult>("export_xmp_sidecars", {
+        hashes,
+        rootFolder: folder || null,
+      });
+      const notes = [
+        res.skipped_foreign > 0 &&
+          `${res.skipped_foreign} skipped (sidecar from another app was kept)`,
+        res.skipped_raw_pair > 0 && `${res.skipped_raw_pair} JPEG(s) covered by their RAW's sidecar`,
+        res.failed > 0 && `${res.failed} failed to write`,
+      ].filter(Boolean);
+      const summary = `Exported ${res.exported} .xmp sidecar file(s)`;
+      addLog("DISK", summary, notes.join(" · ") || undefined);
+      setAutoMatchNotice(notes.length > 0 ? `${summary} — ${notes.join(", ")}` : `${summary}!`);
+      setTimeout(() => setAutoMatchNotice(""), 6000);
     } catch (err) {
       setError(String(err));
     } finally {
@@ -2153,6 +2215,7 @@ export function useLibraryState() {
     handleForceRescanExifSelected,
     handleDetectFacesSingleOnnx,
     handleBatchScanFacesOnnx,
+    handleCancelFaceScan,
     handleSetFlag,
     handleSetColorLabel,
     handleRotateSelection,

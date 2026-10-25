@@ -111,6 +111,8 @@ pub fn open_global_db(app: &AppHandle) -> Result<Connection, String> {
     let _ = conn.execute("ALTER TABLE photos ADD COLUMN lens_model TEXT DEFAULT NULL", []);
     let _ = conn.execute("ALTER TABLE people ADD COLUMN cover_face_thumb TEXT DEFAULT ''", []);
     let _ = conn.execute("ALTER TABLE photo_faces ADD COLUMN source TEXT DEFAULT 'user'", []);
+    // 1 = the file is damaged (e.g. truncated); its thumbnail was recovered from the partial data or failed
+    let _ = conn.execute("ALTER TABLE photos ADD COLUMN damaged INTEGER DEFAULT 0", []);
 
     // Phase 2: Create high-speed covering indexes for folder-scoped & hash lookups
     let _ = conn.execute_batch(
@@ -129,9 +131,15 @@ pub fn open_global_db(app: &AppHandle) -> Result<Connection, String> {
     Ok(conn)
 }
 
+// LIKE pattern matching only files inside `root_folder` (never a sibling such as `Photos2` for `Photos`).
+// Wildcard characters in folder names are escaped, so every query must use `LIKE ?n ESCAPE '!'`.
 pub fn make_folder_prefix(root_folder: Option<&str>) -> String {
     match root_folder {
-        Some(f) if !f.trim().is_empty() => format!("{}%", f.trim()),
+        Some(f) if !f.trim().is_empty() => {
+            let root = f.trim().trim_end_matches(['\\', '/']);
+            let escaped = root.replace('!', "!!").replace('%', "!%").replace('_', "!_");
+            format!("{}{}%", escaped, std::path::MAIN_SEPARATOR)
+        }
         _ => "%".to_string(),
     }
 }

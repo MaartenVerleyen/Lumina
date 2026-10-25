@@ -79,41 +79,78 @@ pub fn get_models_dir(app: &AppHandle) -> PathBuf {
     dir
 }
 
+static FACE_MODELS_VERIFIED: AtomicBool = AtomicBool::new(false);
+static LEGACY_UPGRADE_STARTED: AtomicBool = AtomicBool::new(false);
+
+// A model file is usable only if it is large enough AND parses as an ONNX graph
+// (a truncated download can easily pass a size check).
+pub fn onnx_model_file_is_valid(path: &Path, min_len: u64) -> bool {
+    path.metadata().map(|m| m.len() >= min_len).unwrap_or(false)
+        && tract_onnx::onnx().model_for_path(path).is_ok()
+}
+
+// Downloads to `<name>.part`, validates, then renames into place, so a failed or interrupted
+// download never leaves a corrupt model where the loader would find it.
+async fn download_model_verified(url: &str, final_path: &Path, min_len: u64, label: &str) -> Result<(), String> {
+    let part_path = final_path.with_extension("onnx.part");
+    let resp = HTTP_CLIENT
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to download the {label} face model: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("Failed to download the {label} face model: HTTP {}", resp.status()));
+    }
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| format!("Download of the {label} face model was interrupted: {e}"))?;
+    fs::write(&part_path, &bytes).map_err(|e| e.to_string())?;
+
+    let part_for_check = part_path.clone();
+    let valid = tauri::async_runtime::spawn_blocking(move || onnx_model_file_is_valid(&part_for_check, min_len))
+        .await
+        .unwrap_or(false);
+    if !valid {
+        let _ = fs::remove_file(&part_path);
+        return Err(format!(
+            "The downloaded {label} face model is incomplete or corrupt ({} bytes). Please try again.",
+            bytes.len()
+        ));
+    }
+    fs::rename(&part_path, final_path).map_err(|e| e.to_string())
+}
+
+async fn ensure_model(url: &str, path: PathBuf, min_len: u64, label: &str) -> Result<(), String> {
+    let path_for_check = path.clone();
+    let valid = tauri::async_runtime::spawn_blocking(move || onnx_model_file_is_valid(&path_for_check, min_len))
+        .await
+        .unwrap_or(false);
+    if valid {
+        return Ok(());
+    }
+    // Missing, or corrupt from an earlier interrupted download: replace it
+    let _ = fs::remove_file(&path);
+    download_model_verified(url, &path, min_len, label).await
+}
+
 #[tauri::command]
 pub async fn ensure_neural_face_models(app: AppHandle) -> Result<String, String> {
-    let models_dir = get_models_dir(&app);
-    let detector_path = models_dir.join("version-RFB-320.onnx");
-
-    if !detector_path.exists() || detector_path.metadata().map(|m| m.len() < 100_000).unwrap_or(true) {
-        let resp = HTTP_CLIENT
-            .get(ULTRAFACE_URL)
-            .send()
-            .await
-            .map_err(|e| format!("Failed to download UltraFace ONNX model: {e}"))?;
-        if !resp.status().is_success() {
-            return Err(format!("Failed to download UltraFace model: HTTP {}", resp.status()));
-        }
-        let bytes = resp.bytes().await.map_err(|e| e.to_string())?;
-        fs::write(&detector_path, &bytes).map_err(|e| e.to_string())?;
+    if !FACE_MODELS_VERIFIED.load(Ordering::Acquire) {
+        let models_dir = get_models_dir(&app);
+        ensure_model(ULTRAFACE_URL, models_dir.join("version-RFB-320.onnx"), 100_000, "UltraFace detector").await?;
+        // MobileFaceNet produces the 512-D embeddings that face matching depends on
+        ensure_model(MOBILEFACENET_URL, models_dir.join("w600k_mbf.onnx"), 500_000, "MobileFaceNet embedder").await?;
+        FACE_MODELS_VERIFIED.store(true, Ordering::Release);
     }
 
-    // Also attempt to cache MobileFaceNet (w600k_mbf.onnx) for 512-D ArcFace biometric embeddings
-    let embedder_path = models_dir.join("w600k_mbf.onnx");
-    if !embedder_path.exists() || embedder_path.metadata().map(|m| m.len() < 500_000).unwrap_or(true) {
-        if let Ok(resp) = HTTP_CLIENT.get(MOBILEFACENET_URL).send().await {
-            if resp.status().is_success() {
-                if let Ok(bytes) = resp.bytes().await {
-                    let _ = fs::write(&embedder_path, &bytes);
-                }
-            }
-        }
+    // Upgrade any legacy 384-D face embeddings once per session, in the background
+    if !LEGACY_UPGRADE_STARTED.swap(true, Ordering::AcqRel) {
+        let app_for_upgrade = app.clone();
+        std::thread::spawn(move || {
+            upgrade_legacy_face_embeddings(&app_for_upgrade);
+        });
     }
-
-    // Upgrade any legacy 384-D face embeddings in a non-blocking background thread
-    let app_for_upgrade = app.clone();
-    std::thread::spawn(move || {
-        upgrade_legacy_face_embeddings(&app_for_upgrade);
-    });
 
     Ok("Neural ONNX face models ready".to_string())
 }
@@ -397,6 +434,55 @@ pub fn compute_face_embedding(face_img: &DynamicImage) -> Vec<f32> {
         }
     }
     Vec::new()
+}
+
+// Single source of truth for face-match thresholds (512-D MobileFaceNet cosine). The badge counts, the review
+// modal and its colour coding all use these via `get_face_match_config`. Phase 4 recalibrates them per engine.
+pub const FACE_MATCH_MIN_SIMILARITY: f32 = 0.60;
+pub const FACE_MATCH_STRONG_SIMILARITY: f32 = 0.62;
+
+#[derive(Serialize)]
+pub struct FaceMatchConfig {
+    pub min_similarity_percent: f32,
+    pub strong_similarity_percent: f32,
+}
+
+#[tauri::command]
+pub fn get_face_match_config() -> FaceMatchConfig {
+    FaceMatchConfig {
+        min_similarity_percent: FACE_MATCH_MIN_SIMILARITY * 100.0,
+        strong_similarity_percent: FACE_MATCH_STRONG_SIMILARITY * 100.0,
+    }
+}
+
+// Pending-candidate cache entries are per person AND per library folder
+pub fn pending_cache_key(person: &str, root_folder: Option<&str>) -> String {
+    format!("{}|{}", person.trim().to_lowercase(), make_folder_prefix(root_folder).to_lowercase())
+}
+
+// Swaps in freshly computed candidates for one folder, leaving other folders' cached entries alone
+pub fn replace_pending_for_folder(root_folder: Option<&str>, fresh: HashMap<String, Vec<SimilarFaceCandidate>>) {
+    let suffix = format!("|{}", make_folder_prefix(root_folder).to_lowercase());
+    if let Ok(mut g) = PENDING_CANDIDATES_CACHE.lock() {
+        g.retain(|k, _| !k.ends_with(&suffix));
+        g.extend(fresh);
+    }
+}
+
+pub fn invalidate_pending_for_person(person: &str) {
+    let prefix = format!("{}|", person.trim().to_lowercase());
+    if let Ok(mut g) = PENDING_CANDIDATES_CACHE.lock() {
+        g.retain(|k, _| !k.starts_with(&prefix));
+    }
+}
+
+// Intersection-over-union of two normalized (x, y, w, h) boxes
+pub fn bbox_iou(a: (f64, f64, f64, f64), b: (f64, f64, f64, f64)) -> f64 {
+    let ix = (a.0 + a.2).min(b.0 + b.2) - a.0.max(b.0);
+    let iy = (a.1 + a.3).min(b.1 + b.3) - a.1.max(b.1);
+    let inter = ix.max(0.0) * iy.max(0.0);
+    let union = a.2 * a.3 + b.2 * b.3 - inter;
+    if union > 0.0 { inter / union } else { 0.0 }
 }
 
 pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {

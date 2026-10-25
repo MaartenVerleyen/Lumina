@@ -374,6 +374,7 @@ export default function App() {
         setIsCommitModalOpen={lib.setIsCommitModalOpen}
         handleDismissAllStaged={lib.handleDismissAllStaged}
         handleBatchScanFacesOnnx={lib.handleBatchScanFacesOnnx}
+        handleCancelFaceScan={lib.handleCancelFaceScan}
         runBatchAiOnList={lib.runBatchAiOnList}
         simpleMode={lib.simpleMode}
         toggleSimpleMode={lib.toggleSimpleMode}
@@ -384,7 +385,6 @@ export default function App() {
         setIsShortcutsModalOpen={lib.setIsShortcutsModalOpen}
         setIsSessionLogModalOpen={lib.setIsSessionLogModalOpen}
         sessionLogsCount={lib.sessionLogs.length}
-        ollamaPullProgress={lib.ollamaPullProgress}
         handlePullDefaultAiModel={lib.handlePullDefaultAiModel}
         totalPendingFaceMatches={Object.values(lib.pendingFaceCounts).reduce((a, b) => a + b, 0)}
         onOpenFaceReviewStudio={() =>
@@ -1312,6 +1312,7 @@ export default function App() {
         pendingCounts={lib.pendingFaceCounts}
         setPhotos={lib.setPhotos}
         refreshPeople={lib.refreshPeople}
+        folder={lib.folder}
       />
 
       <LoupeModal

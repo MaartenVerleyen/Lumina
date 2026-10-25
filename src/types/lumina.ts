@@ -24,6 +24,7 @@ export interface FaceScanProgress {
   batch_faces?: Record<string, FaceInstance[]>;
   batch_people?: Record<string, string[]>;
   done: boolean;
+  cancelled: boolean;
 }
 
 export interface ScanProgressEvent {
@@ -71,6 +72,8 @@ export interface PhotoItem {
   iso?: string | null;
   lens_model?: string | null;
   pair_raw_path?: string | null;
+  // File is truncated/corrupt: its thumbnail was recovered from partial data (or could not be made)
+  damaged: boolean;
 }
 
 export interface PersonItem {
@@ -89,6 +92,7 @@ export interface ThumbBatchItem {
   height: number;
   auto_tags: string[];
   thumb_ok: boolean;
+  damaged: boolean;
 }
 
 export interface ThumbBatchProgress {
@@ -96,6 +100,7 @@ export interface ThumbBatchProgress {
   duplicate_groups: Record<string, number>;
   completed: number;
   total: number;
+  folder: string;
 }
 
 export interface ExifRefreshResult {
@@ -140,6 +145,8 @@ export interface LibraryHealthStats {
   cache_size_mb: number;
   orphaned_cache_count: number;
   camera_breakdown: [string, number][];
+  damaged_count: number;
+  damaged_files: string[];
 }
 
 export type AutoStagePreset =
@@ -169,6 +176,28 @@ export interface AiPerf {
   prompt_eval_ms: number;
   output_tokens: number;
   output_eval_ms: number;
+}
+
+export interface FileOpFailure {
+  file: string;
+  error: string;
+}
+
+export interface CommitResult {
+  moved: number;
+  failures: FileOpFailure[];
+}
+
+export interface TrashResult {
+  recycled: number;
+  failures: FileOpFailure[];
+}
+
+export interface XmpExportResult {
+  exported: number;
+  skipped_foreign: number;
+  skipped_raw_pair: number;
+  failed: number;
 }
 
 export interface PerfLogEvent {

@@ -84,7 +84,13 @@ pub fn create_library_subfolder(root_folder: String, relative_path: String) -> R
 
 
 #[tauri::command]
-pub fn copy_image_to_clipboard(path: String) -> Result<(), String> {
+pub async fn copy_image_to_clipboard(path: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || copy_image_to_clipboard_blocking(path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn copy_image_to_clipboard_blocking(path: String) -> Result<(), String> {
     let p = Path::new(&path);
     if !p.exists() {
         return Err("Image file does not exist on disk".into());
