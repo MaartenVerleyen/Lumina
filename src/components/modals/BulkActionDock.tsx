@@ -76,7 +76,7 @@ interface BulkActionDockProps {
   handleShiftTimestamps: (e: React.FormEvent) => Promise<void>;
   handleToggleBasketSelection: () => Promise<void>;
   handleForceRescanExifSelected: () => Promise<void>;
-  runBatchAiOnList: (targets: PhotoItem[]) => Promise<void>;
+  runBatchAiOnList: (targets: PhotoItem[], options?: { reanalyze?: boolean }) => Promise<void>;
   handleBatchAssignPerson?: (personName: string) => Promise<void>;
 }
 

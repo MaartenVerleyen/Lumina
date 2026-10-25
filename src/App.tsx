@@ -341,6 +341,19 @@ export default function App() {
     // Face Review handles Escape itself (it may first close its own spotlight view)
   };
 
+  // Batch AI speed and remaining time, from the photos finished so far
+  const aiBatchRate = (() => {
+    const prog = lib.aiBatchProgress;
+    if (!prog || prog.current < 2) return null;
+    const minutes = (Date.now() - prog.startedAt) / 60000;
+    if (minutes <= 0) return null;
+    const perMinute = prog.current / minutes;
+    const remainingMin = (prog.total - prog.current) / perMinute;
+    const etaLabel =
+      remainingMin < 1 ? `${Math.max(1, Math.round(remainingMin * 60))} s` : `${Math.round(remainingMin)} min`;
+    return { perMinute, etaLabel };
+  })();
+
   extraKeysRef.current = { lib, isBlockingModalOpen };
 
   useKeyboardShortcuts({
@@ -415,7 +428,7 @@ export default function App() {
         setIsLoadingVram={lib.setIsLoadingVram}
         faceScanProgress={lib.faceScanProgress}
         aiBatchProgress={lib.aiBatchProgress}
-        cancelBatchRef={lib.cancelBatchRef}
+        handleStopAiBatch={lib.handleStopAiBatch}
         handleOpenFolder={lib.handleOpenFolder}
         handleRescanFolder={lib.handleRescanFolder}
         handleRescanAndProcessFolder={lib.handleRescanAndProcessFolder}
@@ -477,13 +490,17 @@ export default function App() {
                 ⚠ {lib.aiBatchProgress.failed}
               </span>
             )}
+            {aiBatchRate && (
+              <span className="font-mono text-[11px] text-indigo-200" title="Photos per minute · estimated time remaining">
+                {aiBatchRate.perMinute.toFixed(1)}/min · ~{aiBatchRate.etaLabel} left
+              </span>
+            )}
             <button
-              onClick={() => {
-                lib.cancelBatchRef.current = true;
-              }}
-              className="px-2.5 py-0.5 bg-red-600 hover:bg-red-500 text-white rounded font-semibold text-[11px]"
+              onClick={lib.handleStopAiBatch}
+              disabled={lib.aiBatchProgress.stopping}
+              className="px-2.5 py-0.5 bg-red-600 hover:bg-red-500 disabled:opacity-70 text-white rounded font-semibold text-[11px]"
             >
-              Stop
+              {lib.aiBatchProgress.stopping ? "Stopping…" : "Stop"}
             </button>
           </div>
         </div>
@@ -1264,7 +1281,7 @@ export default function App() {
         onRetryFailures={(failures) => {
           const retryPhotos = failures.map((f) => f.photo);
           lib.setAiBatchReport(null);
-          lib.runBatchAiOnList(retryPhotos);
+          lib.runBatchAiOnList(retryPhotos, { reanalyze: true });
         }}
       />
 

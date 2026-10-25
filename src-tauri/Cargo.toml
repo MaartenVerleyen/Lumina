@@ -34,6 +34,8 @@ kamadak-exif = "0.5"
 reverse_geocoder = "4.1"
 tract-onnx = "0.21"
 trash = "5"
+# Already in the tree via Tauri; `select!`/`Notify` let a Stop abort an in-flight AI request
+tokio = { version = "1", features = ["sync", "macros"] }
 # DCT-domain downscaled JPEG decoding (1/2, 1/4, 1/8) for thumbnails, previews and face/AI input
 jpeg-decoder = { version = "0.3", default-features = false }
 

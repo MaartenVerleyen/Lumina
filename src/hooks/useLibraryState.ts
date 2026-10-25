@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback, useDeferredValue } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { open } from "@tauri-apps/plugin-dialog";
+import { open, ask } from "@tauri-apps/plugin-dialog";
 import {
   PhotoItem,
   PersonItem,
@@ -62,6 +62,23 @@ function searchTextOf(p: PhotoItem): string {
     searchTextCache.set(p, text);
   }
   return text;
+}
+
+// Error text of an AI request aborted by the Stop button (matches ai::AI_CANCELLED in Rust)
+const AI_CANCELLED = "AI analysis cancelled";
+
+// The library's most used tags, offered to the model so the same subject gets the same tag everywhere
+function topLibraryTags(list: PhotoItem[], max = 40): string[] {
+  const counts = new Map<string, number>();
+  for (const p of list) {
+    for (const t of p.tags) {
+      if (t !== "screenshot") counts.set(t, (counts.get(t) || 0) + 1);
+    }
+  }
+  return Array.from(counts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, max)
+    .map(([t]) => t);
 }
 
 // Windows paths: compare case-insensitively and ignore a trailing separator
@@ -431,6 +448,8 @@ export function useLibraryState() {
     succeeded: number;
     failed: number;
     currentFile?: string;
+    startedAt: number;
+    stopping?: boolean;
   } | null>(null);
   const cancelBatchRef = useRef<boolean>(false);
 
@@ -2097,49 +2116,97 @@ export function useLibraryState() {
     }
   }
 
+  // Latest photos for the long-running AI loop (the tag vocabulary is recomputed from the live library)
+  const photosRef = useRef(photos);
+  photosRef.current = photos;
+
+  function applyAiResults(results: Map<string, AiAnalysisResult>) {
+    if (results.size === 0) return;
+    setPhotos((prev) =>
+      prev.map((p) => {
+        const res = results.get(p.hash);
+        return res
+          ? {
+              ...p,
+              tags: res.tags,
+              people: res.people,
+              faces: res.faces,
+              ai_caption: res.caption,
+              ocr_text: res.ocr_text,
+            }
+          : p;
+      })
+    );
+  }
+
   async function handleAiAnalyzeSingle() {
     if (!activePhoto || analyzingHashes.has(activePhoto.hash)) return;
-    const targetHash = activePhoto.hash;
+    if (aiBatchProgress) {
+      // Ollama handles one request at a time: a single analysis would just queue behind the batch
+      setError("Batch AI is running: wait for it to finish or stop it first.");
+      return;
+    }
+    const photo = activePhoto;
     try {
       setError("");
-      setAnalyzingHashes((prev) => new Set(prev).add(targetHash));
+      setAnalyzingHashes((prev) => new Set(prev).add(photo.hash));
       const res = await invoke<AiAnalysisResult>("ai_analyze_photo", {
-        hash: targetHash,
-        imagePathForAi: activePhoto.path,
+        hash: photo.hash,
+        imagePathForAi: diskPathOf(photo),
         modelName: aiModel,
-        existingTags: allLibraryTags,
+        existingTags: topLibraryTags(photosRef.current),
       });
-      setPhotos((prev) =>
-        prev.map((p) =>
-          p.hash === targetHash
-            ? {
-                ...p,
-                tags: res.tags,
-                people: res.people,
-                faces: res.faces,
-                ai_caption: res.caption,
-                ocr_text: res.ocr_text,
-              }
-            : p
-        )
-      );
-      addLog("AI", `AI analyzed ${activePhoto.name}`, `${res.tags.length} tags generated`);
-      addLog("PERF", `AI analysis (${aiModel}): ${activePhoto.name}`, summarizeAiPerf([res.perf]));
-      refreshPeople();
+      applyAiResults(new Map([[photo.hash, res]]));
+      addLog("AI", `AI analyzed ${photo.name}`, `${res.tags.length} tags generated`);
+      addLog("PERF", `AI analysis (${aiModel}): ${photo.name}`, summarizeAiPerf([res.perf]));
     } catch (err) {
-      setError(`AI Error on ${activePhoto.name}: ${String(err)}`);
+      if (!String(err).includes(AI_CANCELLED)) {
+        setError(`AI Error on ${photo.name}: ${String(err)}`);
+      }
     } finally {
       setAnalyzingHashes((prev) => {
         const next = new Set(prev);
-        next.delete(targetHash);
+        next.delete(photo.hash);
         return next;
       });
     }
   }
 
-  // Resilient Batch AI Runner with Automatic Retry (up to 3 attempts) & Post-Run Report Modal
-  async function runBatchAiOnList(targets: PhotoItem[]) {
-    if (aiBatchProgress || targets.length === 0) return;
+  // Stop: also aborts the request Ollama is working on right now (it stops generating)
+  async function handleStopAiBatch() {
+    cancelBatchRef.current = true;
+    setAiBatchProgress((p) => (p ? { ...p, stopping: true } : p));
+    try {
+      await invoke("cancel_ai_analysis");
+    } catch {}
+  }
+
+  // Batch AI runner: one request at a time (qwen3-vl can't run requests in parallel in Ollama), with the next
+  // photo's image prepared while the current one is analysed, retries for real failures, and batched UI updates.
+  // Photos that already have AI results are skipped unless the user chooses to re-analyse them.
+  async function runBatchAiOnList(requested: PhotoItem[], options: { reanalyze?: boolean } = {}) {
+    if (aiBatchProgress || requested.length === 0) return;
+
+    let targets = requested;
+    if (!options.reanalyze) {
+      const analyzed = requested.filter((p) => p.ai_caption);
+      if (analyzed.length > 0) {
+        const fresh = requested.length - analyzed.length;
+        const redo = await ask(
+          fresh > 0
+            ? `${analyzed.length} of these ${requested.length} photos already have AI results. Analyse those again as well? Their caption, text and tags will be replaced.\n\nChoose "Only new photos" to analyse just the ${fresh} photo(s) without results.`
+            : `All ${requested.length} photo(s) already have AI results. Analyse them again? Their caption, text and tags will be replaced.`,
+          {
+            title: "Batch AI",
+            kind: "info",
+            okLabel: "Analyse again",
+            cancelLabel: fresh > 0 ? "Only new photos" : "Cancel",
+          }
+        );
+        if (!redo) targets = requested.filter((p) => !p.ai_caption);
+      }
+    }
+    if (targets.length === 0) return;
 
     cancelBatchRef.current = false;
     setError("");
@@ -2150,6 +2217,7 @@ export function useLibraryState() {
       succeeded: 0,
       failed: 0,
       currentFile: targets[0]?.name,
+      startedAt: Date.now(),
     });
 
     addLog("AI", `Started Batch AI on ${targets.length} photo(s) using ${aiModel}`);
@@ -2158,21 +2226,31 @@ export function useLibraryState() {
     const batchPerfs: AiPerf[] = [];
     let completedCount = 0;
     let succeededCount = 0;
+    let stopped = false;
     const failures: AiFailureItem[] = [];
     const MAX_ATTEMPTS = 3;
+
+    // Results reach the grid in batches (every ~0.5 s) instead of one full re-render per photo
+    const pending = new Map<string, AiAnalysisResult>();
+    let lastFlush = performance.now();
+    const flush = () => {
+      applyAiResults(new Map(pending));
+      pending.clear();
+      lastFlush = performance.now();
+    };
 
     for (let i = 0; i < targets.length; i++) {
       if (cancelBatchRef.current) break;
       const photo = targets[i];
 
+      // Prepare the next photo's 896px image while Ollama works on this one
+      const next = targets[i + 1];
+      if (next) {
+        invoke("prepare_ai_image", { hash: next.hash, imagePath: diskPathOf(next) }).catch(() => {});
+      }
+
       setAnalyzingHashes((prev) => new Set(prev).add(photo.hash));
-      setAiBatchProgress({
-        current: completedCount,
-        total: targets.length,
-        succeeded: succeededCount,
-        failed: failures.length,
-        currentFile: photo.name,
-      });
+      setAiBatchProgress((p) => (p ? { ...p, currentFile: photo.name } : p));
 
       let attempt = 0;
       let success = false;
@@ -2183,36 +2261,34 @@ export function useLibraryState() {
         try {
           const res = await invoke<AiAnalysisResult>("ai_analyze_photo", {
             hash: photo.hash,
-            imagePathForAi: photo.path,
+            imagePathForAi: diskPathOf(photo),
             modelName: aiModel,
-            existingTags: allLibraryTags,
+            existingTags: topLibraryTags(photosRef.current),
           });
           success = true;
           succeededCount++;
           batchPerfs.push(res.perf);
-          setPhotos((prev) =>
-            prev.map((p) =>
-              p.hash === photo.hash
-                ? {
-                    ...p,
-                    tags: res.tags,
-                    people: res.people,
-                    faces: res.faces,
-                    ai_caption: res.caption,
-                    ocr_text: res.ocr_text,
-                  }
-                : p
-            )
-          );
+          pending.set(photo.hash, res);
         } catch (err) {
           lastErr = String(err);
+          if (lastErr.includes(AI_CANCELLED)) {
+            stopped = true;
+            break;
+          }
           if (attempt < MAX_ATTEMPTS && !cancelBatchRef.current) {
             await new Promise((r) => setTimeout(r, 450 * attempt));
           }
         }
       }
 
-      if (!success && !cancelBatchRef.current) {
+      setAnalyzingHashes((prev) => {
+        const nextSet = new Set(prev);
+        nextSet.delete(photo.hash);
+        return nextSet;
+      });
+      if (stopped || cancelBatchRef.current) break;
+
+      if (!success) {
         failures.push({
           photo,
           error: lastErr || "Unknown AI error",
@@ -2221,31 +2297,22 @@ export function useLibraryState() {
       }
 
       completedCount++;
-      setAnalyzingHashes((prev) => {
-        const next = new Set(prev);
-        next.delete(photo.hash);
-        return next;
-      });
-      setAiBatchProgress({
-        current: completedCount,
-        total: targets.length,
-        succeeded: succeededCount,
-        failed: failures.length,
-        currentFile: photo.name,
-      });
-
-      if (succeededCount > 0 && completedCount % 6 === 0) {
-        refreshPeople();
-      }
+      setAiBatchProgress((p) =>
+        p ? { ...p, current: completedCount, succeeded: succeededCount, failed: failures.length } : p
+      );
+      if (performance.now() - lastFlush >= 500) flush();
     }
 
+    flush();
     setAnalyzingHashes(new Set());
     setAiBatchProgress(null);
-    refreshPeople();
 
+    const wasStopped = stopped || cancelBatchRef.current;
     addLog(
       "AI",
-      `Finished Batch AI: ${succeededCount} succeeded, ${failures.length} failed`
+      wasStopped
+        ? `Stopped Batch AI after ${completedCount} of ${targets.length} photo(s): ${succeededCount} succeeded, ${failures.length} failed`
+        : `Finished Batch AI: ${succeededCount} succeeded, ${failures.length} failed`
     );
 
     if (batchPerfs.length > 0) {
@@ -2439,6 +2506,7 @@ export function useLibraryState() {
     handleCreateSubfolder,
     handleAiAnalyzeSingle,
     runBatchAiOnList,
+    handleStopAiBatch,
     recentFolders,
     simpleMode,
     toggleSimpleMode,

@@ -441,7 +441,14 @@ pub fn open_and_orient_image_for_thumb(file_path: &Path) -> Result<(DynamicImage
     decode_standard_or_recover(file_path, 360)
 }
 
+// ~1920 px is plenty for previews, face detection/crops and AI input; big JPEGs decode straight to it
 pub fn open_and_orient_image(file_path: &Path) -> Result<DynamicImage, String> {
+    open_and_orient_image_sized(file_path, 1920)
+}
+
+// Oriented image whose long edge is at least `min_edge` where the source allows (RAW previews and big
+// JPEGs decode directly near that size; HEIC is decoded by WIC at that size)
+pub fn open_and_orient_image_sized(file_path: &Path, min_edge: u32) -> Result<DynamicImage, String> {
     let ext = file_path
         .extension()
         .map(|e| e.to_string_lossy().to_lowercase())
@@ -453,7 +460,7 @@ pub fn open_and_orient_image(file_path: &Path) -> Result<DynamicImage, String> {
                 return Ok(apply_exif_orientation(raw_preview, orient));
             }
         }
-        if let Some((wic_img, orient)) = decode_via_windows_wic(file_path, 1920) {
+        if let Some((wic_img, orient)) = decode_via_windows_wic(file_path, min_edge) {
             return Ok(apply_exif_orientation(wic_img, orient));
         }
         if let Some((heic_preview, orient)) = extract_embedded_raw_jpeg_sized(file_path, false) {
@@ -461,8 +468,7 @@ pub fn open_and_orient_image(file_path: &Path) -> Result<DynamicImage, String> {
         }
     }
 
-    // ~2048 px is plenty for previews, face detection/crops and AI input; big JPEGs decode straight to it
-    decode_standard_or_recover(file_path, 2048).map(|(img, _)| img)
+    decode_standard_or_recover(file_path, min_edge).map(|(img, _)| img)
 }
 
 

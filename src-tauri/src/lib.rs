@@ -361,6 +361,8 @@ pub fn run() {
             face_commands::assign_face_region_and_automatch,
             face_commands::remove_face_box,
             ai::ai_analyze_photo,
+            ai::prepare_ai_image,
+            ai::cancel_ai_analysis,
             ai::check_ollama_status,
             ai::start_ollama_service,
             ai::preload_ollama_vram,

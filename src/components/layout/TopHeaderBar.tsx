@@ -68,8 +68,10 @@ interface TopHeaderBarProps {
     succeeded: number;
     failed: number;
     currentFile?: string;
+    startedAt: number;
+    stopping?: boolean;
   } | null;
-  cancelBatchRef: RefObject<boolean>;
+  handleStopAiBatch: () => Promise<void>;
   handleOpenFolder: () => Promise<void>;
   handleRescanFolder: () => Promise<void>;
   handleRescanAndProcessFolder: () => Promise<void>;
@@ -78,7 +80,7 @@ interface TopHeaderBarProps {
   handleDismissAllStaged: () => Promise<void>;
   handleBatchScanFacesOnnx: () => Promise<void>;
   handleCancelFaceScan: () => Promise<void>;
-  runBatchAiOnList: (targets: PhotoItem[]) => Promise<void>;
+  runBatchAiOnList: (targets: PhotoItem[], options?: { reanalyze?: boolean }) => Promise<void>;
   simpleMode?: boolean;
   toggleSimpleMode?: () => void;
   canUndo?: boolean;
@@ -119,7 +121,7 @@ export default function TopHeaderBar({
   setIsLoadingVram,
   faceScanProgress,
   aiBatchProgress,
-  cancelBatchRef,
+  handleStopAiBatch,
   handleOpenFolder,
   handleRescanFolder,
   handleRescanAndProcessFolder,
@@ -432,14 +434,15 @@ export default function TopHeaderBar({
               {/* Secondary Action: Batch AI Tagging */}
               {aiBatchProgress ? (
                 <button
-                  onClick={() => {
-                    cancelBatchRef.current = true;
-                  }}
-                  className="flex items-center gap-1.5 px-2.5 py-1.5 bg-red-600 hover:bg-red-500 text-white text-xs font-semibold transition"
+                  onClick={handleStopAiBatch}
+                  disabled={aiBatchProgress.stopping}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 bg-red-600 hover:bg-red-500 disabled:opacity-70 text-white text-xs font-semibold transition"
                 >
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
                   <span>
-                    Stop ({aiBatchProgress.current}/{aiBatchProgress.total})
+                    {aiBatchProgress.stopping
+                      ? "Stopping…"
+                      : `Stop (${aiBatchProgress.current}/${aiBatchProgress.total})`}
                   </span>
                 </button>
               ) : (
@@ -449,13 +452,11 @@ export default function TopHeaderBar({
                       triggerModelPull("qwen3-vl:8b");
                       return;
                     }
-                    const targets = visiblePhotos.filter(
-                      (p) => p.tags.length === 0 && !p.ai_caption
-                    );
-                    runBatchAiOnList(targets.length > 0 ? targets : visiblePhotos);
+                    // The runner skips photos that already have AI results (and asks before re-analysing)
+                    runBatchAiOnList(visiblePhotos);
                   }}
                   className="flex items-center gap-1.5 px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold transition"
-                  title="Run Qwen3-VL AI Vision tagging across untagged visible photos"
+                  title="Run AI captioning & tagging on the visible photos (photos that already have AI results are skipped unless you choose otherwise)"
                 >
                   <Sparkles className="w-3.5 h-3.5" />
                   <span>Batch AI</span>

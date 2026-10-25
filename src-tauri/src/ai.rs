@@ -195,33 +195,123 @@ pub async fn pull_ollama_model(app: AppHandle, model_name: String) -> Result<Str
 
 // ----------------- FAST ASSISTANT-PREFILLED QWEN3-VL VISION PIPELINE -----------------
 
-pub fn encode_fast_ai_buffer(app: &AppHandle, hash: &str, image_path: &str) -> Result<String, String> {
-    let orig_path = Path::new(image_path);
-    // Phase 2 Fast Path: If not a screenshot and the pre-oriented 360px cached thumbnail exists,
-    // read its raw JPEG bytes directly (<0.2ms) instead of decoding a 20MB+ camera image from disk!
-    if !is_likely_screenshot(orig_path, "", None, None) {
-        let thumb_path = get_app_storage_dir(app)
-            .join("thumbnails")
-            .join(format!("{}.jpg", hash));
-        if let Ok(meta) = thumb_path.metadata() {
-            if meta.len() > 512 {
-                if let Ok(thumb_bytes) = fs::read(&thumb_path) {
-                    return Ok(general_purpose::STANDARD.encode(&thumb_bytes));
-                }
-            }
-        }
-    }
+// Ollama resizes every image to a fixed working size for qwen3-vl (~1,070 prompt tokens): up to ~900 px the
+// model's cost does not change, larger costs more tokens without reading better (measured 2026-10-25).
+// So 896 px is the most detail (OCR!) at the lowest cost; the old 360px thumbnail misread text.
+pub const AI_IMAGE_EDGE: u32 = 896;
 
-    if let Ok(img) = open_and_orient_image(orig_path) {
-        let small = img.thumbnail(640, 640).to_rgb8();
-        let mut buf = Cursor::new(Vec::new());
-        if small.write_to(&mut buf, ImageFormat::Jpeg).is_ok() {
-            return Ok(general_purpose::STANDARD.encode(buf.into_inner()));
-        }
-    }
-    let raw_bytes = fs::read(image_path).map_err(|e| format!("Failed to read image: {e}"))?;
-    Ok(general_purpose::STANDARD.encode(&raw_bytes))
+// Base64 AI images prepared ahead of time (the next photo is encoded while the current one is analysed)
+static AI_IMAGE_CACHE: LazyLock<Mutex<HashMap<String, String>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+const AI_IMAGE_CACHE_MAX: usize = 8;
+
+// Builds the 896px JPEG (q90) the model sees, from the best available source: the cached 1920px preview
+// for RAW/HEIC, otherwise the original (big JPEGs decode near the target size directly).
+pub fn encode_ai_image(app: &AppHandle, hash: &str, image_path: &str) -> Result<String, String> {
+    let preview = get_app_storage_dir(app)
+        .join("previews")
+        .join(format!("{hash}_preview.jpg"));
+    let img = if preview.metadata().map(|m| m.len() > 1024).unwrap_or(false) {
+        image::open(&preview).map_err(|e| e.to_string())?
+    } else {
+        open_and_orient_image_sized(Path::new(image_path), AI_IMAGE_EDGE)?
+    };
+    let small = img.thumbnail(AI_IMAGE_EDGE, AI_IMAGE_EDGE).to_rgb8();
+    let mut buf = Cursor::new(Vec::new());
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, 90)
+        .encode_image(&small)
+        .map_err(|e| e.to_string())?;
+    Ok(general_purpose::STANDARD.encode(buf.into_inner()))
 }
+
+fn take_cached_ai_image(hash: &str) -> Option<String> {
+    AI_IMAGE_CACHE.lock().ok()?.remove(hash)
+}
+
+// Prefetch: the batch runner calls this for the next photo while the current one is in Ollama
+#[tauri::command]
+pub async fn prepare_ai_image(app: AppHandle, hash: String, image_path: String) -> Result<(), String> {
+    if AI_IMAGE_CACHE.lock().map(|c| c.contains_key(&hash)).unwrap_or(false) {
+        return Ok(());
+    }
+    let encoded = tauri::async_runtime::spawn_blocking(move || {
+        encode_ai_image(&app, &hash, &image_path).map(|b64| (hash, b64))
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    if let Ok(mut cache) = AI_IMAGE_CACHE.lock() {
+        if cache.len() >= AI_IMAGE_CACHE_MAX {
+            cache.clear();
+        }
+        cache.insert(encoded.0, encoded.1);
+    }
+    Ok(())
+}
+
+// Smallest context that fits the ~1,100 prompt tokens + capped output (measured: same speed as 8192)
+const AI_MIN_CTX: u64 = 4096;
+
+// Context size for the request. Ollama reloads the model (~4-6 s) whenever a request asks for a different
+// context than the loaded model has, so reuse whatever is loaded (e.g. a user-configured 8k default) as long
+// as it is large enough; only ask for AI_MIN_CTX when the model isn't loaded yet or has less.
+async fn ai_context_size(model: &str) -> u64 {
+    let loaded = async {
+        let ps: JsonValue = FAST_STATUS_CLIENT
+            .get("http://127.0.0.1:11434/api/ps")
+            .send()
+            .await
+            .ok()?
+            .json()
+            .await
+            .ok()?;
+        ps["models"]
+            .as_array()?
+            .iter()
+            .find(|m| m["name"].as_str() == Some(model) || m["model"].as_str() == Some(model))?["context_length"]
+            .as_u64()
+    }
+    .await;
+    match loaded {
+        Some(ctx) if ctx >= AI_MIN_CTX => ctx,
+        _ => AI_MIN_CTX,
+    }
+}
+
+// Error text the UI recognises as "stopped by the user" (not a failure to retry or report)
+pub const AI_CANCELLED: &str = "AI analysis cancelled";
+
+// Stop button: bumping the generation makes every in-flight ai_analyze_photo abort its Ollama request
+// (dropping the HTTP request makes Ollama stop generating)
+static AI_CANCEL_GENERATION: AtomicU64 = AtomicU64::new(0);
+static AI_CANCEL_NOTIFY: LazyLock<tokio::sync::Notify> = LazyLock::new(tokio::sync::Notify::new);
+
+#[tauri::command]
+pub fn cancel_ai_analysis() {
+    AI_CANCEL_GENERATION.fetch_add(1, Ordering::AcqRel);
+    AI_CANCEL_NOTIFY.notify_waiters();
+    if let Ok(mut cache) = AI_IMAGE_CACHE.lock() {
+        cache.clear();
+    }
+}
+
+async fn wait_for_ai_cancel(started_generation: u64) {
+    loop {
+        let notified = AI_CANCEL_NOTIFY.notified();
+        if AI_CANCEL_GENERATION.load(Ordering::Acquire) != started_generation {
+            return;
+        }
+        notified.await;
+    }
+}
+
+// Prompt and schema tuned on 24 library photos (2026-10-25): v1 copied the caption into ocr_text on every
+// photo without text and wrote 2-4 sentence captions. The schema limits are enforced by Ollama's grammar,
+// which caps output length: ~70 instead of ~160 output tokens, +64% photos/minute.
+const AI_PROMPT: &str = "Describe this photo for a photo library.\n\
+- caption: one sentence, at most 20 words.\n\
+- objects: 5 to 8 short lowercase tags (1-2 words each) for the main subjects, objects and setting.\n\
+- scene: the best matching category.\n\
+- ocr_text: copy text that is literally written in the image (signs, documents, screens). \
+If no text is visible, return an empty string. Never describe the image here.";
 
 pub fn json_value_to_string_list(val: Option<&JsonValue>) -> Vec<String> {
     let Some(v) = val else { return Vec::new() };
@@ -416,50 +506,55 @@ pub async fn ai_analyze_photo(
     existing_tags: Vec<String>,
 ) -> Result<AiAnalysisResult, String> {
     let ai_started = Instant::now();
-    let img_path_clone = image_path_for_ai.clone();
-    let app_for_buf = app.clone();
-    let hash_for_buf = hash.clone();
-    let base64_img = tauri::async_runtime::spawn_blocking(move || {
-        encode_fast_ai_buffer(&app_for_buf, &hash_for_buf, &img_path_clone)
-    })
-    .await
-    .map_err(|e| e.to_string())??;
+    let cancel_generation = AI_CANCEL_GENERATION.load(Ordering::Acquire);
+    let base64_img = match take_cached_ai_image(&hash) {
+        Some(prepared) => prepared,
+        None => {
+            let img_path_clone = image_path_for_ai.clone();
+            let app_for_buf = app.clone();
+            let hash_for_buf = hash.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                encode_ai_image(&app_for_buf, &hash_for_buf, &img_path_clone)
+            })
+            .await
+            .map_err(|e| e.to_string())??
+        }
+    };
     let encode_ms = elapsed_ms(ai_started);
     let image_kb = base64_img.len() * 3 / 4 / 1024;
 
-    let vocab_hint = if existing_tags.is_empty() {
-        String::new()
+    // The caller passes the library's most frequent tags, so the same subject gets the same tag across photos
+    let prompt = if existing_tags.is_empty() {
+        AI_PROMPT.to_string()
     } else {
         format!(
-            "Reuse relevant tags from [{}] when accurate. ",
-            existing_tags.iter().take(20).cloned().collect::<Vec<_>>().join(", ")
+            "{AI_PROMPT}\nPrefer these existing library tags when they fit: {}.",
+            existing_tags.iter().take(40).cloned().collect::<Vec<_>>().join(", ")
         )
     };
-
-    let prompt = format!(
-        "Analyze this image. Keep ocr_text under 300 characters. {vocab_hint}"
-    );
 
     let schema = json!({
         "type": "object",
         "properties": {
-            "caption": { "type": "string", "description": "One concise sentence describing the photo" },
+            "caption": { "type": "string", "maxLength": 160 },
             "objects": {
                 "type": "array",
-                "items": { "type": "string" },
-                "description": "5 to 10 short lowercase object/subject tags"
+                "items": { "type": "string", "maxLength": 24 },
+                "minItems": 3,
+                "maxItems": 8
             },
             "scene": {
                 "type": "string",
                 "enum": ["indoor", "outdoor", "screenshot", "document", "nature", "street", "beach", "kitchen", "studio", "night"]
             },
-            "is_screenshot": { "type": "boolean" },
-            "ocr_text": { "type": "string", "description": "Main visible text in the image, max 300 chars, or empty string" }
+            "ocr_text": { "type": "string", "maxLength": 300 }
         },
-        "required": ["caption", "objects", "scene", "is_screenshot", "ocr_text"]
+        "required": ["caption", "objects", "scene", "ocr_text"]
     });
 
-    // Test 3 Winning Approach: Closed think prefill + schema + 8192 context window
+    let num_ctx = ai_context_size(model_name.trim()).await;
+
+    // Closed-think prefill keeps hybrid reasoning models from spending tokens on <think>
     let payload = json!({
         "model": model_name.trim(),
         "messages": [
@@ -477,26 +572,30 @@ pub async fn ai_analyze_photo(
         "stream": false,
         "options": {
             "temperature": 0.1,
-            "num_ctx": 8192,
-            "num_predict": 768
+            "num_ctx": num_ctx,
+            "num_predict": 512
         },
         "keep_alive": "30m"
     });
 
     let request_started = Instant::now();
-    let res = HTTP_CLIENT
-        .post("http://127.0.0.1:11434/api/chat")
-        .json(&payload)
-        .send()
-        .await
-        .map_err(|e| format!("Ollama unreachable: {e}"))?;
-
-    if !res.status().is_success() {
-        let err = res.text().await.unwrap_or_default();
-        return Err(format!("Ollama error: {err}"));
-    }
-
-    let body: JsonValue = res.json().await.map_err(|e| e.to_string())?;
+    let request = async {
+        let res = HTTP_CLIENT
+            .post("http://127.0.0.1:11434/api/chat")
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|e| format!("Ollama unreachable: {e}"))?;
+        if !res.status().is_success() {
+            let err = res.text().await.unwrap_or_default();
+            return Err(format!("Ollama error: {err}"));
+        }
+        res.json::<JsonValue>().await.map_err(|e| e.to_string())
+    };
+    let body: JsonValue = tokio::select! {
+        result = request => result?,
+        _ = wait_for_ai_cancel(cancel_generation) => return Err(AI_CANCELLED.to_string()),
+    };
     let request_ms = elapsed_ms(request_started);
     let post_started = Instant::now();
     let ns_to_ms = |key: &str| body[key].as_u64().unwrap_or(0) / 1_000_000;
@@ -519,9 +618,7 @@ pub async fn ai_analyze_photo(
     let ai_result = parse_resilient_ai_json(raw_content)?;
 
     // DB writes and ONNX face detection are blocking work: keep them off the async runtime threads
-    let mut stored = tauri::async_runtime::spawn_blocking(move || {
-        store_ai_result(&app, &hash, &image_path_for_ai, ai_result)
-    })
+    let mut stored = tauri::async_runtime::spawn_blocking(move || store_ai_result(&app, &hash, ai_result))
     .await
     .map_err(|e| e.to_string())??;
 
@@ -531,12 +628,26 @@ pub async fn ai_analyze_photo(
     Ok(stored)
 }
 
-fn store_ai_result(
-    app: &AppHandle,
-    hash: &str,
-    image_path_for_ai: &str,
-    ai_result: AiVisionResponse,
-) -> Result<AiAnalysisResult, String> {
+// The model sometimes "transcribes" the photo by repeating its own caption when there is no text
+pub fn ocr_repeats_caption(ocr: &str, caption: &str) -> bool {
+    let norm = |s: &str| {
+        s.to_lowercase()
+            .chars()
+            .filter(|c| c.is_alphanumeric() || c.is_whitespace())
+            .collect::<String>()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let (o, c) = (norm(ocr), norm(caption));
+    if o.is_empty() || c.is_empty() {
+        return false;
+    }
+    let probe = |s: &str| s.chars().take(40).collect::<String>();
+    c.contains(&probe(&o)) || o.contains(&probe(&c))
+}
+
+fn store_ai_result(app: &AppHandle, hash: &str, ai_result: AiVisionResponse) -> Result<AiAnalysisResult, String> {
     let mut conn = open_global_db(app)?;
 
     let banned_placeholders = [
@@ -544,12 +655,14 @@ fn store_ai_result(
         "analyze", "first", "got", "let", "step", "<lowercase noun>",
     ];
 
-    let clean_ocr = if ai_result.ocr_text.contains("<transcribe") {
+    let clean_caption = ai_result.caption.trim().to_string();
+    let clean_ocr = if ai_result.ocr_text.contains("<transcribe")
+        || ocr_repeats_caption(&ai_result.ocr_text, &clean_caption)
+    {
         String::new()
     } else {
         ai_result.ocr_text.trim().to_string()
     };
-    let clean_caption = ai_result.caption.trim().to_string();
 
     if let Ok(tx) = conn.transaction() {
         let _ = tx.execute(
@@ -615,23 +728,8 @@ fn store_ai_result(
         let _ = tx.commit();
     }
 
-    if get_faces_for_hash(&conn, hash).is_empty() {
-        let thumb_candidate = get_app_storage_dir(app)
-            .join("thumbnails")
-            .join(format!("{}.jpg", hash));
-        let face_load_path = if thumb_candidate.exists() {
-            thumb_candidate
-        } else {
-            PathBuf::from(image_path_for_ai)
-        };
-        if let Ok(img) = open_and_orient_image(&face_load_path) {
-            let onnx_boxes = detect_faces_with_onnx(app, &img);
-            for (bx, by, bw, bh, _score) in onnx_boxes {
-                let _ = save_cropped_face_and_record(app, &conn, hash, &img, (bx, by, bw, bh), None, "onnx");
-            }
-        }
-    }
-
+    // Faces are no longer detected here: this ran on the 360px thumbnail, and its tiny, blurry crops were
+    // stored as faces and weakened matching. "Scan Faces" detects them on a full-size decode instead.
     let current_faces = get_faces_for_hash(&conn, hash);
     let updated_tags = get_tags_for_hash(&conn, hash)?;
 

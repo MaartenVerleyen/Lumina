@@ -99,6 +99,29 @@ fn ai_json_accepts_alternate_keys() {
 }
 
 #[test]
+fn ai_json_v2_derives_screenshot_from_scene() {
+    let res = parse_resilient_ai_json(
+        r#"{"caption": "A settings screen", "objects": ["phone", "menu"], "scene": "screenshot", "ocr_text": "Wi-Fi"}"#,
+    )
+    .unwrap();
+    assert!(res.is_screenshot);
+    let res = parse_resilient_ai_json(r#"{"caption": "A dog", "objects": ["dog"], "scene": "outdoor", "ocr_text": ""}"#).unwrap();
+    assert!(!res.is_screenshot);
+}
+
+#[test]
+fn ocr_that_repeats_the_caption_is_detected() {
+    use crate::ai::ocr_repeats_caption;
+    // Real outputs from the 2026-10-25 benchmark: the model "transcribed" the caption on photos without text
+    let caption = "A baby in a brown patterned outfit sits in a high chair, holding a partially eaten slice of bread.";
+    assert!(ocr_repeats_caption("A baby in a brown patterned outfit sits in a high chair, holding a partially eaten slice", caption));
+    assert!(ocr_repeats_caption("Children observe sheep and geese in a sunny field.", "Children observe sheep and geese in a sunny field. Trees frame it."));
+    // Genuine text stays
+    assert!(!ocr_repeats_caption("HYUNDAI Run to progress OLIVERO 3152", "Two men pose with large letters at a Hyundai event."));
+    assert!(!ocr_repeats_caption("", caption));
+}
+
+#[test]
 fn ai_json_rejects_empty_result() {
     assert!(parse_resilient_ai_json("{}").is_err());
     assert!(parse_resilient_ai_json("no json here").is_err());
@@ -589,6 +612,39 @@ fn bench_thumbnail_pipeline() {
             items.len() as f64 * 1000.0 / ms.max(1) as f64
         );
     }
+}
+
+// Manual: exports AI-input JPEGs (384/640/896 px, q90) of a sample of photos for the Ollama benchmark script
+// PowerShell: $env:LUMINA_DIAG_DIR="D:\Performance Test"; $env:LUMINA_DIAG_OUT="<folder>";
+//             cargo test --release --lib export_ai_samples -- --ignored --nocapture
+#[test]
+#[ignore]
+fn export_ai_samples() {
+    let (Ok(dir), Ok(out)) = (std::env::var("LUMINA_DIAG_DIR"), std::env::var("LUMINA_DIAG_OUT")) else {
+        eprintln!("Set LUMINA_DIAG_DIR and LUMINA_DIAG_OUT");
+        return;
+    };
+    let out = PathBuf::from(out).join("ai_samples");
+    fs::create_dir_all(&out).unwrap();
+    let mut files: Vec<PathBuf> = WalkDir::new(&dir)
+        .into_iter()
+        .flatten()
+        .map(|e| e.into_path())
+        .filter(|p| p.extension().map(|e| matches!(e.to_string_lossy().to_lowercase().as_str(), "jpg" | "heic")).unwrap_or(false))
+        .collect();
+    files.sort();
+    // Every 70th file: a spread of camera photos, phone photos, HEIC and messaging images
+    let sample: Vec<&PathBuf> = files.iter().step_by(70).take(24).collect();
+    for (i, p) in sample.iter().enumerate() {
+        let Ok(img) = open_and_orient_image(p) else { continue };
+        for edge in [384u32, 640, 896, 1280, 1600] {
+            let small = img.thumbnail(edge, edge).to_rgb8();
+            let mut buf = Cursor::new(Vec::new());
+            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, 90).encode_image(&small).unwrap();
+            fs::write(out.join(format!("{i:02}_{edge}.jpg")), buf.into_inner()).unwrap();
+        }
+    }
+    eprintln!("exported {} samples to {}", sample.len(), out.display());
 }
 
 #[test]
