@@ -196,19 +196,12 @@ fn run_face_scan(app_clone: &AppHandle, hashes: Vec<String>) -> FaceScanOutcome 
         let mut faces_found = 0usize;
         let mut auto_matched = 0usize;
 
-        let num_threads = (std::thread::available_parallelism()
-            .map(|n| (n.get() * 3) / 4)
-            .unwrap_or(6))
-            .max(2);
-
-        let pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(num_threads)
-            .build()
-            .unwrap();
+        // Shared low-priority pool: a face scan running next to a thumbnail pass no longer doubles the threads
+        let num_threads = BG_POOL.current_num_threads();
 
         let mut done_sent = false;
         let mut cancelled = false;
-        pool.install(|| {
+        BG_POOL.install(|| {
             for chunk in hashes.chunks(24) {
                 if FACE_SCAN_CANCEL.load(Ordering::Acquire) {
                     cancelled = true;

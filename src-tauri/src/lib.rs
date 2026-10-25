@@ -11,7 +11,7 @@ use std::fs::{self, File};
 use std::io::{BufReader, Cursor, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{LazyLock, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Instant;
 use tract_onnx::prelude::*;
 use tauri::{AppHandle, Emitter, Manager};
@@ -29,6 +29,9 @@ mod face_commands;
 mod ai;
 mod system;
 mod perf;
+mod storage;
+mod fastdecode;
+mod thumbs;
 #[cfg(test)]
 mod tests;
 
@@ -41,6 +44,9 @@ use decode::*;
 use library::*;
 use face_commands::*;
 use perf::*;
+use storage::*;
+use fastdecode::*;
+use thumbs::*;
 
 static GEOCODER: LazyLock<ReverseGeocoder> = LazyLock::new(ReverseGeocoder::new);
 static DB_SCHEMA_READY: AtomicBool = AtomicBool::new(false);
@@ -103,7 +109,7 @@ pub struct ScanProgressEvent {
     pub done: bool,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, Default)]
 pub struct PhotoItem {
     pub hash: String,
     pub name: String,
@@ -305,6 +311,12 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let _ = open_global_db(app.handle());
+            // Warm up lazily-built resources off the UI thread, so the first scan doesn't stall on them:
+            // the offline geocoder's city index (first photo with GPS) and the background thread pool
+            std::thread::spawn(|| {
+                LazyLock::force(&GEOCODER);
+                LazyLock::force(&BG_POOL);
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

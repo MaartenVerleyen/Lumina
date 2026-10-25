@@ -199,7 +199,7 @@ pub fn encode_fast_ai_buffer(app: &AppHandle, hash: &str, image_path: &str) -> R
     let orig_path = Path::new(image_path);
     // Phase 2 Fast Path: If not a screenshot and the pre-oriented 360px cached thumbnail exists,
     // read its raw JPEG bytes directly (<0.2ms) instead of decoding a 20MB+ camera image from disk!
-    if !is_likely_screenshot(orig_path, "", None) {
+    if !is_likely_screenshot(orig_path, "", None, None) {
         let thumb_path = get_app_storage_dir(app)
             .join("thumbnails")
             .join(format!("{}.jpg", hash));

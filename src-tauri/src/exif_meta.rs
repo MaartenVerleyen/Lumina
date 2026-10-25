@@ -81,8 +81,14 @@ pub struct FullExifPass {
     pub lens_model: Option<String>,
 }
 
-// Single-Pass Header & EXIF Reader: opens the file ONCE to extract dimensions, orientation, GPS, date & telemetry!
+// Single-Pass Header & EXIF Reader: extracts dimensions, orientation, GPS, date & telemetry
 pub fn extract_all_exif_single_pass(file_path: &Path) -> FullExifPass {
+    extract_all_exif_with_head(file_path, None)
+}
+
+// Same, but parses from `head` (the file's first bytes, already read for hashing) when that is enough;
+// only falls back to reading the file for formats whose header/EXIF lies beyond the head (some RAW/HEIC).
+pub fn extract_all_exif_with_head(file_path: &Path, head: Option<&[u8]>) -> FullExifPass {
     let mut width = 0u32;
     let mut height = 0u32;
     let mut orientation = 1u32;
@@ -98,15 +104,27 @@ pub fn extract_all_exif_single_pass(file_path: &Path) -> FullExifPass {
     let mut iso = None;
     let mut lens = None;
 
-    if let Ok((w, h)) = image::image_dimensions(file_path) {
+    let head_dims = head.and_then(|h| {
+        image::ImageReader::new(Cursor::new(h))
+            .with_guessed_format()
+            .ok()?
+            .into_dimensions()
+            .ok()
+    });
+    if let Some((w, h)) = head_dims.or_else(|| image::image_dimensions(file_path).ok()) {
         width = w;
         height = h;
     }
 
-    if let Ok(file) = File::open(file_path) {
-        let mut bufreader = BufReader::new(file);
-        let exifreader = Reader::new();
-        if let Ok(exif) = exifreader.read_from_container(&mut bufreader) {
+    let exif_opt = head
+        .and_then(|h| Reader::new().read_from_container(&mut Cursor::new(h)).ok())
+        .or_else(|| {
+            let file = File::open(file_path).ok()?;
+            Reader::new().read_from_container(&mut BufReader::new(file)).ok()
+        });
+
+    {
+        if let Some(exif) = exif_opt {
             let mut lat_deg_opt: Option<f64> = None;
             let mut lon_deg_opt: Option<f64> = None;
             let mut is_south = false;

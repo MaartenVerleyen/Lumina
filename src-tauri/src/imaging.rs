@@ -1,21 +1,30 @@
 use crate::*;
 
-pub fn compute_fast_hash(path: &Path, file_size: u64) -> Result<String, String> {
+// Identical hash to compute_fast_hash (size + first 64 KB + last 64 KB: existing DB rows stay matched),
+// but also returns the file head so EXIF and dimensions can be parsed without reading the file again.
+pub fn hash_and_read_head(path: &Path, file_size: u64) -> Result<(String, Vec<u8>), String> {
     let mut file = File::open(path).map_err(|e| e.to_string())?;
+    let head = read_file_head(&mut file, file_size).map_err(|e| e.to_string())?;
+
     let mut hasher = blake3::Hasher::new();
     hasher.update(&file_size.to_le_bytes());
-
-    let mut buffer = vec![0u8; 65536];
-    let bytes_read = file.read(&mut buffer).map_err(|e| e.to_string())?;
-    hasher.update(&buffer[..bytes_read]);
+    hasher.update(&head[..head.len().min(65536)]);
 
     if file_size > 65536 * 2 {
         file.seek(SeekFrom::End(-65536)).map_err(|e| e.to_string())?;
-        let bytes_read_end = file.read(&mut buffer).map_err(|e| e.to_string())?;
-        hasher.update(&buffer[..bytes_read_end]);
+        let mut tail = vec![0u8; 65536];
+        let mut filled = 0;
+        while filled < tail.len() {
+            let n = file.read(&mut tail[filled..]).map_err(|e| e.to_string())?;
+            if n == 0 {
+                break;
+            }
+            filled += n;
+        }
+        hasher.update(&tail[..filled]);
     }
 
-    Ok(hasher.finalize().to_hex()[..16].to_string())
+    Ok((hasher.finalize().to_hex()[..16].to_string(), head))
 }
 
 pub fn compute_dhash(img: &DynamicImage) -> String {
@@ -67,7 +76,13 @@ pub fn compute_sharpness(img: &DynamicImage) -> f64 {
     (variance * 10.0).round() / 10.0
 }
 
-pub fn is_likely_screenshot(file_path: &Path, camera_model: &str, img: Option<&DynamicImage>) -> bool {
+// `source_dims` = the original file's pixel size; `img` may be a reduced decode (scaled JPEG or cached thumb)
+pub fn is_likely_screenshot(
+    file_path: &Path,
+    camera_model: &str,
+    img: Option<&DynamicImage>,
+    source_dims: Option<(u32, u32)>,
+) -> bool {
     let fname = file_path
         .file_name()
         .map(|f| f.to_string_lossy().to_lowercase())
@@ -95,7 +110,7 @@ pub fn is_likely_screenshot(file_path: &Path, camera_model: &str, img: Option<&D
         .unwrap_or_default();
 
     if let Some(decoded) = img {
-        let (w, h) = decoded.dimensions();
+        let (w, h) = source_dims.unwrap_or_else(|| decoded.dimensions());
         let common_dims = [
             (1920, 1080),
             (2560, 1440),

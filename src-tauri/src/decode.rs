@@ -63,6 +63,9 @@ pub fn is_raw_or_heic_ext(ext: &str) -> bool {
 // Two-tier embedded JPEG extractor for Camera RAW (.CR2, .CR3, .NEF, .ARW, .DNG, .ORF, .RW2):
 // - `prefer_fast_thumb = true`: reads only the first 4MB and targets the medium preview (300px..=1620px) for ~1.5ms thumbnailing!
 // - `prefer_fast_thumb = false`: reads up to 48MB and targets the largest full-resolution embedded JPEG for Loupe/Compare!
+pub const RAW_THUMB_READ_BYTES: usize = 6 * 1024 * 1024;
+const RAW_FULL_READ_BYTES: usize = 36 * 1024 * 1024;
+
 pub fn extract_embedded_raw_jpeg_sized(
     file_path: &Path,
     prefer_fast_thumb: bool,
@@ -73,16 +76,36 @@ pub fn extract_embedded_raw_jpeg_sized(
         return None;
     }
 
-    let max_read = if prefer_fast_thumb {
-        6 * 1024 * 1024
-    } else {
-        36 * 1024 * 1024
-    };
-    let read_size = (file_len as usize).min(max_read);
-    let mut buffer = vec![0u8; read_size];
-    let bytes_read = file.read(&mut buffer).ok()?;
-    let slice = &buffer[..bytes_read];
+    let max_read = if prefer_fast_thumb { RAW_THUMB_READ_BYTES } else { RAW_FULL_READ_BYTES };
+    let buffer = read_file_prefix(&mut file, max_read).ok()?;
+    let outer_orientation = read_exif_orientation(file_path);
+    // Full-size requests only need enough pixels for a 1920px preview / face input, not 24+ MP
+    let min_edge = if prefer_fast_thumb { 360 } else { 2048 };
 
+    if let Some(found) = extract_embedded_raw_jpeg_from_bytes(&buffer, prefer_fast_thumb, outer_orientation, min_edge) {
+        return Some(found);
+    }
+    if prefer_fast_thumb && file_len > RAW_THUMB_READ_BYTES as u64 {
+        return extract_embedded_raw_jpeg_sized(file_path, false);
+    }
+    None
+}
+
+// Reads up to `max` bytes from the current position (loops: a single read() may return less)
+pub fn read_file_prefix(file: &mut File, max: usize) -> std::io::Result<Vec<u8>> {
+    let mut buf = Vec::with_capacity(max.min(64 * 1024 * 1024));
+    file.take(max as u64).read_to_end(&mut buf)?;
+    Ok(buf)
+}
+
+// Finds and decodes the best embedded JPEG preview inside RAW file bytes. `min_long_edge` lets large
+// previews decode directly at reduced size (DCT scaling) when that is all the caller needs.
+pub fn extract_embedded_raw_jpeg_from_bytes(
+    slice: &[u8],
+    prefer_fast_thumb: bool,
+    outer_orientation: u32,
+    min_long_edge: u32,
+) -> Option<(DynamicImage, u32)> {
     let mut candidates: Vec<(usize, usize, u32, u32)> = Vec::new();
     let mut i = 0;
     let limit = slice.len().saturating_sub(4);
@@ -167,11 +190,16 @@ pub fn extract_embedded_raw_jpeg_sized(
         candidates.sort_by(|a, b| (b.2 * b.3).cmp(&(a.2 * a.3)));
     }
 
-    let outer_orientation = read_exif_orientation(file_path);
-
-    for (s, e, _, _) in candidates.into_iter().take(4) {
+    for (s, e, cw, ch) in candidates.into_iter().take(4) {
         let jpeg_slice = &slice[s..e];
-        if let Ok(img) = image::load_from_memory_with_format(jpeg_slice, ImageFormat::Jpeg) {
+        // Big previews (e.g. a full 6000px embedded JPEG) decode straight to the needed size
+        let scaled = if cw.max(ch) >= min_long_edge * 2 {
+            decode_jpeg_scaled(jpeg_slice, min_long_edge)
+        } else {
+            None
+        };
+        let decoded = scaled.or_else(|| image::load_from_memory_with_format(jpeg_slice, ImageFormat::Jpeg).ok());
+        if let Some(img) = decoded {
             let (w, h) = img.dimensions();
             let embedded_orient = read_exif_orientation_from_bytes(jpeg_slice);
             let final_orient = match embedded_orient {
@@ -186,10 +214,6 @@ pub fn extract_embedded_raw_jpeg_sized(
             };
             return Some((img, final_orient));
         }
-    }
-
-    if prefer_fast_thumb && file_len > 6 * 1024 * 1024 {
-        return extract_embedded_raw_jpeg_sized(file_path, false);
     }
 
     None
@@ -276,6 +300,20 @@ pub fn batch_decode_heic_thumbs_windows(_jobs: &[(String, String, u32)]) {}
 
 #[cfg(target_os = "windows")]
 pub fn decode_via_windows_wic(file_path: &Path, max_dim: u32) -> Option<(DynamicImage, u32)> {
+    // In-process WIC (≈25 ms for a HEIC thumbnail) instead of starting PowerShell (≈0.5-1.8 s per call).
+    // WIC returns pixels as stored: JPEGs still need their EXIF rotation, HEIC comes out upright.
+    if let Some(img) = wic_decode(file_path, max_dim, max_dim <= 360) {
+        let ext = file_path
+            .extension()
+            .map(|e| e.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+        let orientation = if is_jpeg_ext(&ext) { read_exif_orientation(file_path) } else { 1 };
+        return Some((img, orientation));
+    }
+    if wic_available() {
+        // The same codecs back the PowerShell route, so it would fail too
+        return None;
+    }
 
     let seq = WIC_COUNTER.fetch_add(1, Ordering::Relaxed);
     let tmp_jpg = std::env::temp_dir().join(format!(
@@ -306,22 +344,75 @@ pub fn decode_via_windows_wic(_file_path: &Path, _max_dim: u32) -> Option<(Dynam
     None
 }
 
-// `image` rejects damaged files (e.g. truncated progressive JPEGs from interrupted downloads) that Windows'
-// own decoder still renders from the data that is present. Returns (image, recovered_from_damaged_file).
-fn decode_standard_or_recover(file_path: &Path, wic_max_dim: u32) -> Result<(DynamicImage, bool), String> {
-    let decoded = image::ImageReader::open(file_path)
-        .map_err(|e| e.to_string())?
-        .with_guessed_format()
-        .map_err(|e| e.to_string())?
-        .decode();
-    match decoded {
-        Ok(img) => Ok((apply_exif_orientation(img, read_exif_orientation(file_path)), false)),
-        Err(e) => match decode_via_windows_wic(file_path, wic_max_dim) {
-            // The WIC helper already applies EXIF orientation and reports 1
+// Large camera JPEGs (≥ ~1.5 MB) decode via DCT scaling when only `min_edge` pixels are needed; smaller ones
+// stay on `image`'s faster full decoder (scaling gains little there and the scaled decoder is stricter).
+const SCALED_JPEG_MIN_BYTES: usize = 1_500_000;
+
+// Decodes in-memory image bytes, oriented. `image` rejects damaged files (e.g. truncated progressive JPEGs
+// from interrupted downloads) that Windows' own decoder still renders from the data that is present.
+// Returns (image, recovered_from_damaged_file).
+fn decode_bytes_or_recover(
+    file_path: &Path,
+    bytes: &[u8],
+    min_edge: u32,
+) -> Result<(DynamicImage, bool), String> {
+    let ext = file_path
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    if is_jpeg_ext(&ext) && bytes.len() >= SCALED_JPEG_MIN_BYTES {
+        if let Some(img) = decode_jpeg_scaled_oriented(bytes, min_edge) {
+            return Ok((img, false));
+        }
+    }
+    match image::load_from_memory(bytes) {
+        Ok(img) => Ok((apply_exif_orientation(img, read_exif_orientation_from_bytes(bytes).unwrap_or(1)), false)),
+        Err(e) => match decode_via_windows_wic(file_path, min_edge.max(360)) {
             Some((img, orient)) => Ok((apply_exif_orientation(img, orient), true)),
             None => Err(e.to_string()),
         },
     }
+}
+
+fn decode_standard_or_recover(file_path: &Path, min_edge: u32) -> Result<(DynamicImage, bool), String> {
+    let bytes = fs::read(file_path).map_err(|e| e.to_string())?;
+    decode_bytes_or_recover(file_path, &bytes, min_edge)
+}
+
+// What a thumbnail reader thread loads for the decoders: RAW only needs its first 6 MB (embedded
+// previews live there), HEIC is opened by WIC itself (None).
+pub fn read_for_thumb(path: &Path) -> Option<Vec<u8>> {
+    let ext = path
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    if ext == "heic" || ext == "heif" {
+        return None;
+    }
+    let mut file = File::open(path).ok()?;
+    let max = if is_raw_or_heic_ext(&ext) { RAW_THUMB_READ_BYTES } else { usize::MAX };
+    read_file_prefix(&mut file, max).ok()
+}
+
+// Thumbnail-ready image from bytes already read by `read_for_thumb` (falls back to reading the file).
+// Returns (image, file was damaged and only partially recovered).
+pub fn decode_for_thumb(path: &Path, bytes: Option<&[u8]>) -> Result<(DynamicImage, bool), String> {
+    let ext = path
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    let Some(bytes) = bytes else {
+        return open_and_orient_image_for_thumb(path);
+    };
+    if is_raw_or_heic_ext(&ext) {
+        let outer = read_exif_orientation_from_bytes(bytes).unwrap_or(1);
+        if let Some((img, orient)) = extract_embedded_raw_jpeg_from_bytes(bytes, true, outer, 360) {
+            return Ok((apply_exif_orientation(img, orient), false));
+        }
+        // Preview beyond the first 6 MB, or a RAW codec via WIC
+        return open_and_orient_image_for_thumb(path);
+    }
+    decode_bytes_or_recover(path, bytes, 360)
 }
 
 // Returns (thumbnail-ready image, file was damaged and only partially recovered)
@@ -370,7 +461,8 @@ pub fn open_and_orient_image(file_path: &Path) -> Result<DynamicImage, String> {
         }
     }
 
-    decode_standard_or_recover(file_path, 1920).map(|(img, _)| img)
+    // ~2048 px is plenty for previews, face detection/crops and AI input; big JPEGs decode straight to it
+    decode_standard_or_recover(file_path, 2048).map(|(img, _)| img)
 }
 
 

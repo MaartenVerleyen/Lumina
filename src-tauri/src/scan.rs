@@ -416,7 +416,13 @@ pub async fn scan_folder(
         let scanned_counter = AtomicUsize::new(0);
         let app_scan_progress = app.clone();
 
-        let indexed_results: Vec<(PhotoItem, String, u64, u64, bool)> = candidate_paths
+        // Reader count matched to the drive: few readers on a hard drive, many on an SSD
+        let (io_threads, drive_kind) = index_io_threads(&root_path);
+        let index_pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(io_threads)
+            .build()
+            .map_err(|e| e.to_string())?;
+        let indexed_results: Vec<(PhotoItem, String, u64, u64, bool)> = index_pool.install(|| candidate_paths
             .into_par_iter()
             .filter_map(|file_path| {
                 let metadata = fs::metadata(&file_path).ok()?;
@@ -499,12 +505,13 @@ pub async fn scan_folder(
                             c.lens_model.clone(),
                         )
                     } else {
-                        let h = if c.size == size_bytes {
-                            c.hash.clone()
+                        let (h, head) = if c.size == size_bytes {
+                            (c.hash.clone(), None)
                         } else {
-                            compute_fast_hash(&file_path, size_bytes).ok()?
+                            let (h, head) = hash_and_read_head(&file_path, size_bytes).ok()?;
+                            (h, Some(head))
                         };
-                        let ex = extract_all_exif_single_pass(&file_path);
+                        let ex = extract_all_exif_with_head(&file_path, head.as_deref());
                         let (w, ht) = if c.width > 0 && c.height > 0 && !force {
                             (c.width, c.height)
                         } else {
@@ -537,8 +544,9 @@ pub async fn scan_folder(
                         )
                     }
                 } else {
-                    let h = compute_fast_hash(&file_path, size_bytes).ok()?;
-                    let ex = extract_all_exif_single_pass(&file_path);
+                    // One head read serves the hash, the dimensions and the EXIF parse
+                    let (h, head) = hash_and_read_head(&file_path, size_bytes).ok()?;
+                    let ex = extract_all_exif_with_head(&file_path, Some(&head));
                     (
                         h,
                         ex.width,
@@ -587,7 +595,7 @@ pub async fn scan_folder(
                 let subfolder = get_relative_subfolder(&root_path, &file_path);
                 let mut tags = tags_map.get(&hash).cloned().unwrap_or_default();
 
-                if is_likely_screenshot(&file_path, &camera_model, None)
+                if is_likely_screenshot(&file_path, &camera_model, None, None)
                     && !tags.iter().any(|t| t == "screenshot")
                 {
                     tags.push("screenshot".to_string());
@@ -670,7 +678,7 @@ pub async fn scan_folder(
                     needs_db_upsert,
                 ))
             })
-            .collect();
+            .collect());
 
         let mut indexed_results = indexed_results;
         let collision_entries: Vec<(String, String, bool)> = indexed_results
@@ -805,12 +813,14 @@ pub async fn scan_folder(
             scan_started,
             photos.len(),
             format!(
-                "{} new/changed · db cache {} ms · walk {} ms · index {} ms ({}/s) · db write {} ms",
+                "{} new/changed · db cache {} ms · walk {} ms · index {} ms ({}/s, {} readers, {}) · db write {} ms",
                 upsert_count,
                 cache_ms,
                 walk_ms,
                 index_ms,
                 per_second(total_candidates, index_ms),
+                io_threads,
+                drive_kind,
                 db_ms
             ),
         );
@@ -825,212 +835,7 @@ pub async fn scan_folder(
             .collect();
 
         if !needs_processing.is_empty() {
-            let app_clone = app.clone();
-            let folder_scope = root_path.to_string_lossy().to_string();
-            std::thread::spawn(move || {
-                let thumbs_started = Instant::now();
-                let total = needs_processing.len();
-                let completed = AtomicUsize::new(0);
-                let mut heic_count = 0usize;
-                let mut heic_ms = 0u64;
-                let mut failed_count = 0usize;
-                let mut damaged_count = 0usize;
-                let mut db_write_ms = 0u64;
-
-                let num_threads = (std::thread::available_parallelism()
-                    .map(|n| (n.get() * 3) / 4)
-                    .unwrap_or(6))
-                    .max(2);
-
-                let pool = rayon::ThreadPoolBuilder::new()
-                    .num_threads(num_threads)
-                    .build()
-                    .unwrap();
-
-                let mut superseded = false;
-                pool.install(|| {
-                    for chunk in needs_processing.chunks(48) {
-                        if SCAN_GENERATION.load(Ordering::Acquire) != generation {
-                            superseded = true;
-                            break;
-                        }
-                        // 1. Batch-convert any HEIC/HEIF files in this chunk directly to 360px thumbnails in ONE PowerShell call!
-                        //    (Uses embedded $frame.Thumbnail when available, so it takes ~10ms per HEIC instead of decoding 12MP!)
-                        let heic_thumb_jobs: Vec<(String, String, u32)> = chunk
-                            .iter()
-                            .filter_map(|p| {
-                                let disk_src = p.pair_raw_path.as_deref().unwrap_or(&p.path);
-                                let ext = Path::new(disk_src)
-                                    .extension()
-                                    .map(|e| e.to_string_lossy().to_lowercase())
-                                    .unwrap_or_default();
-                                if ext == "heic" || ext == "heif" {
-                                    let tf = Path::new(&p.thumb_path);
-                                    if force || !tf.exists() {
-                                        return Some((
-                                            disk_src.to_string(),
-                                            p.thumb_path.clone(),
-                                            360,
-                                        ));
-                                    }
-                                }
-                                None
-                            })
-                            .collect();
-
-                        if !heic_thumb_jobs.is_empty() {
-                            let heic_started = Instant::now();
-                            batch_decode_heic_thumbs_windows(&heic_thumb_jobs);
-                            heic_ms += elapsed_ms(heic_started);
-                            heic_count += heic_thumb_jobs.len();
-                        }
-
-                        // 2. Parallel Rayon 360px thumbnail, dHash & sharpness pass (Zero 1920px encoding overhead!)
-                        let batch_items: Vec<ThumbBatchItem> = chunk
-                            .par_iter()
-                            .map(|photo| {
-                                let disk_source = photo
-                                    .pair_raw_path
-                                    .as_deref()
-                                    .unwrap_or(&photo.path);
-                                let original_path = Path::new(disk_source);
-                                let thumb_file = Path::new(&photo.thumb_path);
-                                let ext_lower = original_path
-                                    .extension()
-                                    .map(|e| e.to_string_lossy().to_lowercase())
-                                    .unwrap_or_default();
-
-                                let mut computed_dhash = photo.dhash.clone();
-                                let mut computed_sharpness = photo.sharpness;
-                                let mut computed_w = photo.width;
-                                let mut computed_h = photo.height;
-                                let mut final_thumb_path = photo.thumb_path.clone();
-                                let mut detected_scr = false;
-
-                                // If HEIC 360px thumb was already written by batch_decode_heic_thumbs_windows, read that tiny 20KB JPEG!
-                                let decode_target = if (ext_lower == "heic" || ext_lower == "heif")
-                                    && thumb_file.exists()
-                                {
-                                    thumb_file
-                                } else {
-                                    original_path
-                                };
-
-                                // Damaged = unreadable, or only recoverable from partial data (see decode_standard_or_recover)
-                                let mut damaged = true;
-                                if let Ok((img, recovered)) = open_and_orient_image_for_thumb(decode_target) {
-                                    damaged = recovered;
-                                    let (iw, ih) = img.dimensions();
-                                    if computed_w == 0 || computed_h == 0 {
-                                        computed_w = iw;
-                                        computed_h = ih;
-                                    }
-                                    detected_scr = is_likely_screenshot(
-                                        original_path,
-                                        &photo.camera_model,
-                                        Some(&img),
-                                    );
-                                    let thumb = if iw <= 360 && ih <= 360 {
-                                        img
-                                    } else {
-                                        img.thumbnail(360, 360)
-                                    };
-                                    computed_dhash = compute_dhash(&thumb);
-                                    computed_sharpness = compute_sharpness(&thumb);
-
-                                    if force || !thumb_file.exists() {
-                                        if thumb.to_rgb8().save(thumb_file).is_err() {
-                                            final_thumb_path = photo.path.clone();
-                                        }
-                                    }
-                                }
-
-                                let mut auto_tags = Vec::new();
-                                if detected_scr {
-                                    auto_tags.push("screenshot".to_string());
-                                }
-
-                                let thumb_ok = Path::new(&final_thumb_path).exists();
-                                completed.fetch_add(1, Ordering::Relaxed);
-
-                                ThumbBatchItem {
-                                    hash: photo.hash.clone(),
-                                    thumb_path: final_thumb_path,
-                                    dhash: computed_dhash,
-                                    sharpness: computed_sharpness,
-                                    width: computed_w,
-                                    height: computed_h,
-                                    auto_tags,
-                                    thumb_ok,
-                                    damaged,
-                                }
-                            })
-                            .collect();
-
-                        let done = completed.load(Ordering::Relaxed);
-                        let mut dup_groups = HashMap::new();
-                        failed_count += batch_items.iter().filter(|i| !i.thumb_ok).count();
-                        damaged_count += batch_items.iter().filter(|i| i.damaged).count();
-
-                        let db_started = Instant::now();
-                        if let Ok(mut db_conn) = open_global_db(&app_clone) {
-                            if let Ok(tx) = db_conn.transaction() {
-                                for item in &batch_items {
-                                    let _ = tx.execute(
-                                        "UPDATE photos SET dhash = ?1, sharpness = ?2, width = CASE WHEN ?3 > 0 THEN ?3 ELSE width END, height = CASE WHEN ?4 > 0 THEN ?4 ELSE height END, damaged = ?6 WHERE hash = ?5",
-                                        params![item.dhash, item.sharpness, item.width, item.height, item.hash, item.damaged],
-                                    );
-                                    if !item.auto_tags.is_empty() {
-                                        let _ = tx.execute(
-                                            "INSERT OR IGNORE INTO photo_tags (hash, tag) VALUES (?1, 'screenshot')",
-                                            params![item.hash],
-                                        );
-                                    }
-                                }
-                                let _ = tx.commit();
-                            }
-
-                            if done == total {
-                                dup_groups = compute_db_duplicate_groups(&db_conn, Some(&folder_scope));
-                            }
-                        }
-                        db_write_ms += elapsed_ms(db_started);
-
-                        let _ = app_clone.emit(
-                            "thumb-batch-ready",
-                            ThumbBatchProgress {
-                                items: batch_items,
-                                duplicate_groups: dup_groups,
-                                completed: done,
-                                total,
-                                folder: folder_scope.clone(),
-                            },
-                        );
-                    }
-                });
-
-                if superseded {
-                    eprintln!("[scan] thumbnail pass for {folder_scope} stopped: a newer scan started");
-                    return;
-                }
-                let total_ms = elapsed_ms(thumbs_started);
-                emit_perf(
-                    &app_clone,
-                    "Thumbnails + dHash",
-                    thumbs_started,
-                    total,
-                    format!(
-                        "{}/s on {} threads · HEIC {} files in {} ms (PowerShell) · db {} ms · {} failed · {} damaged",
-                        per_second(total, total_ms),
-                        num_threads,
-                        heic_count,
-                        heic_ms,
-                        db_write_ms,
-                        failed_count,
-                        damaged_count
-                    ),
-                );
-            });
+            spawn_thumbnail_pass(app.clone(), needs_processing, root_path.clone(), generation, force);
         }
 
         Ok(photos)

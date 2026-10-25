@@ -381,6 +381,227 @@ fn rejections_of_vanished_faces_are_removed() {
     assert!(rejections(&conn).iter().all(|(id, _)| id != "h_70_20"));
 }
 
+// ----------------- CONTENT HASH COMPATIBILITY -----------------
+
+// The hash every existing DB row is keyed by (pre-Phase-2 implementation). hash_and_read_head must
+// produce exactly the same value, or every photo would look new and lose its ratings/tags/faces.
+fn legacy_fast_hash(path: &Path, file_size: u64) -> String {
+    let mut file = File::open(path).unwrap();
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(&file_size.to_le_bytes());
+    let mut buffer = vec![0u8; 65536];
+    let bytes_read = file.read(&mut buffer).unwrap();
+    hasher.update(&buffer[..bytes_read]);
+    if file_size > 65536 * 2 {
+        file.seek(SeekFrom::End(-65536)).unwrap();
+        let bytes_read_end = file.read(&mut buffer).unwrap();
+        hasher.update(&buffer[..bytes_read_end]);
+    }
+    hasher.finalize().to_hex()[..16].to_string()
+}
+
+#[test]
+fn new_hash_matches_legacy_hash_for_all_size_classes() {
+    let dir = fresh_dir("hash_compat");
+    // Below 64 KB, between 64 KB and 128 KB (no tail read), just above 128 KB, and larger than the head
+    for size in [1_000usize, 100_000, 131_073, 500_000] {
+        let path = dir.join(format!("f{size}.bin"));
+        let bytes: Vec<u8> = (0..size).map(|i| (i * 7 % 251) as u8).collect();
+        fs::write(&path, &bytes).unwrap();
+        let (hash, head) = hash_and_read_head(&path, size as u64).unwrap();
+        assert_eq!(hash, legacy_fast_hash(&path, size as u64), "size {size}");
+        assert_eq!(head.len(), size.min(FILE_HEAD_BYTES), "head length for size {size}");
+        assert_eq!(&head[..], &bytes[..head.len()]);
+    }
+}
+
+// Manual: parsing EXIF/dimensions from the head buffer must give the same result as reading the file.
+// PowerShell: $env:LUMINA_DIAG_DIR="D:\Performance Test"; cargo test --release --lib head_exif_matches_file_exif -- --ignored --nocapture
+#[test]
+#[ignore]
+fn head_exif_matches_file_exif() {
+    let Ok(dir) = std::env::var("LUMINA_DIAG_DIR") else {
+        eprintln!("Set LUMINA_DIAG_DIR");
+        return;
+    };
+    let files: Vec<PathBuf> = WalkDir::new(&dir).into_iter().flatten().map(|e| e.into_path()).filter(|p| p.is_file()).collect();
+    let describe = |x: &FullExifPass| {
+        format!(
+            "{}x{} | {} | {} | {} | {:?},{:?} | {:?} {:?} {:?} {:?} {:?}",
+            x.width, x.height, x.captured_at, x.camera_model, x.location, x.lat, x.lon,
+            x.focal_length, x.aperture, x.shutter_speed, x.iso, x.lens_model
+        )
+    };
+    let mismatches: Vec<(PathBuf, String, String)> = files
+        .par_iter()
+        .filter_map(|p| {
+            let size = fs::metadata(p).ok()?.len();
+            let (_, head) = hash_and_read_head(p, size).ok()?;
+            let from_head = describe(&extract_all_exif_with_head(p, Some(&head)));
+            let from_file = describe(&extract_all_exif_single_pass(p));
+            (from_head != from_file).then(|| (p.clone(), from_head, from_file))
+        })
+        .collect();
+    eprintln!("checked {} files, {} mismatches", files.len(), mismatches.len());
+    for (p, a, b) in mismatches.iter().take(20) {
+        eprintln!("  {}\n    head: {a}\n    file: {b}", p.display());
+    }
+    assert!(mismatches.is_empty());
+}
+
+// Manual benchmark of the thumbnail decoders on real files (run twice: the 1st run warms the OS file cache).
+// PowerShell: $env:LUMINA_DIAG_DIR="D:\Performance Test"; $env:LUMINA_DIAG_OUT="<folder>";
+//             cargo test --release --lib bench_thumbnail_decoders -- --ignored --nocapture
+#[test]
+#[ignore]
+fn bench_thumbnail_decoders() {
+    let Ok(dir) = std::env::var("LUMINA_DIAG_DIR") else {
+        eprintln!("Set LUMINA_DIAG_DIR");
+        return;
+    };
+    let out_dir = std::env::var("LUMINA_DIAG_OUT").ok().map(PathBuf::from);
+    let files: Vec<PathBuf> = WalkDir::new(&dir).into_iter().flatten().map(|e| e.into_path()).filter(|p| p.is_file()).collect();
+    let ext_of = |p: &Path| p.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+    // The largest JPEGs (camera originals) are where decoding time actually goes
+    let mut jpegs: Vec<&PathBuf> = files.iter().filter(|p| is_jpeg_ext(&ext_of(p))).collect();
+    jpegs.sort_by_key(|p| std::cmp::Reverse(fs::metadata(p).map(|m| m.len()).unwrap_or(0)));
+    jpegs.truncate(100);
+    let heics: Vec<&PathBuf> = files.iter().filter(|p| ext_of(p) == "heic").collect();
+
+    // JPEG: full decode (current path) vs DCT-scaled decode, single thread for a clean per-file number
+    let mut full_ms = 0u128;
+    let mut scaled_ms = 0u128;
+    let mut scaled_fail = 0;
+    for p in &jpegs {
+        let bytes = fs::read(p).unwrap();
+        let t = Instant::now();
+        let full = image::load_from_memory(&bytes).ok().map(|i| i.thumbnail(360, 360));
+        full_ms += t.elapsed().as_millis();
+        let t = Instant::now();
+        let scaled = decode_jpeg_scaled(&bytes, 360).map(|i| i.thumbnail(360, 360));
+        scaled_ms += t.elapsed().as_millis();
+        if scaled.is_none() {
+            scaled_fail += 1;
+            let mut d = jpeg_decoder::Decoder::new(Cursor::new(&bytes));
+            let reason = match d.read_info() {
+                Err(e) => format!("read_info: {e}"),
+                Ok(()) => match d.scale(360, 360) {
+                    Err(e) => format!("scale: {e}"),
+                    Ok(_) => match d.decode() {
+                        Err(e) => format!("decode: {e}"),
+                        Ok(_) => format!("pixel format {:?}", d.info().map(|i| i.pixel_format)),
+                    },
+                },
+            };
+            eprintln!("  scaled decode failed: {} (full decode ok: {}) -> {reason}", p.display(), full.is_some());
+        }
+    }
+    eprintln!(
+        "JPEG x{}: full decode+thumb {:.1} ms/file, scaled decode+thumb {:.1} ms/file, scaled failures {}",
+        jpegs.len(),
+        full_ms as f64 / jpegs.len().max(1) as f64,
+        scaled_ms as f64 / jpegs.len().max(1) as f64,
+        scaled_fail
+    );
+
+    // HEIC through in-process WIC
+    eprintln!("WIC factory available: {}", wic_available());
+    let mut thumb_ms = 0u128;
+    let mut prev_ms = 0u128;
+    let mut heic_fail = 0;
+    for (i, p) in heics.iter().enumerate() {
+        let t = Instant::now();
+        let thumb = wic_decode(p, 360, true);
+        thumb_ms += t.elapsed().as_millis();
+        let t = Instant::now();
+        let preview = wic_decode(p, 1920, false);
+        prev_ms += t.elapsed().as_millis();
+        match (&thumb, &preview) {
+            (Some(th), Some(pv)) => {
+                if i < 3 {
+                    eprintln!("  {} thumb {:?} preview {:?}", p.display(), th.dimensions(), pv.dimensions());
+                    if let Some(out) = &out_dir {
+                        let _ = th.to_rgb8().save(out.join(format!("heic_thumb_{i}.jpg")));
+                        let _ = pv.thumbnail(800, 800).to_rgb8().save(out.join(format!("heic_preview_{i}.jpg")));
+                    }
+                }
+            }
+            _ => heic_fail += 1,
+        }
+    }
+    eprintln!(
+        "HEIC x{} via WIC: thumb {:.1} ms/file, 1920 preview {:.1} ms/file, failures {}",
+        heics.len(),
+        thumb_ms as f64 / heics.len().max(1) as f64,
+        prev_ms as f64 / heics.len().max(1) as f64,
+        heic_fail
+    );
+}
+
+// Manual end-to-end benchmark of the thumbnail pipeline (readers + decoders), regenerating every thumbnail.
+// PowerShell: $env:LUMINA_DIAG_DIR="D:\Performance Test"; $env:LUMINA_DIAG_OUT="<scratch folder>";
+//             cargo test --release --lib bench_thumbnail_pipeline -- --ignored --nocapture
+#[test]
+#[ignore]
+fn bench_thumbnail_pipeline() {
+    let (Ok(dir), Ok(out)) = (std::env::var("LUMINA_DIAG_DIR"), std::env::var("LUMINA_DIAG_OUT")) else {
+        eprintln!("Set LUMINA_DIAG_DIR and LUMINA_DIAG_OUT");
+        return;
+    };
+    let thumbs_dir = PathBuf::from(out).join("thumbs_bench");
+    let exts = ["jpg", "jpeg", "png", "heic", "heif", "cr2", "cr3", "nef", "arw", "dng"];
+    let items: Vec<PhotoItem> = WalkDir::new(&dir)
+        .into_iter()
+        .flatten()
+        .map(|e| e.into_path())
+        .filter(|p| p.extension().map(|e| exts.contains(&e.to_string_lossy().to_lowercase().as_str())).unwrap_or(false))
+        .enumerate()
+        .map(|(i, p)| {
+            let name = p.file_name().unwrap().to_string_lossy().to_string();
+            let ext = p.extension().unwrap().to_string_lossy().to_lowercase();
+            let thumb = thumbs_dir.join(format!("{i}.jpg")).to_string_lossy().to_string();
+            // Mirror scan_folder: RAW/HEIC show their thumb and keep the original in pair_raw_path
+            let (path, pair) = if is_raw_or_heic_ext(&ext) {
+                (thumb.clone(), Some(p.to_string_lossy().to_string()))
+            } else {
+                (p.to_string_lossy().to_string(), None)
+            };
+            PhotoItem { hash: i.to_string(), name, path, pair_raw_path: pair, thumb_path: thumb, ..Default::default() }
+        })
+        .collect();
+
+    for io_threads in [2usize, 16] {
+        let _ = fs::remove_dir_all(&thumbs_dir);
+        fs::create_dir_all(&thumbs_dir).unwrap();
+        let started = Instant::now();
+        let (mut ok, mut failed, mut damaged) = (0, 0, 0);
+        let (_, heic) = run_decode_pipeline(&items, io_threads, true, || false, |e| {
+            if let PipelineEvent::Item(item) = e {
+                if item.thumb_ok { ok += 1 } else { failed += 1 }
+                if item.damaged { damaged += 1 }
+            }
+        });
+        let ms = started.elapsed().as_millis();
+        eprintln!(
+            "{} files with {io_threads} readers + {} decoders: {ms} ms ({:.1}/s) · ok {ok} · failed {failed} · damaged {damaged} · HEIC {heic}",
+            items.len(),
+            BG_POOL.current_num_threads(),
+            items.len() as f64 * 1000.0 / ms.max(1) as f64
+        );
+    }
+}
+
+#[test]
+#[ignore]
+fn diagnose_drive_types() {
+    for drive in ["C:\\", "D:\\", "E:\\"] {
+        let p = Path::new(drive);
+        if p.exists() {
+            eprintln!("{drive} seek penalty: {:?} -> index readers {:?}", drive_has_seek_penalty(p), index_io_threads(p));
+        }
+    }
+}
+
 // ----------------- THUMBNAIL DECODE DIAGNOSTIC (manual) -----------------
 // Runs the real thumbnail decoder over a folder and lists every failure with its error.
 // PowerShell: $env:LUMINA_DIAG_DIR="D:\Performance Test"; cargo test --lib diagnose_thumbnail_failures -- --ignored --nocapture

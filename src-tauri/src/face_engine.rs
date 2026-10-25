@@ -67,8 +67,8 @@ pub fn has_bilateral_face_structure(face_img: &DynamicImage) -> bool {
 
 pub type OnnxPlan = SimplePlan<TypedFact, Box<dyn TypedOp>, Graph<TypedFact, Box<dyn TypedOp>>>;
 
-pub static ULTRAFACE_PLAN: LazyLock<Mutex<Option<OnnxPlan>>> = LazyLock::new(|| Mutex::new(None));
-pub static MOBILEFACENET_PLAN: LazyLock<Mutex<Option<OnnxPlan>>> = LazyLock::new(|| Mutex::new(None));
+pub static ULTRAFACE_PLAN: LazyLock<Mutex<Option<Arc<OnnxPlan>>>> = LazyLock::new(|| Mutex::new(None));
+pub static MOBILEFACENET_PLAN: LazyLock<Mutex<Option<Arc<OnnxPlan>>>> = LazyLock::new(|| Mutex::new(None));
 
 pub const ULTRAFACE_URL: &str = "https://github.com/onnx/models/raw/main/validated/vision/body_analysis/ultraface/models/version-RFB-320.onnx";
 pub const MOBILEFACENET_URL: &str = "https://huggingface.co/WePrompt/buffalo_sc/resolve/main/w600k_mbf.onnx";
@@ -205,7 +205,7 @@ pub fn upgrade_legacy_face_embeddings(app: &AppHandle) {
     }
 }
 
-pub fn get_or_load_mobilefacenet(app: &AppHandle) -> Option<OnnxPlan> {
+pub fn get_or_load_mobilefacenet(app: &AppHandle) -> Option<Arc<OnnxPlan>> {
     let mut guard = MOBILEFACENET_PLAN.lock().ok()?;
     if let Some(ref plan) = *guard {
         return Some(plan.clone());
@@ -235,11 +235,13 @@ pub fn get_or_load_mobilefacenet(app: &AppHandle) -> Option<OnnxPlan> {
         .into_runnable()
         .ok()?;
 
+    // Shared, not cloned: every thread runs the same plan concurrently (run() takes &self)
+    let model = Arc::new(model);
     *guard = Some(model.clone());
     Some(model)
 }
 
-pub fn get_or_load_ultraface(app: &AppHandle) -> Option<OnnxPlan> {
+pub fn get_or_load_ultraface(app: &AppHandle) -> Option<Arc<OnnxPlan>> {
     let mut guard = ULTRAFACE_PLAN.lock().ok()?;
     if let Some(ref plan) = *guard {
         return Some(plan.clone());
@@ -260,6 +262,8 @@ pub fn get_or_load_ultraface(app: &AppHandle) -> Option<OnnxPlan> {
         .into_runnable()
         .ok()?;
 
+    // Shared, not cloned: every thread runs the same plan concurrently (run() takes &self)
+    let model = Arc::new(model);
     *guard = Some(model.clone());
     Some(model)
 }
@@ -405,8 +409,11 @@ pub fn detect_faces_with_onnx(app: &AppHandle, img: &DynamicImage) -> Vec<(f64, 
 
 // Computes a 512-D L2-normalized ArcFace embedding via MobileFaceNet ONNX
 pub fn compute_face_embedding(face_img: &DynamicImage) -> Vec<f32> {
-    if let Ok(guard) = MOBILEFACENET_PLAN.lock() {
-        if let Some(ref plan) = *guard {
+    // Take a reference to the shared plan and release the lock before running inference, so embeddings
+    // on different threads run in parallel instead of one at a time
+    let plan = MOBILEFACENET_PLAN.lock().ok().and_then(|guard| guard.clone());
+    {
+        if let Some(plan) = plan {
             // Square aspect-preserving crop at Lanczos3 quality for ArcFace 112x112 input
             let resized = face_img
                 .resize_to_fill(112, 112, FilterType::Lanczos3)
