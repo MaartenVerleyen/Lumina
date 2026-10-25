@@ -155,6 +155,27 @@ export interface AiAnalysisResult {
   faces: FaceInstance[];
   caption: string;
   ocr_text: string;
+  perf: AiPerf;
+}
+
+export interface AiPerf {
+  image_kb: number;
+  encode_ms: number;
+  request_ms: number;
+  post_ms: number;
+  total_ms: number;
+  ollama_load_ms: number;
+  prompt_tokens: number;
+  prompt_eval_ms: number;
+  output_tokens: number;
+  output_eval_ms: number;
+}
+
+export interface PerfLogEvent {
+  label: string;
+  millis: number;
+  count: number;
+  details: string;
 }
 
 export interface AiFailureItem {
@@ -240,7 +261,7 @@ export interface UndoHistoryEntry {
 export interface SessionLogEntry {
   id: string;
   timestamp: string;
-  category: "LIBRARY" | "TRIAGE" | "FACE" | "AI" | "DISK";
+  category: "LIBRARY" | "TRIAGE" | "FACE" | "AI" | "DISK" | "PERF";
   message: string;
   details?: string;
 }

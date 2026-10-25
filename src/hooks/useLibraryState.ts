@@ -21,6 +21,8 @@ import {
   FaceInstance,
   TimestampShiftResult,
   AiAnalysisResult,
+  AiPerf,
+  PerfLogEvent,
   OllamaPullProgress,
   ScanProgressEvent,
   AiFailureItem,
@@ -36,6 +38,22 @@ import {
 } from "../utils/photoHelpers";
 
 const MAX_UNDO_STEPS = 20;
+
+// Averages per-photo AI timings into one Session Log line (tokens/s use summed tokens over summed durations)
+function summarizeAiPerf(perfs: AiPerf[]): string {
+  if (perfs.length === 0) return "";
+  const sum = (key: keyof AiPerf) => perfs.reduce((acc, p) => acc + p[key], 0);
+  const avg = (key: keyof AiPerf) => Math.round(sum(key) / perfs.length);
+  const rate = (tokens: number, ms: number) => (ms > 0 ? ((tokens * 1000) / ms).toFixed(1) : "?");
+  return [
+    `avg ${(avg("total_ms") / 1000).toFixed(1)} s/photo`,
+    `encode ${avg("encode_ms")} ms (${avg("image_kb")} KB image)`,
+    `ollama ${avg("request_ms")} ms (model load ${avg("ollama_load_ms")} ms)`,
+    `prompt ${avg("prompt_tokens")} tok @ ${rate(sum("prompt_tokens"), sum("prompt_eval_ms"))} tok/s`,
+    `output ${avg("output_tokens")} tok @ ${rate(sum("output_tokens"), sum("output_eval_ms"))} tok/s`,
+    `db + faces ${avg("post_ms")} ms`,
+  ].join(" · ");
+}
 
 export function captureSnapshots(
   photos: PhotoItem[],
@@ -394,6 +412,18 @@ export function useLibraryState() {
       unlisten.then((f) => f());
     };
   }, []);
+
+  // Listen for backend performance timings (scan, thumbnails, face scan, previews)
+  useEffect(() => {
+    const unlisten = listen<PerfLogEvent>("perf-log", (event) => {
+      const { label, millis, count, details } = event.payload;
+      const items = count === 1 ? "" : ` for ${count} items`;
+      addLog("PERF", `${label}: ${(millis / 1000).toFixed(2)} s${items}`, details);
+    });
+    return () => {
+      unlisten.then((f) => f());
+    };
+  }, [addLog]);
 
   // Listen for Ollama Pull Progress Events
   useEffect(() => {
@@ -1838,6 +1868,7 @@ export function useLibraryState() {
         )
       );
       addLog("AI", `AI analyzed ${activePhoto.name}`, `${res.tags.length} tags generated`);
+      addLog("PERF", `AI analysis (${aiModel}): ${activePhoto.name}`, summarizeAiPerf([res.perf]));
       refreshPeople();
     } catch (err) {
       setError(`AI Error on ${activePhoto.name}: ${String(err)}`);
@@ -1867,6 +1898,8 @@ export function useLibraryState() {
 
     addLog("AI", `Started Batch AI on ${targets.length} photo(s) using ${aiModel}`);
 
+    const batchStartedAt = performance.now();
+    const batchPerfs: AiPerf[] = [];
     let completedCount = 0;
     let succeededCount = 0;
     const failures: AiFailureItem[] = [];
@@ -1900,6 +1933,7 @@ export function useLibraryState() {
           });
           success = true;
           succeededCount++;
+          batchPerfs.push(res.perf);
           setPhotos((prev) =>
             prev.map((p) =>
               p.hash === photo.hash
@@ -1957,6 +1991,16 @@ export function useLibraryState() {
       "AI",
       `Finished Batch AI: ${succeededCount} succeeded, ${failures.length} failed`
     );
+
+    if (batchPerfs.length > 0) {
+      const wallSeconds = (performance.now() - batchStartedAt) / 1000;
+      const perMinute = (succeededCount / (wallSeconds / 60)).toFixed(1);
+      addLog(
+        "PERF",
+        `Batch AI (${aiModel}): ${succeededCount} photos in ${wallSeconds.toFixed(1)} s · ${perMinute} photos/min`,
+        summarizeAiPerf(batchPerfs)
+      );
+    }
 
     if (targets.length > 1 || failures.length > 0) {
       setAiBatchReport({

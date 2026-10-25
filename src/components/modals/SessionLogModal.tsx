@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Download, FileText, Trash2, X } from "lucide-react";
-import { SessionLogEntry } from "../../hooks/useSessionLog";
+import { SessionLogEntry } from "../../types/lumina";
 
 interface SessionLogModalProps {
   isOpen: boolean;
@@ -69,7 +69,7 @@ export default function SessionLogModal({
           />
 
           <div className="flex bg-zinc-900 border border-zinc-800 rounded-lg p-0.5 text-[10px]">
-            {["ALL", "TRIAGE", "DISK", "AI", "FACE"].map((cat) => (
+            {["ALL", "TRIAGE", "DISK", "AI", "FACE", "PERF"].map((cat) => (
               <button
                 key={cat}
                 onClick={() => setFilter(cat)}
@@ -117,6 +117,8 @@ export default function SessionLogModal({
                       ? "bg-amber-500/10 text-amber-400 border border-amber-500/20"
                       : l.category === "AI"
                       ? "bg-indigo-500/10 text-indigo-400 border border-indigo-500/20"
+                      : l.category === "PERF"
+                      ? "bg-fuchsia-500/10 text-fuchsia-400 border border-fuchsia-500/20"
                       : "bg-cyan-500/10 text-cyan-400 border border-cyan-500/20"
                   }`}
                 >

@@ -1,0 +1,1048 @@
+use crate::*;
+
+pub fn assign_duplicate_groups(photos: &mut [PhotoItem]) {
+    for p in photos.iter_mut() {
+        p.duplicate_group = None;
+    }
+
+    // Order indices chronologically by captured_at then name so bursts with different prefixes still sit adjacent
+    let mut order: Vec<usize> = (0..photos.len()).collect();
+    order.sort_by(|&a, &b| {
+        photos[a]
+            .captured_at
+            .cmp(&photos[b].captured_at)
+            .then_with(|| photos[a].name.cmp(&photos[b].name))
+    });
+
+    let parsed: Vec<(Option<u64>, bool)> = photos
+        .iter()
+        .map(|p| {
+            let h = if p.dhash.len() == 16 {
+                u64::from_str_radix(&p.dhash, 16).ok()
+            } else {
+                None
+            };
+            let is_scr = p.tags.iter().any(|t| t == "screenshot")
+                || p.name.ends_with(".png")
+                || p.name.ends_with(".PNG")
+                || p.camera_model.is_empty();
+            (h, is_scr)
+        })
+        .collect();
+
+    let n = order.len();
+    let mut visited = vec![false; photos.len()];
+    let mut current_group = 1usize;
+
+    for pos_i in 0..n {
+        let i = order[pos_i];
+        if visited[i] || photos[i].subfolder == "_Trash" {
+            continue;
+        }
+        let (Some(h1), is_scr_1) = parsed[i] else {
+            continue;
+        };
+
+        let mut members = vec![i];
+        let limit = (pos_i + 300).min(n);
+        for pos_j in (pos_i + 1)..limit {
+            let j = order[pos_j];
+            if visited[j] || photos[j].subfolder == "_Trash" {
+                continue;
+            }
+            if let (Some(h2), is_scr_2) = parsed[j] {
+                let max_dist = if is_scr_1 && is_scr_2 { 11 } else { 8 };
+                if (h1 ^ h2).count_ones() <= max_dist {
+                    members.push(j);
+                }
+            }
+        }
+
+        if members.len() > 1 {
+            for &idx in &members {
+                visited[idx] = true;
+                photos[idx].duplicate_group = Some(current_group);
+            }
+            current_group += 1;
+        }
+    }
+}
+
+pub fn compute_db_duplicate_groups(conn: &Connection, root_folder: Option<&str>) -> HashMap<String, usize> {
+    let mut map = HashMap::new();
+    let prefix = make_folder_prefix(root_folder);
+    let Ok(mut stmt) = conn.prepare(
+        "SELECT hash, dhash, COALESCE(camera_model, ''), COALESCE(subfolder, ''), COALESCE(current_path, '')
+         FROM photos
+         WHERE length(dhash) = 16 AND COALESCE(subfolder, '') != '_Trash' AND current_path LIKE ?1
+         ORDER BY COALESCE(captured_at, '') ASC, current_path ASC",
+    ) else {
+        return map;
+    };
+
+    let Ok(rows) = stmt.query_map(params![prefix], |r| {
+        let hash: String = r.get(0)?;
+        let dhash_str: String = r.get(1)?;
+        let cam: String = r.get(2)?;
+        let path: String = r.get(4)?;
+        let h_val = u64::from_str_radix(&dhash_str, 16).unwrap_or(0);
+        let is_scr = cam.is_empty() || path.ends_with(".png") || path.ends_with(".PNG");
+        Ok((hash, h_val, is_scr))
+    }) else {
+        return map;
+    };
+
+    let items: Vec<(String, u64, bool)> = rows.flatten().collect();
+    let n = items.len();
+    let mut visited = vec![false; n];
+    let mut grp = 1usize;
+
+    for i in 0..n {
+        if visited[i] {
+            continue;
+        }
+        let (_, h1, s1) = items[i];
+        let mut members = vec![i];
+        let limit = (i + 300).min(n);
+        for j in (i + 1)..limit {
+            if visited[j] {
+                continue;
+            }
+            let (_, h2, s2) = items[j];
+            let max_d = if s1 && s2 { 11 } else { 8 };
+            if (h1 ^ h2).count_ones() <= max_d {
+                members.push(j);
+            }
+        }
+        if members.len() > 1 {
+            for &idx in &members {
+                visited[idx] = true;
+                map.insert(items[idx].0.clone(), grp);
+            }
+            grp += 1;
+        }
+    }
+
+    map
+}
+
+#[derive(Clone)]
+pub struct CachedRow {
+    pub size: u64,
+    pub mtime: u64,
+    pub width: u32,
+    pub height: u32,
+    pub rating: i32,
+    pub flag: Option<String>,
+    pub color_label: Option<String>,
+    pub rotation: i32,
+    pub in_basket: bool,
+    pub ai_caption: String,
+    pub ocr_text: String,
+    pub hash: String,
+    pub captured_at: String,
+    pub camera_model: String,
+    pub location: String,
+    pub lat: Option<f64>,
+    pub lon: Option<f64>,
+    pub dhash: String,
+    pub sharpness: f64,
+    pub staged_target: Option<String>,
+    pub exif_checked: i32,
+    pub focal_length: Option<String>,
+    pub aperture: Option<String>,
+    pub shutter_speed: Option<String>,
+    pub iso: Option<String>,
+    pub lens_model: Option<String>,
+}
+
+#[tauri::command]
+pub async fn scan_folder(
+    app: AppHandle,
+    folder_path: String,
+    force_reprocess: Option<bool>,
+) -> Result<Vec<PhotoItem>, String> {
+    let force = force_reprocess.unwrap_or(false);
+    tauri::async_runtime::spawn_blocking(move || {
+        let scan_started = Instant::now();
+        let input_path = PathBuf::from(&folder_path);
+        let root_path = if input_path.is_file() {
+            input_path
+                .parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or(input_path)
+        } else {
+            input_path
+        };
+
+        if !root_path.exists() {
+            return Err(format!("Folder does not exist: {}", root_path.display()));
+        }
+
+        let app_dir = get_app_storage_dir(&app);
+        let thumbs_dir = app_dir.join("thumbnails");
+        let previews_dir = app_dir.join("previews");
+        let _ = fs::create_dir_all(&thumbs_dir);
+        let _ = fs::create_dir_all(&previews_dir);
+
+        let _ = app.emit(
+            "scan-progress",
+            ScanProgressEvent {
+                stage: "Loading SQLite index cache...".to_string(),
+                current_file: root_path.to_string_lossy().to_string(),
+                completed: 0,
+                total: 100,
+                percent: 2,
+                done: false,
+            },
+        );
+
+        let mut conn = open_global_db(&app)?;
+        let folder_prefix = make_folder_prefix(Some(&root_path.to_string_lossy()));
+
+        let mut cache_map: HashMap<String, CachedRow> = HashMap::new();
+        {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT current_path, file_size, modified_time, rating,
+                            COALESCE(ai_caption, ''), COALESCE(ocr_text, ''), hash,
+                            COALESCE(captured_at, ''), COALESCE(camera_model, ''),
+                            COALESCE(location, ''), latitude, longitude,
+                            COALESCE(dhash, ''), COALESCE(sharpness, 0.0), staged_target,
+                            COALESCE(exif_checked, 0), flag, color_label, COALESCE(rotation, 0), COALESCE(in_basket, 0),
+                            COALESCE(width, 0), COALESCE(height, 0),
+                            focal_length, aperture, shutter_speed, iso, lens_model
+                     FROM photos WHERE current_path LIKE ?1",
+                )
+                .map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map(params![folder_prefix], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        CachedRow {
+                            size: row.get(1)?,
+                            mtime: row.get(2)?,
+                            rating: row.get(3)?,
+                            ai_caption: row.get(4)?,
+                            ocr_text: row.get(5)?,
+                            hash: row.get(6)?,
+                            captured_at: row.get(7)?,
+                            camera_model: row.get(8)?,
+                            location: row.get(9)?,
+                            lat: row.get(10)?,
+                            lon: row.get(11)?,
+                            dhash: row.get(12)?,
+                            sharpness: row.get(13)?,
+                            staged_target: row.get(14)?,
+                            exif_checked: row.get(15)?,
+                            flag: row.get(16)?,
+                            color_label: row.get(17)?,
+                            rotation: row.get(18)?,
+                            in_basket: row.get::<_, i32>(19).unwrap_or(0) != 0,
+                            width: row.get::<_, u32>(20).unwrap_or(0),
+                            height: row.get::<_, u32>(21).unwrap_or(0),
+                            focal_length: row.get(22).ok().flatten(),
+                            aperture: row.get(23).ok().flatten(),
+                            shutter_speed: row.get(24).ok().flatten(),
+                            iso: row.get(25).ok().flatten(),
+                            lens_model: row.get(26).ok().flatten(),
+                        },
+                    ))
+                })
+                .map_err(|e| e.to_string())?;
+            for r in rows.flatten() {
+                cache_map.insert(r.0, r.1);
+            }
+        }
+
+        let mut tags_map: HashMap<String, Vec<String>> = HashMap::new();
+        {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT pt.hash, pt.tag FROM photo_tags pt
+                     JOIN photos p ON pt.hash = p.hash
+                     WHERE p.current_path LIKE ?1
+                     ORDER BY pt.tag ASC",
+                )
+                .map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map(params![folder_prefix], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
+                .map_err(|e| e.to_string())?;
+            for r in rows.flatten() {
+                tags_map.entry(r.0).or_default().push(r.1);
+            }
+        }
+
+        let mut people_map: HashMap<String, Vec<String>> = HashMap::new();
+        {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT pp.hash, pp.person_name FROM photo_people pp
+                     JOIN photos p ON pp.hash = p.hash
+                     WHERE p.current_path LIKE ?1
+                     ORDER BY pp.person_name ASC",
+                )
+                .map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map(params![folder_prefix], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
+                .map_err(|e| e.to_string())?;
+            for r in rows.flatten() {
+                people_map.entry(r.0).or_default().push(r.1);
+            }
+        }
+
+        let mut faces_map: HashMap<String, Vec<FaceInstance>> = HashMap::new();
+        {
+            if let Ok(mut stmt) = conn.prepare(
+                "SELECT pf.face_id, pf.hash, pf.bbox_x, pf.bbox_y, pf.bbox_w, pf.bbox_h, pf.person_name, pf.face_thumb, pf.confidence
+                 FROM photo_faces pf
+                 JOIN photos p ON pf.hash = p.hash
+                 WHERE p.current_path LIKE ?1
+                 ORDER BY pf.bbox_x ASC",
+            ) {
+                if let Ok(rows) = stmt.query_map(params![folder_prefix], |row| {
+                    Ok(FaceInstance {
+                        face_id: row.get(0)?,
+                        hash: row.get(1)?,
+                        bbox_x: row.get(2)?,
+                        bbox_y: row.get(3)?,
+                        bbox_w: row.get(4)?,
+                        bbox_h: row.get(5)?,
+                        person_name: row.get(6)?,
+                        face_thumb: row.get(7)?,
+                        confidence: row.get(8)?,
+                    })
+                }) {
+                    for f in rows.flatten() {
+                        faces_map.entry(f.hash.clone()).or_default().push(f);
+                    }
+                }
+            }
+        }
+
+        let cache_ms = elapsed_ms(scan_started);
+        let walk_started = Instant::now();
+        let candidate_paths: Vec<PathBuf> = WalkDir::new(&root_path)
+            .into_iter()
+            .filter_entry(|e| {
+                if !e.file_type().is_dir() {
+                    return true;
+                }
+                let name = e.file_name().to_string_lossy();
+                name != ".git"
+                    && name != "node_modules"
+                    && name != ".triage_cache"
+                    && !name.starts_with('$')
+            })
+            .flatten()
+            .filter_map(|entry| {
+                if !entry.file_type().is_file() {
+                    return None;
+                }
+                let p = entry.into_path();
+                let ext = p.extension()?.to_str()?.to_lowercase();
+                if [
+                    "jpg", "jpeg", "png", "webp", "bmp", "gif", "tiff", "cr2", "cr3", "nef",
+                    "arw", "dng", "orf", "rw2", "heic", "heif", "pef", "raf",
+                ]
+                .contains(&ext.as_str())
+                {
+                    Some(p)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let total_candidates = candidate_paths.len();
+        let walk_ms = elapsed_ms(walk_started);
+        let index_started = Instant::now();
+        let scanned_counter = AtomicUsize::new(0);
+        let app_scan_progress = app.clone();
+
+        let indexed_results: Vec<(PhotoItem, String, u64, u64, bool)> = candidate_paths
+            .into_par_iter()
+            .filter_map(|file_path| {
+                let metadata = fs::metadata(&file_path).ok()?;
+                let size_bytes = metadata.len();
+                if size_bytes == 0 {
+                    return None;
+                }
+                let size_kb = size_bytes / 1024;
+                let modified_time = metadata
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+
+                let orig_path_str = file_path.to_string_lossy().to_string();
+                let file_name_str = file_path.file_name()?.to_string_lossy().to_string();
+                let ext_lower = file_path
+                    .extension()
+                    .map(|e| e.to_string_lossy().to_lowercase())
+                    .unwrap_or_default();
+
+                let mut needs_db_upsert = true;
+
+                let (
+                    hash,
+                    width,
+                    height,
+                    rating,
+                    flag,
+                    color_label,
+                    rotation,
+                    in_basket,
+                    ai_caption,
+                    ocr_text,
+                    captured_at,
+                    camera_model,
+                    location,
+                    lat,
+                    lon,
+                    dhash,
+                    sharpness,
+                    staged_target,
+                    focal_length,
+                    aperture,
+                    shutter_speed,
+                    iso,
+                    lens_model,
+                ) = if let Some(c) = cache_map.get(&orig_path_str) {
+                    if !force
+                        && c.exif_checked == 1
+                        && !c.captured_at.is_empty()
+                        && c.size == size_bytes
+                        && c.mtime == modified_time
+                    {
+                        needs_db_upsert = false;
+                        (
+                            c.hash.clone(),
+                            c.width,
+                            c.height,
+                            c.rating,
+                            c.flag.clone(),
+                            c.color_label.clone(),
+                            c.rotation,
+                            c.in_basket,
+                            c.ai_caption.clone(),
+                            c.ocr_text.clone(),
+                            c.captured_at.clone(),
+                            c.camera_model.clone(),
+                            c.location.clone(),
+                            c.lat,
+                            c.lon,
+                            c.dhash.clone(),
+                            c.sharpness,
+                            c.staged_target.clone(),
+                            c.focal_length.clone(),
+                            c.aperture.clone(),
+                            c.shutter_speed.clone(),
+                            c.iso.clone(),
+                            c.lens_model.clone(),
+                        )
+                    } else {
+                        let h = if c.size == size_bytes {
+                            c.hash.clone()
+                        } else {
+                            compute_fast_hash(&file_path, size_bytes).ok()?
+                        };
+                        let ex = extract_all_exif_single_pass(&file_path);
+                        let (w, ht) = if c.width > 0 && c.height > 0 && !force {
+                            (c.width, c.height)
+                        } else {
+                            (ex.width, ex.height)
+                        };
+                        (
+                            h,
+                            w,
+                            ht,
+                            c.rating,
+                            c.flag.clone(),
+                            c.color_label.clone(),
+                            c.rotation,
+                            c.in_basket,
+                            c.ai_caption.clone(),
+                            c.ocr_text.clone(),
+                            if !ex.captured_at.is_empty() { ex.captured_at } else { c.captured_at.clone() },
+                            if !ex.camera_model.is_empty() { ex.camera_model } else { c.camera_model.clone() },
+                            if !ex.location.is_empty() { ex.location } else { c.location.clone() },
+                            ex.lat.or(c.lat),
+                            ex.lon.or(c.lon),
+                            if force { String::new() } else { c.dhash.clone() },
+                            if force { 0.0 } else { c.sharpness },
+                            c.staged_target.clone(),
+                            ex.focal_length.or_else(|| c.focal_length.clone()),
+                            ex.aperture.or_else(|| c.aperture.clone()),
+                            ex.shutter_speed.or_else(|| c.shutter_speed.clone()),
+                            ex.iso.or_else(|| c.iso.clone()),
+                            ex.lens_model.or_else(|| c.lens_model.clone()),
+                        )
+                    }
+                } else {
+                    let h = compute_fast_hash(&file_path, size_bytes).ok()?;
+                    let ex = extract_all_exif_single_pass(&file_path);
+                    (
+                        h,
+                        ex.width,
+                        ex.height,
+                        0,
+                        None,
+                        None,
+                        0,
+                        false,
+                        String::new(),
+                        String::new(),
+                        ex.captured_at,
+                        ex.camera_model,
+                        ex.location,
+                        ex.lat,
+                        ex.lon,
+                        String::new(),
+                        0.0,
+                        None,
+                        ex.focal_length,
+                        ex.aperture,
+                        ex.shutter_speed,
+                        ex.iso,
+                        ex.lens_model,
+                    )
+                };
+
+                let thumb_file = thumbs_dir.join(format!("{}.jpg", hash));
+                let preview_file = previews_dir.join(format!("{}_preview.jpg", hash));
+                let is_raw_heic = is_raw_or_heic_ext(&ext_lower);
+
+                // Thumbnail is ready as soon as the 360px thumb file exists (no need to wait for 1920px previews!)
+                let thumb_ready = !force && thumb_file.metadata().map(|m| m.len() > 256).unwrap_or(false);
+
+                // For RAW & HEIC files, point display path to the 1920px preview if already cached, otherwise the 360px thumb JPEG so WebView2 renders immediately!
+                let display_path_str = if is_raw_heic {
+                    if preview_file.exists() {
+                        preview_file.to_string_lossy().to_string()
+                    } else {
+                        thumb_file.to_string_lossy().to_string()
+                    }
+                } else {
+                    orig_path_str.clone()
+                };
+
+                let subfolder = get_relative_subfolder(&root_path, &file_path);
+                let mut tags = tags_map.get(&hash).cloned().unwrap_or_default();
+
+                if is_likely_screenshot(&file_path, &camera_model, None)
+                    && !tags.iter().any(|t| t == "screenshot")
+                {
+                    tags.push("screenshot".to_string());
+                    tags.sort();
+                    needs_db_upsert = true;
+                }
+
+                let people = people_map.get(&hash).cloned().unwrap_or_default();
+                let faces = faces_map.get(&hash).cloned().unwrap_or_default();
+
+                let cur_done = scanned_counter.fetch_add(1, Ordering::Relaxed) + 1;
+                if cur_done % 25 == 0 || cur_done == total_candidates {
+                    let pct = ((cur_done * 100) / total_candidates.max(1)).min(99);
+                    let _ = app_scan_progress.emit(
+                        "scan-progress",
+                        ScanProgressEvent {
+                            stage: if force {
+                                "Deep Reprocessing EXIF & thumbnails...".to_string()
+                            } else {
+                                "Indexing library files...".to_string()
+                            },
+                            current_file: file_name_str.clone(),
+                            completed: cur_done,
+                            total: total_candidates,
+                            percent: pct,
+                            done: false,
+                        },
+                    );
+                }
+
+                Some((
+                    PhotoItem {
+                        hash,
+                        name: file_name_str,
+                        subfolder,
+                        path: display_path_str,
+                        thumb_path: thumb_file.to_string_lossy().to_string(),
+                        size_kb,
+                        width,
+                        height,
+                        thumb_ready,
+                        rating,
+                        flag,
+                        color_label,
+                        rotation,
+                        in_basket,
+                        tags,
+                        people,
+                        faces,
+                        ai_caption,
+                        ocr_text,
+                        captured_at,
+                        camera_model,
+                        location,
+                        latitude: lat,
+                        longitude: lon,
+                        dhash,
+                        sharpness,
+                        duplicate_group: None,
+                        staged_target,
+                        focal_length,
+                        aperture,
+                        shutter_speed,
+                        iso,
+                        lens_model,
+                        pair_raw_path: if is_raw_heic {
+                            Some(orig_path_str.clone())
+                        } else {
+                            None
+                        },
+                    },
+                    orig_path_str,
+                    size_bytes,
+                    modified_time,
+                    needs_db_upsert,
+                ))
+            })
+            .collect();
+
+        let index_ms = elapsed_ms(index_started);
+        let db_started = Instant::now();
+        let upsert_count = indexed_results.iter().filter(|(_, _, _, _, upsert)| *upsert).count();
+        let has_upserts = upsert_count > 0;
+        if has_upserts {
+            if let Ok(tx) = conn.transaction() {
+                for (p, orig_disk_path, size_bytes, mtime, needs_upsert) in &indexed_results {
+                    if !*needs_upsert {
+                        continue;
+                    }
+                    let _ = tx.execute(
+                        "INSERT INTO photos (hash, current_path, subfolder, file_size, modified_time, width, height, rating, flag, color_label, rotation, ai_caption, ocr_text, captured_at, camera_model, location, latitude, longitude, dhash, sharpness, staged_target, exif_checked, focal_length, aperture, shutter_speed, iso, lens_model)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, 1, ?22, ?23, ?24, ?25, ?26)
+                         ON CONFLICT(hash) DO UPDATE SET
+                            current_path = excluded.current_path,
+                            subfolder = excluded.subfolder,
+                            file_size = excluded.file_size,
+                            modified_time = excluded.modified_time,
+                            width = CASE WHEN excluded.width > 0 THEN excluded.width ELSE photos.width END,
+                            height = CASE WHEN excluded.height > 0 THEN excluded.height ELSE photos.height END,
+                            captured_at = excluded.captured_at,
+                            camera_model = excluded.camera_model,
+                            location = excluded.location,
+                            latitude = excluded.latitude,
+                            longitude = excluded.longitude,
+                            staged_target = excluded.staged_target,
+                            focal_length = COALESCE(excluded.focal_length, photos.focal_length),
+                            aperture = COALESCE(excluded.aperture, photos.aperture),
+                            shutter_speed = COALESCE(excluded.shutter_speed, photos.shutter_speed),
+                            iso = COALESCE(excluded.iso, photos.iso),
+                            lens_model = COALESCE(excluded.lens_model, photos.lens_model),
+                            exif_checked = 1",
+                        params![
+                            p.hash, orig_disk_path, p.subfolder, size_bytes, mtime, p.width, p.height, p.rating,
+                            p.flag, p.color_label, p.rotation,
+                            p.ai_caption, p.ocr_text, p.captured_at, p.camera_model,
+                            p.location, p.latitude, p.longitude, p.dhash, p.sharpness,
+                            p.staged_target, p.focal_length, p.aperture, p.shutter_speed, p.iso, p.lens_model
+                        ],
+                    );
+
+                    if p.tags.iter().any(|t| t == "screenshot") {
+                        let _ = tx.execute(
+                            "INSERT OR IGNORE INTO photo_tags (hash, tag) VALUES (?1, 'screenshot')",
+                            params![p.hash],
+                        );
+                    }
+                }
+                let _ = tx.commit();
+            }
+        }
+
+        let db_ms = elapsed_ms(db_started);
+
+        let mut photos: Vec<PhotoItem> = indexed_results
+            .into_iter()
+            .map(|(p, _, _, _, _)| p)
+            .collect();
+
+        let mut raw_stem_map: HashMap<(String, String), String> = HashMap::new();
+        for p in &photos {
+            let disk_p = p.pair_raw_path.as_deref().unwrap_or(&p.path);
+            let path_obj = Path::new(disk_p);
+            let stem = path_obj
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_lowercase())
+                .unwrap_or_default();
+            let ext = path_obj
+                .extension()
+                .map(|e| e.to_string_lossy().to_lowercase())
+                .unwrap_or_default();
+            if !stem.is_empty() && is_raw_or_heic_ext(&ext) {
+                raw_stem_map.insert((p.subfolder.clone(), stem), disk_p.to_string());
+            }
+        }
+        for p in &mut photos {
+            let path_obj = Path::new(&p.name);
+            let stem = path_obj
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_lowercase())
+                .unwrap_or_default();
+            let ext = path_obj
+                .extension()
+                .map(|e| e.to_string_lossy().to_lowercase())
+                .unwrap_or_default();
+            if matches!(ext.as_str(), "jpg" | "jpeg") {
+                if let Some(raw_p) = raw_stem_map.get(&(p.subfolder.clone(), stem)) {
+                    p.pair_raw_path = Some(raw_p.clone());
+                }
+            }
+        }
+
+        let _ = app.emit(
+            "scan-progress",
+            ScanProgressEvent {
+                stage: "Ready".to_string(),
+                current_file: String::new(),
+                completed: photos.len(),
+                total: photos.len(),
+                percent: 100,
+                done: true,
+            },
+        );
+
+        emit_perf(
+            &app,
+            if force { "Folder index (deep reprocess)" } else { "Folder index" },
+            scan_started,
+            photos.len(),
+            format!(
+                "{} new/changed · db cache {} ms · walk {} ms · index {} ms ({}/s) · db write {} ms",
+                upsert_count,
+                cache_ms,
+                walk_ms,
+                index_ms,
+                per_second(total_candidates, index_ms),
+                db_ms
+            ),
+        );
+
+        photos.sort_by(|a, b| a.subfolder.cmp(&b.subfolder).then(a.name.cmp(&b.name)));
+        assign_duplicate_groups(&mut photos);
+
+        let needs_processing: Vec<PhotoItem> = photos
+            .iter()
+            .filter(|p| force || !p.thumb_ready || p.dhash.is_empty())
+            .cloned()
+            .collect();
+
+        if !needs_processing.is_empty() {
+            let app_clone = app.clone();
+            let folder_scope = root_path.to_string_lossy().to_string();
+            std::thread::spawn(move || {
+                let thumbs_started = Instant::now();
+                let total = needs_processing.len();
+                let completed = AtomicUsize::new(0);
+                let mut heic_count = 0usize;
+                let mut heic_ms = 0u64;
+                let mut failed_count = 0usize;
+                let mut db_write_ms = 0u64;
+
+                let num_threads = (std::thread::available_parallelism()
+                    .map(|n| (n.get() * 3) / 4)
+                    .unwrap_or(6))
+                    .max(2);
+
+                let pool = rayon::ThreadPoolBuilder::new()
+                    .num_threads(num_threads)
+                    .build()
+                    .unwrap();
+
+                pool.install(|| {
+                    for chunk in needs_processing.chunks(48) {
+                        // 1. Batch-convert any HEIC/HEIF files in this chunk directly to 360px thumbnails in ONE PowerShell call!
+                        //    (Uses embedded $frame.Thumbnail when available, so it takes ~10ms per HEIC instead of decoding 12MP!)
+                        let heic_thumb_jobs: Vec<(String, String, u32)> = chunk
+                            .iter()
+                            .filter_map(|p| {
+                                let disk_src = p.pair_raw_path.as_deref().unwrap_or(&p.path);
+                                let ext = Path::new(disk_src)
+                                    .extension()
+                                    .map(|e| e.to_string_lossy().to_lowercase())
+                                    .unwrap_or_default();
+                                if ext == "heic" || ext == "heif" {
+                                    let tf = Path::new(&p.thumb_path);
+                                    if force || !tf.exists() {
+                                        return Some((
+                                            disk_src.to_string(),
+                                            p.thumb_path.clone(),
+                                            360,
+                                        ));
+                                    }
+                                }
+                                None
+                            })
+                            .collect();
+
+                        if !heic_thumb_jobs.is_empty() {
+                            let heic_started = Instant::now();
+                            batch_decode_heic_thumbs_windows(&heic_thumb_jobs);
+                            heic_ms += elapsed_ms(heic_started);
+                            heic_count += heic_thumb_jobs.len();
+                        }
+
+                        // 2. Parallel Rayon 360px thumbnail, dHash & sharpness pass (Zero 1920px encoding overhead!)
+                        let batch_items: Vec<ThumbBatchItem> = chunk
+                            .par_iter()
+                            .map(|photo| {
+                                let disk_source = photo
+                                    .pair_raw_path
+                                    .as_deref()
+                                    .unwrap_or(&photo.path);
+                                let original_path = Path::new(disk_source);
+                                let thumb_file = Path::new(&photo.thumb_path);
+                                let ext_lower = original_path
+                                    .extension()
+                                    .map(|e| e.to_string_lossy().to_lowercase())
+                                    .unwrap_or_default();
+
+                                let mut computed_dhash = photo.dhash.clone();
+                                let mut computed_sharpness = photo.sharpness;
+                                let mut computed_w = photo.width;
+                                let mut computed_h = photo.height;
+                                let mut final_thumb_path = photo.thumb_path.clone();
+                                let mut detected_scr = false;
+
+                                // If HEIC 360px thumb was already written by batch_decode_heic_thumbs_windows, read that tiny 20KB JPEG!
+                                let decode_target = if (ext_lower == "heic" || ext_lower == "heif")
+                                    && thumb_file.exists()
+                                {
+                                    thumb_file
+                                } else {
+                                    original_path
+                                };
+
+                                if let Ok(img) = open_and_orient_image_for_thumb(decode_target) {
+                                    let (iw, ih) = img.dimensions();
+                                    if computed_w == 0 || computed_h == 0 {
+                                        computed_w = iw;
+                                        computed_h = ih;
+                                    }
+                                    detected_scr = is_likely_screenshot(
+                                        original_path,
+                                        &photo.camera_model,
+                                        Some(&img),
+                                    );
+                                    let thumb = if iw <= 360 && ih <= 360 {
+                                        img
+                                    } else {
+                                        img.thumbnail(360, 360)
+                                    };
+                                    computed_dhash = compute_dhash(&thumb);
+                                    computed_sharpness = compute_sharpness(&thumb);
+
+                                    if force || !thumb_file.exists() {
+                                        if thumb.to_rgb8().save(thumb_file).is_err() {
+                                            final_thumb_path = photo.path.clone();
+                                        }
+                                    }
+                                }
+
+                                let mut auto_tags = Vec::new();
+                                if detected_scr {
+                                    auto_tags.push("screenshot".to_string());
+                                }
+
+                                let thumb_ok = Path::new(&final_thumb_path).exists();
+                                completed.fetch_add(1, Ordering::Relaxed);
+
+                                ThumbBatchItem {
+                                    hash: photo.hash.clone(),
+                                    thumb_path: final_thumb_path,
+                                    dhash: computed_dhash,
+                                    sharpness: computed_sharpness,
+                                    width: computed_w,
+                                    height: computed_h,
+                                    auto_tags,
+                                    thumb_ok,
+                                }
+                            })
+                            .collect();
+
+                        let done = completed.load(Ordering::Relaxed);
+                        let mut dup_groups = HashMap::new();
+                        failed_count += batch_items.iter().filter(|i| !i.thumb_ok).count();
+
+                        let db_started = Instant::now();
+                        if let Ok(mut db_conn) = open_global_db(&app_clone) {
+                            if let Ok(tx) = db_conn.transaction() {
+                                for item in &batch_items {
+                                    let _ = tx.execute(
+                                        "UPDATE photos SET dhash = ?1, sharpness = ?2, width = CASE WHEN ?3 > 0 THEN ?3 ELSE width END, height = CASE WHEN ?4 > 0 THEN ?4 ELSE height END WHERE hash = ?5",
+                                        params![item.dhash, item.sharpness, item.width, item.height, item.hash],
+                                    );
+                                    if !item.auto_tags.is_empty() {
+                                        let _ = tx.execute(
+                                            "INSERT OR IGNORE INTO photo_tags (hash, tag) VALUES (?1, 'screenshot')",
+                                            params![item.hash],
+                                        );
+                                    }
+                                }
+                                let _ = tx.commit();
+                            }
+
+                            if done == total {
+                                dup_groups = compute_db_duplicate_groups(&db_conn, Some(&folder_scope));
+                            }
+                        }
+                        db_write_ms += elapsed_ms(db_started);
+
+                        let _ = app_clone.emit(
+                            "thumb-batch-ready",
+                            ThumbBatchProgress {
+                                items: batch_items,
+                                duplicate_groups: dup_groups,
+                                completed: done,
+                                total,
+                            },
+                        );
+                    }
+                });
+
+                let total_ms = elapsed_ms(thumbs_started);
+                emit_perf(
+                    &app_clone,
+                    "Thumbnails + dHash",
+                    thumbs_started,
+                    total,
+                    format!(
+                        "{}/s on {} threads · HEIC {} files in {} ms (PowerShell) · db {} ms · {} failed",
+                        per_second(total, total_ms),
+                        num_threads,
+                        heic_count,
+                        heic_ms,
+                        db_write_ms,
+                        failed_count
+                    ),
+                );
+            });
+        }
+
+        Ok(photos)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+// ----------------- FORCE EXIF RESCAN (INDIVIDUAL & BATCH) -----------------
+
+#[tauri::command]
+pub async fn rescan_exif_batch(app: AppHandle, hashes: Vec<String>) -> Result<Vec<ExifRefreshResult>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut conn = open_global_db(&app)?;
+        let mut results = Vec::new();
+
+        if let Ok(tx) = conn.transaction() {
+            for h in &hashes {
+                let row_opt: Option<(String, String, String, String, Option<f64>, Option<f64>)> = tx
+                    .query_row(
+                        "SELECT current_path, COALESCE(captured_at, ''), COALESCE(camera_model, ''), COALESCE(location, ''), latitude, longitude
+                         FROM photos WHERE hash = ?1",
+                        params![h],
+                        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
+                    )
+                    .ok();
+
+                if let Some((path_str, old_date, old_cam, old_loc, old_lat, old_lon)) = row_opt {
+                    let path_obj = Path::new(&path_str);
+                    let ex = extract_all_exif_single_pass(path_obj);
+
+                    let final_date = if !ex.captured_at.is_empty() { ex.captured_at } else { old_date };
+                    let final_cam = if !ex.camera_model.is_empty() { ex.camera_model } else { old_cam };
+                    let final_loc = if !ex.location.is_empty() { ex.location } else { old_loc };
+                    let final_lat = ex.lat.or(old_lat);
+                    let final_lon = ex.lon.or(old_lon);
+
+                    let _ = tx.execute(
+                        "UPDATE photos SET
+                            captured_at = ?1,
+                            camera_model = ?2,
+                            location = ?3,
+                            latitude = ?4,
+                            longitude = ?5,
+                            focal_length = COALESCE(?6, focal_length),
+                            aperture = COALESCE(?7, aperture),
+                            shutter_speed = COALESCE(?8, shutter_speed),
+                            iso = COALESCE(?9, iso),
+                            lens_model = COALESCE(?10, lens_model),
+                            exif_checked = 1
+                         WHERE hash = ?11",
+                        params![
+                            final_date, final_cam, final_loc, final_lat, final_lon,
+                            ex.focal_length, ex.aperture, ex.shutter_speed, ex.iso, ex.lens_model, h
+                        ],
+                    );
+
+                    results.push(ExifRefreshResult {
+                        hash: h.clone(),
+                        captured_at: final_date,
+                        camera_model: final_cam,
+                        location: final_loc,
+                        latitude: final_lat,
+                        longitude: final_lon,
+                        focal_length: ex.focal_length,
+                        aperture: ex.aperture,
+                        shutter_speed: ex.shutter_speed,
+                        iso: ex.iso,
+                        lens_model: ex.lens_model,
+                    });
+                }
+            }
+            let _ = tx.commit();
+        }
+
+        Ok(results)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+// ----------------- DATE TIMELINE AGGREGATION -----------------
+
+#[tauri::command]
+pub async fn get_timeline_distribution(app: AppHandle, root_folder: Option<String>) -> Result<Vec<TimelineBucket>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let conn = open_global_db(&app)?;
+        let prefix = make_folder_prefix(root_folder.as_deref());
+        let mut stmt = conn
+            .prepare(
+                "SELECT substr(replace(captured_at, ':', '-'), 1, 10) as period, count(*)
+                 FROM photos
+                 WHERE captured_at IS NOT NULL AND length(captured_at) >= 10 AND current_path LIKE ?1
+                 GROUP BY period
+                 ORDER BY period ASC",
+            )
+            .map_err(|e| e.to_string())?;
+
+        let rows = stmt
+            .query_map(params![prefix], |r| {
+                Ok(TimelineBucket {
+                    period: r.get(0)?,
+                    count: r.get(1)?,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+
+        Ok(rows.flatten().collect())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
