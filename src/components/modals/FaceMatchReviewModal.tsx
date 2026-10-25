@@ -1,6 +1,11 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
-import { PersonItem, PhotoItem, SimilarFaceCandidate } from "../../types/lumina";
+import {
+  FaceInstance,
+  PersonItem,
+  PhotoItem,
+  SimilarFaceCandidate,
+} from "../../types/lumina";
 import {
   Check,
   CheckCheck,
@@ -8,9 +13,13 @@ import {
   ChevronRight,
   LayoutGrid,
   Loader2,
+  RefreshCw,
+  RotateCcw,
   ScanFace,
+  ShieldCheck,
   Sparkles,
   User,
+  UserMinus,
   X,
 } from "lucide-react";
 
@@ -21,7 +30,15 @@ interface FaceMatchReviewModalProps {
   people: PersonItem[];
   pendingCounts: Record<string, number>;
   setPhotos: React.Dispatch<React.SetStateAction<PhotoItem[]>>;
-  refreshPeople: () => Promise<void>;
+  refreshPeople: (currentFolder?: string, skipPendingScan?: boolean) => Promise<void>;
+}
+
+type StatusTab = "pending" | "confirmed" | "denied";
+
+interface HistoryStep {
+  action: "accept" | "deny";
+  person: string;
+  candidates: SimilarFaceCandidate[];
 }
 
 export default function FaceMatchReviewModal({
@@ -34,73 +51,165 @@ export default function FaceMatchReviewModal({
   refreshPeople,
 }: FaceMatchReviewModalProps) {
   const [activePerson, setActivePerson] = useState<string>("");
+  const [statusTab, setStatusTab] = useState<StatusTab>("pending");
   const [candidates, setCandidates] = useState<SimilarFaceCandidate[]>([]);
+  const [confirmedFaces, setConfirmedFaces] = useState<SimilarFaceCandidate[]>([]);
+  const [deniedFaces, setDeniedFaces] = useState<SimilarFaceCandidate[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [reviewMode, setReviewMode] = useState<"grid" | "spotlight">("grid");
   const [spotlightIndex, setSpotlightIndex] = useState<number>(0);
+  const [historyStack, setHistoryStack] = useState<HistoryStep[]>([]);
 
-  const loadCandidatesForPerson = useCallback(async (personName: string) => {
-    const clean = personName.trim();
-    if (!clean) return;
-    setActivePerson(clean);
-    setIsLoading(true);
-    try {
-      const res = await invoke<SimilarFaceCandidate[]>("find_similar_faces", {
-        personName: clean,
-        minSimilarity: 0.44,
-      });
-      setCandidates(res);
-      setSelectedIds(
-        new Set(res.filter((c) => c.similarity >= 56).map((c) => c.face_id))
+  const syncUpdatedFacesToPhotos = useCallback(
+    (updatedMap: Record<string, FaceInstance[]>) => {
+      const hashes = Object.keys(updatedMap);
+      if (hashes.length === 0) return;
+      setPhotos((prev) =>
+        prev.map((p) => {
+          const nextFaces = updatedMap[p.hash];
+          if (!nextFaces) return p;
+          const activeFaceNames = Array.from(
+            new Set(
+              nextFaces
+                .map((f) => f.person_name?.trim())
+                .filter((n): n is string => Boolean(n))
+            )
+          );
+          const mergedPeople = Array.from(
+            new Set([
+              ...p.people.filter(
+                (pe) => pe.toLowerCase() !== activePerson.toLowerCase()
+              ),
+              ...activeFaceNames,
+            ])
+          ).sort();
+          return {
+            ...p,
+            faces: nextFaces,
+            people: mergedPeople,
+          };
+        })
       );
-      setSpotlightIndex(0);
-    } catch {
-      setCandidates([]);
-      setSelectedIds(new Set());
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
+    },
+    [activePerson, setPhotos]
+  );
+
+  const loadDataForPerson = useCallback(
+    async (
+      personName: string,
+      tab: StatusTab = statusTab,
+      forceRefresh = false
+    ) => {
+      const clean = personName.trim();
+      if (!clean) return;
+      setActivePerson(clean);
+      setIsLoading(true);
+      try {
+        if (tab === "pending") {
+          const res = await invoke<SimilarFaceCandidate[]>("find_similar_faces", {
+            personName: clean,
+            minSimilarity: 0.50,
+            forceRefresh,
+          });
+          setCandidates(res);
+          // Do NOT pre-select all candidates automatically: only confirm what the user explicitly selects or clicks!
+          setSelectedIds(new Set());
+          setSpotlightIndex(0);
+        } else if (tab === "confirmed") {
+          const res = await invoke<SimilarFaceCandidate[]>(
+            "get_confirmed_faces_for_person",
+            { personName: clean }
+          );
+          setConfirmedFaces(res);
+          setSelectedIds(new Set());
+        } else if (tab === "denied") {
+          const res = await invoke<SimilarFaceCandidate[]>(
+            "get_rejected_faces_for_person",
+            { personName: clean }
+          );
+          setDeniedFaces(res);
+          setSelectedIds(new Set());
+        }
+      } catch {
+        setCandidates([]);
+        setSelectedIds(new Set());
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [statusTab]
+  );
 
   useEffect(() => {
     if (!isOpen) return;
+    setStatusTab("pending");
+    setHistoryStack([]);
     const target =
       initialPerson ||
       people.find((p) => (pendingCounts[p.name] || 0) > 0)?.name ||
       people[0]?.name ||
       "";
     if (target) {
-      loadCandidatesForPerson(target);
+      loadDataForPerson(target, "pending");
     }
   }, [isOpen, initialPerson]);
 
+  const handleSwitchTab = async (nextTab: StatusTab) => {
+    setStatusTab(nextTab);
+    if (nextTab !== "pending") {
+      setReviewMode("grid");
+    }
+    if (activePerson) {
+      await loadDataForPerson(activePerson, nextTab);
+    }
+  };
+
+  // Accept 1 or more pending candidates WITHOUT triggering a full re-scan on every click!
   const handleAcceptBatch = useCallback(
-    async (faceIds: string[]) => {
+    async (faceIds: string[], recordHistory = true) => {
       if (!activePerson || faceIds.length === 0) return;
       const idSet = new Set(faceIds);
-      const updatedHashes = await invoke<string[]>("assign_faces_to_person_batch", {
-        faceIds,
-        personName: activePerson,
-      });
-      const hashSet = new Set(updatedHashes);
+      const affectedItems = candidates.filter((c) => idSet.has(c.face_id));
 
-      setPhotos((prev) =>
-        prev.map((p) => {
-          if (!hashSet.has(p.hash)) return p;
-          const nextFaces = p.faces.map((f) =>
-            idSet.has(f.face_id) ? { ...f, person_name: activePerson } : f
-          );
-          const nextPeople = p.people.includes(activePerson)
-            ? p.people
-            : [...p.people, activePerson].sort();
-          return {
-            ...p,
-            faces: nextFaces,
-            people: nextPeople,
-          };
-        })
+      // Optimistically remove from UI list immediately so rapid clicking feels 0ms!
+      setCandidates((prev) => {
+        const next = prev.filter((c) => !idSet.has(c.face_id));
+        setSpotlightIndex((idx) => Math.min(idx, Math.max(0, next.length - 1)));
+        return next;
+      });
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        for (const id of faceIds) next.delete(id);
+        return next;
+      });
+
+      if (recordHistory && affectedItems.length > 0) {
+        setHistoryStack((prev) => [
+          ...prev.slice(-29),
+          { action: "accept", person: activePerson, candidates: affectedItems },
+        ]);
+      }
+
+      const updatedFacesMap = await invoke<Record<string, FaceInstance[]>>(
+        "assign_faces_to_person_batch",
+        {
+          faceIds,
+          personName: activePerson,
+        }
       );
+      syncUpdatedFacesToPhotos(updatedFacesMap);
+      await refreshPeople(undefined, true);
+    },
+    [activePerson, candidates, syncUpdatedFacesToPhotos, refreshPeople]
+  );
+
+  // Deny 1 or more pending candidates WITHOUT triggering a full re-scan on every click!
+  const handleDenyBatch = useCallback(
+    async (faceIds: string[], recordHistory = true) => {
+      if (!activePerson || faceIds.length === 0) return;
+      const idSet = new Set(faceIds);
+      const affectedItems = candidates.filter((c) => idSet.has(c.face_id));
 
       setCandidates((prev) => {
         const next = prev.filter((c) => !idSet.has(c.face_id));
@@ -112,41 +221,111 @@ export default function FaceMatchReviewModal({
         for (const id of faceIds) next.delete(id);
         return next;
       });
-      await refreshPeople();
-      // Re-run find_similar_faces so the updated multi-prototype centroid immediately surfaces any new matches!
-      const refreshed = await invoke<SimilarFaceCandidate[]>("find_similar_faces", {
-        personName: activePerson,
-        minSimilarity: 0.44,
-      });
-      setCandidates(refreshed);
-    },
-    [activePerson, setPhotos, refreshPeople]
-  );
 
-  const handleDenyBatch = useCallback(
-    async (faceIds: string[]) => {
-      if (!activePerson || faceIds.length === 0) return;
-      const idSet = new Set(faceIds);
+      if (recordHistory && affectedItems.length > 0) {
+        setHistoryStack((prev) => [
+          ...prev.slice(-29),
+          { action: "deny", person: activePerson, candidates: affectedItems },
+        ]);
+      }
+
       await invoke<number>("reject_face_candidates_batch", {
         faceIds,
         personName: activePerson,
       });
-      setCandidates((prev) => {
-        const next = prev.filter((c) => !idSet.has(c.face_id));
-        setSpotlightIndex((idx) => Math.min(idx, Math.max(0, next.length - 1)));
-        return next;
+      await refreshPeople(undefined, true);
+    },
+    [activePerson, candidates, refreshPeople]
+  );
+
+  // Undo the last Accept or Deny action inside the modal!
+  const handleUndoLastDecision = useCallback(async () => {
+    if (historyStack.length === 0) return;
+    const last = historyStack[historyStack.length - 1];
+    setHistoryStack((prev) => prev.slice(0, -1));
+    const faceIds = last.candidates.map((c) => c.face_id);
+
+    if (last.action === "accept") {
+      const updatedMap = await invoke<Record<string, FaceInstance[]>>(
+        "unassign_faces_batch",
+        {
+          faceIds,
+          personName: last.person,
+        }
+      );
+      syncUpdatedFacesToPhotos(updatedMap);
+    } else {
+      await invoke<number>("unreject_face_candidates_batch", {
+        faceIds,
+        personName: last.person,
       });
+    }
+
+    if (last.person.toLowerCase() === activePerson.toLowerCase() && statusTab === "pending") {
+      setCandidates((prev) => {
+        const existingIds = new Set(prev.map((x) => x.face_id));
+        const restored = last.candidates.filter((x) => !existingIds.has(x.face_id));
+        return [...restored, ...prev];
+      });
+    }
+    await refreshPeople();
+  }, [historyStack, activePerson, statusTab, syncUpdatedFacesToPhotos, refreshPeople]);
+
+  // Unassign a face from the "Confirmed Faces" tab (if you accidentally confirmed someone)
+  const handleUnassignConfirmed = useCallback(
+    async (faceIds: string[]) => {
+      if (!activePerson || faceIds.length === 0) return;
+      const idSet = new Set(faceIds);
+      setConfirmedFaces((prev) => prev.filter((c) => !idSet.has(c.face_id)));
       setSelectedIds((prev) => {
         const next = new Set(prev);
         for (const id of faceIds) next.delete(id);
         return next;
       });
+      const updatedMap = await invoke<Record<string, FaceInstance[]>>(
+        "unassign_faces_batch",
+        {
+          faceIds,
+          personName: activePerson,
+        }
+      );
+      syncUpdatedFacesToPhotos(updatedMap);
       await refreshPeople();
     },
-    [activePerson, refreshPeople]
+    [activePerson, syncUpdatedFacesToPhotos, refreshPeople]
   );
 
-  // Keyboard shortcuts inside the modal (Spotlight & Escape)
+  // Restore a face from the "Denied / Ignored" tab (if you accidentally denied someone)
+  const handleRestoreDenied = useCallback(
+    async (faceIds: string[], alsoAccept = false) => {
+      if (!activePerson || faceIds.length === 0) return;
+      const idSet = new Set(faceIds);
+      setDeniedFaces((prev) => prev.filter((c) => !idSet.has(c.face_id)));
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        for (const id of faceIds) next.delete(id);
+        return next;
+      });
+      await invoke<number>("unreject_face_candidates_batch", {
+        faceIds,
+        personName: activePerson,
+      });
+      if (alsoAccept) {
+        const updatedMap = await invoke<Record<string, FaceInstance[]>>(
+          "assign_faces_to_person_batch",
+          {
+            faceIds,
+            personName: activePerson,
+          }
+        );
+        syncUpdatedFacesToPhotos(updatedMap);
+      }
+      await refreshPeople();
+    },
+    [activePerson, syncUpdatedFacesToPhotos, refreshPeople]
+  );
+
+  // Keyboard shortcuts inside the modal (Spotlight, Ctrl+Z Undo & Escape)
   useEffect(() => {
     if (!isOpen) return;
     function onKeyDown(e: KeyboardEvent) {
@@ -156,7 +335,13 @@ export default function FaceMatchReviewModal({
         onClose();
         return;
       }
-      if (reviewMode === "spotlight" && candidates.length > 0) {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        e.stopPropagation();
+        handleUndoLastDecision();
+        return;
+      }
+      if (statusTab === "pending" && reviewMode === "spotlight" && candidates.length > 0) {
         const cur = candidates[spotlightIndex];
         if (!cur) return;
         if (e.key.toLowerCase() === "y" || e.key === "Enter") {
@@ -184,9 +369,26 @@ export default function FaceMatchReviewModal({
     }
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [isOpen, reviewMode, candidates, spotlightIndex, handleAcceptBatch, handleDenyBatch, onClose]);
+  }, [
+    isOpen,
+    statusTab,
+    reviewMode,
+    candidates,
+    spotlightIndex,
+    handleAcceptBatch,
+    handleDenyBatch,
+    handleUndoLastDecision,
+    onClose,
+  ]);
 
   if (!isOpen) return null;
+
+  const activeList =
+    statusTab === "pending"
+      ? candidates
+      : statusTab === "confirmed"
+      ? confirmedFaces
+      : deniedFaces;
 
   const currentSpotlight = candidates[spotlightIndex] || null;
   const activePersonObj = people.find(
@@ -203,7 +405,7 @@ export default function FaceMatchReviewModal({
         className="bg-[#0e1017] border border-zinc-800 rounded-2xl w-full max-w-6xl h-[86vh] shadow-2xl flex flex-col overflow-hidden"
       >
         {/* Top Modal Header */}
-        <div className="px-6 py-4 bg-[#12141d] border-b border-zinc-800 flex items-center justify-between shrink-0">
+        <div className="px-6 py-4 bg-[#12141d] border-b border-zinc-800 flex items-center justify-between shrink-0 gap-4 flex-wrap">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-xl bg-indigo-500/15 border border-indigo-500/30 flex items-center justify-center">
               <ScanFace className="w-5 h-5 text-indigo-400" />
@@ -211,42 +413,92 @@ export default function FaceMatchReviewModal({
             <div>
               <h2 className="text-base font-bold text-zinc-100 flex items-center gap-2">
                 <span>Face Match Review & Confirmation Studio</span>
-                <span className="text-[11px] px-2 py-0.5 rounded-full bg-indigo-500/15 text-indigo-300 border border-indigo-500/30 font-mono">
-                  Multi-Prototype Centroid AI
-                </span>
               </h2>
               <p className="text-xs text-zinc-400">
-                Every confirmed face strengthens {activePerson || "the person"}'s biometric profile across angles and lighting.
+                Review potential matches, manage confirmed faces, or restore accidentally denied faces.
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
-            {/* Mode Switcher: Large Grid vs 1-by-1 Spotlight */}
-            <div className="flex bg-zinc-900 border border-zinc-800 rounded-xl p-0.5 text-xs">
+          {/* 3-Tab Status Switcher: Pending Suggestions | Confirmed Faces | Denied / Ignored */}
+          <div className="flex items-center gap-2 bg-zinc-950 border border-zinc-800 rounded-xl p-1 text-xs">
+            <button
+              onClick={() => handleSwitchTab("pending")}
+              className={`px-3 py-1.5 rounded-lg font-semibold flex items-center gap-1.5 transition ${
+                statusTab === "pending"
+                  ? "bg-amber-500/20 text-amber-300 border border-amber-500/40"
+                  : "text-zinc-400 hover:text-zinc-200"
+              }`}
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>Pending Matches ({pendingCounts[activePerson] ?? candidates.length})</span>
+            </button>
+            <button
+              onClick={() => handleSwitchTab("confirmed")}
+              className={`px-3 py-1.5 rounded-lg font-semibold flex items-center gap-1.5 transition ${
+                statusTab === "confirmed"
+                  ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
+                  : "text-zinc-400 hover:text-zinc-200"
+              }`}
+            >
+              <ShieldCheck className="w-3.5 h-3.5" />
+              <span>Confirmed ({activePersonObj?.photo_count ?? confirmedFaces.length})</span>
+            </button>
+            <button
+              onClick={() => handleSwitchTab("denied")}
+              className={`px-3 py-1.5 rounded-lg font-semibold flex items-center gap-1.5 transition ${
+                statusTab === "denied"
+                  ? "bg-red-500/20 text-red-300 border border-red-500/40"
+                  : "text-zinc-400 hover:text-zinc-200"
+              }`}
+            >
+              <X className="w-3.5 h-3.5" />
+              <span>Denied / Ignored</span>
+            </button>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {/* Undo Last Accept/Deny Button */}
+            {historyStack.length > 0 && (
               <button
-                onClick={() => setReviewMode("grid")}
-                className={`px-3 py-1.5 rounded-lg font-medium flex items-center gap-1.5 transition ${
-                  reviewMode === "grid"
-                    ? "bg-indigo-600 text-white shadow"
-                    : "text-zinc-400 hover:text-zinc-200"
-                }`}
+                onClick={handleUndoLastDecision}
+                className="px-3 py-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-300 text-xs font-semibold flex items-center gap-1.5 transition"
+                title="Undo last Accept or Deny action (Ctrl+Z)"
               >
-                <LayoutGrid className="w-3.5 h-3.5" />
-                <span>Large Grid ({candidates.length})</span>
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>
+                  Undo {historyStack[historyStack.length - 1].action === "accept" ? "Accept" : "Deny"}
+                </span>
               </button>
-              <button
-                onClick={() => setReviewMode("spotlight")}
-                className={`px-3 py-1.5 rounded-lg font-medium flex items-center gap-1.5 transition ${
-                  reviewMode === "spotlight"
-                    ? "bg-indigo-600 text-white shadow"
-                    : "text-zinc-400 hover:text-zinc-200"
-                }`}
-              >
-                <Sparkles className="w-3.5 h-3.5" />
-                <span>1-by-1 Spotlight (Y / N)</span>
-              </button>
-            </div>
+            )}
+
+            {/* Mode Switcher: Large Grid vs 1-by-1 Spotlight (for Pending tab) */}
+            {statusTab === "pending" && (
+              <div className="flex bg-zinc-900 border border-zinc-800 rounded-xl p-0.5 text-xs">
+                <button
+                  onClick={() => setReviewMode("grid")}
+                  className={`px-2.5 py-1.5 rounded-lg font-medium flex items-center gap-1.5 transition ${
+                    reviewMode === "grid"
+                      ? "bg-indigo-600 text-white shadow"
+                      : "text-zinc-400 hover:text-zinc-200"
+                  }`}
+                >
+                  <LayoutGrid className="w-3.5 h-3.5" />
+                  <span>3-Col Grid</span>
+                </button>
+                <button
+                  onClick={() => setReviewMode("spotlight")}
+                  className={`px-2.5 py-1.5 rounded-lg font-medium flex items-center gap-1.5 transition ${
+                    reviewMode === "spotlight"
+                      ? "bg-indigo-600 text-white shadow"
+                      : "text-zinc-400 hover:text-zinc-200"
+                  }`}
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>Spotlight (Y/N)</span>
+                </button>
+              </div>
+            )}
 
             <button
               onClick={onClose}
@@ -271,7 +523,7 @@ export default function FaceMatchReviewModal({
               return (
                 <button
                   key={p.name}
-                  onClick={() => loadCandidatesForPerson(p.name)}
+                  onClick={() => loadDataForPerson(p.name, statusTab)}
                   className={`w-full flex items-center justify-between p-2 rounded-xl text-xs transition ${
                     isSelected
                       ? "bg-indigo-600/20 text-indigo-200 border border-indigo-500/40 shadow-sm"
@@ -311,7 +563,7 @@ export default function FaceMatchReviewModal({
           {/* Main Workspace */}
           <div className="flex-1 flex flex-col min-h-0 overflow-hidden bg-[#090a0f]">
             {/* Action Sub-Toolbar */}
-            <div className="px-6 py-3 bg-[#0e1017] border-b border-zinc-800/80 flex items-center justify-between text-xs shrink-0">
+            <div className="px-6 py-3 bg-[#0e1017] border-b border-zinc-800/80 flex items-center justify-between text-xs shrink-0 gap-2 flex-wrap">
               <div className="flex items-center gap-3">
                 {activePersonObj?.cover_thumb && (
                   <img
@@ -324,43 +576,112 @@ export default function FaceMatchReviewModal({
                   {activePerson}
                 </span>
                 <span className="text-zinc-400">
-                  — <strong>{candidates.length}</strong> potential unassigned face match
-                  {candidates.length === 1 ? "" : "es"}
+                  {statusTab === "pending" && (
+                    <>
+                      — <strong>{candidates.length}</strong> pending suggestion
+                      {candidates.length === 1 ? "" : "s"}
+                    </>
+                  )}
+                  {statusTab === "confirmed" && (
+                    <>
+                      — <strong>{confirmedFaces.length}</strong> confirmed face box
+                      {confirmedFaces.length === 1 ? "" : "es"}
+                    </>
+                  )}
+                  {statusTab === "denied" && (
+                    <>
+                      — <strong>{deniedFaces.length}</strong> denied / ignored face box
+                      {deniedFaces.length === 1 ? "" : "es"}
+                    </>
+                  )}
                 </span>
+
+                {statusTab === "pending" && (
+                  <button
+                    onClick={async () => {
+                    await refreshPeople();
+                    await loadDataForPerson(activePerson, "pending", true);
+                  }}
+                    className="px-2.5 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-indigo-300 flex items-center gap-1 text-[11px] font-medium"
+                    title="Re-scan unassigned faces using your newly confirmed faces"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                    <span>Refresh Suggestions</span>
+                  </button>
+                )}
               </div>
 
-              {reviewMode === "grid" && candidates.length > 0 && (
+              {reviewMode === "grid" && activeList.length > 0 && (
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() =>
-                      setSelectedIds(new Set(candidates.map((c) => c.face_id)))
+                      setSelectedIds(new Set(activeList.map((c) => c.face_id)))
                     }
                     className="px-2.5 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-300"
                   >
-                    Select All
+                    Select All ({activeList.length})
                   </button>
-                  <button
-                    onClick={() => setSelectedIds(new Set())}
-                    className="px-2.5 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-400"
-                  >
-                    Clear Selection
-                  </button>
-                  <button
-                    onClick={() => handleDenyBatch(Array.from(selectedIds))}
-                    disabled={selectedIds.size === 0}
-                    className="px-3 py-1.5 rounded-lg bg-red-950/60 hover:bg-red-900/80 disabled:opacity-40 border border-red-800/50 text-red-200 font-semibold flex items-center gap-1.5 transition"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                    <span>Deny Selected ({selectedIds.size})</span>
-                  </button>
-                  <button
-                    onClick={() => handleAcceptBatch(Array.from(selectedIds))}
-                    disabled={selectedIds.size === 0}
-                    className="px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-semibold flex items-center gap-1.5 shadow transition"
-                  >
-                    <CheckCheck className="w-4 h-4" />
-                    <span>Accept & Confirm Selected ({selectedIds.size})</span>
-                  </button>
+                  {selectedIds.size > 0 && (
+                    <button
+                      onClick={() => setSelectedIds(new Set())}
+                      className="px-2.5 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-400"
+                    >
+                      Clear ({selectedIds.size})
+                    </button>
+                  )}
+
+                  {statusTab === "pending" && (
+                    <>
+                      <button
+                        onClick={() => handleDenyBatch(Array.from(selectedIds))}
+                        disabled={selectedIds.size === 0}
+                        className="px-3 py-1.5 rounded-lg bg-red-950/60 hover:bg-red-900/80 disabled:opacity-40 border border-red-800/50 text-red-200 font-semibold flex items-center gap-1.5 transition"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                        <span>Deny Selected ({selectedIds.size})</span>
+                      </button>
+                      <button
+                        onClick={() => handleAcceptBatch(Array.from(selectedIds))}
+                        disabled={selectedIds.size === 0}
+                        className="px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-semibold flex items-center gap-1.5 shadow transition"
+                      >
+                        <CheckCheck className="w-4 h-4" />
+                        <span>Accept Selected ({selectedIds.size})</span>
+                      </button>
+                    </>
+                  )}
+
+                  {statusTab === "confirmed" && (
+                    <button
+                      onClick={() => handleUnassignConfirmed(Array.from(selectedIds))}
+                      disabled={selectedIds.size === 0}
+                      className="px-3.5 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 disabled:opacity-40 text-white font-semibold flex items-center gap-1.5 shadow transition"
+                    >
+                      <UserMinus className="w-3.5 h-3.5" />
+                      <span>Remove Selected from "{activePerson}" ({selectedIds.size})</span>
+                    </button>
+                  )}
+
+                  {statusTab === "denied" && (
+                    <>
+                      <button
+                        onClick={() => handleRestoreDenied(Array.from(selectedIds), false)}
+                        disabled={selectedIds.size === 0}
+                        className="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 text-zinc-200 font-semibold flex items-center gap-1.5 transition"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" />
+                        <span>Move Back to Pending ({selectedIds.size})</span>
+                      </button>
+                      <button
+                        onClick={() => handleRestoreDenied(Array.from(selectedIds), true)}
+                        disabled={selectedIds.size === 0}
+                        className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-semibold flex items-center gap-1.5 shadow transition"
+                      >
+                        <Check className="w-3.5 h-3.5" />
+                        <span>Accept as "{activePerson}" ({selectedIds.size})</span>
+                      </button>
+                    </>
+                  )}
                 </div>
               )}
             </div>
@@ -370,23 +691,37 @@ export default function FaceMatchReviewModal({
               <div className="flex-1 flex flex-col items-center justify-center gap-3 text-zinc-400">
                 <Loader2 className="w-8 h-8 animate-spin text-indigo-400" />
                 <span className="text-xs font-mono">
-                  Comparing library faces against all confirmed "{activePerson}" embeddings...
+                  Loading faces for "{activePerson}"...
                 </span>
               </div>
-            ) : candidates.length === 0 ? (
+            ) : activeList.length === 0 ? (
               <div className="flex-1 flex flex-col items-center justify-center gap-2 text-center p-8">
                 <div className="w-12 h-12 rounded-2xl bg-zinc-900 border border-zinc-800 flex items-center justify-center mb-1">
                   <Check className="w-6 h-6 text-emerald-400" />
                 </div>
                 <h3 className="text-sm font-bold text-zinc-200">
-                  No Unassigned Matches Remaining for "{activePerson}"
+                  {statusTab === "pending" &&
+                    `No Pending Suggestions Remaining for "${activePerson}"`}
+                  {statusTab === "confirmed" &&
+                    `No Confirmed Faces Recorded for "${activePerson}"`}
+                  {statusTab === "denied" &&
+                    `No Denied Faces for "${activePerson}"`}
                 </h3>
-                <p className="text-xs text-zinc-500 max-w-md">
-                  All matching detected faces have been reviewed. Tip: Click "Scan Faces" in the AI menu if you have added new photos that haven't been scanned for faces yet.
-                </p>
+                {statusTab === "pending" && (
+                  <button
+                    onClick={async () => {
+                    await refreshPeople();
+                    await loadDataForPerson(activePerson, "pending", true);
+                  }}
+                    className="mt-2 px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold flex items-center gap-1.5 shadow"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>Scan for More Matches Using Newly Confirmed Faces</span>
+                  </button>
+                )}
               </div>
-            ) : reviewMode === "grid" ? (
-              /* 3-COLUMN FIXED 250PX CARD GRID MODE (Inline CSS Grid guarantees 3 columns & 250px card height!) */
+            ) : reviewMode === "grid" || statusTab !== "pending" ? (
+              /* 3-COLUMN FIXED 250PX CARD GRID MODE */
               <div
                 style={{ flex: 1, minHeight: 0, overflowY: "auto" }}
                 className="p-6"
@@ -399,7 +734,7 @@ export default function FaceMatchReviewModal({
                     gap: "16px",
                   }}
                 >
-                  {candidates.map((cand) => {
+                  {activeList.map((cand) => {
                     const isSelected = selectedIds.has(cand.face_id);
                     return (
                       <div
@@ -427,38 +762,53 @@ export default function FaceMatchReviewModal({
                           <img
                             src={convertFileSrc(cand.face_thumb)}
                             alt={cand.photo_name}
+                            decoding="async"
                             className="w-full h-full object-cover group-hover:scale-105 transition duration-200"
                           />
 
-                          {/* Similarity Pill */}
-                          <span
-                            className={`absolute top-2.5 left-2.5 px-2 py-0.5 rounded-md text-[11px] font-mono font-bold backdrop-blur-md shadow ${
-                              cand.similarity >= 62
-                                ? "bg-emerald-950/90 text-emerald-300 border border-emerald-500/40"
-                                : "bg-amber-950/90 text-amber-300 border border-amber-500/40"
-                            }`}
-                          >
-                            {cand.similarity}% match
-                          </span>
+                          {/* Status / Similarity Pill */}
+                          {statusTab === "pending" && (
+                            <span
+                              className={`absolute top-2.5 left-2.5 px-2 py-0.5 rounded-md text-[11px] font-mono font-bold backdrop-blur-md shadow ${
+                                cand.similarity >= 62
+                                  ? "bg-emerald-950/90 text-emerald-300 border border-emerald-500/40"
+                                  : "bg-amber-950/90 text-amber-300 border border-amber-500/40"
+                              }`}
+                            >
+                              {cand.similarity}% match
+                            </span>
+                          )}
+                          {statusTab === "confirmed" && (
+                            <span className="absolute top-2.5 left-2.5 px-2 py-0.5 rounded-md text-[10px] font-mono font-bold bg-emerald-950/90 text-emerald-300 border border-emerald-500/40 backdrop-blur-md">
+                              ✓ Confirmed {activePerson}
+                            </span>
+                          )}
+                          {statusTab === "denied" && (
+                            <span className="absolute top-2.5 left-2.5 px-2 py-0.5 rounded-md text-[10px] font-mono font-bold bg-red-950/90 text-red-300 border border-red-500/40 backdrop-blur-md">
+                              ✕ Denied
+                            </span>
+                          )}
 
                           {/* Inspect in Spotlight Button */}
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              const idx = candidates.findIndex(
-                                (x) => x.face_id === cand.face_id
-                              );
-                              if (idx >= 0) setSpotlightIndex(idx);
-                              setReviewMode("spotlight");
-                            }}
-                            className="absolute top-2.5 right-2.5 px-2.5 py-1 rounded-md bg-black/80 hover:bg-indigo-600 text-zinc-200 hover:text-white text-[10px] font-semibold opacity-0 group-hover:opacity-100 transition backdrop-blur shadow"
-                            title="Inspect full photo context"
-                          >
-                            Full Photo
-                          </button>
+                          {statusTab === "pending" && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const idx = candidates.findIndex(
+                                  (x) => x.face_id === cand.face_id
+                                );
+                                if (idx >= 0) setSpotlightIndex(idx);
+                                setReviewMode("spotlight");
+                              }}
+                              className="absolute top-2.5 right-2.5 px-2.5 py-1 rounded-md bg-black/80 hover:bg-indigo-600 text-zinc-200 hover:text-white text-[10px] font-semibold opacity-0 group-hover:opacity-100 transition backdrop-blur shadow"
+                              title="Inspect full photo context"
+                            >
+                              Full Photo
+                            </button>
+                          )}
                         </div>
 
-                        {/* Card Footer (78px high: Filename + Accept / Deny Buttons) */}
+                        {/* Card Footer (78px high: Filename + Action Buttons) */}
                         <div
                           style={{ height: "78px" }}
                           className="px-3 py-2 flex flex-col justify-between bg-[#12141d] shrink-0"
@@ -470,29 +820,72 @@ export default function FaceMatchReviewModal({
                             {cand.photo_name}
                           </span>
 
-                          <div className="flex items-center gap-2">
+                          {statusTab === "pending" && (
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleAcceptBatch([cand.face_id]);
+                                }}
+                                className="flex-1 py-1.5 rounded-lg bg-emerald-600/90 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center justify-center gap-1 transition"
+                                title="Confirm this is the person"
+                              >
+                                <Check className="w-3.5 h-3.5" />
+                                <span>Accept</span>
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDenyBatch([cand.face_id]);
+                                }}
+                                className="py-1.5 px-3 rounded-lg bg-zinc-800 hover:bg-red-950/80 text-zinc-400 hover:text-red-300 text-xs font-semibold flex items-center justify-center transition"
+                                title="Not this person (Move to Denied tab)"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          )}
+
+                          {statusTab === "confirmed" && (
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
-                                handleAcceptBatch([cand.face_id]);
+                                handleUnassignConfirmed([cand.face_id]);
                               }}
-                              className="flex-1 py-1.5 rounded-lg bg-emerald-600/90 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center justify-center gap-1 transition"
-                              title="Confirm this is the person"
+                              className="w-full py-1.5 rounded-lg bg-zinc-800 hover:bg-amber-600 text-zinc-200 hover:text-white text-xs font-semibold flex items-center justify-center gap-1.5 transition"
+                              title="Unassign this face from this person and return it to unassigned"
                             >
-                              <Check className="w-3.5 h-3.5" />
-                              <span>Accept</span>
+                              <UserMinus className="w-3.5 h-3.5" />
+                              <span>Unassign from {activePerson}</span>
                             </button>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDenyBatch([cand.face_id]);
-                              }}
-                              className="py-1.5 px-3 rounded-lg bg-zinc-800 hover:bg-red-950/80 text-zinc-400 hover:text-red-300 text-xs font-semibold flex items-center justify-center transition"
-                              title="Not this person (Hide permanently for this person)"
-                            >
-                              <X className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
+                          )}
+
+                          {statusTab === "denied" && (
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleRestoreDenied([cand.face_id], false);
+                                }}
+                                className="flex-1 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold flex items-center justify-center gap-1 transition"
+                                title="Remove from Denied list so it appears in Pending again"
+                              >
+                                <RotateCcw className="w-3 h-3" />
+                                <span>Restore</span>
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleRestoreDenied([cand.face_id], true);
+                                }}
+                                className="flex-1 py-1.5 rounded-lg bg-emerald-600/90 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center justify-center gap-1 transition"
+                                title="Directly confirm as this person"
+                              >
+                                <Check className="w-3.5 h-3.5" />
+                                <span>Accept</span>
+                              </button>
+                            </div>
+                          )}
                         </div>
                       </div>
                     );
@@ -509,6 +902,7 @@ export default function FaceMatchReviewModal({
                       <img
                         src={convertFileSrc(currentSpotlight.photo_path)}
                         alt={currentSpotlight.photo_name}
+                        decoding="async"
                         className="block max-w-full max-h-[62vh] w-auto h-auto object-contain rounded-lg select-none"
                       />
                       <div

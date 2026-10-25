@@ -26,6 +26,7 @@ import {
   ScanFace,
   Sparkles,
   Star,
+  User,
   X,
   XCircle,
 } from "lucide-react";
@@ -553,7 +554,7 @@ function RightInspector({
               onChange={(e) => setFaceNameInput(e.target.value)}
               placeholder={
                 selectedFaceId || drawnBox
-                  ? "Enter name to auto-match..."
+                  ? "Enter person name..."
                   : "Click face or 'Draw Face Box'..."
               }
               className="flex-1 bg-zinc-950 border border-zinc-800 rounded-lg px-2.5 py-1 text-xs text-zinc-200 select-text cursor-text focus:outline-none focus:border-indigo-500"
@@ -562,9 +563,68 @@ function RightInspector({
               type="submit"
               className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold shrink-0"
             >
-              Save & Match
+              Save Name
             </button>
           </form>
+
+          {/* Assigned People Pills with 1-Click Unassign (X) */}
+          {activePhoto.people.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-zinc-800/70">
+              <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mr-1">
+                People:
+              </span>
+              {activePhoto.people.map((personName) => (
+                <span
+                  key={personName}
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-950/60 border border-emerald-500/40 text-emerald-200 text-[11px] font-medium"
+                >
+                  <User className="w-3 h-3 text-emerald-400" />
+                  <span className="capitalize">{personName}</span>
+                  <button
+                    type="button"
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      const updatedPeople = await invoke<string[]>(
+                        "remove_person_from_photo",
+                        {
+                          hash: activePhoto.hash,
+                          name: personName,
+                        }
+                      );
+                      setPhotos((prev) =>
+                        prev.map((p) => {
+                          if (p.hash !== activePhoto.hash) return p;
+                          const nextFaces = p.faces.map((f) =>
+                            f.person_name &&
+                            f.person_name.toLowerCase() === personName.toLowerCase()
+                              ? { ...f, person_name: null }
+                              : f
+                          );
+                          return {
+                            ...p,
+                            people: updatedPeople,
+                            faces: nextFaces,
+                          };
+                        })
+                      );
+                      if (
+                        faceNameInput.trim().toLowerCase() === personName.toLowerCase()
+                      ) {
+                        setFaceNameInput("");
+                      }
+                      if (refreshPeople) {
+                        await refreshPeople();
+                      }
+                    }}
+                    className="text-emerald-400/70 hover:text-red-400 ml-0.5"
+                    title={`Remove "${personName}" from this photo`}
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
 
           {/* Pop-out Button to open the Full-Screen Face Match Review Studio */}
           {(faceNameInput.trim() || activePhoto.people.length > 0) &&

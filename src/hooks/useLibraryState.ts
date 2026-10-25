@@ -199,7 +199,13 @@ function expandWithRawPairs(hashes: string[], photos: PhotoItem[]): string[] {
 export function useLibraryState() {
   const [isAppReady, setIsAppReady] = useState<boolean>(false);
   const splashClosedRef = useRef<boolean>(false);
-  const [folder, setFolder] = useState<string>("");
+  const [folder, setFolder] = useState<string>(() => {
+    try {
+      return localStorage.getItem("lumina_active_folder") || "";
+    } catch {
+      return "";
+    }
+  });
   const [photos, setPhotos] = useState<PhotoItem[]>([]);
   const [recentFolders, setRecentFolders] = useState<string[]>(() => {
     try {
@@ -362,6 +368,9 @@ export function useLibraryState() {
   }
 
   function saveRecentFolder(path: string) {
+    try {
+      localStorage.setItem("lumina_active_folder", path);
+    } catch {}
     setRecentFolders((prev) => {
       const next = [path, ...prev.filter((p) => p !== path)].slice(0, 6);
       try {
@@ -413,6 +422,20 @@ export function useLibraryState() {
     }
   }, []);
 
+  // Auto-restore active folder on mount (or if WebView2 ever reloads) so it never drops back to the welcome screen
+  const initialRestoreDoneRef = useRef<boolean>(false);
+  useEffect(() => {
+    if (!initialRestoreDoneRef.current) {
+      initialRestoreDoneRef.current = true;
+      try {
+        const savedActive = localStorage.getItem("lumina_active_folder");
+        if (savedActive && photos.length === 0) {
+          handleLoadFolderPath(savedActive);
+        }
+      } catch {}
+    }
+  }, []);
+
   // Poll Ollama status every 10s & only trigger React state update if status actually changed!
   useEffect(() => {
     let mounted = true;
@@ -454,18 +477,24 @@ export function useLibraryState() {
     };
   }, [aiModel]);
 
-  async function refreshPeople(currentFolder = folder) {
+  async function refreshPeople(currentFolder = folder, skipPendingScan = false) {
     try {
-      const [res, pending] = await Promise.all([
-        invoke<PersonItem[]>("get_people", {
-          rootFolder: currentFolder || null,
-        }),
+      // 1. Immediately load & render the Top People Carousel (<2ms) without waiting on biometric matching!
+      const res = await invoke<PersonItem[]>("get_people", {
+        rootFolder: currentFolder || null,
+      });
+      setPeople(res);
+
+      // 2. Asynchronously compute & cache pending face match counts in the background
+      if (!skipPendingScan) {
         invoke<Record<string, number>>("get_pending_face_match_counts", {
           rootFolder: currentFolder || null,
-        }),
-      ]);
-      setPeople(res);
-      setPendingFaceCounts(pending || {});
+        })
+          .then((pending) => {
+            setPendingFaceCounts(pending || {});
+          })
+          .catch(() => {});
+      }
     } catch {}
   }
 
@@ -522,13 +551,17 @@ export function useLibraryState() {
         const peopleMap = prog.batch_people || {};
         setPhotos((prev) =>
           prev.map((p) => {
-            const updatedFaces = facesMap[p.hash];
-            if (!updatedFaces) return p;
+            if (!(p.hash in facesMap)) return p;
+            const updatedFaces = facesMap[p.hash] || [];
             const extraPeople = peopleMap[p.hash] || [];
-            const mergedPeople =
-              extraPeople.length > 0
-                ? Array.from(new Set([...p.people, ...extraPeople])).sort()
-                : p.people;
+            const confirmedNames = new Set(
+              updatedFaces
+                .map((f) => f.person_name?.trim())
+                .filter((n): n is string => Boolean(n))
+            );
+            const mergedPeople = Array.from(
+              new Set([...confirmedNames, ...extraPeople])
+            ).sort();
             return {
               ...p,
               faces: updatedFaces,
@@ -540,17 +573,17 @@ export function useLibraryState() {
 
       if (prog.done) {
         setFaceScanProgress(null);
-        setAutoMatchNotice(
-          `Neural ONNX Face Scan complete: detected ${prog.faces_found} human face(s)` +
-            (prog.auto_matched > 0 ? ` & auto-matched ${prog.auto_matched} photo(s)!` : "!")
-        );
         addLog(
           "FACE",
           `Completed ONNX Face Scan on ${prog.total} photos`,
-          `${prog.faces_found} faces found, ${prog.auto_matched} auto-matched`
+          `${prog.faces_found} faces found — analyzing potential matches in background...`
         );
-        setTimeout(() => setAutoMatchNotice(""), 6000);
-        refreshPeople(folder);
+        refreshPeople(folder, false).then(() => {
+          setAutoMatchNotice(
+            `Face Scan complete: detected ${prog.faces_found} face(s) & updated potential match badges!`
+          );
+          setTimeout(() => setAutoMatchNotice(""), 6000);
+        });
       } else {
         setFaceScanProgress(prog);
       }
@@ -1167,10 +1200,19 @@ export function useLibraryState() {
   }
 
   async function handleBatchScanFacesOnnx() {
-    if (faceScanProgress || visiblePhotos.length === 0) return;
+    const targetList = photos.length > 0 ? photos : visiblePhotos;
+    if (faceScanProgress || targetList.length === 0) return;
     try {
       setError("");
-      const hashes = visiblePhotos.map((p) => p.hash);
+      const hashes = targetList.map((p) => p.hash);
+      // Immediately strip unconfirmed faces in UI while keeping confirmed faces
+      setPhotos((prev) =>
+        prev.map((p) => ({
+          ...p,
+          faces: p.faces.filter((f) => Boolean(f.person_name && f.person_name.trim())),
+        }))
+      );
+      setPendingFaceCounts({});
       setFaceScanProgress({
         completed: 0,
         total: hashes.length,
@@ -1178,7 +1220,7 @@ export function useLibraryState() {
         auto_matched: 0,
         done: false,
       });
-      addLog("FACE", `Started batch ONNX Face Scan on ${hashes.length} photos`);
+      addLog("FACE", `Started full ONNX Face Rescan on ${hashes.length} photos`);
       await invoke<number>("scan_library_faces_batch", { hashes });
     } catch (err) {
       setFaceScanProgress(null);
