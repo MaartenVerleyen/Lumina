@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { memo, useEffect, useRef } from "react";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import {
   CitySearchResult,
@@ -34,18 +34,22 @@ function HistogramCanvas({ imageSrc }: { imageSrc: string }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      const canvas = canvasRef.current;
+      if (!canvas || cancelled) return;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
 
-    const img = new Image();
-    img.crossOrigin = "anonymous";
-    img.src = imageSrc;
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.decoding = "async";
+      img.src = imageSrc;
 
-    img.onload = () => {
-      const w = 128;
-      const h = 96;
+      img.onload = () => {
+        if (cancelled) return;
+        const w = 64;
+        const h = 48;
       const offCanvas = document.createElement("canvas");
       offCanvas.width = w;
       offCanvas.height = h;
@@ -109,10 +113,16 @@ function HistogramCanvas({ imageSrc }: { imageSrc: string }) {
         ctx.stroke();
       }
 
-      drawCurve(lBin, "rgba(228, 228, 231, 0.45)", "rgba(228, 228, 231, 0.08)");
-      drawCurve(rBin, "rgba(239, 68, 68, 0.8)", "rgba(239, 68, 68, 0.12)");
-      drawCurve(gBin, "rgba(16, 185, 129, 0.8)", "rgba(16, 185, 129, 0.12)");
-      drawCurve(bBin, "rgba(59, 130, 246, 0.8)", "rgba(59, 130, 246, 0.12)");
+        drawCurve(lBin, "rgba(228, 228, 231, 0.45)", "rgba(228, 228, 231, 0.08)");
+        drawCurve(rBin, "rgba(239, 68, 68, 0.8)", "rgba(239, 68, 68, 0.12)");
+        drawCurve(gBin, "rgba(16, 185, 129, 0.8)", "rgba(16, 185, 129, 0.12)");
+        drawCurve(bBin, "rgba(59, 130, 246, 0.8)", "rgba(59, 130, 246, 0.12)");
+      };
+    }, 110);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
     };
   }, [imageSrc]);
 
@@ -184,7 +194,7 @@ interface RightInspectorProps {
   onOpenFaceReviewModal?: (personName: string) => void;
 }
 
-export default function RightInspector({
+function RightInspector({
   rightWidth,
   simpleMode,
   activePhoto,
@@ -287,6 +297,7 @@ export default function RightInspector({
             <img
               src={convertFileSrc(previewSource)}
               alt={activePhoto.name}
+              decoding="async"
               draggable={false}
               className="block max-w-full w-auto h-auto max-h-[44vh] object-contain rounded select-none pointer-events-none"
             />
@@ -968,3 +979,4 @@ export default function RightInspector({
     </aside>
   );
 }
+export default memo(RightInspector);

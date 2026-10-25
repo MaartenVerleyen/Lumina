@@ -28,6 +28,34 @@ static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
         .unwrap_or_default()
 });
 
+static FAST_STATUS_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_millis(1200))
+        .build()
+        .unwrap_or_default()
+});
+
+static FACE_EMBEDDING_CACHE: LazyLock<Mutex<HashMap<String, Vec<f32>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn get_cached_face_embedding(face_id: &str, emb_str: &str) -> Option<Vec<f32>> {
+    if let Ok(guard) = FACE_EMBEDDING_CACHE.lock() {
+        if let Some(cached) = guard.get(face_id) {
+            if !cached.is_empty() {
+                return Some(cached.clone());
+            }
+        }
+    }
+    let parsed: Vec<f32> = serde_json::from_str(emb_str).ok()?;
+    if parsed.is_empty() {
+        return None;
+    }
+    if let Ok(mut guard) = FACE_EMBEDDING_CACHE.lock() {
+        guard.insert(face_id.to_string(), parsed.clone());
+    }
+    Some(parsed)
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct FaceInstance {
     pub face_id: String,
@@ -350,27 +378,8 @@ fn open_global_db(app: &AppHandle) -> Result<Connection, String> {
     let _ = conn.execute("ALTER TABLE photos ADD COLUMN shutter_speed TEXT DEFAULT NULL", []);
     let _ = conn.execute("ALTER TABLE photos ADD COLUMN iso TEXT DEFAULT NULL", []);
     let _ = conn.execute("ALTER TABLE photos ADD COLUMN lens_model TEXT DEFAULT NULL", []);
-    // Repair any previously shifted dates that used colons instead of hyphens in YYYY-MM-DD
-    let _ = conn.execute(
-        "UPDATE photos SET captured_at = substr(replace(captured_at, ':', '-'), 1, 10) || substr(captured_at, 11) WHERE length(captured_at) >= 10 AND substr(captured_at, 5, 1) = ':'",
-        [],
-    );
     let _ = conn.execute("ALTER TABLE people ADD COLUMN cover_face_thumb TEXT DEFAULT ''", []);
     let _ = conn.execute("ALTER TABLE photo_faces ADD COLUMN source TEXT DEFAULT 'user'", []);
-
-    // Purge bad placeholder tags & fake face boxes on startup
-    let _ = conn.execute(
-        "DELETE FROM photo_tags WHERE tag IN ('tag1', 'tag2', 'tag3', 'object1', 'object2', 'analyze', 'first', 'got', 'let', 'step', 'okay', 'need', 'look')",
-        [],
-    );
-    let _ = conn.execute(
-        "UPDATE photos SET ai_caption = '' WHERE ai_caption = 'One short sentence.' OR ai_caption LIKE 'Got it, let%' OR ai_caption LIKE 'Okay, let%'",
-        [],
-    );
-    let _ = conn.execute(
-        "DELETE FROM photo_faces WHERE (person_name IS NULL OR person_name = '') AND source != 'onnx'",
-        [],
-    );
 
     // Phase 2: Create high-speed covering indexes for folder-scoped & hash lookups
     let _ = conn.execute_batch(
@@ -601,12 +610,11 @@ async fn ensure_neural_face_models(app: AppHandle) -> Result<String, String> {
         }
     }
 
-    // Upgrade any legacy 384-D face embeddings in SQLite to 512-D ArcFace embeddings using saved 96x96 face crops
+    // Upgrade any legacy 384-D face embeddings in a non-blocking background thread
     let app_for_upgrade = app.clone();
-    let _ = tauri::async_runtime::spawn_blocking(move || {
+    std::thread::spawn(move || {
         upgrade_legacy_face_embeddings(&app_for_upgrade);
-    })
-    .await;
+    });
 
     Ok("Neural ONNX face models ready".to_string())
 }
@@ -650,6 +658,9 @@ fn upgrade_legacy_face_embeddings(app: &AppHandle) {
                             "UPDATE photo_faces SET embedding = ?1 WHERE face_id = ?2",
                             params![emb_json, fid],
                         );
+                        if let Ok(mut guard) = FACE_EMBEDDING_CACHE.lock() {
+                            guard.insert(fid.clone(), new_emb);
+                        }
                     }
                 }
             }
@@ -1804,6 +1815,7 @@ fn open_and_orient_image(file_path: &Path) -> Result<DynamicImage, String> {
     Ok(apply_exif_orientation(img, orientation))
 }
 
+#[allow(dead_code)]
 fn get_oriented_dimensions(file_path: &Path) -> (u32, u32) {
     if let Ok((w, h)) = image::image_dimensions(file_path) {
         let orientation = read_exif_orientation(file_path);
@@ -1845,6 +1857,7 @@ fn make_folder_prefix(root_folder: Option<&str>) -> String {
     }
 }
 
+#[allow(dead_code)]
 fn extract_exif_metadata(file_path: &Path) -> (String, String, String, Option<f64>, Option<f64>) {
     let mut date_str = String::new();
     let mut make_str = String::new();
@@ -1948,6 +1961,7 @@ fn extract_exif_metadata(file_path: &Path) -> (String, String, String, Option<f6
     (date_str, camera, location, raw_lat, raw_lon)
 }
 
+#[allow(dead_code)]
 fn extract_camera_telemetry(
     file_path: &Path,
 ) -> (
@@ -2026,6 +2040,224 @@ fn extract_camera_telemetry(
     }
 
     (focal, aperture, shutter, iso, lens)
+}
+
+struct FullExifPass {
+    width: u32,
+    height: u32,
+    captured_at: String,
+    camera_model: String,
+    location: String,
+    lat: Option<f64>,
+    lon: Option<f64>,
+    focal_length: Option<String>,
+    aperture: Option<String>,
+    shutter_speed: Option<String>,
+    iso: Option<String>,
+    lens_model: Option<String>,
+}
+
+// Single-Pass Header & EXIF Reader: opens the file ONCE to extract dimensions, orientation, GPS, date & telemetry!
+fn extract_all_exif_single_pass(file_path: &Path) -> FullExifPass {
+    let mut width = 0u32;
+    let mut height = 0u32;
+    let mut orientation = 1u32;
+    let mut date_str = String::new();
+    let mut make_str = String::new();
+    let mut camera = String::new();
+    let mut location = String::new();
+    let mut raw_lat = None;
+    let mut raw_lon = None;
+    let mut focal = None;
+    let mut aperture = None;
+    let mut shutter = None;
+    let mut iso = None;
+    let mut lens = None;
+
+    if let Ok((w, h)) = image::image_dimensions(file_path) {
+        width = w;
+        height = h;
+    }
+
+    if let Ok(file) = File::open(file_path) {
+        let mut bufreader = BufReader::new(file);
+        let exifreader = Reader::new();
+        if let Ok(exif) = exifreader.read_from_container(&mut bufreader) {
+            let mut lat_deg_opt: Option<f64> = None;
+            let mut lon_deg_opt: Option<f64> = None;
+            let mut is_south = false;
+            let mut is_west = false;
+
+            for f in exif.fields() {
+                match f.tag {
+                    Tag::Orientation => {
+                        if orientation == 1 {
+                            if let Some(v) = f.value.get_uint(0) {
+                                if (1..=8).contains(&v) {
+                                    orientation = v;
+                                }
+                            }
+                        }
+                    }
+                    Tag::PixelXDimension | Tag::ImageWidth => {
+                        if width == 0 {
+                            width = f.value.get_uint(0).unwrap_or(0);
+                        }
+                    }
+                    Tag::PixelYDimension | Tag::ImageLength => {
+                        if height == 0 {
+                            height = f.value.get_uint(0).unwrap_or(0);
+                        }
+                    }
+                    Tag::DateTimeOriginal => {
+                        let norm = normalize_date_str(&f.display_value().to_string());
+                        if !norm.is_empty() {
+                            date_str = norm;
+                        }
+                    }
+                    Tag::DateTimeDigitized | Tag::DateTime => {
+                        if date_str.is_empty() {
+                            let norm = normalize_date_str(&f.display_value().to_string());
+                            if !norm.is_empty() {
+                                date_str = norm;
+                            }
+                        }
+                    }
+                    Tag::Make => {
+                        if make_str.is_empty() {
+                            make_str = f.display_value().to_string().replace('"', "").trim().to_string();
+                        }
+                    }
+                    Tag::Model => {
+                        if camera.is_empty() {
+                            camera = f.display_value().to_string().replace('"', "").trim().to_string();
+                        }
+                    }
+                    Tag::GPSLatitude => {
+                        if lat_deg_opt.is_none() {
+                            lat_deg_opt = parse_gps_rational(&f.value);
+                        }
+                    }
+                    Tag::GPSLatitudeRef => {
+                        let s = f.display_value().to_string().to_uppercase();
+                        if s.contains('S') {
+                            is_south = true;
+                        }
+                    }
+                    Tag::GPSLongitude => {
+                        if lon_deg_opt.is_none() {
+                            lon_deg_opt = parse_gps_rational(&f.value);
+                        }
+                    }
+                    Tag::GPSLongitudeRef => {
+                        let s = f.display_value().to_string().to_uppercase();
+                        if s.contains('W') {
+                            is_west = true;
+                        }
+                    }
+                    Tag::FocalLength | Tag::FocalLengthIn35mmFilm => {
+                        if focal.is_none() {
+                            let val = f.display_value().to_string().replace('"', "").trim().to_string();
+                            if !val.is_empty() {
+                                focal = Some(if val.ends_with("mm") {
+                                    val
+                                } else {
+                                    format!("{}mm", val.split_whitespace().next().unwrap_or(&val))
+                                });
+                            }
+                        }
+                    }
+                    Tag::FNumber => {
+                        if aperture.is_none() {
+                            let val = f.display_value().to_string().replace('"', "").trim().to_string();
+                            if !val.is_empty() {
+                                let clean = val.trim_start_matches("f/").trim_start_matches('F').trim();
+                                aperture = Some(format!("f/{}", clean.split_whitespace().next().unwrap_or(clean)));
+                            }
+                        }
+                    }
+                    Tag::ExposureTime => {
+                        if shutter.is_none() {
+                            let val = f.display_value().to_string().replace('"', "").trim().to_string();
+                            if !val.is_empty() {
+                                let token = val.split_whitespace().next().unwrap_or(&val);
+                                shutter = Some(if token.ends_with('s') {
+                                    token.to_string()
+                                } else {
+                                    format!("{}s", token)
+                                });
+                            }
+                        }
+                    }
+                    Tag::PhotographicSensitivity => {
+                        if iso.is_none() {
+                            let val = f.display_value().to_string().replace('"', "").trim().to_string();
+                            if !val.is_empty() {
+                                iso = Some(format!("ISO {}", val.split_whitespace().next().unwrap_or(&val)));
+                            }
+                        }
+                    }
+                    Tag::LensModel => {
+                        if lens.is_none() {
+                            let val = f.display_value().to_string().replace('"', "").trim().to_string();
+                            if !val.is_empty() {
+                                lens = Some(val);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            if camera.is_empty() && !make_str.is_empty() {
+                camera = make_str;
+            } else if !make_str.is_empty() && !camera.to_lowercase().starts_with(&make_str.to_lowercase()) {
+                camera = format!("{} {}", make_str, camera);
+            }
+
+            if let (Some(mut lat), Some(mut lon)) = (lat_deg_opt, lon_deg_opt) {
+                if is_south && lat > 0.0 {
+                    lat = -lat;
+                }
+                if is_west && lon > 0.0 {
+                    lon = -lon;
+                }
+                if (lat.abs() > 0.0001 || lon.abs() > 0.0001) && lat.abs() <= 90.0 && lon.abs() <= 180.0 {
+                    raw_lat = Some(lat);
+                    raw_lon = Some(lon);
+                    let search_res = GEOCODER.search((lat, lon));
+                    location = format!("{}, {}", search_res.record.name, search_res.record.cc);
+                }
+            }
+        }
+    }
+
+    if matches!(orientation, 5 | 6 | 7 | 8) && width >= height && width > 0 {
+        std::mem::swap(&mut width, &mut height);
+    }
+
+    if date_str.is_empty() {
+        if let Ok(meta) = fs::metadata(file_path) {
+            if let Ok(ctime) = meta.created().or_else(|_| meta.modified()) {
+                date_str = format_system_time_iso(ctime);
+            }
+        }
+    }
+
+    FullExifPass {
+        width,
+        height,
+        captured_at: date_str,
+        camera_model: camera,
+        location,
+        lat: raw_lat,
+        lon: raw_lon,
+        focal_length: focal,
+        aperture,
+        shutter_speed: shutter,
+        iso,
+        lens_model: lens,
+    }
 }
 
 fn get_relative_subfolder(root: &Path, file_path: &Path) -> String {
@@ -2174,10 +2406,17 @@ async fn scan_folder(
         let mut tags_map: HashMap<String, Vec<String>> = HashMap::new();
         {
             let mut stmt = conn
-                .prepare("SELECT hash, tag FROM photo_tags ORDER BY tag ASC")
+                .prepare(
+                    "SELECT pt.hash, pt.tag FROM photo_tags pt
+                     JOIN photos p ON pt.hash = p.hash
+                     WHERE p.current_path LIKE ?1
+                     ORDER BY pt.tag ASC",
+                )
                 .map_err(|e| e.to_string())?;
             let rows = stmt
-                .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+                .query_map(params![folder_prefix], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
                 .map_err(|e| e.to_string())?;
             for r in rows.flatten() {
                 tags_map.entry(r.0).or_default().push(r.1);
@@ -2187,10 +2426,17 @@ async fn scan_folder(
         let mut people_map: HashMap<String, Vec<String>> = HashMap::new();
         {
             let mut stmt = conn
-                .prepare("SELECT hash, person_name FROM photo_people ORDER BY person_name ASC")
+                .prepare(
+                    "SELECT pp.hash, pp.person_name FROM photo_people pp
+                     JOIN photos p ON pp.hash = p.hash
+                     WHERE p.current_path LIKE ?1
+                     ORDER BY pp.person_name ASC",
+                )
                 .map_err(|e| e.to_string())?;
             let rows = stmt
-                .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+                .query_map(params![folder_prefix], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
                 .map_err(|e| e.to_string())?;
             for r in rows.flatten() {
                 people_map.entry(r.0).or_default().push(r.1);
@@ -2200,9 +2446,13 @@ async fn scan_folder(
         let mut faces_map: HashMap<String, Vec<FaceInstance>> = HashMap::new();
         {
             if let Ok(mut stmt) = conn.prepare(
-                "SELECT face_id, hash, bbox_x, bbox_y, bbox_w, bbox_h, person_name, face_thumb, confidence FROM photo_faces ORDER BY bbox_x ASC",
+                "SELECT pf.face_id, pf.hash, pf.bbox_x, pf.bbox_y, pf.bbox_w, pf.bbox_h, pf.person_name, pf.face_thumb, pf.confidence
+                 FROM photo_faces pf
+                 JOIN photos p ON pf.hash = p.hash
+                 WHERE p.current_path LIKE ?1
+                 ORDER BY pf.bbox_x ASC",
             ) {
-                if let Ok(rows) = stmt.query_map([], |row| {
+                if let Ok(rows) = stmt.query_map(params![folder_prefix], |row| {
                     Ok(FaceInstance {
                         face_id: row.get(0)?,
                         hash: row.get(1)?,
@@ -2346,13 +2596,12 @@ async fn scan_folder(
                         } else {
                             compute_fast_hash(&file_path, size_bytes).ok()?
                         };
+                        let ex = extract_all_exif_single_pass(&file_path);
                         let (w, ht) = if c.width > 0 && c.height > 0 && !force {
                             (c.width, c.height)
                         } else {
-                            get_oriented_dimensions(&file_path)
+                            (ex.width, ex.height)
                         };
-                        let (d, cam, loc, new_lat, new_lon) = extract_exif_metadata(&file_path);
-                        let (focal, aper, shut, iso_val, lens) = extract_camera_telemetry(&file_path);
                         (
                             h,
                             w,
@@ -2364,30 +2613,28 @@ async fn scan_folder(
                             c.in_basket,
                             c.ai_caption.clone(),
                             c.ocr_text.clone(),
-                            if !d.is_empty() { d } else { c.captured_at.clone() },
-                            if !cam.is_empty() { cam } else { c.camera_model.clone() },
-                            if !loc.is_empty() { loc } else { c.location.clone() },
-                            new_lat.or(c.lat),
-                            new_lon.or(c.lon),
+                            if !ex.captured_at.is_empty() { ex.captured_at } else { c.captured_at.clone() },
+                            if !ex.camera_model.is_empty() { ex.camera_model } else { c.camera_model.clone() },
+                            if !ex.location.is_empty() { ex.location } else { c.location.clone() },
+                            ex.lat.or(c.lat),
+                            ex.lon.or(c.lon),
                             if force { String::new() } else { c.dhash.clone() },
                             if force { 0.0 } else { c.sharpness },
                             c.staged_target.clone(),
-                            focal.or_else(|| c.focal_length.clone()),
-                            aper.or_else(|| c.aperture.clone()),
-                            shut.or_else(|| c.shutter_speed.clone()),
-                            iso_val.or_else(|| c.iso.clone()),
-                            lens.or_else(|| c.lens_model.clone()),
+                            ex.focal_length.or_else(|| c.focal_length.clone()),
+                            ex.aperture.or_else(|| c.aperture.clone()),
+                            ex.shutter_speed.or_else(|| c.shutter_speed.clone()),
+                            ex.iso.or_else(|| c.iso.clone()),
+                            ex.lens_model.or_else(|| c.lens_model.clone()),
                         )
                     }
                 } else {
                     let h = compute_fast_hash(&file_path, size_bytes).ok()?;
-                    let (w, ht) = get_oriented_dimensions(&file_path);
-                    let (d, cam, loc, lat, lon) = extract_exif_metadata(&file_path);
-                    let (focal, aper, shut, iso_val, lens) = extract_camera_telemetry(&file_path);
+                    let ex = extract_all_exif_single_pass(&file_path);
                     (
                         h,
-                        w,
-                        ht,
+                        ex.width,
+                        ex.height,
                         0,
                         None,
                         None,
@@ -2395,19 +2642,19 @@ async fn scan_folder(
                         false,
                         String::new(),
                         String::new(),
-                        d,
-                        cam,
-                        loc,
-                        lat,
-                        lon,
+                        ex.captured_at,
+                        ex.camera_model,
+                        ex.location,
+                        ex.lat,
+                        ex.lon,
                         String::new(),
                         0.0,
                         None,
-                        focal,
-                        aper,
-                        shut,
-                        iso_val,
-                        lens,
+                        ex.focal_length,
+                        ex.aperture,
+                        ex.shutter_speed,
+                        ex.iso,
+                        ex.lens_model,
                     )
                 };
 
@@ -2638,7 +2885,7 @@ async fn scan_folder(
                     .unwrap();
 
                 pool.install(|| {
-                    for chunk in needs_processing.chunks(32) {
+                    for chunk in needs_processing.chunks(48) {
                         // 1. Batch-convert any HEIC/HEIF files in this chunk directly to 360px thumbnails in ONE PowerShell call!
                         //    (Uses embedded $frame.Thumbnail when available, so it takes ~10ms per HEIC instead of decoding 12MP!)
                         let heic_thumb_jobs: Vec<(String, String, u32)> = chunk
@@ -2765,7 +3012,7 @@ async fn scan_folder(
                                 let _ = tx.commit();
                             }
 
-                            if done == total || done % 96 == 0 {
+                            if done == total {
                                 dup_groups = compute_db_duplicate_groups(&db_conn, Some(&folder_scope));
                             }
                         }
@@ -2828,99 +3075,106 @@ async fn ensure_high_res_preview(
 // ----------------- FORCE EXIF RESCAN (INDIVIDUAL & BATCH) -----------------
 
 #[tauri::command]
-fn rescan_exif_batch(app: AppHandle, hashes: Vec<String>) -> Result<Vec<ExifRefreshResult>, String> {
-    let mut conn = open_global_db(&app)?;
-    let mut results = Vec::new();
+async fn rescan_exif_batch(app: AppHandle, hashes: Vec<String>) -> Result<Vec<ExifRefreshResult>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut conn = open_global_db(&app)?;
+        let mut results = Vec::new();
 
-    if let Ok(tx) = conn.transaction() {
-        for h in &hashes {
-            let row_opt: Option<(String, String, String, String, Option<f64>, Option<f64>)> = tx
-                .query_row(
-                    "SELECT current_path, COALESCE(captured_at, ''), COALESCE(camera_model, ''), COALESCE(location, ''), latitude, longitude
-                     FROM photos WHERE hash = ?1",
-                    params![h],
-                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
-                )
-                .ok();
+        if let Ok(tx) = conn.transaction() {
+            for h in &hashes {
+                let row_opt: Option<(String, String, String, String, Option<f64>, Option<f64>)> = tx
+                    .query_row(
+                        "SELECT current_path, COALESCE(captured_at, ''), COALESCE(camera_model, ''), COALESCE(location, ''), latitude, longitude
+                         FROM photos WHERE hash = ?1",
+                        params![h],
+                        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
+                    )
+                    .ok();
 
-            if let Some((path_str, old_date, old_cam, old_loc, old_lat, old_lon)) = row_opt {
-                let path_obj = Path::new(&path_str);
-                let (d, cam, loc, lat, lon) = extract_exif_metadata(path_obj);
-                let (focal, aperture, shutter, iso, lens) = extract_camera_telemetry(path_obj);
+                if let Some((path_str, old_date, old_cam, old_loc, old_lat, old_lon)) = row_opt {
+                    let path_obj = Path::new(&path_str);
+                    let ex = extract_all_exif_single_pass(path_obj);
 
-                let final_date = if !d.is_empty() { d } else { old_date };
-                let final_cam = if !cam.is_empty() { cam } else { old_cam };
-                let final_loc = if !loc.is_empty() { loc } else { old_loc };
-                let final_lat = lat.or(old_lat);
-                let final_lon = lon.or(old_lon);
+                    let final_date = if !ex.captured_at.is_empty() { ex.captured_at } else { old_date };
+                    let final_cam = if !ex.camera_model.is_empty() { ex.camera_model } else { old_cam };
+                    let final_loc = if !ex.location.is_empty() { ex.location } else { old_loc };
+                    let final_lat = ex.lat.or(old_lat);
+                    let final_lon = ex.lon.or(old_lon);
 
-                let _ = tx.execute(
-                    "UPDATE photos SET
-                        captured_at = ?1,
-                        camera_model = ?2,
-                        location = ?3,
-                        latitude = ?4,
-                        longitude = ?5,
-                        focal_length = COALESCE(?6, focal_length),
-                        aperture = COALESCE(?7, aperture),
-                        shutter_speed = COALESCE(?8, shutter_speed),
-                        iso = COALESCE(?9, iso),
-                        lens_model = COALESCE(?10, lens_model),
-                        exif_checked = 1
-                     WHERE hash = ?11",
-                    params![
-                        final_date, final_cam, final_loc, final_lat, final_lon,
-                        focal, aperture, shutter, iso, lens, h
-                    ],
-                );
+                    let _ = tx.execute(
+                        "UPDATE photos SET
+                            captured_at = ?1,
+                            camera_model = ?2,
+                            location = ?3,
+                            latitude = ?4,
+                            longitude = ?5,
+                            focal_length = COALESCE(?6, focal_length),
+                            aperture = COALESCE(?7, aperture),
+                            shutter_speed = COALESCE(?8, shutter_speed),
+                            iso = COALESCE(?9, iso),
+                            lens_model = COALESCE(?10, lens_model),
+                            exif_checked = 1
+                         WHERE hash = ?11",
+                        params![
+                            final_date, final_cam, final_loc, final_lat, final_lon,
+                            ex.focal_length, ex.aperture, ex.shutter_speed, ex.iso, ex.lens_model, h
+                        ],
+                    );
 
-                results.push(ExifRefreshResult {
-                    hash: h.clone(),
-                    captured_at: final_date,
-                    camera_model: final_cam,
-                    location: final_loc,
-                    latitude: final_lat,
-                    longitude: final_lon,
-                    focal_length: focal,
-                    aperture,
-                    shutter_speed: shutter,
-                    iso,
-                    lens_model: lens,
-                });
+                    results.push(ExifRefreshResult {
+                        hash: h.clone(),
+                        captured_at: final_date,
+                        camera_model: final_cam,
+                        location: final_loc,
+                        latitude: final_lat,
+                        longitude: final_lon,
+                        focal_length: ex.focal_length,
+                        aperture: ex.aperture,
+                        shutter_speed: ex.shutter_speed,
+                        iso: ex.iso,
+                        lens_model: ex.lens_model,
+                    });
+                }
             }
+            let _ = tx.commit();
         }
-        let _ = tx.commit();
-    }
 
-    Ok(results)
+        Ok(results)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 // ----------------- DATE TIMELINE AGGREGATION -----------------
 
 #[tauri::command]
-fn get_timeline_distribution(app: AppHandle, root_folder: Option<String>) -> Result<Vec<TimelineBucket>, String> {
-    let conn = open_global_db(&app)?;
-    let prefix = make_folder_prefix(root_folder.as_deref());
-    let mut stmt = conn
-        .prepare(
-            "SELECT substr(replace(captured_at, ':', '-'), 1, 10) as period, count(*)
-             FROM photos
-             WHERE captured_at IS NOT NULL AND length(captured_at) >= 10 AND current_path LIKE ?1
-             GROUP BY period
-             ORDER BY period ASC",
-        )
-        .map_err(|e| e.to_string())?;
+async fn get_timeline_distribution(app: AppHandle, root_folder: Option<String>) -> Result<Vec<TimelineBucket>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let conn = open_global_db(&app)?;
+        let prefix = make_folder_prefix(root_folder.as_deref());
+        let mut stmt = conn
+            .prepare(
+                "SELECT substr(replace(captured_at, ':', '-'), 1, 10) as period, count(*)
+                 FROM photos
+                 WHERE captured_at IS NOT NULL AND length(captured_at) >= 10 AND current_path LIKE ?1
+                 GROUP BY period
+                 ORDER BY period ASC",
+            )
+            .map_err(|e| e.to_string())?;
 
-    let rows = stmt
-        .query_map(params![prefix], |r| {
-            Ok(TimelineBucket {
-                period: r.get(0)?,
-                count: r.get(1)?,
+        let rows = stmt
+            .query_map(params![prefix], |r| {
+                Ok(TimelineBucket {
+                    period: r.get(0)?,
+                    count: r.get(1)?,
+                })
             })
-        })
-        .map_err(|e| e.to_string())?;
+            .map_err(|e| e.to_string())?;
 
-    Ok(rows.flatten().collect())
+        Ok(rows.flatten().collect())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 // ----------------- OFFLINE CITY SEARCH & MANUAL LOCATION -----------------
@@ -3969,7 +4223,7 @@ async fn scan_library_faces_batch(
 }
 
 #[tauri::command]
-fn assign_face_region_and_automatch(
+async fn assign_face_region_and_automatch(
     app: AppHandle,
     hash: String,
     image_path: String,
@@ -3979,110 +4233,115 @@ fn assign_face_region_and_automatch(
     bbox_h: f64,
     person_name: String,
 ) -> Result<Vec<FaceInstance>, String> {
-    let clean_name = person_name.trim().to_string();
-    if clean_name.is_empty() {
-        return Err("Person name cannot be empty".into());
-    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let clean_name = person_name.trim().to_string();
+        if clean_name.is_empty() {
+            return Err("Person name cannot be empty".into());
+        }
 
-    let img = open_and_orient_image(Path::new(&image_path)).map_err(|e| format!("Failed to open image: {e}"))?;
-    let conn = open_global_db(&app)?;
+        let img = open_and_orient_image(Path::new(&image_path))
+            .map_err(|e| format!("Failed to open image: {e}"))?;
+        let conn = open_global_db(&app)?;
 
-    let saved_face = save_cropped_face_and_record(
-        &app,
-        &conn,
-        &hash,
-        &img,
-        (bbox_x, bbox_y, bbox_w, bbox_h),
-        Some(clean_name.clone()),
-        "onnx",
-    )
-    .ok_or("Failed to crop face region")?;
+        let _saved_face = save_cropped_face_and_record(
+            &app,
+            &conn,
+            &hash,
+            &img,
+            (bbox_x, bbox_y, bbox_w, bbox_h),
+            Some(clean_name.clone()),
+            "onnx",
+        )
+        .ok_or("Failed to crop face region")?;
 
-    // Load all confirmed embeddings for this person (multi-prototype + centroid matching!)
-    let mut ref_embeddings: Vec<Vec<f32>> = Vec::new();
-    if let Ok(mut stmt) = conn.prepare(
-        "SELECT embedding FROM photo_faces WHERE lower(person_name) = lower(?1)",
-    ) {
-        if let Ok(rows) = stmt.query_map(params![clean_name], |r| r.get::<_, String>(0)) {
-            for emb_str in rows.flatten() {
-                if let Ok(vec) = serde_json::from_str::<Vec<f32>>(&emb_str) {
-                    if !vec.is_empty() {
+        // Load all confirmed embeddings for this person (using in-memory cache!)
+        let mut ref_embeddings: Vec<Vec<f32>> = Vec::new();
+        if let Ok(mut stmt) = conn.prepare(
+            "SELECT face_id, embedding FROM photo_faces WHERE lower(person_name) = lower(?1)",
+        ) {
+            if let Ok(rows) = stmt.query_map(params![clean_name], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+            }) {
+                for (fid, emb_str) in rows.flatten() {
+                    if let Some(vec) = get_cached_face_embedding(&fid, &emb_str) {
                         ref_embeddings.push(vec);
                     }
                 }
             }
         }
-    }
 
-    if !ref_embeddings.is_empty() {
-        let app_clone = app.clone();
-        let target_name = clean_name.clone();
-        let source_hash = hash.clone();
+        if !ref_embeddings.is_empty() {
+            let app_clone = app.clone();
+            let target_name = clean_name.clone();
+            let source_hash = hash.clone();
 
-        std::thread::spawn(move || {
-            let Ok(bg_conn) = open_global_db(&app_clone) else {
-                return;
-            };
+            std::thread::spawn(move || {
+                let Ok(bg_conn) = open_global_db(&app_clone) else {
+                    return;
+                };
 
-            let centroid_512 = compute_normalized_centroid(&ref_embeddings, 512);
-            let centroid_384 = compute_normalized_centroid(&ref_embeddings, 384);
+                let centroid_512 = compute_normalized_centroid(&ref_embeddings, 512);
+                let centroid_384 = compute_normalized_centroid(&ref_embeddings, 384);
 
-            let mut matched_hashes: Vec<String> = Vec::new();
-            if let Ok(mut stmt) = bg_conn.prepare(
-                "SELECT pf.face_id, pf.hash, pf.embedding FROM photo_faces pf
-                 WHERE pf.hash != ?1
-                   AND (pf.person_name IS NULL OR pf.person_name = '')
-                   AND NOT EXISTS (
-                       SELECT 1 FROM face_rejections fr
-                       WHERE fr.face_id = pf.face_id AND lower(fr.person_name) = lower(?2)
-                   )",
-            ) {
-                if let Ok(rows) = stmt.query_map(params![source_hash, target_name], |r| {
-                    Ok((
-                        r.get::<_, String>(0)?,
-                        r.get::<_, String>(1)?,
-                        r.get::<_, String>(2)?,
-                    ))
-                }) {
-                    for (fid, fhash, femb_str) in rows.flatten() {
-                        if let Ok(cand_emb) = serde_json::from_str::<Vec<f32>>(&femb_str) {
-                            let thresh = if cand_emb.len() == 512 { 0.54 } else { 0.68 };
-                            let sim = score_against_person_profile(
-                                &cand_emb,
-                                &ref_embeddings,
-                                centroid_512.as_ref(),
-                                centroid_384.as_ref(),
-                            );
-                            if sim >= thresh {
-                                let _ = bg_conn.execute(
-                                    "UPDATE photo_faces SET person_name = ?1, confidence = ?2 WHERE face_id = ?3",
-                                    params![target_name, sim as f64, fid],
+                let mut matched_hashes: Vec<String> = Vec::new();
+                if let Ok(mut stmt) = bg_conn.prepare(
+                    "SELECT pf.face_id, pf.hash, pf.embedding FROM photo_faces pf
+                     WHERE pf.hash != ?1
+                       AND (pf.person_name IS NULL OR pf.person_name = '')
+                       AND NOT EXISTS (
+                           SELECT 1 FROM face_rejections fr
+                           WHERE fr.face_id = pf.face_id AND lower(fr.person_name) = lower(?2)
+                       )",
+                ) {
+                    if let Ok(rows) = stmt.query_map(params![source_hash, target_name], |r| {
+                        Ok((
+                            r.get::<_, String>(0)?,
+                            r.get::<_, String>(1)?,
+                            r.get::<_, String>(2)?,
+                        ))
+                    }) {
+                        for (fid, fhash, femb_str) in rows.flatten() {
+                            if let Some(cand_emb) = get_cached_face_embedding(&fid, &femb_str) {
+                                let thresh = if cand_emb.len() == 512 { 0.54 } else { 0.68 };
+                                let sim = score_against_person_profile(
+                                    &cand_emb,
+                                    &ref_embeddings,
+                                    centroid_512.as_ref(),
+                                    centroid_384.as_ref(),
                                 );
-                                let _ = bg_conn.execute(
-                                    "INSERT OR IGNORE INTO photo_people (hash, person_name) VALUES (?1, ?2)",
-                                    params![fhash, target_name],
-                                );
-                                if !matched_hashes.contains(&fhash) {
-                                    matched_hashes.push(fhash);
+                                if sim >= thresh {
+                                    let _ = bg_conn.execute(
+                                        "UPDATE photo_faces SET person_name = ?1, confidence = ?2 WHERE face_id = ?3",
+                                        params![target_name, sim as f64, fid],
+                                    );
+                                    let _ = bg_conn.execute(
+                                        "INSERT OR IGNORE INTO photo_people (hash, person_name) VALUES (?1, ?2)",
+                                        params![fhash, target_name],
+                                    );
+                                    if !matched_hashes.contains(&fhash) {
+                                        matched_hashes.push(fhash);
+                                    }
                                 }
                             }
                         }
                     }
                 }
-            }
 
-            let _ = app_clone.emit(
-                "face-automatch-complete",
-                FaceMatchEvent {
-                    person_name: target_name,
-                    total_matched: matched_hashes.len(),
-                    matched_hashes,
-                },
-            );
-        });
-    }
+                let _ = app_clone.emit(
+                    "face-automatch-complete",
+                    FaceMatchEvent {
+                        person_name: target_name,
+                        total_matched: matched_hashes.len(),
+                        matched_hashes,
+                    },
+                );
+            });
+        }
 
-    Ok(get_faces_for_hash(&conn, &hash))
+        Ok(get_faces_for_hash(&conn, &hash))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -4102,49 +4361,53 @@ fn remove_face_box(app: AppHandle, face_id: String, hash: String) -> Result<Vec<
 }
 
 #[tauri::command]
-fn get_people(app: AppHandle, root_folder: Option<String>) -> Result<Vec<PersonItem>, String> {
-    let conn = open_global_db(&app)?;
-    let prefix = make_folder_prefix(root_folder.as_deref());
-    let mut stmt = conn
-        .prepare(
-            "SELECT p.id, p.name, COUNT(DISTINCT pp.hash) as cnt,
-                    COALESCE(NULLIF(p.cover_face_thumb, ''), (SELECT pf.face_thumb FROM photo_faces pf JOIN photos phf ON pf.hash = phf.hash WHERE pf.person_name = p.name AND phf.current_path LIKE ?1 LIMIT 1), '') as face_crop,
-                    (SELECT ph.hash FROM photos ph JOIN photo_people pp2 ON ph.hash = pp2.hash WHERE pp2.person_name = p.name AND ph.current_path LIKE ?1 LIMIT 1) as fallback_hash
-             FROM people p
-             JOIN photo_people pp ON p.name = pp.person_name
-             JOIN photos ph_main ON pp.hash = ph_main.hash
-             WHERE ph_main.current_path LIKE ?1
-             GROUP BY p.name
-             HAVING cnt > 0
-             ORDER BY cnt DESC",
-        )
-        .map_err(|e| e.to_string())?;
+async fn get_people(app: AppHandle, root_folder: Option<String>) -> Result<Vec<PersonItem>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let conn = open_global_db(&app)?;
+        let prefix = make_folder_prefix(root_folder.as_deref());
+        let mut stmt = conn
+            .prepare(
+                "SELECT p.id, p.name, COUNT(DISTINCT pp.hash) as cnt,
+                        COALESCE(NULLIF(p.cover_face_thumb, ''), (SELECT pf.face_thumb FROM photo_faces pf JOIN photos phf ON pf.hash = phf.hash WHERE pf.person_name = p.name AND phf.current_path LIKE ?1 LIMIT 1), '') as face_crop,
+                        (SELECT ph.hash FROM photos ph JOIN photo_people pp2 ON ph.hash = pp2.hash WHERE pp2.person_name = p.name AND ph.current_path LIKE ?1 LIMIT 1) as fallback_hash
+                 FROM people p
+                 JOIN photo_people pp ON p.name = pp.person_name
+                 JOIN photos ph_main ON pp.hash = ph_main.hash
+                 WHERE ph_main.current_path LIKE ?1
+                 GROUP BY p.name
+                 HAVING cnt > 0
+                 ORDER BY cnt DESC",
+            )
+            .map_err(|e| e.to_string())?;
 
-    let app_dir = get_app_storage_dir(&app);
-    let thumbs_dir = app_dir.join("thumbnails");
+        let app_dir = get_app_storage_dir(&app);
+        let thumbs_dir = app_dir.join("thumbnails");
 
-    let rows = stmt
-        .query_map(params![prefix], |row| {
-            let face_crop: String = row.get(3)?;
-            let fallback_h: Option<String> = row.get(4)?;
-            let cover_thumb = if !face_crop.is_empty() && Path::new(&face_crop).exists() {
-                face_crop
-            } else {
-                fallback_h
-                    .map(|h| thumbs_dir.join(format!("{}.jpg", h)).to_string_lossy().to_string())
-                    .unwrap_or_default()
-            };
+        let rows = stmt
+            .query_map(params![prefix], |row| {
+                let face_crop: String = row.get(3)?;
+                let fallback_h: Option<String> = row.get(4)?;
+                let cover_thumb = if !face_crop.is_empty() && Path::new(&face_crop).exists() {
+                    face_crop
+                } else {
+                    fallback_h
+                        .map(|h| thumbs_dir.join(format!("{}.jpg", h)).to_string_lossy().to_string())
+                        .unwrap_or_default()
+                };
 
-            Ok(PersonItem {
-                id: row.get(0)?,
-                name: row.get(1)?,
-                photo_count: row.get(2)?,
-                cover_thumb,
+                Ok(PersonItem {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    photo_count: row.get(2)?,
+                    cover_thumb,
+                })
             })
-        })
-        .map_err(|e| e.to_string())?;
+            .map_err(|e| e.to_string())?;
 
-    Ok(rows.flatten().collect())
+        Ok(rows.flatten().collect())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -4205,138 +4468,139 @@ pub struct SimilarFaceCandidate {
 }
 
 #[tauri::command]
-fn find_similar_faces(
+async fn find_similar_faces(
     app: AppHandle,
     person_name: String,
     min_similarity: Option<f32>,
 ) -> Result<Vec<SimilarFaceCandidate>, String> {
-    let conn = open_global_db(&app)?;
-    let clean_name = person_name.trim().to_string();
+    tauri::async_runtime::spawn_blocking(move || {
+        let conn = open_global_db(&app)?;
+        let clean_name = person_name.trim().to_string();
 
-    // Load all verified embeddings for this person
-    let mut ref_embeddings: Vec<Vec<f32>> = Vec::new();
-    {
-        let mut stmt = conn
-            .prepare("SELECT embedding FROM photo_faces WHERE lower(person_name) = lower(?1)")
-            .map_err(|e| e.to_string())?;
-        let rows = stmt
-            .query_map(params![clean_name], |r| r.get::<_, String>(0))
-            .map_err(|e| e.to_string())?;
-        for emb_str in rows.flatten() {
-            if let Ok(vec) = serde_json::from_str::<Vec<f32>>(&emb_str) {
-                if !vec.is_empty() {
+        // Load all verified embeddings for this person (using in-memory cache!)
+        let mut ref_embeddings: Vec<Vec<f32>> = Vec::new();
+        {
+            let mut stmt = conn
+                .prepare("SELECT face_id, embedding FROM photo_faces WHERE lower(person_name) = lower(?1)")
+                .map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map(params![clean_name], |r| {
+                    Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+                })
+                .map_err(|e| e.to_string())?;
+            for (fid, emb_str) in rows.flatten() {
+                if let Some(vec) = get_cached_face_embedding(&fid, &emb_str) {
                     ref_embeddings.push(vec);
                 }
             }
         }
-    }
 
-    if ref_embeddings.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let centroid_512 = compute_normalized_centroid(&ref_embeddings, 512);
-    let centroid_384 = compute_normalized_centroid(&ref_embeddings, 384);
-
-    let thumbs_dir = get_app_storage_dir(&app).join("thumbnails");
-    let previews_dir = get_app_storage_dir(&app).join("previews");
-
-    let mut stmt = conn
-        .prepare(
-            "SELECT pf.face_id, pf.hash, pf.face_thumb, pf.person_name, pf.embedding,
-                    COALESCE(p.current_path, ''), pf.bbox_x, pf.bbox_y, pf.bbox_w, pf.bbox_h
-             FROM photo_faces pf
-             LEFT JOIN photos p ON pf.hash = p.hash
-             WHERE (pf.person_name IS NULL OR pf.person_name = '' OR lower(pf.person_name) != lower(?1))
-               AND NOT EXISTS (
-                   SELECT 1 FROM face_rejections fr
-                   WHERE fr.face_id = pf.face_id AND lower(fr.person_name) = lower(?1)
-               )",
-        )
-        .map_err(|e| e.to_string())?;
-
-    let rows = stmt
-        .query_map(params![clean_name], |r| {
-            Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, String>(2)?,
-                r.get::<_, Option<String>>(3)?,
-                r.get::<_, String>(4)?,
-                r.get::<_, String>(5)?,
-                r.get::<_, f64>(6)?,
-                r.get::<_, f64>(7)?,
-                r.get::<_, f64>(8)?,
-                r.get::<_, f64>(9)?,
-            ))
-        })
-        .map_err(|e| e.to_string())?;
-
-    let mut candidates = Vec::new();
-    for (face_id, hash, face_thumb, cur_person, emb_str, photo_path, bx, by, bw, bh) in rows.flatten() {
-        let Ok(cand_emb) = serde_json::from_str::<Vec<f32>>(&emb_str) else {
-            continue;
-        };
-        if cand_emb.is_empty() {
-            continue;
+        if ref_embeddings.is_empty() {
+            return Ok(Vec::new());
         }
-        let default_thresh = if cand_emb.len() == 512 { 0.44 } else { 0.64 };
-        let thresh = min_similarity.unwrap_or(default_thresh);
 
-        let best_sim = score_against_person_profile(
-            &cand_emb,
-            &ref_embeddings,
-            centroid_512.as_ref(),
-            centroid_384.as_ref(),
-        );
+        let centroid_512 = compute_normalized_centroid(&ref_embeddings, 512);
+        let centroid_384 = compute_normalized_centroid(&ref_embeddings, 384);
 
-        if best_sim >= thresh {
-            let path_obj = Path::new(&photo_path);
-            let photo_name = path_obj
-                .file_name()
-                .map(|f| f.to_string_lossy().to_string())
-                .unwrap_or_else(|| hash.clone());
-            let ext = path_obj
-                .extension()
-                .map(|e| e.to_string_lossy().to_lowercase())
-                .unwrap_or_default();
-            let display_photo_path = if is_raw_or_heic_ext(&ext) {
-                let prev = previews_dir.join(format!("{}_preview.jpg", hash));
-                let th = thumbs_dir.join(format!("{}.jpg", hash));
-                if prev.exists() {
-                    prev.to_string_lossy().to_string()
-                } else if th.exists() {
-                    th.to_string_lossy().to_string()
+        let thumbs_dir = get_app_storage_dir(&app).join("thumbnails");
+        let previews_dir = get_app_storage_dir(&app).join("previews");
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT pf.face_id, pf.hash, pf.face_thumb, pf.person_name, pf.embedding,
+                        COALESCE(p.current_path, ''), pf.bbox_x, pf.bbox_y, pf.bbox_w, pf.bbox_h
+                 FROM photo_faces pf
+                 LEFT JOIN photos p ON pf.hash = p.hash
+                 WHERE (pf.person_name IS NULL OR pf.person_name = '' OR lower(pf.person_name) != lower(?1))
+                   AND NOT EXISTS (
+                       SELECT 1 FROM face_rejections fr
+                       WHERE fr.face_id = pf.face_id AND lower(fr.person_name) = lower(?1)
+                   )",
+            )
+            .map_err(|e| e.to_string())?;
+
+        let rows = stmt
+            .query_map(params![clean_name], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, Option<String>>(3)?,
+                    r.get::<_, String>(4)?,
+                    r.get::<_, String>(5)?,
+                    r.get::<_, f64>(6)?,
+                    r.get::<_, f64>(7)?,
+                    r.get::<_, f64>(8)?,
+                    r.get::<_, f64>(9)?,
+                ))
+            })
+            .map_err(|e| e.to_string())?;
+
+        let mut candidates = Vec::new();
+        for (face_id, hash, face_thumb, cur_person, emb_str, photo_path, bx, by, bw, bh) in rows.flatten() {
+            let Some(cand_emb) = get_cached_face_embedding(&face_id, &emb_str) else {
+                continue;
+            };
+            let default_thresh = if cand_emb.len() == 512 { 0.44 } else { 0.64 };
+            let thresh = min_similarity.unwrap_or(default_thresh);
+
+            let best_sim = score_against_person_profile(
+                &cand_emb,
+                &ref_embeddings,
+                centroid_512.as_ref(),
+                centroid_384.as_ref(),
+            );
+
+            if best_sim >= thresh {
+                let path_obj = Path::new(&photo_path);
+                let photo_name = path_obj
+                    .file_name()
+                    .map(|f| f.to_string_lossy().to_string())
+                    .unwrap_or_else(|| hash.clone());
+                let ext = path_obj
+                    .extension()
+                    .map(|e| e.to_string_lossy().to_lowercase())
+                    .unwrap_or_default();
+                let display_photo_path = if is_raw_or_heic_ext(&ext) {
+                    let prev = previews_dir.join(format!("{}_preview.jpg", hash));
+                    let th = thumbs_dir.join(format!("{}.jpg", hash));
+                    if prev.exists() {
+                        prev.to_string_lossy().to_string()
+                    } else if th.exists() {
+                        th.to_string_lossy().to_string()
+                    } else {
+                        photo_path
+                    }
                 } else {
                     photo_path
-                }
-            } else {
-                photo_path
-            };
+                };
 
-            candidates.push(SimilarFaceCandidate {
-                face_id,
-                hash,
-                face_thumb,
-                photo_name,
-                photo_path: display_photo_path,
-                bbox_x: bx,
-                bbox_y: by,
-                bbox_w: bw,
-                bbox_h: bh,
-                current_person: cur_person,
-                similarity: (best_sim * 1000.0).round() / 10.0,
-            });
+                candidates.push(SimilarFaceCandidate {
+                    face_id,
+                    hash,
+                    face_thumb,
+                    photo_name,
+                    photo_path: display_photo_path,
+                    bbox_x: bx,
+                    bbox_y: by,
+                    bbox_w: bw,
+                    bbox_h: bh,
+                    current_person: cur_person,
+                    similarity: (best_sim * 1000.0).round() / 10.0,
+                });
+            }
         }
-    }
 
-    candidates.sort_by(|a, b| {
-        b.similarity
-            .partial_cmp(&a.similarity)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-    candidates.truncate(120);
-    Ok(candidates)
+        candidates.sort_by(|a, b| {
+            b.similarity
+                .partial_cmp(&a.similarity)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        candidates.truncate(120);
+        Ok(candidates)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -4362,99 +4626,110 @@ fn reject_face_candidates_batch(
 }
 
 #[tauri::command]
-fn get_pending_face_match_counts(
+async fn get_pending_face_match_counts(
     app: AppHandle,
     root_folder: Option<String>,
 ) -> Result<HashMap<String, usize>, String> {
-    let conn = open_global_db(&app)?;
-    let prefix = make_folder_prefix(root_folder.as_deref());
+    tauri::async_runtime::spawn_blocking(move || {
+        let conn = open_global_db(&app)?;
+        let prefix = make_folder_prefix(root_folder.as_deref());
 
-    // 1. Load all confirmed face embeddings grouped by person_name
-    let mut person_refs: HashMap<String, Vec<Vec<f32>>> = HashMap::new();
-    {
-        let mut stmt = conn
-            .prepare(
-                "SELECT person_name, embedding FROM photo_faces
-                 WHERE person_name IS NOT NULL AND person_name != ''",
-            )
-            .map_err(|e| e.to_string())?;
-        let rows = stmt
-            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
-            .map_err(|e| e.to_string())?;
-        for (pname, emb_str) in rows.flatten() {
-            if let Ok(vec) = serde_json::from_str::<Vec<f32>>(&emb_str) {
-                if !vec.is_empty() {
+        // 1. Load all confirmed face embeddings grouped by person_name (from in-memory cache!)
+        let mut person_refs: HashMap<String, Vec<Vec<f32>>> = HashMap::new();
+        {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT face_id, person_name, embedding FROM photo_faces
+                     WHERE person_name IS NOT NULL AND person_name != ''",
+                )
+                .map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map([], |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?,
+                    ))
+                })
+                .map_err(|e| e.to_string())?;
+            for (fid, pname, emb_str) in rows.flatten() {
+                if let Some(vec) = get_cached_face_embedding(&fid, &emb_str) {
                     person_refs.entry(pname).or_default().push(vec);
                 }
             }
         }
-    }
 
-    if person_refs.is_empty() {
-        return Ok(HashMap::new());
-    }
+        if person_refs.is_empty() {
+            return Ok(HashMap::new());
+        }
 
-    // 2. Load all rejected (face_id, lower_person_name) pairs
-    let mut rejected_set: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
-    if let Ok(mut stmt) = conn.prepare("SELECT face_id, lower(person_name) FROM face_rejections") {
-        if let Ok(rows) = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))) {
-            for pair in rows.flatten() {
-                rejected_set.insert(pair);
+        // 2. Load all rejected (face_id, lower_person_name) pairs
+        let mut rejected_set: std::collections::HashSet<(String, String)> =
+            std::collections::HashSet::new();
+        if let Ok(mut stmt) = conn.prepare("SELECT face_id, lower(person_name) FROM face_rejections") {
+            if let Ok(rows) =
+                stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+            {
+                for pair in rows.flatten() {
+                    rejected_set.insert(pair);
+                }
             }
         }
-    }
 
-    // 3. Load all unassigned faces within the active folder
-    let mut unassigned: Vec<(String, Vec<f32>)> = Vec::new();
-    {
-        let mut stmt = conn
-            .prepare(
-                "SELECT pf.face_id, pf.embedding
-                 FROM photo_faces pf
-                 JOIN photos p ON pf.hash = p.hash
-                 WHERE (pf.person_name IS NULL OR pf.person_name = '')
-                   AND p.current_path LIKE ?1",
-            )
-            .map_err(|e| e.to_string())?;
-        let rows = stmt
-            .query_map(params![prefix], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
-            .map_err(|e| e.to_string())?;
-        for (fid, emb_str) in rows.flatten() {
-            if let Ok(vec) = serde_json::from_str::<Vec<f32>>(&emb_str) {
-                if !vec.is_empty() {
+        // 3. Load all unassigned faces within the active folder (from in-memory cache!)
+        let mut unassigned: Vec<(String, Vec<f32>)> = Vec::new();
+        {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT pf.face_id, pf.embedding
+                     FROM photo_faces pf
+                     JOIN photos p ON pf.hash = p.hash
+                     WHERE (pf.person_name IS NULL OR pf.person_name = '')
+                       AND p.current_path LIKE ?1",
+                )
+                .map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map(params![prefix], |r| {
+                    Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+                })
+                .map_err(|e| e.to_string())?;
+            for (fid, emb_str) in rows.flatten() {
+                if let Some(vec) = get_cached_face_embedding(&fid, &emb_str) {
                     unassigned.push((fid, vec));
                 }
             }
         }
-    }
 
-    let mut counts: HashMap<String, usize> = HashMap::new();
-    if unassigned.is_empty() {
-        return Ok(counts);
-    }
+        let mut counts: HashMap<String, usize> = HashMap::new();
+        if unassigned.is_empty() {
+            return Ok(counts);
+        }
 
-    for (pname, refs) in &person_refs {
-        let lower_p = pname.to_lowercase();
-        let c512 = compute_normalized_centroid(refs, 512);
-        let c384 = compute_normalized_centroid(refs, 384);
-        let mut cnt = 0usize;
+        for (pname, refs) in &person_refs {
+            let lower_p = pname.to_lowercase();
+            let c512 = compute_normalized_centroid(refs, 512);
+            let c384 = compute_normalized_centroid(refs, 384);
+            let mut cnt = 0usize;
 
-        for (fid, cand_emb) in &unassigned {
-            if rejected_set.contains(&(fid.clone(), lower_p.clone())) {
-                continue;
+            for (fid, cand_emb) in &unassigned {
+                if rejected_set.contains(&(fid.clone(), lower_p.clone())) {
+                    continue;
+                }
+                let thresh = if cand_emb.len() == 512 { 0.45 } else { 0.65 };
+                let sim = score_against_person_profile(cand_emb, refs, c512.as_ref(), c384.as_ref());
+                if sim >= thresh {
+                    cnt += 1;
+                }
             }
-            let thresh = if cand_emb.len() == 512 { 0.45 } else { 0.65 };
-            let sim = score_against_person_profile(cand_emb, refs, c512.as_ref(), c384.as_ref());
-            if sim >= thresh {
-                cnt += 1;
+            if cnt > 0 {
+                counts.insert(pname.clone(), cnt);
             }
         }
-        if cnt > 0 {
-            counts.insert(pname.clone(), cnt);
-        }
-    }
 
-    Ok(counts)
+        Ok(counts)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -4512,7 +4787,7 @@ fn assign_faces_to_person_batch(
 
 #[tauri::command]
 async fn check_ollama_status() -> Result<OllamaStatus, String> {
-    let res = HTTP_CLIENT.get("http://127.0.0.1:11434/api/tags").send().await;
+    let res = FAST_STATUS_CLIENT.get("http://127.0.0.1:11434/api/tags").send().await;
 
     if res.is_err() {
         return Ok(OllamaStatus {
@@ -4537,7 +4812,7 @@ async fn check_ollama_status() -> Result<OllamaStatus, String> {
     }
 
     let mut active_vram_model = None;
-    if let Ok(ps_res) = HTTP_CLIENT.get("http://127.0.0.1:11434/api/ps").send().await {
+    if let Ok(ps_res) = FAST_STATUS_CLIENT.get("http://127.0.0.1:11434/api/ps").send().await {
         if let Ok(ps_val) = ps_res.json::<serde_json::Value>().await {
             if let Some(active_arr) = ps_val["models"].as_array() {
                 if let Some(first) = active_arr.first() {

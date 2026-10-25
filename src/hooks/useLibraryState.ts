@@ -404,14 +404,33 @@ export function useLibraryState() {
     };
   }, [addLog]);
 
-  // Poll Ollama status & Mark App Ready for Splashscreen Dismissal
+  // Dismiss Splashscreen IMMEDIATELY on mount so startup never waits on Ollama TCP timeouts
+  useEffect(() => {
+    if (!splashClosedRef.current) {
+      splashClosedRef.current = true;
+      setIsAppReady(true);
+      invoke("close_splashscreen").catch(() => {});
+    }
+  }, []);
+
+  // Poll Ollama status every 10s & only trigger React state update if status actually changed!
   useEffect(() => {
     let mounted = true;
     async function checkStatus() {
       try {
         const s = await invoke<OllamaStatus>("check_ollama_status");
         if (!mounted) return;
-        setOllamaStatus(s);
+        setOllamaStatus((prev) => {
+          if (
+            prev &&
+            prev.running === s.running &&
+            prev.active_vram_model === s.active_vram_model &&
+            prev.installed_models.length === s.installed_models.length
+          ) {
+            return prev;
+          }
+          return s;
+        });
         if (
           s.installed_models.length > 0 &&
           !s.installed_models.some((m) => m.name === aiModel)
@@ -420,17 +439,15 @@ export function useLibraryState() {
         }
       } catch {
         if (!mounted) return;
-        setOllamaStatus({ running: false, active_vram_model: null, installed_models: [] });
-      } finally {
-        if (mounted && !splashClosedRef.current) {
-          splashClosedRef.current = true;
-          setIsAppReady(true);
-          invoke("close_splashscreen").catch(() => {});
-        }
+        setOllamaStatus((prev) =>
+          prev && !prev.running
+            ? prev
+            : { running: false, active_vram_model: null, installed_models: [] }
+        );
       }
     }
     checkStatus();
-    const interval = setInterval(checkStatus, 3500);
+    const interval = setInterval(checkStatus, 10000);
     return () => {
       mounted = false;
       clearInterval(interval);
@@ -439,13 +456,15 @@ export function useLibraryState() {
 
   async function refreshPeople(currentFolder = folder) {
     try {
-      const res = await invoke<PersonItem[]>("get_people", {
-        rootFolder: currentFolder || null,
-      });
+      const [res, pending] = await Promise.all([
+        invoke<PersonItem[]>("get_people", {
+          rootFolder: currentFolder || null,
+        }),
+        invoke<Record<string, number>>("get_pending_face_match_counts", {
+          rootFolder: currentFolder || null,
+        }),
+      ]);
       setPeople(res);
-      const pending = await invoke<Record<string, number>>("get_pending_face_match_counts", {
-        rootFolder: currentFolder || null,
-      });
       setPendingFaceCounts(pending || {});
     } catch {}
   }
@@ -611,41 +630,60 @@ export function useLibraryState() {
     return Array.from(s).sort();
   }, [photos]);
 
-  const stagedPhotos = useMemo(() => photos.filter((p) => Boolean(p.staged_target)), [photos]);
-  const gpsPhotosCount = useMemo(
-    () => photos.filter((p) => p.latitude != null && p.longitude != null).length,
-    [photos]
-  );
-  const screenshotPhotosCount = useMemo(
-    () => photos.filter((p) => p.tags.includes("screenshot")).length,
-    [photos]
-  );
-  const picksCount = useMemo(() => photos.filter((p) => p.flag === "pick").length, [photos]);
-  const rejectsCount = useMemo(() => photos.filter((p) => p.flag === "reject").length, [photos]);
-  const basketCount = useMemo(() => photos.filter((p) => p.in_basket).length, [photos]);
-
-  const { sharpestInGroup, burstGroupCounts, totalBurstGroups } = useMemo(() => {
+  const {
+    stagedPhotos,
+    gpsPhotosCount,
+    screenshotPhotosCount,
+    picksCount,
+    rejectsCount,
+    basketCount,
+    sharpestInGroup,
+    burstGroupCounts,
+    totalBurstGroups,
+    duplicatePhotosCount,
+  } = useMemo(() => {
+    const staged: PhotoItem[] = [];
+    let gps = 0;
+    let screenshots = 0;
+    let picks = 0;
+    let rejects = 0;
+    let basket = 0;
+    let dupCount = 0;
     const best = new Map<number, { hash: string; sharpness: number }>();
     const counts = new Map<number, number>();
-    photos.forEach((p) => {
-      if (!p.duplicate_group || p.subfolder === "_Trash") return;
-      counts.set(p.duplicate_group, (counts.get(p.duplicate_group) || 0) + 1);
-      const cur = best.get(p.duplicate_group);
-      if (!cur || p.sharpness > cur.sharpness) {
-        best.set(p.duplicate_group, { hash: p.hash, sharpness: p.sharpness });
+
+    for (let i = 0; i < photos.length; i++) {
+      const p = photos[i];
+      if (p.staged_target) staged.push(p);
+      if (p.latitude != null && p.longitude != null) gps++;
+      if (p.tags.includes("screenshot")) screenshots++;
+      if (p.flag === "pick") picks++;
+      else if (p.flag === "reject") rejects++;
+      if (p.in_basket) basket++;
+
+      if (p.duplicate_group && p.subfolder !== "_Trash") {
+        dupCount++;
+        counts.set(p.duplicate_group, (counts.get(p.duplicate_group) || 0) + 1);
+        const cur = best.get(p.duplicate_group);
+        if (!cur || p.sharpness > cur.sharpness) {
+          best.set(p.duplicate_group, { hash: p.hash, sharpness: p.sharpness });
+        }
       }
-    });
+    }
+
     return {
+      stagedPhotos: staged,
+      gpsPhotosCount: gps,
+      screenshotPhotosCount: screenshots,
+      picksCount: picks,
+      rejectsCount: rejects,
+      basketCount: basket,
       sharpestInGroup: best,
       burstGroupCounts: counts,
       totalBurstGroups: counts.size,
+      duplicatePhotosCount: dupCount,
     };
   }, [photos]);
-
-  const duplicatePhotosCount = useMemo(
-    () => photos.filter((p) => p.duplicate_group && p.subfolder !== "_Trash").length,
-    [photos]
-  );
 
   const visiblePhotos = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -802,9 +840,17 @@ export function useLibraryState() {
     viewMode,
   ]);
 
+  const photoByHash = useMemo(() => {
+    const m = new Map<string, PhotoItem>();
+    for (let i = 0; i < photos.length; i++) {
+      m.set(photos[i].hash, photos[i]);
+    }
+    return m;
+  }, [photos]);
+
   const activePhoto = useMemo(
-    () => photos.find((p) => p.hash === activeHash) || null,
-    [photos, activeHash]
+    () => (activeHash ? photoByHash.get(activeHash) || null : null),
+    [photoByHash, activeHash]
   );
 
   const comparePhotos = useMemo(() => {

@@ -153,9 +153,14 @@ export default function VirtualPhotoGrid({
                         <img
                           src={convertFileSrc(photo.thumb_path)}
                           alt={photo.name}
-                          loading="lazy"
-                          style={{ transform: `rotate(${photo.rotation}deg)` }}
-                          className="w-full h-full object-cover group-hover:scale-[1.02] transition duration-200"
+                          decoding="async"
+                          draggable={false}
+                          style={
+                            photo.rotation
+                              ? { transform: `rotate(${photo.rotation}deg)` }
+                              : undefined
+                          }
+                          className="w-full h-full object-cover select-none"
                         />
                       ) : (
                         <span className="text-xs text-zinc-600 animate-pulse">Loading...</span>

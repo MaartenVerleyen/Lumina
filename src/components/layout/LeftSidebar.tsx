@@ -1,3 +1,4 @@
+import { memo, useMemo } from "react";
 import { FolderTreeNode, PhotoItem, SmartFilter } from "../../types/lumina";
 import {
   BrainCircuit,
@@ -51,7 +52,7 @@ interface LeftSidebarProps {
   onFolderContextMenu?: (folderRelPath: string, e: React.MouseEvent) => void;
 }
 
-export default function LeftSidebar({
+function LeftSidebar({
   leftWidth,
   photos,
   smartFilter,
@@ -159,9 +160,34 @@ export default function LeftSidebar({
     });
   }
 
-  const trashFolderCount = photos.filter(
-    (p) => p.subfolder === "_Trash" || p.staged_target === "_Trash"
-  ).length;
+  const {
+    trashFolderCount,
+    favoritesCount,
+    aiTaggedCount,
+    untaggedCount,
+    ocrCount,
+  } = useMemo(() => {
+    let trash = 0;
+    let favs = 0;
+    let aiTagged = 0;
+    let untagged = 0;
+    let ocr = 0;
+    for (let i = 0; i < photos.length; i++) {
+      const p = photos[i];
+      if (p.subfolder === "_Trash" || p.staged_target === "_Trash") trash++;
+      if (p.rating >= 4) favs++;
+      if (p.tags.length > 0 || p.ai_caption.length > 0) aiTagged++;
+      else untagged++;
+      if (p.ocr_text) ocr++;
+    }
+    return {
+      trashFolderCount: trash,
+      favoritesCount: favs,
+      aiTaggedCount: aiTagged,
+      untaggedCount: untagged,
+      ocrCount: ocr,
+    };
+  }, [photos]);
 
   const filterItems = [
     {
@@ -195,21 +221,21 @@ export default function LeftSidebar({
     {
       id: "FAVORITES",
       label: "Favorites (4★+)",
-      count: photos.filter((p) => p.rating >= 4).length,
+      count: favoritesCount,
       icon: <Star className="w-3.5 h-3.5 text-amber-400 fill-amber-400/20" />,
       hideInSimple: false,
     },
     {
       id: "AI_TAGGED",
       label: "AI Tagged",
-      count: photos.filter((p) => p.tags.length > 0 || p.ai_caption.length > 0).length,
+      count: aiTaggedCount,
       icon: <BrainCircuit className="w-3.5 h-3.5 text-indigo-400" />,
       hideInSimple: true,
     },
     {
       id: "UNTAGGED",
       label: "Untagged",
-      count: photos.filter((p) => p.tags.length === 0 && !p.ai_caption).length,
+      count: untaggedCount,
       icon: <Sparkles className="w-3.5 h-3.5 text-purple-400" />,
       hideInSimple: true,
     },
@@ -232,7 +258,7 @@ export default function LeftSidebar({
     {
       id: "HAS_OCR",
       label: simpleMode ? "Photos with Text" : "Has Text (OCR)",
-      count: photos.filter((p) => p.ocr_text).length,
+      count: ocrCount,
       icon: <FileText className="w-3.5 h-3.5 text-indigo-400" />,
       hideInSimple: false,
     },
@@ -419,3 +445,5 @@ export default function LeftSidebar({
     </aside>
   );
 }
+
+export default memo(LeftSidebar);
