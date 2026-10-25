@@ -39,6 +39,7 @@ import {
   getPhotoEventName,
   computePresetTargetFolder,
 } from "../utils/photoHelpers";
+import { expandWithRawPairs, diskPathOf, RAW_OR_HEIC_NAME } from "../utils/rawPairs";
 
 const MAX_UNDO_STEPS = 20;
 
@@ -86,11 +87,37 @@ export function captureSnapshots(
   return out;
 }
 
+type SnapshotField = Exclude<keyof PhotoActionSnapshot, "hash">;
+const SNAPSHOT_FIELDS: SnapshotField[] = [
+  "flag",
+  "rating",
+  "color_label",
+  "staged_target",
+  "in_basket",
+  "rotation",
+];
+
+// Fields an undo entry actually changed; undo/redo re-applies only these. Re-sending untouched fields
+// would e.g. re-stage photos whose staged move was committed (physically moved) after the action.
+export function changedSnapshotFields(entry: UndoHistoryEntry): Set<SnapshotField> {
+  const afterByHash = new Map(entry.after.map((s) => [s.hash, s]));
+  const changed = new Set<SnapshotField>();
+  for (const b of entry.before) {
+    const a = afterByHash.get(b.hash);
+    if (!a) continue;
+    for (const f of SNAPSHOT_FIELDS) {
+      if (a[f] !== b[f]) changed.add(f);
+    }
+  }
+  return changed;
+}
+
 async function applySnapshotsToBackend(
   snapshots: PhotoActionSnapshot[],
+  fields: Set<SnapshotField>,
   setPhotos: React.Dispatch<React.SetStateAction<PhotoItem[]>>
 ) {
-  if (snapshots.length === 0) return;
+  if (snapshots.length === 0 || fields.size === 0) return;
 
   const byFlag = new Map<"pick" | "reject" | null, string[]>();
   const byRating = new Map<number, string[]>();
@@ -118,23 +145,31 @@ async function applySnapshotsToBackend(
     stageOps.push({ hash: s.hash, target_subfolder: s.staged_target });
   }
 
-  for (const [flag, hashes] of byFlag.entries()) {
-    await invoke("set_photo_flag", { hashes, flag });
+  if (fields.has("flag")) {
+    for (const [flag, hashes] of byFlag.entries()) {
+      await invoke("set_photo_flag", { hashes, flag });
+    }
   }
-  for (const [rating, hashes] of byRating.entries()) {
-    await invoke("set_photos_rating", { hashes, rating });
+  if (fields.has("rating")) {
+    for (const [rating, hashes] of byRating.entries()) {
+      await invoke("set_photos_rating", { hashes, rating });
+    }
   }
-  for (const [color, hashes] of byColor.entries()) {
-    await invoke("set_photo_color_label", { hashes, color });
+  if (fields.has("color_label")) {
+    for (const [color, hashes] of byColor.entries()) {
+      await invoke("set_photo_color_label", { hashes, color });
+    }
   }
-  for (const [inBasket, hashes] of byBasket.entries()) {
-    await invoke("set_photo_basket", { hashes, inBasket });
+  if (fields.has("in_basket")) {
+    for (const [inBasket, hashes] of byBasket.entries()) {
+      await invoke("set_photo_basket", { hashes, inBasket });
+    }
   }
-  if (stageOps.length > 0) {
+  if (fields.has("staged_target") && stageOps.length > 0) {
     await invoke("stage_photos_move", { ops: stageOps });
   }
-  const rotOps = snapshots.map((s) => ({ hash: s.hash, rotation: s.rotation }));
-  if (rotOps.length > 0) {
+  if (fields.has("rotation")) {
+    const rotOps = snapshots.map((s) => ({ hash: s.hash, rotation: s.rotation }));
     await invoke("set_photos_rotation_exact", { ops: rotOps });
   }
 
@@ -143,15 +178,11 @@ async function applySnapshotsToBackend(
     prev.map((p) => {
       const hit = snapMap.get(p.hash);
       if (!hit) return p;
-      return {
-        ...p,
-        flag: hit.flag,
-        rating: hit.rating,
-        color_label: hit.color_label,
-        staged_target: hit.staged_target,
-        in_basket: hit.in_basket,
-        rotation: hit.rotation,
-      };
+      const next = { ...p };
+      for (const f of fields) {
+        (next as Record<SnapshotField, unknown>)[f] = hit[f];
+      }
+      return next;
     })
   );
 }
@@ -162,66 +193,96 @@ export function useUndoStack(
   setSelectedHashes: React.Dispatch<React.SetStateAction<Set<string>>>,
   setAutoMatchNotice: React.Dispatch<React.SetStateAction<string>>
 ) {
-  const [undoStack, setUndoStack] = useState<UndoHistoryEntry[]>([]);
-  const [redoStack, setRedoStack] = useState<UndoHistoryEntry[]>([]);
+  // Stacks live in refs so rapid Ctrl+Z presses each see the stack as left by the previous one;
+  // `version` only exists to re-render buttons (canUndo/canRedo).
+  const undoRef = useRef<UndoHistoryEntry[]>([]);
+  const redoRef = useRef<UndoHistoryEntry[]>([]);
+  const [, setVersion] = useState(0);
+  const bump = useCallback(() => setVersion((v) => v + 1), []);
+  // Undo/redo run strictly one after another, in the order they were pressed
+  const queueRef = useRef<Promise<void>>(Promise.resolve());
 
-  const pushUndoEntry = useCallback((entry: UndoHistoryEntry) => {
-    setUndoStack((prev) => [...prev.slice(-(MAX_UNDO_STEPS - 1)), entry]);
-    setRedoStack([]);
+  const pushUndoEntry = useCallback(
+    (entry: UndoHistoryEntry) => {
+      undoRef.current = [...undoRef.current.slice(-(MAX_UNDO_STEPS - 1)), entry];
+      redoRef.current = [];
+      bump();
+    },
+    [bump]
+  );
+
+  const clearHistory = useCallback(() => {
+    undoRef.current = [];
+    redoRef.current = [];
+    bump();
+  }, [bump]);
+
+  const enqueue = useCallback((step: () => Promise<void>) => {
+    queueRef.current = queueRef.current.then(step, step);
+    return queueRef.current;
   }, []);
 
-  const handleUndo = useCallback(async () => {
-    if (undoStack.length === 0) return;
-    const last = undoStack[undoStack.length - 1];
-    setUndoStack((prev) => prev.slice(0, -1));
-    setRedoStack((prev) => [...prev, last]);
+  const handleUndo = useCallback(
+    () =>
+      enqueue(async () => {
+        const last = undoRef.current[undoRef.current.length - 1];
+        if (!last) return;
+        try {
+          await applySnapshotsToBackend(last.before, changedSnapshotFields(last), setPhotos);
+        } catch (err) {
+          setAutoMatchNotice(`Undo failed (${last.description}): ${String(err)}`);
+          setTimeout(() => setAutoMatchNotice(""), 5000);
+          return;
+        }
+        // Only move the entry once the backend accepted it, so a failed undo can be retried
+        undoRef.current = undoRef.current.slice(0, -1);
+        redoRef.current = [...redoRef.current, last];
+        bump();
+        if (last.previousActiveHash) {
+          setActiveHash(last.previousActiveHash);
+        }
+        if (last.previousSelectedHashes.length > 0) {
+          setSelectedHashes(new Set(last.previousSelectedHashes));
+        }
+        setAutoMatchNotice(`Undid: ${last.description}`);
+        setTimeout(() => setAutoMatchNotice(""), 3000);
+      }),
+    [enqueue, bump, setPhotos, setActiveHash, setSelectedHashes, setAutoMatchNotice]
+  );
 
-    await applySnapshotsToBackend(last.before, setPhotos);
-    if (last.previousActiveHash) {
-      setActiveHash(last.previousActiveHash);
-    }
-    if (last.previousSelectedHashes.length > 0) {
-      setSelectedHashes(new Set(last.previousSelectedHashes));
-    }
-    setAutoMatchNotice(`Undid: ${last.description}`);
-    setTimeout(() => setAutoMatchNotice(""), 3000);
-  }, [undoStack, setPhotos, setActiveHash, setSelectedHashes, setAutoMatchNotice]);
-
-  const handleRedo = useCallback(async () => {
-    if (redoStack.length === 0) return;
-    const next = redoStack[redoStack.length - 1];
-    setRedoStack((prev) => prev.slice(0, -1));
-    setUndoStack((prev) => [...prev, next]);
-
-    await applySnapshotsToBackend(next.after, setPhotos);
-    setAutoMatchNotice(`Redid: ${next.description}`);
-    setTimeout(() => setAutoMatchNotice(""), 3000);
-  }, [redoStack, setPhotos, setAutoMatchNotice]);
+  const handleRedo = useCallback(
+    () =>
+      enqueue(async () => {
+        const next = redoRef.current[redoRef.current.length - 1];
+        if (!next) return;
+        try {
+          await applySnapshotsToBackend(next.after, changedSnapshotFields(next), setPhotos);
+        } catch (err) {
+          setAutoMatchNotice(`Redo failed (${next.description}): ${String(err)}`);
+          setTimeout(() => setAutoMatchNotice(""), 5000);
+          return;
+        }
+        redoRef.current = redoRef.current.slice(0, -1);
+        undoRef.current = [...undoRef.current, next];
+        bump();
+        setAutoMatchNotice(`Redid: ${next.description}`);
+        setTimeout(() => setAutoMatchNotice(""), 3000);
+      }),
+    [enqueue, bump, setPhotos, setAutoMatchNotice]
+  );
 
   return {
-    undoStack,
-    redoStack,
-    canUndo: undoStack.length > 0,
-    canRedo: redoStack.length > 0,
+    undoStack: undoRef.current,
+    redoStack: redoRef.current,
+    canUndo: undoRef.current.length > 0,
+    canRedo: redoRef.current.length > 0,
     pushUndoEntry,
+    clearHistory,
     handleUndo,
     handleRedo,
   };
 }
 
-function expandWithRawPairs(hashes: string[], photos: PhotoItem[]): string[] {
-  const result = new Set<string>(hashes);
-  const byHash = new Map(photos.map((p) => [p.hash, p]));
-  const byPath = new Map(photos.map((p) => [p.path, p]));
-  for (const h of hashes) {
-    const p = byHash.get(h);
-    if (p?.pair_raw_path) {
-      const pair = byPath.get(p.pair_raw_path);
-      if (pair) result.add(pair.hash);
-    }
-  }
-  return Array.from(result);
-}
 
 export function useLibraryState() {
   const [isAppReady, setIsAppReady] = useState<boolean>(false);
@@ -287,7 +348,8 @@ export function useLibraryState() {
   const [viewMode, setViewMode] = useState<"grid" | "map" | "compare">("grid");
   const [selectedHashes, setSelectedHashes] = useState<Set<string>>(new Set());
   const [activeHash, setActiveHash] = useState<string | null>(null);
-  const lastSelectedIndexRef = useRef<number | null>(null);
+  // Shift-click / Shift+arrow range anchor (a photo hash, resolved to an index at use time)
+  const selectionAnchorHashRef = useRef<string | null>(null);
 
   const [isLoupeOpen, setIsLoupeOpen] = useState<boolean>(false);
   const [isCommitModalOpen, setIsCommitModalOpen] = useState<boolean>(false);
@@ -645,6 +707,8 @@ export function useLibraryState() {
   useEffect(() => {
     folderRef.current = folder;
     setProgress(null);
+    // Undo entries reference photos of the previous folder; replaying them here would be wrong
+    undo.clearHistory();
   }, [folder]);
 
   useEffect(() => {
@@ -672,7 +736,7 @@ export function useLibraryState() {
               ? Array.from(new Set([...p.tags, ...hit.auto_tags])).sort()
               : p.tags;
 
-          const isRawOrHeic = /\.(cr2|cr3|nef|arw|dng|orf|rw2|heic|heif|pef|raf)$/i.test(p.name);
+          const isRawOrHeic = RAW_OR_HEIC_NAME.test(p.name);
           const displayPath =
             isRawOrHeic && !p.path.endsWith("_preview.jpg") ? hit.thumb_path : p.path;
 
@@ -974,9 +1038,9 @@ export function useLibraryState() {
     if (!isLoupeOpen && viewMode !== "compare") return;
     const candidates = viewMode === "compare" ? comparePhotos : activePhoto ? [activePhoto] : [];
     for (const item of candidates) {
-      const isRawOrHeic = /\.(cr2|cr3|nef|arw|dng|orf|rw2|heic|heif|pef|raf)$/i.test(item.name);
+      const isRawOrHeic = RAW_OR_HEIC_NAME.test(item.name);
       if (!isRawOrHeic || item.path.endsWith("_preview.jpg")) continue;
-      const rawDiskPath = item.pair_raw_path || item.path;
+      const rawDiskPath = diskPathOf(item);
       const targetHash = item.hash;
       invoke<string>("ensure_high_res_preview", {
         hash: targetHash,
@@ -995,9 +1059,13 @@ export function useLibraryState() {
 
   function handlePhotoClick(index: number, hash: string, e: React.MouseEvent) {
     setActiveHash(hash);
-    if (e.shiftKey && lastSelectedIndexRef.current !== null) {
-      const start = Math.min(lastSelectedIndexRef.current, index);
-      const end = Math.max(lastSelectedIndexRef.current, index);
+    // The anchor is a photo, not an index: after filtering/sorting the old index would point elsewhere
+    const anchorIdx = selectionAnchorHashRef.current
+      ? visiblePhotos.findIndex((p) => p.hash === selectionAnchorHashRef.current)
+      : -1;
+    if (e.shiftKey && anchorIdx !== -1) {
+      const start = Math.min(anchorIdx, index);
+      const end = Math.max(anchorIdx, index);
       const next = new Set(selectedHashes);
       for (let i = start; i <= end; i++) next.add(visiblePhotos[i].hash);
       setSelectedHashes(next);
@@ -1006,10 +1074,10 @@ export function useLibraryState() {
       if (next.has(hash)) next.delete(hash);
       else next.add(hash);
       setSelectedHashes(next);
-      lastSelectedIndexRef.current = index;
+      selectionAnchorHashRef.current = hash;
     } else {
       setSelectedHashes(new Set([hash]));
-      lastSelectedIndexRef.current = index;
+      selectionAnchorHashRef.current = hash;
     }
   }
 
@@ -1027,12 +1095,17 @@ export function useLibraryState() {
     });
   }
 
+  // Only the most recent folder load may apply its result (a slower earlier scan must not win)
+  const folderLoadRequestRef = useRef(0);
+
   async function handleLoadFolderPath(targetPath: string) {
     if (!targetPath) return;
+    const requestId = ++folderLoadRequestRef.current;
+    const isSuperseded = () => requestId !== folderLoadRequestRef.current;
+    const previousFolder = folder;
     try {
       setError("");
       setFolder(targetPath);
-      saveRecentFolder(targetPath);
       setSelectedHashes(new Set());
       setActiveHash(null);
       setExpandedFolders(new Set());
@@ -1051,6 +1124,9 @@ export function useLibraryState() {
         folderPath: targetPath,
         forceReprocess: false,
       });
+      if (isSuperseded()) return;
+      // Remember the folder only once it actually opened, so a bad path is never restored on next launch
+      saveRecentFolder(targetPath);
       setPhotos(res);
       setIsScanningFolder(false);
       setScanProgress(null);
@@ -1058,9 +1134,12 @@ export function useLibraryState() {
       if (res.length > 0) {
         setActiveHash(res[0].hash);
         setSelectedHashes(new Set([res[0].hash]));
-        lastSelectedIndexRef.current = 0;
+        selectionAnchorHashRef.current = res[0].hash;
       }
     } catch (err) {
+      if (isSuperseded()) return;
+      // Keep showing the previous folder's photos under the previous folder's name
+      setFolder(previousFolder);
       setIsScanningFolder(false);
       setScanProgress(null);
       setError(String(err));
@@ -1241,7 +1320,7 @@ export function useLibraryState() {
       setIsDetectingSingleFace(true);
       const detected = await invoke<FaceInstance[]>("detect_faces_in_photo", {
         hash: activePhoto.hash,
-        imagePath: activePhoto.pair_raw_path || activePhoto.path,
+        imagePath: diskPathOf(activePhoto),
         forceOnnx: true,
       });
       setPhotos((prev) =>
@@ -1298,13 +1377,21 @@ export function useLibraryState() {
     }
   }
 
-  async function handleSetFlag(flag: "pick" | "reject" | null) {
-    if (selectedHashes.size === 0) return;
+  // Triage handlers act on `targetHashes` when given (e.g. the right-clicked photo), otherwise on the
+  // current selection. Undo entries are recorded only after the backend accepted the change.
+  function resolveTargets(targetHashes?: string[]): string[] {
+    const base = targetHashes ?? Array.from(selectedHashes);
+    return base.length === 0 ? [] : expandWithRawPairs(base, photos);
+  }
+
+  async function handleSetFlag(flag: "pick" | "reject" | null, targetHashes?: string[]) {
+    const hashes = resolveTargets(targetHashes);
+    if (hashes.length === 0) return;
     try {
-      const hashes = expandWithRawPairs(Array.from(selectedHashes), photos);
       const hashSet = new Set(hashes);
       const before = captureSnapshots(photos, hashSet);
       const after = before.map((s: PhotoActionSnapshot) => ({ ...s, flag }));
+      await invoke("set_photo_flag", { hashes, flag });
       undo.pushUndoEntry({
         description: `Flag (${flag || "unflag"}) on ${hashes.length} photo(s)`,
         previousActiveHash: activeHash,
@@ -1312,7 +1399,6 @@ export function useLibraryState() {
         before,
         after,
       });
-      await invoke("set_photo_flag", { hashes, flag });
       setPhotos((prev) => prev.map((p) => (hashSet.has(p.hash) ? { ...p, flag } : p)));
       addLog("TRIAGE", `Set flag "${flag || "unflagged"}" on ${hashes.length} photo(s)`);
     } catch (err) {
@@ -1320,13 +1406,92 @@ export function useLibraryState() {
     }
   }
 
-  async function handleSetColorLabel(color: "red" | "yellow" | "green" | "blue" | null) {
-    if (selectedHashes.size === 0) return;
+  // X key / "Reject & Trash": one action, one undo step (flag reject + stage to _Trash)
+  async function handleRejectToTrash(targetHashes?: string[]) {
+    const hashes = resolveTargets(targetHashes);
+    if (hashes.length === 0) return;
     try {
-      const hashes = expandWithRawPairs(Array.from(selectedHashes), photos);
+      const hashSet = new Set(hashes);
+      const before = captureSnapshots(photos, hashSet);
+      const after = before.map((s: PhotoActionSnapshot) => ({
+        ...s,
+        flag: "reject" as const,
+        staged_target: "_Trash",
+      }));
+      await invoke("set_photo_flag", { hashes, flag: "reject" });
+      await invoke("stage_photos_move", {
+        ops: hashes.map((hash) => ({ hash, target_subfolder: "_Trash" })),
+      });
+      undo.pushUndoEntry({
+        description: `Reject & stage to _Trash on ${hashes.length} photo(s)`,
+        previousActiveHash: activeHash,
+        previousSelectedHashes: hashes,
+        before,
+        after,
+      });
+      setPhotos((prev) =>
+        prev.map((p) =>
+          hashSet.has(p.hash) ? { ...p, flag: "reject", staged_target: "_Trash" } : p
+        )
+      );
+      addLog("TRIAGE", `Rejected & staged ${hashes.length} photo(s) to _Trash`);
+    } catch (err) {
+      setError(String(err));
+    }
+  }
+
+  // Compare view "Keep This & Trash Rest": pick one, reject + stage the others, as ONE undo step
+  async function handleKeepAndTrashRest(keepHash: string, otherHashes: string[]) {
+    const keep = expandWithRawPairs([keepHash], photos);
+    const keepSet = new Set(keep);
+    const rest = expandWithRawPairs(otherHashes, photos).filter((h) => !keepSet.has(h));
+    const restSet = new Set(rest);
+    try {
+      const before = captureSnapshots(photos, [...keep, ...rest]);
+      const after = before.map((s: PhotoActionSnapshot) =>
+        keepSet.has(s.hash)
+          ? { ...s, flag: "pick" as const }
+          : { ...s, flag: "reject" as const, staged_target: "_Trash" }
+      );
+      await invoke("set_photo_flag", { hashes: keep, flag: "pick" });
+      if (rest.length > 0) {
+        await invoke("set_photo_flag", { hashes: rest, flag: "reject" });
+        await invoke("stage_photos_move", {
+          ops: rest.map((hash) => ({ hash, target_subfolder: "_Trash" })),
+        });
+      }
+      undo.pushUndoEntry({
+        description: `Keep 1 & trash ${rest.length} photo(s) (Compare)`,
+        previousActiveHash: activeHash,
+        previousSelectedHashes: keep,
+        before,
+        after,
+      });
+      setPhotos((prev) =>
+        prev.map((p) => {
+          if (keepSet.has(p.hash)) return { ...p, flag: "pick" };
+          if (restSet.has(p.hash)) return { ...p, flag: "reject", staged_target: "_Trash" };
+          return p;
+        })
+      );
+      addLog("TRIAGE", `Compare: kept 1 photo, staged ${rest.length} for _Trash`);
+    } catch (err) {
+      setError(String(err));
+      throw err;
+    }
+  }
+
+  async function handleSetColorLabel(
+    color: "red" | "yellow" | "green" | "blue" | null,
+    targetHashes?: string[]
+  ) {
+    const hashes = resolveTargets(targetHashes);
+    if (hashes.length === 0) return;
+    try {
       const hashSet = new Set(hashes);
       const before = captureSnapshots(photos, hashSet);
       const after = before.map((s: PhotoActionSnapshot) => ({ ...s, color_label: color }));
+      await invoke("set_photo_color_label", { hashes, color });
       undo.pushUndoEntry({
         description: `Color label (${color || "clear"}) on ${hashes.length} photo(s)`,
         previousActiveHash: activeHash,
@@ -1334,7 +1499,6 @@ export function useLibraryState() {
         before,
         after,
       });
-      await invoke("set_photo_color_label", { hashes, color });
       setPhotos((prev) =>
         prev.map((p) => (hashSet.has(p.hash) ? { ...p, color_label: color } : p))
       );
@@ -1344,10 +1508,10 @@ export function useLibraryState() {
     }
   }
 
-  async function handleRotateSelection(deltaDegrees: number) {
-    if (selectedHashes.size === 0) return;
+  async function handleRotateSelection(deltaDegrees: number, targetHashes?: string[]) {
+    const hashes = resolveTargets(targetHashes);
+    if (hashes.length === 0) return;
     try {
-      const hashes = expandWithRawPairs(Array.from(selectedHashes), photos);
       const hashSet = new Set(hashes);
       const before = captureSnapshots(photos, hashSet);
       const res = await invoke<Record<string, number>>("set_photo_rotation", {
@@ -1374,13 +1538,14 @@ export function useLibraryState() {
     }
   }
 
-  async function handleBatchRate(rating: number) {
-    if (selectedHashes.size === 0) return;
+  async function handleBatchRate(rating: number, targetHashes?: string[]) {
+    const hashes = resolveTargets(targetHashes);
+    if (hashes.length === 0) return;
     try {
-      const hashes = expandWithRawPairs(Array.from(selectedHashes), photos);
       const hashSet = new Set(hashes);
       const before = captureSnapshots(photos, hashSet);
       const after = before.map((s: PhotoActionSnapshot) => ({ ...s, rating }));
+      await invoke("set_photos_rating", { hashes, rating });
       undo.pushUndoEntry({
         description: `Rating (${rating}★) on ${hashes.length} photo(s)`,
         previousActiveHash: activeHash,
@@ -1388,7 +1553,6 @@ export function useLibraryState() {
         before,
         after,
       });
-      await invoke("set_photos_rating", { hashes, rating });
       setPhotos((prev) => prev.map((p) => (hashSet.has(p.hash) ? { ...p, rating } : p)));
       addLog("TRIAGE", `Rated ${hashes.length} photo(s) ${rating}★`);
     } catch (err) {
@@ -1418,13 +1582,18 @@ export function useLibraryState() {
     }
   }
 
-  async function handleBatchStageMove(targetSub: string | null) {
-    if (selectedHashes.size === 0) return;
+  async function handleBatchStageMove(targetSub: string | null, targetHashes?: string[]) {
+    const hashes = resolveTargets(targetHashes);
+    if (hashes.length === 0) return;
     try {
-      const hashes = expandWithRawPairs(Array.from(selectedHashes), photos);
       const hashSet = new Set(hashes);
       const before = captureSnapshots(photos, hashSet);
       const after = before.map((s: PhotoActionSnapshot) => ({ ...s, staged_target: targetSub }));
+      const ops = hashes.map((hash) => ({
+        hash,
+        target_subfolder: targetSub,
+      }));
+      await invoke("stage_photos_move", { ops });
       undo.pushUndoEntry({
         description: `Stage move (${targetSub || "clear"}) on ${hashes.length} photo(s)`,
         previousActiveHash: activeHash,
@@ -1432,11 +1601,6 @@ export function useLibraryState() {
         before,
         after,
       });
-      const ops = hashes.map((hash) => ({
-        hash,
-        target_subfolder: targetSub,
-      }));
-      await invoke("stage_photos_move", { ops });
       setPhotos((prev) =>
         prev.map((p) => (hashSet.has(p.hash) ? { ...p, staged_target: targetSub } : p))
       );
@@ -1555,7 +1719,8 @@ export function useLibraryState() {
           h: found.bbox_h,
         };
       }
-    } else if (activePhoto.faces.length > 0) {
+    } else if (activePhoto.faces.length === 1) {
+      // Exactly one face on the photo: unambiguous
       const found = activePhoto.faces[0];
       previousFacePerson = found.person_name || null;
       targetBbox = {
@@ -1564,8 +1729,16 @@ export function useLibraryState() {
         w: found.bbox_w,
         h: found.bbox_h,
       };
-    } else {
-      targetBbox = { x: 0.3, y: 0.3, w: 0.4, h: 0.4 };
+    }
+
+    if (!targetBbox) {
+      // Never invent a face region: a made-up box would be saved as a reference face and skew matching
+      setError(
+        activePhoto.faces.length > 1
+          ? `This photo has ${activePhoto.faces.length} faces: click the face that is "${cleanName}" first.`
+          : `No face selected: draw a box around ${cleanName}'s face first (or tag the photo via the bulk "Person" action).`
+      );
+      return;
     }
 
     try {
@@ -1573,7 +1746,7 @@ export function useLibraryState() {
       setAutoMatchNotice(`Saving "${cleanName}" & matching against verified faces...`);
       const updatedFaces = await invoke<FaceInstance[]>("assign_face_region_and_automatch", {
         hash: activePhoto.hash,
-        imagePath: activePhoto.pair_raw_path || activePhoto.path,
+        imagePath: diskPathOf(activePhoto),
         bboxX: targetBbox.x,
         bboxY: targetBbox.y,
         bboxW: targetBbox.w,
@@ -2126,7 +2299,7 @@ export function useLibraryState() {
     setSelectedHashes,
     activeHash,
     setActiveHash,
-    lastSelectedIndexRef,
+    selectionAnchorHashRef,
     isLoupeOpen,
     setIsLoupeOpen,
     isCommitModalOpen,
@@ -2217,6 +2390,8 @@ export function useLibraryState() {
     handleBatchScanFacesOnnx,
     handleCancelFaceScan,
     handleSetFlag,
+    handleRejectToTrash,
+    handleKeepAndTrashRest,
     handleSetColorLabel,
     handleRotateSelection,
     handleBatchRate,

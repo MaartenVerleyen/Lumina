@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
+import { diskPathOf } from "../../utils/rawPairs";
 import { PhotoItem } from "../../types/lumina";
 import {
   ChevronLeft,
@@ -177,7 +178,7 @@ export default function LoupeModal({
           {/* Open External & Reveal in Explorer */}
           <div className="flex items-center gap-1 bg-zinc-900/90 border border-zinc-800 px-2 py-1 rounded-xl text-xs">
             <button
-              onClick={() => invoke("open_in_default_app", { path: activePhoto.path })}
+              onClick={() => invoke("open_in_default_app", { path: diskPathOf(activePhoto) })}
               className="px-2 py-0.5 hover:bg-zinc-800 rounded text-zinc-300 hover:text-white flex items-center gap-1 transition"
               title="Open in Default OS Photo Viewer / Editor"
             >
@@ -185,7 +186,7 @@ export default function LoupeModal({
               <span>Open External</span>
             </button>
             <button
-              onClick={() => invoke("reveal_in_file_manager", { path: activePhoto.path })}
+              onClick={() => invoke("reveal_in_file_manager", { path: diskPathOf(activePhoto) })}
               className="px-2 py-0.5 hover:bg-zinc-800 rounded text-zinc-300 hover:text-white flex items-center gap-1 transition"
               title="Reveal File in Windows Explorer / Finder"
             >

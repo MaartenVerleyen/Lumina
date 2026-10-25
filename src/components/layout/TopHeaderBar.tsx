@@ -574,10 +574,16 @@ export default function TopHeaderBar({
                           <button
                             onClick={async () => {
                               setIsLoadingVram(true);
-                              await invoke("preload_ollama_vram", { modelName: aiModel });
-                              const s = await invoke<OllamaStatus>("check_ollama_status");
-                              setOllamaStatus(s);
-                              setIsLoadingVram(false);
+                              try {
+                                await invoke("preload_ollama_vram", { modelName: aiModel });
+                                const s = await invoke<OllamaStatus>("check_ollama_status");
+                                setOllamaStatus(s);
+                              } catch (err) {
+                                console.error("Warm up VRAM failed:", err);
+                              } finally {
+                                // Never leave the button stuck in its disabled "loading" state
+                                setIsLoadingVram(false);
+                              }
                             }}
                             disabled={isLoadingVram}
                             className="flex items-center gap-1 text-[11px] bg-indigo-950/60 border border-indigo-500/40 text-indigo-300 hover:bg-indigo-900/60 px-2.5 py-1 rounded-lg transition font-medium"

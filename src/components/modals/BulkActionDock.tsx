@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { CitySearchResult, PhotoItem } from "../../types/lumina";
 import {
   CheckSquare,
@@ -19,6 +20,31 @@ import {
   X,
   XCircle,
 } from "lucide-react";
+
+// Number field that accepts a leading "-" while typing: the text is kept as typed and the parent
+// only receives a number once the text is a valid integer (a controlled number input reset "-" to 0).
+function SignedIntInput({ value, onChange }: { value: number; onChange: (n: number) => void }) {
+  const [text, setText] = useState(String(value));
+  useEffect(() => {
+    // Follow outside changes (e.g. reset to 0 after applying) but keep "-" or "" while typing
+    const parsed = parseInt(text, 10);
+    if ((Number.isNaN(parsed) ? 0 : parsed) !== value) setText(String(value));
+  }, [value]);
+  return (
+    <input
+      type="text"
+      inputMode="numeric"
+      value={text}
+      onChange={(e) => {
+        const next = e.target.value.replace(/[^\d-]/g, "").replace(/(?!^)-/g, "");
+        setText(next);
+        const n = parseInt(next, 10);
+        onChange(Number.isNaN(n) ? 0 : n);
+      }}
+      className="bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200"
+    />
+  );
+}
 
 interface BulkActionDockProps {
   selectedHashes: Set<string>;
@@ -234,21 +260,11 @@ export default function BulkActionDock({
               <div className="flex items-center gap-2">
                 <div className="flex-1 flex flex-col gap-0.5">
                   <span className="text-[10px] text-zinc-500">Hours (±)</span>
-                  <input
-                    type="number"
-                    value={shiftHoursInput}
-                    onChange={(e) => setShiftHoursInput(parseInt(e.target.value || "0", 10))}
-                    className="bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200"
-                  />
+                  <SignedIntInput value={shiftHoursInput} onChange={setShiftHoursInput} />
                 </div>
                 <div className="flex-1 flex flex-col gap-0.5">
                   <span className="text-[10px] text-zinc-500">Minutes (±)</span>
-                  <input
-                    type="number"
-                    value={shiftMinutesInput}
-                    onChange={(e) => setShiftMinutesInput(parseInt(e.target.value || "0", 10))}
-                    className="bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200"
-                  />
+                  <SignedIntInput value={shiftMinutesInput} onChange={setShiftMinutesInput} />
                 </div>
               </div>
               <button

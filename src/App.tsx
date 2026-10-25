@@ -3,7 +3,8 @@ import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useLibraryState } from "./hooks/useLibraryState";
-import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
+import { useKeyboardShortcuts, isEditableTarget } from "./hooks/useKeyboardShortcuts";
+import { diskPathOf } from "./utils/rawPairs";
 import TopHeaderBar from "./components/layout/TopHeaderBar";
 import LeftSidebar from "./components/layout/LeftSidebar";
 import RightInspector from "./components/layout/RightInspector";
@@ -107,9 +108,13 @@ export default function App() {
     };
   }, []);
 
-  // Global Tauri Drag & Drop Folder/File Listener
+  // Global Tauri Drag & Drop Folder/File Listener: registered once (re-registering every render leaked
+  // listeners, so one drop could start several concurrent folder loads)
+  const loadFolderRef = useRef(lib.handleLoadFolderPath);
+  loadFolderRef.current = lib.handleLoadFolderPath;
   useEffect(() => {
     let unlisten: (() => void) | undefined;
+    let disposed = false;
     try {
       getCurrentWebview()
         .onDragDropEvent((event) => {
@@ -119,48 +124,55 @@ export default function App() {
             setIsDraggingOverWindow(false);
             const droppedPath = event.payload.paths?.[0];
             if (droppedPath) {
-              lib.handleLoadFolderPath(droppedPath);
+              loadFolderRef.current(droppedPath);
             }
           } else {
             setIsDraggingOverWindow(false);
           }
         })
         .then((fn) => {
-          unlisten = fn;
+          // If the component unmounted before registration finished, unregister immediately
+          if (disposed) fn();
+          else unlisten = fn;
         })
         .catch(() => {});
     } catch {}
     return () => {
+      disposed = true;
       if (unlisten) unlisten();
     };
-  }, [lib.handleLoadFolderPath]);
+  }, []);
 
-  // Global Undo/Redo (`Ctrl+Z` / `Ctrl+Y`), Shortcuts (`?`), and Session Log (`Ctrl+L`) Listener
+  // Global Undo/Redo (`Ctrl+Z` / `Ctrl+Y`), Shortcuts (`?`), and Session Log (`Ctrl+L`) Listener.
+  // Registered once; reads the latest handlers through a ref.
+  const extraKeysRef = useRef({ lib, isBlockingModalOpen: false });
   useEffect(() => {
     function handleExtraKeys(e: KeyboardEvent) {
-      const tag = document.activeElement?.tagName.toLowerCase();
-      if (tag === "input" || tag === "select" || tag === "textarea") return;
+      if (isEditableTarget(e.target)) return;
+      const { lib: l, isBlockingModalOpen: blocked } = extraKeysRef.current;
+      const key = e.key.toLowerCase();
+      const mod = e.ctrlKey || e.metaKey;
 
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z" && !e.shiftKey) {
+      if (mod && key === "z" && !e.shiftKey) {
+        // Undo/redo would change photos behind an open dialog (Face Review has its own Ctrl+Z)
+        if (blocked) return;
         e.preventDefault();
-        lib.handleUndo();
-      } else if (
-        (e.ctrlKey || e.metaKey) &&
-        (e.key.toLowerCase() === "y" || (e.shiftKey && e.key.toLowerCase() === "z"))
-      ) {
+        l.handleUndo();
+      } else if (mod && (key === "y" || (e.shiftKey && key === "z"))) {
+        if (blocked) return;
         e.preventDefault();
-        lib.handleRedo();
+        l.handleRedo();
       } else if (e.key === "?" || (e.shiftKey && e.key === "/")) {
         e.preventDefault();
-        lib.setIsShortcutsModalOpen((prev) => !prev);
-      } else if (e.key.toLowerCase() === "l" && (e.ctrlKey || e.metaKey)) {
+        l.setIsShortcutsModalOpen((prev) => !prev);
+      } else if (key === "l" && mod) {
         e.preventDefault();
-        lib.setIsSessionLogModalOpen((prev) => !prev);
+        l.setIsSessionLogModalOpen((prev) => !prev);
       }
     }
     window.addEventListener("keydown", handleExtraKeys);
     return () => window.removeEventListener("keydown", handleExtraKeys);
-  }, [lib.handleUndo, lib.handleRedo, lib.setIsShortcutsModalOpen, lib.setIsSessionLogModalOpen]);
+  }, []);
 
   // Block native browser right-click menu everywhere except inside text inputs,
   // while opening custom context menus strictly on Photo cards & Folder tree items!
@@ -272,15 +284,19 @@ export default function App() {
       if (!targetPhoto) return;
 
       lib.setActiveHash(targetPhoto.hash);
-      if (extendSelection && lib.lastSelectedIndexRef.current !== null) {
-        const start = Math.min(lib.lastSelectedIndexRef.current, nextIdx);
-        const end = Math.max(lib.lastSelectedIndexRef.current, nextIdx);
+      const anchorHash = lib.selectionAnchorHashRef.current;
+      const anchorIdx = anchorHash
+        ? lib.visiblePhotos.findIndex((p) => p.hash === anchorHash)
+        : -1;
+      if (extendSelection && anchorIdx !== -1) {
+        const start = Math.min(anchorIdx, nextIdx);
+        const end = Math.max(anchorIdx, nextIdx);
         const nextSet = new Set(lib.selectedHashes);
         for (let i = start; i <= end; i++) nextSet.add(lib.visiblePhotos[i].hash);
         lib.setSelectedHashes(nextSet);
       } else {
         lib.setSelectedHashes(new Set([targetPhoto.hash]));
-        lib.lastSelectedIndexRef.current = nextIdx;
+        lib.selectionAnchorHashRef.current = targetPhoto.hash;
       }
 
       const targetRow = Math.floor(nextIdx / gridColumns);
@@ -295,22 +311,55 @@ export default function App() {
     ]
   );
 
+  // Explorer-style: right-clicking a photo inside the selection acts on the whole selection,
+  // right-clicking any other photo acts on that photo only (and selects it)
+  function contextMenuTargets(hash: string): string[] {
+    if (lib.selectedHashes.has(hash)) return Array.from(lib.selectedHashes);
+    lib.setSelectedHashes(new Set([hash]));
+    return [hash];
+  }
+
+  // Dialogs that sit on top of the grid: while one is open, grid shortcuts must not touch photos behind it.
+  // (The Loupe is deliberately not here: triaging inside the Loupe is the point of it.)
+  const isBlockingModalOpen =
+    lib.isCommitModalOpen ||
+    lib.isHealthModalOpen ||
+    lib.isSessionLogModalOpen ||
+    lib.isShortcutsModalOpen ||
+    Boolean(lib.faceReviewPerson) ||
+    Boolean(lib.aiBatchReport) ||
+    isNewFolderModalOpen ||
+    Boolean(lib.isScanningFolder || lib.scanProgress || lib.ollamaPullProgress);
+
+  const closeBlockingModals = () => {
+    lib.setIsCommitModalOpen(false);
+    lib.setIsHealthModalOpen(false);
+    lib.setIsSessionLogModalOpen(false);
+    lib.setIsShortcutsModalOpen(false);
+    lib.setAiBatchReport(null);
+    setIsNewFolderModalOpen(false);
+    // Face Review handles Escape itself (it may first close its own spotlight view)
+  };
+
+  extraKeysRef.current = { lib, isBlockingModalOpen };
+
   useKeyboardShortcuts({
     activeHash: lib.activeHash,
     activePhoto: lib.activePhoto,
     selectedHashes: lib.selectedHashes,
     isLoupeOpen: lib.isLoupeOpen,
     setIsLoupeOpen: lib.setIsLoupeOpen,
-    setIsCommitModalOpen: lib.setIsCommitModalOpen,
     setIsDrawingFace: lib.setIsDrawingFace,
     setDrawnBox: lib.setDrawnBox,
     setActiveBulkPopover: lib.setActiveBulkPopover,
+    isBlockingModalOpen,
+    closeBlockingModals,
     gridColumns,
     navigateByOffset,
     autoAdvance: lib.autoAdvance,
     searchInputRef,
     handleSetFlag: lib.handleSetFlag,
-    handleBatchStageMove: lib.handleBatchStageMove,
+    handleRejectToTrash: lib.handleRejectToTrash,
     handleBatchRate: lib.handleBatchRate,
     handleSetColorLabel: lib.handleSetColorLabel,
     handleRotateSelection: lib.handleRotateSelection,
@@ -824,10 +873,10 @@ export default function App() {
               comparePan={lib.comparePan}
               setComparePan={lib.setComparePan}
               setViewMode={lib.setViewMode}
-              setPhotos={lib.setPhotos}
               photos={lib.photos}
               setSelectedHashes={lib.setSelectedHashes}
               setAutoMatchNotice={lib.setAutoMatchNotice}
+              onKeepAndTrashRest={lib.handleKeepAndTrashRest}
             />
           ) : lib.photos.length === 0 ? (
             <div
@@ -1052,14 +1101,14 @@ export default function App() {
         onOpenDefault={() => {
           if (contextPhoto) {
             lib.handleOpenInDefaultViewer(
-              contextPhoto.pair_raw_path || contextPhoto.path
+              diskPathOf(contextPhoto)
             );
           }
         }}
         onRevealInFolder={() => {
           if (contextPhoto) {
             lib.handleRevealInFileManager(
-              contextPhoto.pair_raw_path || contextPhoto.path
+              diskPathOf(contextPhoto)
             );
           }
         }}
@@ -1081,23 +1130,16 @@ export default function App() {
         }}
         onCopyPath={() => {
           if (!contextPhoto) return;
-          const diskPath = contextPhoto.pair_raw_path || contextPhoto.path;
+          const diskPath = diskPathOf(contextPhoto);
           navigator.clipboard?.writeText(diskPath).catch(() => {});
           lib.setAutoMatchNotice(`Copied file path: ${diskPath}`);
           setTimeout(() => lib.setAutoMatchNotice(""), 3000);
         }}
         onPickPhoto={() => {
-          if (contextPhoto) {
-            lib.setSelectedHashes(new Set([contextPhoto.hash]));
-            lib.handleSetFlag("pick");
-          }
+          if (contextPhoto) lib.handleSetFlag("pick", contextMenuTargets(contextPhoto.hash));
         }}
         onStageTrash={() => {
-          if (contextPhoto) {
-            lib.setSelectedHashes(new Set([contextPhoto.hash]));
-            lib.handleSetFlag("reject");
-            lib.handleBatchStageMove("_Trash");
-          }
+          if (contextPhoto) lib.handleRejectToTrash(contextMenuTargets(contextPhoto.hash));
         }}
       />
 

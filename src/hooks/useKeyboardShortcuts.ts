@@ -1,4 +1,4 @@
-import { useEffect, RefObject } from "react";
+import { useEffect, useRef, RefObject } from "react";
 import { PhotoItem } from "../types/lumina";
 
 interface UseKeyboardShortcutsParams {
@@ -7,7 +7,6 @@ interface UseKeyboardShortcutsParams {
   selectedHashes: Set<string>;
   isLoupeOpen: boolean;
   setIsLoupeOpen: React.Dispatch<React.SetStateAction<boolean>>;
-  setIsCommitModalOpen: React.Dispatch<React.SetStateAction<boolean>>;
   setIsDrawingFace: React.Dispatch<React.SetStateAction<boolean>>;
   setDrawnBox: React.Dispatch<
     React.SetStateAction<{ x: number; y: number; w: number; h: number } | null>
@@ -15,12 +14,15 @@ interface UseKeyboardShortcutsParams {
   setActiveBulkPopover: React.Dispatch<
     React.SetStateAction<"tag" | "person" | "move" | "location" | "time" | null>
   >;
+  // A dialog (commit, health, face review, ...) is open: grid shortcuts must not act on photos behind it
+  isBlockingModalOpen: boolean;
+  closeBlockingModals: () => void;
   gridColumns: number;
   navigateByOffset: (offset: number, extendSelection: boolean) => void;
   autoAdvance: boolean;
   searchInputRef: RefObject<HTMLInputElement | null>;
   handleSetFlag: (flag: "pick" | "reject" | null) => Promise<void>;
-  handleBatchStageMove: (targetSub: string | null) => Promise<void>;
+  handleRejectToTrash: () => Promise<void>;
   handleBatchRate: (rating: number) => Promise<void>;
   handleSetColorLabel: (color: "red" | "yellow" | "green" | "blue" | null) => Promise<void>;
   handleRotateSelection: (deltaDegrees: number) => Promise<void>;
@@ -31,114 +33,115 @@ interface UseKeyboardShortcutsParams {
   handleToggleBasketSelection: () => Promise<void>;
 }
 
-export function useKeyboardShortcuts({
-  activeHash,
-  activePhoto,
-  selectedHashes,
-  isLoupeOpen,
-  setIsLoupeOpen,
-  setIsCommitModalOpen,
-  setIsDrawingFace,
-  setDrawnBox,
-  setActiveBulkPopover,
-  gridColumns,
-  navigateByOffset,
-  autoAdvance,
-  searchInputRef,
-  handleSetFlag,
-  handleBatchStageMove,
-  handleBatchRate,
-  handleSetColorLabel,
-  handleRotateSelection,
-  handleAiAnalyzeSingle,
-  setViewMode,
-  setCompareZoom,
-  setComparePan,
-  handleToggleBasketSelection,
-}: UseKeyboardShortcutsParams) {
+// Typing into a field (including contenteditable) must never trigger triage shortcuts
+export function isEditableTarget(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null;
+  if (!el) return false;
+  const tag = el.tagName?.toLowerCase();
+  return tag === "input" || tag === "select" || tag === "textarea" || el.isContentEditable;
+}
+
+function isActivatableTarget(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null;
+  if (!el) return false;
+  const tag = el.tagName?.toLowerCase();
+  return tag === "button" || tag === "a" || el.getAttribute?.("role") === "button";
+}
+
+export function useKeyboardShortcuts(params: UseKeyboardShortcutsParams) {
+  // The listener is registered once and always reads the latest props, so it never acts on stale
+  // state (e.g. an outdated AI model or selection).
+  const latest = useRef(params);
+  latest.current = params;
+
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
-        e.preventDefault();
-        searchInputRef.current?.focus();
+      const p = latest.current;
+      const key = e.key.toLowerCase();
+
+      if (isEditableTarget(e.target)) return;
+
+      if (p.isBlockingModalOpen) {
+        if (e.key === "Escape") p.closeBlockingModals();
         return;
       }
 
-      const tag = document.activeElement?.tagName.toLowerCase();
-      if (tag === "input" || tag === "select" || tag === "textarea") return;
+      if ((e.ctrlKey || e.metaKey) && key === "k") {
+        e.preventDefault();
+        p.searchInputRef.current?.focus();
+        return;
+      }
+      // Ctrl/Cmd/Alt combinations belong to the app-level handlers (undo, session log) or the OS
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+      const hasSelection = p.selectedHashes.size > 0;
+      // Holding a key down must not keep flagging/trashing photos as auto-advance moves on
+      if (e.repeat && !e.key.startsWith("Arrow")) return;
 
       if (e.key === "ArrowRight") {
         e.preventDefault();
-        navigateByOffset(1, e.shiftKey);
+        p.navigateByOffset(1, e.shiftKey);
       } else if (e.key === "ArrowLeft") {
         e.preventDefault();
-        navigateByOffset(-1, e.shiftKey);
+        p.navigateByOffset(-1, e.shiftKey);
       } else if (e.key === "ArrowDown") {
         e.preventDefault();
-        navigateByOffset(isLoupeOpen ? 1 : gridColumns, e.shiftKey);
+        p.navigateByOffset(p.isLoupeOpen ? 1 : p.gridColumns, e.shiftKey);
       } else if (e.key === "ArrowUp") {
         e.preventDefault();
-        navigateByOffset(isLoupeOpen ? -1 : -gridColumns, e.shiftKey);
+        p.navigateByOffset(p.isLoupeOpen ? -1 : -p.gridColumns, e.shiftKey);
       } else if (e.key === " ") {
+        // Let Space activate a focused button as usual
+        if (isActivatableTarget(e.target)) return;
         e.preventDefault();
-        if (activeHash) setIsLoupeOpen((prev) => !prev);
+        if (p.activeHash) p.setIsLoupeOpen((prev) => !prev);
       } else if (e.key === "Escape") {
-        setIsLoupeOpen(false);
-        setIsCommitModalOpen(false);
-        setIsDrawingFace(false);
-        setDrawnBox(null);
-        setActiveBulkPopover(null);
-      } else if (e.key.toLowerCase() === "p" && selectedHashes.size > 0) {
+        p.setIsLoupeOpen(false);
+        p.setIsDrawingFace(false);
+        p.setDrawnBox(null);
+        p.setActiveBulkPopover(null);
+      } else if (key === "p" && hasSelection) {
         e.preventDefault();
-        handleSetFlag("pick");
-        if (autoAdvance) navigateByOffset(1, false);
-      } else if (e.key.toLowerCase() === "u" && selectedHashes.size > 0) {
+        p.handleSetFlag("pick");
+        if (p.autoAdvance) p.navigateByOffset(1, false);
+      } else if (key === "u" && hasSelection) {
         e.preventDefault();
-        handleSetFlag(null);
-      } else if (e.key.toLowerCase() === "x" && selectedHashes.size > 0) {
+        p.handleSetFlag(null);
+      } else if (key === "x" && hasSelection) {
         e.preventDefault();
-        handleSetFlag("reject");
-        handleBatchStageMove("_Trash");
-        if (autoAdvance) navigateByOffset(1, false);
-      } else if (["1", "2", "3", "4", "5", "0"].includes(e.key) && selectedHashes.size > 0) {
-        handleBatchRate(Number(e.key));
-        if (autoAdvance && e.key !== "0") navigateByOffset(1, false);
-      } else if (e.key === "6" && selectedHashes.size > 0) {
-        handleSetColorLabel("red");
-      } else if (e.key === "7" && selectedHashes.size > 0) {
-        handleSetColorLabel("yellow");
-      } else if (e.key === "8" && selectedHashes.size > 0) {
-        handleSetColorLabel("green");
-      } else if (e.key === "9" && selectedHashes.size > 0) {
-        handleSetColorLabel("blue");
-      } else if (e.key === "[" && selectedHashes.size > 0) {
-        handleRotateSelection(-90);
-      } else if (e.key === "]" && selectedHashes.size > 0) {
-        handleRotateSelection(90);
-      } else if (e.key.toLowerCase() === "a" && activePhoto) {
-        handleAiAnalyzeSingle();
-      } else if (e.key.toLowerCase() === "g" && !isLoupeOpen) {
-        setViewMode("grid");
-      } else if (e.key.toLowerCase() === "m" && !isLoupeOpen) {
-        setViewMode("map");
-      } else if (e.key.toLowerCase() === "c" && !isLoupeOpen) {
-        setCompareZoom(1);
-        setComparePan({ x: 0, y: 0 });
-        setViewMode((prev) => (prev === "compare" ? "grid" : "compare"));
-      } else if (e.key.toLowerCase() === "b" && selectedHashes.size > 0) {
+        p.handleRejectToTrash();
+        if (p.autoAdvance) p.navigateByOffset(1, false);
+      } else if (["1", "2", "3", "4", "5", "0"].includes(e.key) && hasSelection) {
+        p.handleBatchRate(Number(e.key));
+        if (p.autoAdvance && e.key !== "0") p.navigateByOffset(1, false);
+      } else if (e.key === "6" && hasSelection) {
+        p.handleSetColorLabel("red");
+      } else if (e.key === "7" && hasSelection) {
+        p.handleSetColorLabel("yellow");
+      } else if (e.key === "8" && hasSelection) {
+        p.handleSetColorLabel("green");
+      } else if (e.key === "9" && hasSelection) {
+        p.handleSetColorLabel("blue");
+      } else if (e.key === "[" && hasSelection) {
+        p.handleRotateSelection(-90);
+      } else if (e.key === "]" && hasSelection) {
+        p.handleRotateSelection(90);
+      } else if (key === "a" && p.activePhoto) {
+        p.handleAiAnalyzeSingle();
+      } else if (key === "g" && !p.isLoupeOpen) {
+        p.setViewMode("grid");
+      } else if (key === "m" && !p.isLoupeOpen) {
+        p.setViewMode("map");
+      } else if (key === "c" && !p.isLoupeOpen) {
+        p.setCompareZoom(1);
+        p.setComparePan({ x: 0, y: 0 });
+        p.setViewMode((prev) => (prev === "compare" ? "grid" : "compare"));
+      } else if (key === "b" && hasSelection) {
         e.preventDefault();
-        handleToggleBasketSelection();
+        p.handleToggleBasketSelection();
       }
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [
-    activeHash,
-    activePhoto,
-    selectedHashes,
-    isLoupeOpen,
-    gridColumns,
-    navigateByOffset,
-    autoAdvance,
-  ]);
+  }, []);
 }

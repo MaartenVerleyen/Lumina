@@ -1,5 +1,5 @@
 import { useRef, useMemo } from "react";
-import { invoke, convertFileSrc } from "@tauri-apps/api/core";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import { PhotoItem } from "../../types/lumina";
 import {
   ChevronLeft,
@@ -20,10 +20,10 @@ interface CompareViewProps {
   comparePan: { x: number; y: number };
   setComparePan: React.Dispatch<React.SetStateAction<{ x: number; y: number }>>;
   setViewMode: React.Dispatch<React.SetStateAction<"grid" | "map" | "compare">>;
-  setPhotos: React.Dispatch<React.SetStateAction<PhotoItem[]>>;
   photos?: PhotoItem[];
   setSelectedHashes?: React.Dispatch<React.SetStateAction<Set<string>>>;
   setAutoMatchNotice?: React.Dispatch<React.SetStateAction<string>>;
+  onKeepAndTrashRest: (keepHash: string, otherHashes: string[]) => Promise<void>;
 }
 
 export default function CompareView({
@@ -35,10 +35,10 @@ export default function CompareView({
   comparePan,
   setComparePan,
   setViewMode,
-  setPhotos,
   photos = [],
   setSelectedHashes,
   setAutoMatchNotice,
+  onKeepAndTrashRest,
 }: CompareViewProps) {
   const isPanningCompareRef = useRef<boolean>(false);
   const panStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -251,30 +251,16 @@ export default function CompareView({
                         remainingGroups[0] ||
                         null;
 
-                      await invoke("set_photo_flag", { hashes: [cp.hash], flag: "pick" });
                       const others = comparePhotos.filter((o) => o.hash !== cp.hash);
-                      if (others.length > 0) {
-                        const otherHashes = others.map((o) => o.hash);
-                        const ops = otherHashes.map((hash) => ({
-                          hash,
-                          target_subfolder: "_Trash",
-                        }));
-                        await invoke("stage_photos_move", { ops });
-                        await invoke("set_photo_flag", {
-                          hashes: otherHashes,
-                          flag: "reject",
-                        });
+                      try {
+                        // Undo-aware (one Ctrl+Z step) and RAW+JPEG pair aware
+                        await onKeepAndTrashRest(
+                          cp.hash,
+                          others.map((o) => o.hash)
+                        );
+                      } catch {
+                        return; // error already shown by the handler; don't auto-advance
                       }
-                      const otherSet = new Set(others.map((o) => o.hash));
-                      setPhotos((prev) =>
-                        prev.map((p) => {
-                          if (p.hash === cp.hash) return { ...p, flag: "pick" };
-                          if (otherSet.has(p.hash)) {
-                            return { ...p, flag: "reject", staged_target: "_Trash" };
-                          }
-                          return p;
-                        })
-                      );
 
                       // Auto-advance to the next burst group if we were comparing a burst!
                       if (currentGroupId && nextGroup && nextGroup.members.length > 0) {
