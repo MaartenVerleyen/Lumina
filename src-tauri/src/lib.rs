@@ -343,7 +343,7 @@ pub fn run() {
             files::get_library_health_stats,
             files::prune_orphaned_cache,
             face_commands::get_people,
-            face_commands::add_person_to_photo,
+            face_commands::add_person_to_photos,
             face_commands::remove_person_from_photo,
             face_commands::find_similar_faces,
             face_commands::get_confirmed_faces_for_person,

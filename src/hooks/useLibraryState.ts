@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback, useDeferredValue } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -42,6 +42,27 @@ import {
 import { expandWithRawPairs, diskPathOf, RAW_OR_HEIC_NAME } from "../utils/rawPairs";
 
 const MAX_UNDO_STEPS = 20;
+
+// One collator for all sorting: String.localeCompare(..., options) builds a new collator on every call,
+// which dominated sort time on large libraries
+const NAME_COLLATOR = new Intl.Collator(undefined, { numeric: true });
+const TEXT_COLLATOR = new Intl.Collator();
+// Dates are "YYYY-MM-DD HH:MM:SS": plain code-unit order is the correct (and fastest) order
+const compareStrings = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+
+// Lower-cased searchable text per photo object. Photos are replaced (not mutated) on every change,
+// so the WeakMap entry refreshes automatically and stale entries are garbage-collected.
+const searchTextCache = new WeakMap<PhotoItem, string>();
+function searchTextOf(p: PhotoItem): string {
+  let text = searchTextCache.get(p);
+  if (text === undefined) {
+    text = [p.name, p.ai_caption, p.ocr_text, p.location, ...p.tags, ...p.people]
+      .join("\n")
+      .toLowerCase();
+    searchTextCache.set(p, text);
+  }
+  return text;
+}
 
 // Windows paths: compare case-insensitively and ignore a trailing separator
 function isSameFolder(a: string, b: string): boolean {
@@ -608,9 +629,14 @@ export function useLibraryState() {
     } catch {}
   }
 
+  // Debounced: opening a folder changes `folder` and then `photos.length`, which used to run the
+  // (expensive) face-match count twice back to back
   useEffect(() => {
-    refreshPeople(folder);
-    refreshTimeline(folder);
+    const timer = setTimeout(() => {
+      refreshPeople(folder);
+      refreshTimeline(folder);
+    }, 400);
+    return () => clearTimeout(timer);
   }, [photos.length, folder]);
 
   useEffect(() => {
@@ -762,6 +788,8 @@ export function useLibraryState() {
   }, []);
 
   const folderTree = useMemo(() => buildFolderTree(photos), [photos]);
+  // Typing stays responsive: the (expensive) grid filter catches up with the search box when idle
+  const deferredSearchQuery = useDeferredValue(searchQuery);
 
   useEffect(() => {
     if (folderTree.nodes.length > 0 && expandedFolders.size === 0) {
@@ -775,7 +803,7 @@ export function useLibraryState() {
       const ev = getPhotoEventName(p);
       if (ev) counts.set(ev, (counts.get(ev) || 0) + 1);
     });
-    return Array.from(counts.entries()).sort((a, b) => b[0].localeCompare(a[0]));
+    return Array.from(counts.entries()).sort((a, b) => TEXT_COLLATOR.compare(b[0], a[0]));
   }, [photos]);
 
   const allLibraryTags = useMemo(() => {
@@ -840,7 +868,7 @@ export function useLibraryState() {
   }, [photos]);
 
   const visiblePhotos = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
+    const q = deferredSearchQuery.trim().toLowerCase();
     const filtered = photos.filter((p) => {
       if (smartFilter === "PICKS" && p.flag !== "pick") return false;
       if (smartFilter === "REJECTS" && p.flag !== "reject") return false;
@@ -893,36 +921,29 @@ export function useLibraryState() {
       if (activeEvent !== "ALL" && getPhotoEventName(p) !== activeEvent) return false;
       if (activeTag !== "ALL" && !p.tags.includes(activeTag)) return false;
 
-      if (q) {
-        const mName = p.name.toLowerCase().includes(q);
-        const mCaption = p.ai_caption.toLowerCase().includes(q);
-        const mOcr = p.ocr_text.toLowerCase().includes(q);
-        const mTag = p.tags.some((t) => t.toLowerCase().includes(q));
-        const mLoc = p.location.toLowerCase().includes(q);
-        const mPerson = p.people.some((pe) => pe.toLowerCase().includes(q));
-        if (!mName && !mCaption && !mOcr && !mTag && !mLoc && !mPerson) return false;
-      }
+      if (q && !searchTextOf(p).includes(q)) return false;
       return true;
     });
 
-    const sorted = [...filtered].sort((a, b) => {
+    // `filtered` is already a fresh array: sort it in place
+    const sorted = filtered.sort((a, b) => {
       if (smartFilter === "DUPLICATES") {
         return (a.duplicate_group || 0) - (b.duplicate_group || 0) || b.sharpness - a.sharpness;
       }
       switch (sortBy) {
         case "NAME_ASC":
-          return a.name.localeCompare(b.name, undefined, { numeric: true });
+          return NAME_COLLATOR.compare(a.name, b.name);
         case "NAME_DESC":
-          return b.name.localeCompare(a.name, undefined, { numeric: true });
+          return NAME_COLLATOR.compare(b.name, a.name);
         case "DATE_DESC":
           return (
-            (b.captured_at || "").localeCompare(a.captured_at || "") ||
-            a.name.localeCompare(b.name)
+            compareStrings(b.captured_at || "", a.captured_at || "") ||
+            TEXT_COLLATOR.compare(a.name, b.name)
           );
         case "DATE_ASC":
           return (
-            (a.captured_at || "9999").localeCompare(b.captured_at || "9999") ||
-            a.name.localeCompare(b.name)
+            compareStrings(a.captured_at || "9999", b.captured_at || "9999") ||
+            TEXT_COLLATOR.compare(a.name, b.name)
           );
         case "SCORE_DESC":
           return b.sharpness - a.sharpness;
@@ -933,10 +954,10 @@ export function useLibraryState() {
         case "TAG_NAME": {
           const tA = a.tags[0] || "zzzz";
           const tB = b.tags[0] || "zzzz";
-          return tA.localeCompare(tB) || a.name.localeCompare(b.name);
+          return TEXT_COLLATOR.compare(tA, tB) || TEXT_COLLATOR.compare(a.name, b.name);
         }
         case "TAG_COUNT":
-          return b.tags.length - a.tags.length || a.name.localeCompare(b.name);
+          return b.tags.length - a.tags.length || TEXT_COLLATOR.compare(a.name, b.name);
         case "SIZE_DESC":
           return b.size_kb - a.size_kb;
         default:
@@ -987,7 +1008,7 @@ export function useLibraryState() {
     activeSubfolder,
     activeEvent,
     activeTag,
-    searchQuery,
+    deferredSearchQuery,
     sortBy,
     showAllBurstVersions,
     expandedBurstGroups,
@@ -1794,9 +1815,7 @@ export function useLibraryState() {
     try {
       const hashes = expandWithRawPairs(Array.from(selectedHashes), photos);
       const hashSet = new Set(hashes);
-      for (const h of hashes) {
-        await invoke<string[]>("add_person_to_photo", { hash: h, name: clean });
-      }
+      await invoke<number>("add_person_to_photos", { hashes, name: clean });
       setPhotos((prev) =>
         prev.map((p) =>
           hashSet.has(p.hash) && !p.people.includes(clean)
@@ -1910,18 +1929,20 @@ export function useLibraryState() {
   async function handleMapPickCoordinates(lat: number, lon: number) {
     if (selectedHashes.size === 0) return;
     try {
-      const hashes = Array.from(selectedHashes);
-      await invoke("set_manual_location", {
+      const hashes = expandWithRawPairs(Array.from(selectedHashes), photos);
+      const hashSet = new Set(hashes);
+      const location = await invoke<string>("set_manual_location", {
         hashes,
         location: "",
         latitude: lat,
         longitude: lon,
       });
-      const res = await invoke<PhotoItem[]>("scan_folder", {
-        folderPath: folder,
-        forceReprocess: false,
-      });
-      setPhotos(res);
+      // Patch just these photos (this used to rescan the whole folder)
+      setPhotos((prev) =>
+        prev.map((p) =>
+          hashSet.has(p.hash) ? { ...p, location, latitude: lat, longitude: lon } : p
+        )
+      );
       setIsPickingMapLocation(false);
       addLog("TRIAGE", `Assigned map GPS (${lat.toFixed(4)}, ${lon.toFixed(4)}) to ${hashes.length} photo(s)`);
       setAutoMatchNotice(

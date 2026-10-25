@@ -546,26 +546,27 @@ pub async fn get_people(app: AppHandle, root_folder: Option<String>) -> Result<V
     .map_err(|e| e.to_string())?
 }
 
+// Tags a person on many photos in one transaction (the UI used to call a per-photo command in a loop)
 #[tauri::command]
-pub fn add_person_to_photo(app: AppHandle, hash: String, name: String) -> Result<Vec<String>, String> {
+pub fn add_person_to_photos(app: AppHandle, hashes: Vec<String>, name: String) -> Result<usize, String> {
     let clean = name.trim().to_string();
     if clean.is_empty() {
         return Err("Name cannot be empty".into());
     }
-    let conn = open_global_db(&app)?;
-    conn.execute("INSERT OR IGNORE INTO people (name) VALUES (?1)", params![clean])
+    let mut conn = open_global_db(&app)?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    tx.execute("INSERT OR IGNORE INTO people (name) VALUES (?1)", params![clean])
         .map_err(|e| e.to_string())?;
-    conn.execute(
-        "INSERT OR IGNORE INTO photo_people (hash, person_name) VALUES (?1, ?2)",
-        params![hash, clean],
-    )
-    .map_err(|e| e.to_string())?;
-
-    let mut stmt = conn
-        .prepare("SELECT person_name FROM photo_people WHERE hash = ?1 ORDER BY person_name ASC")
-        .map_err(|e| e.to_string())?;
-    let rows = stmt.query_map(params![hash], |r| r.get(0)).map_err(|e| e.to_string())?;
-    Ok(rows.flatten().collect())
+    {
+        let mut stmt = tx
+            .prepare("INSERT OR IGNORE INTO photo_people (hash, person_name) VALUES (?1, ?2)")
+            .map_err(|e| e.to_string())?;
+        for h in &hashes {
+            stmt.execute(params![h, clean]).map_err(|e| e.to_string())?;
+        }
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(hashes.len())
 }
 
 #[tauri::command]

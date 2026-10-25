@@ -62,7 +62,7 @@ pub fn set_manual_location(
     location: String,
     latitude: Option<f64>,
     longitude: Option<f64>,
-) -> Result<(), String> {
+) -> Result<String, String> {
     let clean_loc = location.trim().to_string();
     let mut conn = open_global_db(&app)?;
 
@@ -88,7 +88,8 @@ pub fn set_manual_location(
         let _ = tx.commit();
     }
 
-    Ok(())
+    // The resolved place name (reverse-geocoded when only coordinates were given), so the UI can update in place
+    Ok(final_loc)
 }
 
 // ----------------- PICK/REJECT FLAGS, COLOR LABELS & ROTATION -----------------
