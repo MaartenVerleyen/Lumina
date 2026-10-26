@@ -44,6 +44,9 @@
   },
   "bundle": {
     "active": true,
+    "resources": {
+      "target/release/DirectML.dll": "DirectML.dll"
+    },
     "targets": [
       "nsis",
       "msi"

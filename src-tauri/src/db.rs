@@ -113,6 +113,10 @@ pub fn open_global_db(app: &AppHandle) -> Result<Connection, String> {
     let _ = conn.execute("ALTER TABLE photo_faces ADD COLUMN source TEXT DEFAULT 'user'", []);
     // 1 = the file is damaged (e.g. truncated); its thumbnail was recovered from the partial data or failed
     let _ = conn.execute("ALTER TABLE photos ADD COLUMN damaged INTEGER DEFAULT 0", []);
+    // Face engine v2: which engine produced the embedding (vectors of different engines are never compared)
+    // and the embedding itself as little-endian f32 bytes
+    let _ = conn.execute("ALTER TABLE photo_faces ADD COLUMN engine TEXT DEFAULT ''", []);
+    let _ = conn.execute("ALTER TABLE photo_faces ADD COLUMN embedding_blob BLOB", []);
 
     // Phase 2: Create high-speed covering indexes for folder-scoped & hash lookups
     let _ = conn.execute_batch(

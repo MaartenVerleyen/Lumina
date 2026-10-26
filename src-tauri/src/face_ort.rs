@@ -50,7 +50,6 @@ pub struct Detection {
 
 pub struct FaceV2 {
     pub detection: Detection,
-    pub aligned: image::RgbImage,
     pub embedding: Vec<f32>,
 }
 
@@ -218,9 +217,8 @@ impl FaceModels {
         let embeddings = self.embed(&aligned)?;
         Ok(detections
             .into_iter()
-            .zip(aligned)
             .zip(embeddings)
-            .map(|((detection, aligned), embedding)| FaceV2 { detection, aligned, embedding })
+            .map(|(detection, embedding)| FaceV2 { detection, embedding })
             .collect())
     }
 }
@@ -270,4 +268,308 @@ pub fn align_face(img: &image::RgbImage, landmarks: &[(f32, f32); 5]) -> image::
         }
     }
     out
+}
+
+// ----------------- MODEL DOWNLOAD (official InsightFace buffalo_l package) -----------------
+
+pub const BUFFALO_L_URL: &str = "https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip";
+
+#[derive(Serialize, Clone)]
+pub struct FaceModelDownloadProgress {
+    pub downloaded_mb: f64,
+    pub total_mb: f64,
+    pub percent: usize,
+    pub stage: String,
+    pub done: bool,
+}
+
+pub fn sha256_hex(path: &Path) -> Option<String> {
+    use sha2::{Digest, Sha256};
+    let mut file = File::open(path).ok()?;
+    let mut hasher = Sha256::new();
+    std::io::copy(&mut file, &mut hasher).ok()?;
+    Some(hasher.finalize().iter().map(|b| format!("{b:02x}")).collect())
+}
+
+fn model_file_ok(path: &Path, sha256: &str) -> bool {
+    sha256_hex(path).as_deref() == Some(sha256)
+}
+
+static FACE_MODELS_V2_VERIFIED: AtomicBool = AtomicBool::new(false);
+
+// Makes sure det_10g.onnx and w600k_r50.onnx exist and match the official checksums, downloading
+// InsightFace's buffalo_l package once if needed (288 MB; only the two models are kept).
+pub async fn ensure_face_models_v2(app: &AppHandle) -> Result<PathBuf, String> {
+    let dir = get_models_dir(app);
+    if FACE_MODELS_V2_VERIFIED.load(Ordering::Acquire) {
+        return Ok(dir);
+    }
+    let (det, emb) = (dir.join(DETECTOR_FILE), dir.join(EMBEDDER_FILE));
+    let check_dir = dir.clone();
+    let present = tauri::async_runtime::spawn_blocking(move || {
+        model_file_ok(&check_dir.join(DETECTOR_FILE), DETECTOR_SHA256) && model_file_ok(&check_dir.join(EMBEDDER_FILE), EMBEDDER_SHA256)
+    })
+    .await
+    .unwrap_or(false);
+    if !present {
+        download_buffalo_l(app, &dir).await?;
+        if !(model_file_ok(&det, DETECTOR_SHA256) && model_file_ok(&emb, EMBEDDER_SHA256)) {
+            return Err("The downloaded face models failed their checksum. Please try again.".into());
+        }
+    }
+    FACE_MODELS_V2_VERIFIED.store(true, Ordering::Release);
+    Ok(dir)
+}
+
+async fn download_buffalo_l(app: &AppHandle, dir: &Path) -> Result<(), String> {
+    let zip_part = dir.join("buffalo_l.zip.part");
+    // No overall timeout: 288 MB can take minutes; only connecting and stalls are bounded
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(20))
+        .read_timeout(std::time::Duration::from_secs(60))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let mut res = client
+        .get(BUFFALO_L_URL)
+        .send()
+        .await
+        .map_err(|e| format!("Could not download the face models: {e}"))?;
+    if !res.status().is_success() {
+        return Err(format!("Could not download the face models: HTTP {}", res.status()));
+    }
+    let total = res.content_length().unwrap_or(288_621_354) as f64;
+    let mut file = File::create(&zip_part).map_err(|e| e.to_string())?;
+    let mut downloaded = 0f64;
+    let mut last_percent = usize::MAX;
+    while let Some(chunk) = res.chunk().await.map_err(|e| format!("Face model download interrupted: {e}"))? {
+        std::io::Write::write_all(&mut file, &chunk).map_err(|e| e.to_string())?;
+        downloaded += chunk.len() as f64;
+        let percent = ((downloaded / total) * 100.0) as usize;
+        if percent != last_percent {
+            last_percent = percent;
+            let _ = app.emit(
+                "face-model-download",
+                FaceModelDownloadProgress {
+                    downloaded_mb: (downloaded / 1_048_576.0 * 10.0).round() / 10.0,
+                    total_mb: (total / 1_048_576.0 * 10.0).round() / 10.0,
+                    percent: percent.min(99),
+                    stage: "Downloading face recognition models".into(),
+                    done: false,
+                },
+            );
+        }
+    }
+    drop(file);
+
+    let dir = dir.to_path_buf();
+    let extracted = tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+        let archive_file = File::open(&zip_part).map_err(|e| e.to_string())?;
+        let mut archive = zip::ZipArchive::new(BufReader::new(archive_file)).map_err(|e| format!("Corrupt face model package: {e}"))?;
+        for (name, sha) in [(DETECTOR_FILE, DETECTOR_SHA256), (EMBEDDER_FILE, EMBEDDER_SHA256)] {
+            let target = dir.join(name);
+            let part = dir.join(format!("{name}.part"));
+            {
+                let mut entry = archive.by_name(name).map_err(|e| format!("{name} missing from the package: {e}"))?;
+                let mut out = File::create(&part).map_err(|e| e.to_string())?;
+                std::io::copy(&mut entry, &mut out).map_err(|e| e.to_string())?;
+            }
+            if !model_file_ok(&part, sha) {
+                let _ = fs::remove_file(&part);
+                return Err(format!("{name} failed its checksum"));
+            }
+            fs::rename(&part, &target).map_err(|e| e.to_string())?;
+        }
+        let _ = fs::remove_file(&zip_part);
+        // The previous engine's models are no longer used
+        let _ = fs::remove_file(dir.join("version-RFB-320.onnx"));
+        let _ = fs::remove_file(dir.join("w600k_mbf.onnx"));
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let _ = app.emit(
+        "face-model-download",
+        FaceModelDownloadProgress {
+            downloaded_mb: 0.0,
+            total_mb: 0.0,
+            percent: 100,
+            stage: if extracted.is_ok() { "Face models ready".into() } else { "Face model download failed".into() },
+            done: true,
+        },
+    );
+    extracted
+}
+
+// Loaded once and shared by every face operation (sessions are internally locked)
+static FACE_MODELS_V2: LazyLock<Mutex<Option<Arc<FaceModels>>>> = LazyLock::new(|| Mutex::new(None));
+
+pub async fn face_models_v2(app: &AppHandle) -> Result<Arc<FaceModels>, String> {
+    if let Some(models) = FACE_MODELS_V2.lock().ok().and_then(|g| g.clone()) {
+        return Ok(models);
+    }
+    let dir = ensure_face_models_v2(app).await?;
+    let loaded = tauri::async_runtime::spawn_blocking(move || FaceModels::load(&dir))
+        .await
+        .map_err(|e| e.to_string())??;
+    let loaded = Arc::new(loaded);
+    if let Ok(mut slot) = FACE_MODELS_V2.lock() {
+        if slot.is_none() {
+            *slot = Some(loaded.clone());
+        }
+        return Ok(slot.clone().unwrap_or(loaded));
+    }
+    Ok(loaded)
+}
+
+// Already-loaded models without awaiting (for blocking code that runs after face_models_v2 was awaited)
+pub fn loaded_face_models_v2() -> Option<Arc<FaceModels>> {
+    FACE_MODELS_V2.lock().ok().and_then(|g| g.clone())
+}
+
+// ----------------- APP INTEGRATION -----------------
+
+// Embeddings are stored as little-endian f32 bytes (2 KB per face instead of ~6 KB of JSON text)
+pub fn embedding_to_blob(embedding: &[f32]) -> Vec<u8> {
+    embedding.iter().flat_map(|v| v.to_le_bytes()).collect()
+}
+
+pub fn blob_to_embedding(blob: &[u8]) -> Vec<f32> {
+    blob.chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect()
+}
+
+// 96px face thumbnail from a box enlarged by 30%, so the UI shows the whole head rather than a tight crop
+pub fn face_thumbnail(img: &DynamicImage, bbox: (f64, f64, f64, f64)) -> image::RgbImage {
+    let (w, h) = (img.width() as f64, img.height() as f64);
+    let (cx, cy) = ((bbox.0 + bbox.2 / 2.0) * w, (bbox.1 + bbox.3 / 2.0) * h);
+    let side = (bbox.2 * w).max(bbox.3 * h) * 1.3;
+    let x = (cx - side / 2.0).clamp(0.0, (w - 1.0).max(0.0));
+    let y = (cy - side / 2.0).clamp(0.0, (h - 1.0).max(0.0));
+    let cw = side.min(w - x).max(1.0);
+    let ch = side.min(h - y).max(1.0);
+    img.crop_imm(x as u32, y as u32, cw as u32, ch as u32)
+        .resize_to_fill(96, 96, FilterType::Triangle)
+        .to_rgb8()
+}
+
+impl FaceModels {
+    // Embedding for a box the user drew: find the face's landmarks by running the detector inside the box
+    // (enlarged by 40%); if the detector finds nothing there, align on the box itself.
+    pub fn embed_region(&self, img: &DynamicImage, bbox: (f64, f64, f64, f64)) -> Result<Vec<f32>, String> {
+        let (w, h) = (img.width() as f64, img.height() as f64);
+        let pad = 0.4;
+        let x0 = ((bbox.0 - bbox.2 * pad / 2.0) * w).clamp(0.0, w - 1.0);
+        let y0 = ((bbox.1 - bbox.3 * pad / 2.0) * h).clamp(0.0, h - 1.0);
+        let x1 = ((bbox.0 + bbox.2 * (1.0 + pad / 2.0)) * w).clamp(x0 + 1.0, w);
+        let y1 = ((bbox.1 + bbox.3 * (1.0 + pad / 2.0)) * h).clamp(y0 + 1.0, h);
+        let region = img.crop_imm(x0 as u32, y0 as u32, (x1 - x0) as u32, (y1 - y0) as u32);
+        let rgb = img.to_rgb8();
+
+        let landmarks = match self.detect(&region)?.into_iter().next() {
+            // Detections are sorted by score; map the best one's landmarks back to full-image pixels
+            Some(d) => d.landmarks.map(|(lx, ly)| (lx + x0 as f32, ly + y0 as f32)),
+            None => {
+                // No detection: place the template's landmarks inside the (square-ified) user box
+                let side = (bbox.2 * w).max(bbox.3 * h) as f32;
+                let (bx, by) = (
+                    (bbox.0 * w) as f32 + ((bbox.2 * w) as f32 - side) / 2.0,
+                    (bbox.1 * h) as f32 + ((bbox.3 * h) as f32 - side) / 2.0,
+                );
+                ARCFACE_TEMPLATE.map(|(tx, ty)| (bx + tx / 112.0 * side, by + ty / 112.0 * side))
+            }
+        };
+        let aligned = align_face(&rgb, &landmarks);
+        self.embed(&[aligned])?.into_iter().next().ok_or_else(|| "no embedding produced".to_string())
+    }
+}
+
+// Stores one face (engine v2): reuses the id/name of an overlapping face on the same photo, writes the
+// thumbnail, embedding and people links. Same rules as the original save_cropped_face_and_record.
+#[allow(clippy::too_many_arguments)]
+pub fn record_face_v2(
+    app: &AppHandle,
+    conn: &Connection,
+    hash: &str,
+    img: &DynamicImage,
+    bbox: (f64, f64, f64, f64),
+    embedding: Vec<f32>,
+    score: f64,
+    person_name: Option<String>,
+    source: &str,
+) -> Option<FaceInstance> {
+    let mut previous_person: Option<String> = None;
+    let (face_id, resolved_person_name) =
+        if let Some((existing_id, existing_name)) = find_overlapping_face_id(conn, hash, bbox, None) {
+            previous_person = existing_name.clone();
+            (existing_id, person_name.or(existing_name))
+        } else {
+            (
+                format!("{}_{}_{}", hash, (bbox.0 * 100.0).round() as i32, (bbox.1 * 100.0).round() as i32),
+                person_name,
+            )
+        };
+
+    let faces_dir = get_app_storage_dir(app).join("faces");
+    let _ = fs::create_dir_all(&faces_dir);
+    let face_thumb_path = faces_dir.join(format!("{}.jpg", face_id));
+    let _ = face_thumbnail(img, bbox).save(&face_thumb_path);
+    let face_thumb_str = face_thumb_path.to_string_lossy().to_string();
+
+    let _ = conn.execute(
+        "INSERT INTO photo_faces (face_id, hash, bbox_x, bbox_y, bbox_w, bbox_h, person_name, face_thumb, embedding, embedding_blob, engine, confidence, source)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, '[]', ?9, ?10, ?11, ?12)
+         ON CONFLICT(face_id) DO UPDATE SET
+            bbox_x = excluded.bbox_x,
+            bbox_y = excluded.bbox_y,
+            bbox_w = excluded.bbox_w,
+            bbox_h = excluded.bbox_h,
+            person_name = COALESCE(excluded.person_name, photo_faces.person_name),
+            face_thumb = excluded.face_thumb,
+            embedding = '[]',
+            embedding_blob = excluded.embedding_blob,
+            engine = excluded.engine,
+            confidence = excluded.confidence,
+            source = excluded.source",
+        params![
+            face_id,
+            hash,
+            bbox.0,
+            bbox.1,
+            bbox.2,
+            bbox.3,
+            resolved_person_name,
+            face_thumb_str,
+            embedding_to_blob(&embedding),
+            FACE_ENGINE_V2,
+            score,
+            source
+        ],
+    );
+    if let Ok(mut cache) = FACE_EMBEDDING_CACHE.lock() {
+        cache.insert(face_id.clone(), embedding);
+    }
+
+    if let Some(ref p_name) = resolved_person_name {
+        let clean = p_name.trim().to_string();
+        if !clean.is_empty() {
+            let _ = conn.execute(
+                "INSERT INTO people (name, cover_face_thumb) VALUES (?1, ?2)
+                 ON CONFLICT(name) DO UPDATE SET cover_face_thumb = excluded.cover_face_thumb",
+                params![clean, face_thumb_str],
+            );
+        }
+    }
+    sync_photo_people_from_faces(conn, hash, previous_person.as_deref());
+
+    Some(FaceInstance {
+        face_id,
+        hash: hash.to_string(),
+        bbox_x: bbox.0,
+        bbox_y: bbox.1,
+        bbox_w: bbox.2,
+        bbox_h: bbox.3,
+        person_name: resolved_person_name,
+        face_thumb: face_thumb_str,
+        confidence: score,
+    })
 }

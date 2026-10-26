@@ -4,6 +4,7 @@ import luminaMark from "../../assets/lumina-mark.svg";
 import {
   OllamaStatus,
   FaceScanProgress,
+  FaceModelDownloadProgress,
   PhotoItem,
 } from "../../types/lumina";
 import {
@@ -62,6 +63,7 @@ interface TopHeaderBarProps {
   isLoadingVram: boolean;
   setIsLoadingVram: React.Dispatch<React.SetStateAction<boolean>>;
   faceScanProgress: FaceScanProgress | null;
+  faceModelDownload: FaceModelDownloadProgress | null;
   aiBatchProgress: {
     current: number;
     total: number;
@@ -120,6 +122,7 @@ export default function TopHeaderBar({
   isLoadingVram,
   setIsLoadingVram,
   faceScanProgress,
+  faceModelDownload,
   aiBatchProgress,
   handleStopAiBatch,
   handleOpenFolder,
@@ -403,8 +406,10 @@ export default function TopHeaderBar({
               {faceScanProgress ? (
                 <span className="flex items-center gap-1.5 px-2.5 py-1.5 text-indigo-200 text-xs font-mono">
                   <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-400" />
-                  <span>
-                    Faces {faceScanProgress.completed}/{faceScanProgress.total}
+                  <span title={faceModelDownload ? `${faceModelDownload.downloaded_mb} / ${faceModelDownload.total_mb} MB (one-time download)` : undefined}>
+                    {faceModelDownload
+                      ? `Face models ${faceModelDownload.percent}%`
+                      : `Faces ${faceScanProgress.completed}/${faceScanProgress.total}`}
                   </span>
                   <button
                     onClick={handleCancelFaceScan}

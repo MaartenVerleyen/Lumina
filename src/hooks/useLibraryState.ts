@@ -23,6 +23,7 @@ import {
   AiAnalysisResult,
   AiPerf,
   PerfLogEvent,
+  FaceModelDownloadProgress,
   XmpExportResult,
   CommitResult,
   TrashResult,
@@ -523,6 +524,23 @@ export function useLibraryState() {
       unlisten.then((f) => f());
     };
   }, []);
+
+  // One-time face model download progress (shown in the header while a face scan waits for it)
+  const [faceModelDownload, setFaceModelDownload] = useState<FaceModelDownloadProgress | null>(null);
+  useEffect(() => {
+    const unlisten = listen<FaceModelDownloadProgress>("face-model-download", (event) => {
+      const prog = event.payload;
+      if (prog.done) {
+        setFaceModelDownload(null);
+        addLog("FACE", prog.stage);
+      } else {
+        setFaceModelDownload(prog);
+      }
+    });
+    return () => {
+      unlisten.then((f) => f());
+    };
+  }, [addLog]);
 
   // Listen for backend performance timings (scan, thumbnails, face scan, previews)
   useEffect(() => {
@@ -1384,13 +1402,12 @@ export function useLibraryState() {
     }
   }
 
-  async function handleBatchScanFacesOnnx() {
-    if (faceScanProgress || photos.length === 0) return;
+  // Starts a background face scan (detect, align, embed) for these photos. Unconfirmed faces are replaced
+  // photo by photo as results arrive (face-scan-progress), so a cancelled scan leaves unreached photos untouched.
+  async function startFaceScan(hashes: string[], logMessage: string) {
+    if (faceScanProgressRef.current || hashes.length === 0) return;
     try {
       setError("");
-      const hashes = photos.map((p) => p.hash);
-      // Unconfirmed faces are replaced photo by photo as results arrive (face-scan-progress),
-      // so a cancelled scan leaves the photos it never reached untouched.
       setPendingFaceCounts({});
       setFaceScanProgress({
         completed: 0,
@@ -1400,13 +1417,47 @@ export function useLibraryState() {
         done: false,
         cancelled: false,
       });
-      addLog("FACE", `Started full ONNX Face Rescan on ${hashes.length} photos`);
+      addLog("FACE", logMessage);
+      // The first call downloads (288 MB, once) and loads the face models before the scan starts
       await invoke<number>("scan_library_faces_batch", { hashes });
     } catch (err) {
       setFaceScanProgress(null);
+      setFaceModelDownload(null);
       setError(String(err));
     }
   }
+
+  async function handleBatchScanFacesOnnx() {
+    if (photos.length === 0) return;
+    await startFaceScan(
+      photos.map((p) => p.hash),
+      `Started face scan on ${photos.length} photos`
+    );
+  }
+
+  // Face engine upgrade: photos whose faces came from the previous engine are re-scanned automatically once
+  // per opened folder (confirmed names and rejections carry over; the old embeddings can't be matched)
+  const faceScanProgressRef = useRef(faceScanProgress);
+  faceScanProgressRef.current = faceScanProgress;
+  const faceUpgradeCheckedRef = useRef<Set<string>>(new Set());
+  const hasPhotos = photos.length > 0;
+  useEffect(() => {
+    if (!folder || !hasPhotos || faceUpgradeCheckedRef.current.has(folder)) return;
+    const timer = setTimeout(async () => {
+      if (faceScanProgressRef.current) return;
+      faceUpgradeCheckedRef.current.add(folder);
+      try {
+        const outdated = await invoke<string[]>("get_outdated_face_photos", { rootFolder: folder });
+        if (outdated.length > 0) {
+          await startFaceScan(
+            outdated,
+            `Upgrading faces in ${outdated.length} photo(s) to the new face engine (names and rejections are kept)`
+          );
+        }
+      } catch {}
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [folder, hasPhotos]);
 
   async function handleCancelFaceScan() {
     try {
@@ -2477,6 +2528,7 @@ export function useLibraryState() {
     handleDetectFacesSingleOnnx,
     handleBatchScanFacesOnnx,
     handleCancelFaceScan,
+    faceModelDownload,
     handleSetFlag,
     handleRejectToTrash,
     handleKeepAndTrashRest,

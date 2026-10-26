@@ -193,6 +193,15 @@ export interface TrashResult {
   failures: FileOpFailure[];
 }
 
+// One-time download of the face recognition models (InsightFace buffalo_l, 288 MB)
+export interface FaceModelDownloadProgress {
+  downloaded_mb: number;
+  total_mb: number;
+  percent: number;
+  stage: string;
+  done: boolean;
+}
+
 export interface XmpExportResult {
   exported: number;
   skipped_foreign: number;

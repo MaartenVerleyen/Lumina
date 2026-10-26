@@ -10,9 +10,7 @@ pub async fn detect_faces_in_photo(
     force_onnx: Option<bool>,
 ) -> Result<Vec<FaceInstance>, String> {
     let run_neural = force_onnx.unwrap_or(false);
-    if run_neural {
-        ensure_neural_face_models(app.clone()).await?;
-    }
+    let models = if run_neural { Some(face_models_v2(&app).await?) } else { loaded_face_models_v2() };
 
     tauri::async_runtime::spawn_blocking(move || {
         let conn = open_global_db(&app)?;
@@ -20,17 +18,30 @@ pub async fn detect_faces_in_photo(
         if !run_neural && !existing.is_empty() {
             return Ok(existing);
         }
+        let Some(models) = models else {
+            return Ok(existing);
+        };
 
         if let Ok(img) = open_and_orient_image(Path::new(&image_path)) {
-            let onnx_boxes = detect_faces_with_onnx(&app, &img);
+            let faces = models.analyze(&img)?;
             let old_rejected = rejected_unnamed_faces(&conn, &hash);
-            // Clear any old un-named boxes on this photo before inserting fresh ONNX boxes
+            // Clear any old un-named boxes on this photo before inserting the fresh detections
             let _ = conn.execute(
                 "DELETE FROM photo_faces WHERE hash = ?1 AND (person_name IS NULL OR person_name = '')",
                 params![hash],
             );
-            for (bx, by, bw, bh, _score) in onnx_boxes {
-                let _ = save_cropped_face_and_record(&app, &conn, &hash, &img, (bx, by, bw, bh), None, "onnx");
+            for face in faces.into_iter().filter(|f| is_usable_face(&img, f.detection.bbox)) {
+                let _ = record_face_v2(
+                    &app,
+                    &conn,
+                    &hash,
+                    &img,
+                    face.detection.bbox,
+                    face.embedding,
+                    face.detection.score as f64,
+                    None,
+                    "scrfd",
+                );
             }
             if !old_rejected.is_empty() {
                 let new_faces: Vec<(String, (f64, f64, f64, f64))> = get_faces_for_hash(&conn, &hash)
@@ -49,7 +60,14 @@ pub async fn detect_faces_in_photo(
 
 pub struct PendingFaceWrite {
     pub face: FaceInstance,
-    pub emb_json: String,
+    pub embedding: Vec<f32>,
+}
+
+// Faces narrower than this (in the decoded ~1920px image) are too small to recognise reliably
+const MIN_FACE_PX: f64 = 20.0;
+
+pub fn is_usable_face(img: &DynamicImage, bbox: (f64, f64, f64, f64)) -> bool {
+    bbox.2 * img.width() as f64 >= MIN_FACE_PX
 }
 
 #[tauri::command]
@@ -57,14 +75,14 @@ pub async fn scan_library_faces_batch(
     app: AppHandle,
     hashes: Vec<String>,
 ) -> Result<usize, String> {
-    // 1. Ensure the UltraFace ONNX model is downloaded & cached locally
-    let _ = ensure_neural_face_models(app.clone()).await?;
+    // Downloads (first time only) and loads engine v2 before the background thread starts
+    let models = face_models_v2(&app).await?;
 
     let total_hashes = hashes.len();
     let app_clone = app.clone();
     FACE_SCAN_CANCEL.store(false, Ordering::Release);
     std::thread::spawn(move || {
-        let outcome = run_face_scan(&app_clone, hashes);
+        let outcome = run_face_scan(&app_clone, hashes, models);
         // However the scan ended (finished, cancelled, DB error, empty list), the UI must get a final `done`
         if !outcome.done_sent {
             let _ = app_clone.emit(
@@ -146,18 +164,31 @@ pub fn rejected_unnamed_faces(conn: &Connection, hash: &str) -> Vec<(String, (f6
         .unwrap_or_default()
 }
 
-fn run_face_scan(app_clone: &AppHandle, hashes: Vec<String>) -> FaceScanOutcome {
+fn run_face_scan(app_clone: &AppHandle, hashes: Vec<String>, models: Arc<FaceModels>) -> FaceScanOutcome {
     {
         let face_scan_started = Instant::now();
         let Ok(mut conn) = open_global_db(app_clone) else {
             return FaceScanOutcome::default();
         };
 
-        // Pre-warm the ONNX model plans once before entering the parallel Rayon pool
-        let model_load_started = Instant::now();
-        let detector = get_or_load_ultraface(app_clone);
-        let _ = get_or_load_mobilefacenet(app_clone);
-        let model_load_ms = elapsed_ms(model_load_started);
+        // Named faces still embedded by the old engine: if the new detector doesn't find them again, they are
+        // re-embedded from their stored box so no confirmed name is left on an incomparable embedding
+        let mut named_outdated: HashMap<String, Vec<(String, (f64, f64, f64, f64))>> = HashMap::new();
+        if let Ok(mut stmt) = conn.prepare(
+            "SELECT face_id, hash, bbox_x, bbox_y, bbox_w, bbox_h FROM photo_faces
+             WHERE person_name IS NOT NULL AND person_name != '' AND COALESCE(engine, '') != ?1",
+        ) {
+            let wanted: std::collections::HashSet<&String> = hashes.iter().collect();
+            if let Ok(rows) = stmt.query_map(params![FACE_ENGINE_V2], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, (r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)))
+            }) {
+                for (fid, h, bbox) in rows.flatten() {
+                    if wanted.contains(&h) {
+                        named_outdated.entry(h).or_default().push((fid, bbox));
+                    }
+                }
+            }
+        }
 
         // Remember rejected unnamed faces before they are deleted, so their rejections can be re-attached
         let old_rejected: HashMap<String, Vec<(String, (f64, f64, f64, f64))>> = hashes
@@ -207,7 +238,7 @@ fn run_face_scan(app_clone: &AppHandle, hashes: Vec<String>) -> FaceScanOutcome 
                     cancelled = true;
                     break;
                 }
-                let chunk_results: Vec<(String, Vec<PendingFaceWrite>)> = chunk
+                let chunk_results: Vec<(String, Vec<PendingFaceWrite>, Vec<(String, Vec<f32>)>)> = chunk
                     .par_iter()
                     .filter_map(|h| {
                         let orig_path = path_map.get(h)?;
@@ -219,13 +250,28 @@ fn run_face_scan(app_clone: &AppHandle, hashes: Vec<String>) -> FaceScanOutcome 
                         };
 
                         let img = open_and_orient_image(Path::new(&load_path)).ok()?;
-                        let faces = detect_and_embed_faces(detector.as_ref()?, &img);
+                        let faces: Vec<FaceV2> = models
+                            .analyze(&img)
+                            .ok()?
+                            .into_iter()
+                            .filter(|f| is_usable_face(&img, f.detection.bbox))
+                            .collect();
+
+                        // Old-engine named faces that no new detection covers: re-embed them from their box
+                        let reembeds: Vec<(String, Vec<f32>)> = named_outdated
+                            .get(h)
+                            .map(|named| {
+                                named
+                                    .iter()
+                                    .filter(|(_, bbox)| faces.iter().all(|f| bbox_iou(*bbox, f.detection.bbox) < 0.3))
+                                    .filter_map(|(fid, bbox)| models.embed_region(&img, *bbox).ok().map(|e| (fid.clone(), e)))
+                                    .collect()
+                            })
+                            .unwrap_or_default();
 
                         let mut writes = Vec::with_capacity(faces.len());
-                        for DetectedFace { bbox: (bx, by, bw, bh), crop: cropped, embedding, .. } in faces {
-                            let emb_json =
-                                serde_json::to_string(&embedding).unwrap_or_else(|_| "[]".to_string());
-
+                        for face in faces {
+                            let (bx, by, bw, bh) = face.detection.bbox;
                             let face_id = format!(
                                 "{}_{}_{}",
                                 h,
@@ -233,13 +279,7 @@ fn run_face_scan(app_clone: &AppHandle, hashes: Vec<String>) -> FaceScanOutcome 
                                 (by * 100.0).round() as i32
                             );
                             let face_thumb_path = faces_dir.join(format!("{}.jpg", face_id));
-                            let thumb_96 = cropped.resize_to_fill(96, 96, FilterType::Triangle).to_rgb8();
-                            let _ = thumb_96.save(&face_thumb_path);
-                            let face_thumb_str = face_thumb_path.to_string_lossy().to_string();
-
-                            let matched_person: Option<String> = None;
-                            let matched_conf = 1.0f64;
-
+                            let _ = face_thumbnail(&img, face.detection.bbox).save(&face_thumb_path);
                             writes.push(PendingFaceWrite {
                                 face: FaceInstance {
                                     face_id,
@@ -248,15 +288,15 @@ fn run_face_scan(app_clone: &AppHandle, hashes: Vec<String>) -> FaceScanOutcome 
                                     bbox_y: by,
                                     bbox_w: bw,
                                     bbox_h: bh,
-                                    person_name: matched_person,
-                                    face_thumb: face_thumb_str,
-                                    confidence: matched_conf,
+                                    person_name: None,
+                                    face_thumb: face_thumb_path.to_string_lossy().to_string(),
+                                    confidence: face.detection.score as f64,
                                 },
-                                emb_json,
+                                embedding: face.embedding,
                             });
                         }
 
-                        Some((h.clone(), writes))
+                        Some((h.clone(), writes, reembeds))
                     })
                     .collect();
 
@@ -266,7 +306,7 @@ fn run_face_scan(app_clone: &AppHandle, hashes: Vec<String>) -> FaceScanOutcome 
 
                 if !chunk_results.is_empty() {
                     if let Ok(tx) = conn.transaction() {
-                        for (h, writes) in &chunk_results {
+                        for (h, writes, reembeds) in &chunk_results {
                             let _ = tx.execute(
                                 "DELETE FROM photo_faces WHERE hash = ?1 AND (person_name IS NULL OR person_name = '')",
                                 params![h],
@@ -288,10 +328,8 @@ fn run_face_scan(app_clone: &AppHandle, hashes: Vec<String>) -> FaceScanOutcome 
                                     (f.face_id.clone(), f.person_name.clone())
                                 };
 
-                                if let Ok(vec) = serde_json::from_str::<Vec<f32>>(&item.emb_json) {
-                                    if let Ok(mut guard) = FACE_EMBEDDING_CACHE.lock() {
-                                        guard.insert(target_face_id.clone(), vec);
-                                    }
+                                if let Ok(mut guard) = FACE_EMBEDDING_CACHE.lock() {
+                                    guard.insert(target_face_id.clone(), item.embedding.clone());
                                 }
                                 let target_thumb_str = if target_face_id != f.face_id {
                                     let existing_thumb = faces_dir.join(format!("{}.jpg", target_face_id));
@@ -302,8 +340,8 @@ fn run_face_scan(app_clone: &AppHandle, hashes: Vec<String>) -> FaceScanOutcome 
                                 };
 
                                 let _ = tx.execute(
-                                    "INSERT INTO photo_faces (face_id, hash, bbox_x, bbox_y, bbox_w, bbox_h, person_name, face_thumb, embedding, confidence, source)
-                                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'onnx')
+                                    "INSERT INTO photo_faces (face_id, hash, bbox_x, bbox_y, bbox_w, bbox_h, person_name, face_thumb, embedding, embedding_blob, engine, confidence, source)
+                                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, '[]', ?9, ?11, ?10, 'scrfd')
                                     ON CONFLICT(face_id) DO UPDATE SET
                                         bbox_x = excluded.bbox_x,
                                         bbox_y = excluded.bbox_y,
@@ -311,9 +349,11 @@ fn run_face_scan(app_clone: &AppHandle, hashes: Vec<String>) -> FaceScanOutcome 
                                         bbox_h = excluded.bbox_h,
                                         person_name = COALESCE(photo_faces.person_name, excluded.person_name),
                                         face_thumb = excluded.face_thumb,
-                                        embedding = excluded.embedding,
+                                        embedding = '[]',
+                                        embedding_blob = excluded.embedding_blob,
+                                        engine = excluded.engine,
                                         confidence = excluded.confidence,
-                                        source = 'onnx'",
+                                        source = 'scrfd'",
                                     params![
                                         target_face_id,
                                         f.hash,
@@ -323,8 +363,9 @@ fn run_face_scan(app_clone: &AppHandle, hashes: Vec<String>) -> FaceScanOutcome 
                                         f.bbox_h,
                                         target_person,
                                         target_thumb_str,
-                                        item.emb_json,
-                                        f.confidence
+                                        embedding_to_blob(&item.embedding),
+                                        f.confidence,
+                                        FACE_ENGINE_V2
                                     ],
                                 );
                                 if let Some(ref matched_name) = target_person {
@@ -339,11 +380,20 @@ fn run_face_scan(app_clone: &AppHandle, hashes: Vec<String>) -> FaceScanOutcome 
                             if let Some(old) = old_rejected.get(h) {
                                 carry_over_rejections(&tx, old, &inserted);
                             }
+                            for (fid, embedding) in reembeds {
+                                let _ = tx.execute(
+                                    "UPDATE photo_faces SET embedding = '[]', embedding_blob = ?1, engine = ?2 WHERE face_id = ?3",
+                                    params![embedding_to_blob(embedding), FACE_ENGINE_V2, fid],
+                                );
+                                if let Ok(mut guard) = FACE_EMBEDDING_CACHE.lock() {
+                                    guard.insert(fid.clone(), embedding.clone());
+                                }
+                            }
                         }
                         let _ = tx.commit();
                     }
 
-                    for (h, _) in &chunk_results {
+                    for (h, _, _) in &chunk_results {
                         let all_faces = get_faces_for_hash(&conn, h);
                         let mut p_list: Vec<String> = all_faces
                             .iter()
@@ -378,15 +428,15 @@ fn run_face_scan(app_clone: &AppHandle, hashes: Vec<String>) -> FaceScanOutcome 
         let total_ms = elapsed_ms(face_scan_started);
         emit_perf(
             app_clone,
-            if cancelled { "Face scan (cancelled)" } else { "Face scan (UltraFace + MobileFaceNet)" },
+            if cancelled { "Face scan (cancelled)" } else { "Face scan (SCRFD + aligned ArcFace)" },
             face_scan_started,
             completed_count,
             format!(
-                "{} photos/s on {} threads · {} faces found · model load {} ms",
+                "{} photos/s · {} decode threads · models on {} · {} faces found",
                 per_second(completed_count, total_ms),
                 num_threads,
-                faces_found,
-                model_load_ms
+                models.device,
+                faces_found
             ),
         );
 
@@ -411,6 +461,7 @@ pub async fn assign_face_region_and_automatch(
     bbox_h: f64,
     person_name: String,
 ) -> Result<Vec<FaceInstance>, String> {
+    let models = face_models_v2(&app).await?;
     tauri::async_runtime::spawn_blocking(move || {
         let clean_name = person_name.trim().to_string();
         if clean_name.is_empty() {
@@ -421,16 +472,11 @@ pub async fn assign_face_region_and_automatch(
             .map_err(|e| format!("Failed to open image: {e}"))?;
         let conn = open_global_db(&app)?;
 
-        let _saved_face = save_cropped_face_and_record(
-            &app,
-            &conn,
-            &hash,
-            &img,
-            (bbox_x, bbox_y, bbox_w, bbox_h),
-            Some(clean_name.clone()),
-            "onnx",
-        )
-        .ok_or("Failed to crop face region")?;
+        // The landmarks for alignment come from running the detector inside the box
+        let bbox = (bbox_x, bbox_y, bbox_w, bbox_h);
+        let embedding = models.embed_region(&img, bbox)?;
+        let _saved_face = record_face_v2(&app, &conn, &hash, &img, bbox, embedding, 1.0, Some(clean_name.clone()), "user")
+            .ok_or("Failed to save the face")?;
 
         // Emit completion event without silently mutating other photos behind the user's back;
         // pending matches will surface via +N? badges for explicit confirmation in the Review Studio!
@@ -1251,6 +1297,28 @@ pub async fn assign_faces_to_person_batch(
             updated_faces_map.insert(h.clone(), get_faces_for_hash(&conn, &h));
         }
         Ok(updated_faces_map)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+// Photos in the folder that still have faces from an older face engine (they need re-detecting so their
+// faces can be matched again). Used to start the automatic upgrade scan when a folder is opened.
+#[tauri::command]
+pub async fn get_outdated_face_photos(app: AppHandle, root_folder: Option<String>) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let conn = open_global_db(&app)?;
+        let prefix = make_folder_prefix(root_folder.as_deref());
+        let mut stmt = conn
+            .prepare(
+                "SELECT DISTINCT pf.hash FROM photo_faces pf JOIN photos p ON p.hash = pf.hash
+                 WHERE COALESCE(pf.engine, '') != ?1 AND p.current_path LIKE ?2 ESCAPE '!'",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params![FACE_ENGINE_V2, prefix], |r| r.get::<_, String>(0))
+            .map_err(|e| e.to_string())?;
+        Ok(rows.flatten().collect())
     })
     .await
     .map_err(|e| e.to_string())?

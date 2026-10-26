@@ -8,7 +8,8 @@
 //
 // PowerShell: $env:LUMINA_FACE_EVAL="D:\FaceEval"; $env:LUMINA_DIAG_OUT="<folder for the JSON report>"
 //             cargo test --release --lib face_eval -- --ignored --nocapture
-// Optional:   $env:LUMINA_MODELS (default %LOCALAPPDATA%\com.amazhr.lumina\models), $env:LUMINA_EVAL_LABEL
+// Optional:   $env:LUMINA_MODELS (folder with det_10g.onnx and w600k_r50.onnx; default
+//             %LOCALAPPDATA%\com.amazhr.lumina\models), $env:LUMINA_EVAL_LABEL
 
 use crate::*;
 
@@ -35,9 +36,9 @@ fn image_files(dir: &Path) -> Vec<PathBuf> {
     files
 }
 
-// Either the current engine (UltraFace + unaligned MobileFaceNet) or engine v2 (SCRFD + aligned ArcFace r50)
+// The app's face engine (engine v2: SCRFD + aligned ArcFace r50). The old UltraFace + MobileFaceNet engine was
+// removed after its baseline was recorded (53/100 faces found, rank-1 32%, 0% recall at its 0.60 threshold).
 enum Engine {
-    V1(Arc<OnnxPlan>),
     V2(FaceModels),
 }
 
@@ -49,10 +50,6 @@ struct EvalFace {
 fn faces_in(engine: &Engine, path: &Path) -> Option<Vec<EvalFace>> {
     let img = open_and_orient_image(path).ok()?;
     Some(match engine {
-        Engine::V1(detector) => detect_and_embed_faces(detector, &img)
-            .into_iter()
-            .map(|f| EvalFace { bbox: f.bbox, embedding: f.embedding })
-            .collect(),
         Engine::V2(models) => models
             .analyze(&img)
             .ok()?
@@ -118,18 +115,12 @@ fn face_eval() {
     let models = std::env::var("LUMINA_MODELS").map(PathBuf::from).unwrap_or_else(|_| {
         PathBuf::from(std::env::var("LOCALAPPDATA").unwrap_or_default()).join("com.amazhr.lumina").join("models")
     });
-    let label = std::env::var("LUMINA_EVAL_LABEL").unwrap_or_else(|_| "current engine".to_string());
+    let label = std::env::var("LUMINA_EVAL_LABEL").unwrap_or_else(|_| "engine v2".to_string());
     let started = Instant::now();
 
-    let engine = if std::env::var("LUMINA_EVAL_ENGINE").as_deref() == Ok("v2") {
-        let dir = std::env::var("LUMINA_NEW_MODELS").map(PathBuf::from).unwrap_or(models.clone());
-        let loaded = FaceModels::load(&dir).expect("engine v2 models not found");
-        eprintln!("engine v2 on {}", loaded.device);
-        Engine::V2(loaded)
-    } else {
-        get_or_load_mobilefacenet_from(&models).expect("face embedding model not found");
-        Engine::V1(get_or_load_ultraface_from(&models).expect("face detector model not found"))
-    };
+    let loaded = FaceModels::load(&models).expect("face models not found (det_10g.onnx, w600k_r50.onnx)");
+    eprintln!("face engine on {}", loaded.device);
+    let engine = Engine::V2(loaded);
     let detector = &engine;
 
     let set = PathBuf::from(set);

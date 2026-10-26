@@ -32,10 +32,12 @@ reqwest = { version = "0.12", features = ["json"] }
 base64 = "0.22"
 kamadak-exif = "0.5"
 reverse_geocoder = "4.1"
-tract-onnx = "0.21"
 # ONNX Runtime for the face engine (SCRFD + ArcFace): DirectML on the GPU, CPU as fallback.
 # Pinned: the 2.0 API still changes between release candidates.
 ort = { version = "=2.0.0-rc.15", features = ["directml"] }
+# Face models come from InsightFace's official buffalo_l package: unzip two files, verify their SHA-256
+zip = { version = "9", default-features = false, features = ["deflate"] }
+sha2 = "0.10"
 trash = "5"
 # Already in the tree via Tauri; `select!`/`Notify` let a Stop abort an in-flight AI request
 tokio = { version = "1", features = ["sync", "macros"] }

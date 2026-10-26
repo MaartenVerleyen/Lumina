@@ -427,6 +427,7 @@ export default function App() {
         isLoadingVram={lib.isLoadingVram}
         setIsLoadingVram={lib.setIsLoadingVram}
         faceScanProgress={lib.faceScanProgress}
+        faceModelDownload={lib.faceModelDownload}
         aiBatchProgress={lib.aiBatchProgress}
         handleStopAiBatch={lib.handleStopAiBatch}
         handleOpenFolder={lib.handleOpenFolder}

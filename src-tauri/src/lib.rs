@@ -13,7 +13,6 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Instant;
-use tract_onnx::prelude::*;
 use tauri::{AppHandle, Emitter, Manager};
 use walkdir::WalkDir;
 
@@ -357,10 +356,10 @@ pub fn run() {
             face_commands::reject_face_candidates_batch,
             face_commands::unreject_face_candidates_batch,
             face_commands::get_pending_face_match_counts,
-            face_engine::ensure_neural_face_models,
             face_commands::detect_faces_in_photo,
             face_commands::scan_library_faces_batch,
             face_commands::cancel_face_scan,
+            face_commands::get_outdated_face_photos,
             face_engine::get_face_match_config,
             face_commands::assign_face_region_and_automatch,
             face_commands::remove_face_box,

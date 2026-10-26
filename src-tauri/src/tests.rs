@@ -345,12 +345,26 @@ fn shared_sidecar_stays_while_pair_partner_remains() {
 // ----------------- FACE MODEL FILE VALIDATION -----------------
 
 #[test]
-fn corrupt_or_missing_model_files_are_rejected() {
+fn sha256_matches_known_vector_and_handles_missing_files() {
+    use crate::face_ort::sha256_hex;
     let dir = fresh_dir("models");
-    let junk = dir.join("junk.onnx");
-    fs::write(&junk, vec![0x5Au8; 200_000]).unwrap();
-    assert!(!onnx_model_file_is_valid(&junk, 100_000), "large-enough junk must not pass as a model");
-    assert!(!onnx_model_file_is_valid(&dir.join("missing.onnx"), 100_000));
+    let file = dir.join("abc.bin");
+    fs::write(&file, b"abc").unwrap();
+    // FIPS 180-2 test vector for "abc"
+    assert_eq!(
+        sha256_hex(&file).as_deref(),
+        Some("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+    );
+    assert_eq!(sha256_hex(&dir.join("missing.onnx")), None);
+}
+
+#[test]
+fn embedding_blob_round_trips() {
+    use crate::face_ort::{blob_to_embedding, embedding_to_blob};
+    let v: Vec<f32> = (0..512).map(|i| (i as f32 * 0.37).sin()).collect();
+    let blob = embedding_to_blob(&v);
+    assert_eq!(blob.len(), 512 * 4);
+    assert_eq!(blob_to_embedding(&blob), v);
 }
 
 // ----------------- FACE REJECTIONS SURVIVE RE-DETECTION -----------------
