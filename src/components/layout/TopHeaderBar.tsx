@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, RefObject } from "react";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import luminaMark from "../../assets/lumina-mark.svg";
+import type { GridStyle, CardDetails } from "../views/VirtualPhotoGrid";
 import {
   OllamaStatus,
   FaceScanProgress,
@@ -40,6 +41,10 @@ import {
 } from "lucide-react";
 
 interface TopHeaderBarProps {
+  gridStyle: GridStyle;
+  setGridStyle: (value: GridStyle) => void;
+  cardDetails: CardDetails;
+  setCardDetails: (value: CardDetails) => void;
   folder: string;
   photos: PhotoItem[];
   visiblePhotos: PhotoItem[];
@@ -99,6 +104,10 @@ interface TopHeaderBarProps {
 }
 
 export default function TopHeaderBar({
+  gridStyle,
+  setGridStyle,
+  cardDetails,
+  setCardDetails,
   folder,
   photos,
   visiblePhotos,
@@ -217,7 +226,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
   }
 
   return (
-    <header className="flex items-center justify-between px-4 py-2 bg-[#10121a]/95 backdrop-blur-md border-b border-zinc-800/70 z-30 gap-3 shrink-0">
+    <header className="flex items-center justify-between px-4 py-2 bg-card/95 backdrop-blur-md border-b border-zinc-800/70 z-30 gap-3 shrink-0">
       {/* ZONE 1: Left Navigation, Unified Library Split-Pill, View Switcher & Undo/Redo */}
       <div className="flex items-center gap-2.5 shrink-0">
         <button
@@ -267,7 +276,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
           </div>
 
           {isLibraryMenuOpen && (
-            <div className="absolute left-0 top-full mt-1.5 w-64 bg-[#12141d] border border-zinc-700/80 rounded-xl shadow-2xl p-1.5 z-50 text-xs">
+            <div className="absolute left-0 top-full mt-1.5 w-64 bg-raised border border-zinc-700/80 rounded-xl shadow-2xl p-1.5 z-50 text-xs">
               <button
                 onClick={() => {
                   setIsLibraryMenuOpen(false);
@@ -278,7 +287,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                 <FolderOpen className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
                 <div>
                   <div className="font-medium text-zinc-200">Switch Library Folder...</div>
-                  <div className="text-[10px] text-zinc-500 truncate max-w-[180px]">
+                  <div className="text-[11px] text-zinc-500 truncate max-w-[180px]">
                     {folder}
                   </div>
                 </div>
@@ -294,7 +303,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                 <RefreshCw className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
                 <div>
                   <div className="font-medium text-zinc-200">Quick Rescan</div>
-                  <div className="text-[10px] text-zinc-500">
+                  <div className="text-[11px] text-zinc-500">
                     Detect added/removed files & refresh EXIF
                   </div>
                 </div>
@@ -309,7 +318,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                 <Zap className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
                 <div>
                   <div className="font-medium text-zinc-200">Deep Reprocess Thumbnails</div>
-                  <div className="text-[10px] text-zinc-500">
+                  <div className="text-[11px] text-zinc-500">
                     Rebuild 360px thumbs, dHash & focus scores
                   </div>
                 </div>
@@ -461,7 +470,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                   <ScanFace className="w-3.5 h-3.5 text-indigo-400" />
                   <span>Scan Faces</span>
                   {totalPendingFaceMatches > 0 && (
-                    <span className="px-1.5 py-0.2 rounded-full bg-amber-500 text-zinc-950 font-mono text-[10px] font-bold">
+                    <span className="px-1.5 py-0.2 rounded-full bg-amber-500 text-zinc-950 font-mono text-[11px] font-bold">
                       +{totalPendingFaceMatches}
                     </span>
                   )}
@@ -537,7 +546,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
             </div>
 
             {isAiMenuOpen && (
-              <div className="absolute right-0 top-full mt-1.5 w-76 bg-[#12141d] border border-zinc-700/80 rounded-xl shadow-2xl p-3 z-50 flex flex-col gap-2.5 text-xs">
+              <div className="absolute right-0 top-full mt-1.5 w-76 bg-raised border border-zinc-700/80 rounded-xl shadow-2xl p-3 z-50 flex flex-col gap-2.5 text-xs">
                 {onOpenFaceReviewStudio && (
                   <button
                     onClick={() => {
@@ -551,7 +560,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                       <span>Open Face Match Review Studio</span>
                     </span>
                     {totalPendingFaceMatches > 0 && (
-                      <span className="px-2 py-0.5 rounded-full bg-amber-500 text-zinc-950 font-mono text-[10px] font-bold">
+                      <span className="px-2 py-0.5 rounded-full bg-amber-500 text-zinc-950 font-mono text-[11px] font-bold">
                         +{totalPendingFaceMatches} matches
                       </span>
                     )}
@@ -566,14 +575,14 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                     Ollama Vision Engine
                   </span>
                   {ollamaStatus?.running ? (
-                    <span className="text-[10px] text-emerald-400 font-mono">
+                    <span className="text-[11px] text-emerald-400 font-mono">
                       {ollamaStatus.active_vram_model ? "VRAM Active" : "Online"}
                     </span>
                   ) : (
                     <button
                       onClick={startOllama}
                       disabled={isStartingOllama}
-                      className="text-[10px] bg-red-950/60 border border-red-800/60 text-red-300 px-2 py-0.5 rounded hover:bg-red-900/60"
+                      className="text-[11px] bg-red-950/60 border border-red-800/60 text-red-300 px-2 py-0.5 rounded hover:bg-red-900/60"
                     >
                       {isStartingOllama ? "Starting…" : "Start Ollama"}
                     </button>
@@ -584,7 +593,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                   (hasVisionModel ? (
                     <>
                       <div className="flex flex-col gap-1">
-                        <label className="text-[10px] text-zinc-500 uppercase font-bold">
+                        <label className="text-[11px] text-zinc-500 uppercase font-bold">
                           Active Vision Model
                         </label>
                         <select
@@ -680,13 +689,13 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
           </button>
 
           {isToolsMenuOpen && (
-            <div className="absolute right-0 top-full mt-1.5 w-64 bg-[#12141d] border border-zinc-700/80 rounded-xl shadow-2xl p-2 z-50 flex flex-col gap-1 text-xs">
+            <div className="absolute right-0 top-full mt-1.5 w-64 bg-raised border border-zinc-700/80 rounded-xl shadow-2xl p-2 z-50 flex flex-col gap-1 text-xs">
               {toggleSimpleMode && (
                 <div className="p-2 rounded-lg bg-zinc-900/80 flex items-center justify-between mb-1">
                   <span className="text-[11px] font-semibold text-zinc-300">
                     Interface Mode
                   </span>
-                  <div className="flex bg-zinc-950 border border-zinc-800 rounded-md p-0.5 text-[10px]">
+                  <div className="flex bg-zinc-950 border border-zinc-800 rounded-md p-0.5 text-[11px]">
                     <button
                       onClick={() => {
                         if (!simpleMode) toggleSimpleMode();
@@ -715,6 +724,50 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                 </div>
               )}
 
+              {[
+                {
+                  label: "Grid",
+                  value: gridStyle,
+                  set: setGridStyle,
+                  options: [
+                    ["justified", "Justified", "Rows keep each photo's shape"],
+                    ["square", "Square", "Equal cards with a name line"],
+                  ],
+                },
+                {
+                  label: "Card details",
+                  value: cardDetails,
+                  set: setCardDetails,
+                  options: [
+                    ["hover", "On hover", "Extra badges show on hover and on the selected photo"],
+                    ["always", "Always", "All badges always visible"],
+                  ],
+                },
+              ].map((setting) => (
+                <div
+                  key={setting.label}
+                  className="p-2 rounded-lg bg-zinc-900/80 flex items-center justify-between mb-1"
+                >
+                  <span className="text-[11px] font-semibold text-zinc-300">{setting.label}</span>
+                  <div className="flex bg-zinc-950 border border-zinc-800 rounded-md p-0.5 text-[11px]">
+                    {setting.options.map(([value, text, hint]) => (
+                      <button
+                        key={value}
+                        onClick={() => (setting.set as (v: string) => void)(value)}
+                        title={hint}
+                        className={`px-2 py-0.5 rounded ${
+                          setting.value === value
+                            ? "bg-emerald-500/20 text-emerald-300 font-bold"
+                            : "text-zinc-500"
+                        }`}
+                      >
+                        {text}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+
               {photos.length > 0 && (
                 <button
                   onClick={() => {
@@ -726,7 +779,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                   <HardDrive className="w-4 h-4 text-emerald-400 shrink-0" />
                   <div>
                     <div className="font-medium">Storage Health & XMP</div>
-                    <div className="text-[10px] text-zinc-500">
+                    <div className="text-[11px] text-zinc-500">
                       Cache stats & Lightroom sidecars
                     </div>
                   </div>
@@ -746,7 +799,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                     <span>Session Activity Log</span>
                   </span>
                   {sessionLogsCount > 0 && (
-                    <span className="px-1.5 py-0.2 rounded-full bg-emerald-500/15 text-emerald-300 font-mono text-[10px]">
+                    <span className="px-1.5 py-0.2 rounded-full bg-emerald-500/15 text-emerald-300 font-mono text-[11px]">
                       {sessionLogsCount}
                     </span>
                   )}
@@ -765,7 +818,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                     <HelpCircle className="w-4 h-4 text-amber-400 shrink-0" />
                     <span>Keyboard Shortcuts</span>
                   </span>
-                  <kbd className="px-1.5 py-0.2 bg-zinc-950 border border-zinc-700 rounded text-[10px] font-mono text-zinc-400">
+                  <kbd className="px-1.5 py-0.2 bg-zinc-950 border border-zinc-700 rounded text-[11px] font-mono text-zinc-400">
                     ?
                   </kbd>
                 </button>

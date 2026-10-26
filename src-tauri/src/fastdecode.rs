@@ -96,7 +96,8 @@ mod wic {
             if allow_embedded_thumb {
                 if let Ok(thumb) = frame.GetThumbnail() {
                     if let Some((tw, th)) = source_size(&thumb) {
-                        if tw.max(th) >= 200 && tw.max(th) >= max_dim.min(360) {
+                        // An embedded thumbnail is only used when it is at least as big as requested
+                        if tw.max(th) >= max_dim {
                             src = thumb;
                         }
                     }

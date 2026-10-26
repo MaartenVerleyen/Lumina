@@ -18,7 +18,14 @@ import {
 } from "./components/layout/ContextMenu";
 import TimelineDrawer from "./components/views/TimelineDrawer";
 import CompareView from "./components/views/CompareView";
-import VirtualPhotoGrid from "./components/views/VirtualPhotoGrid";
+import VirtualPhotoGrid, { SQUARE_FOOTER_HEIGHT } from "./components/views/VirtualPhotoGrid";
+import {
+  buildJustifiedLayout,
+  buildSquareLayout,
+  monthKeyOf,
+  monthLabel,
+  verticalNeighbor,
+} from "./utils/gridLayout";
 import PhotoMap from "./components/views/PhotoMap";
 import BulkActionDock from "./components/modals/BulkActionDock";
 import CommitModal from "./components/modals/CommitModal";
@@ -236,44 +243,56 @@ export default function App() {
     return () => ro.disconnect();
   }, [lib.viewMode, lib.photos.length, isLeftCollapsed, isRightCollapsed]);
 
-  const { gridColumns, cardThumbWidth, cardThumbHeight, rowEstimateHeight } = useMemo(() => {
-    const safeWidth = Math.max(320, centerWidth);
+  // Grid layout: rows (and month headers when sorted by date) computed up front for the virtualizer
+  const isDateSorted =
+    (lib.sortBy === "DATE_DESC" || lib.sortBy === "DATE_ASC") && lib.smartFilter !== "DUPLICATES";
+  const gridGap = lib.gridStyle === "justified" ? 8 : 14;
+  const layout = useMemo(() => {
+    const width = Math.max(320, centerWidth);
+    const photos = lib.visiblePhotos;
+    const grouping = isDateSorted
+      ? { groupKey: (i: number) => monthKeyOf(photos[i].captured_at), groupLabel: monthLabel }
+      : {};
+    if (lib.gridStyle === "justified") {
+      return buildJustifiedLayout(photos, {
+        width,
+        gap: gridGap,
+        headerHeight: 44,
+        targetRowHeight: Math.round(110 + lib.zoomLevel * 300),
+        ...grouping,
+      });
+    }
     const targetCardW = 115 + lib.zoomLevel * 325;
-    const cols = Math.max(1, Math.min(12, Math.floor(safeWidth / targetCardW)));
-    const actualCardW = Math.floor((safeWidth - (cols - 1) * 14) / cols);
-    const thumbH = Math.max(90, Math.min(380, Math.round(actualCardW * 0.74)));
-    return {
-      gridColumns: cols,
-      cardThumbWidth: actualCardW,
-      cardThumbHeight: thumbH,
-      rowEstimateHeight: thumbH + 46,
-    };
-  }, [lib.zoomLevel, centerWidth]);
-
-  const rowCount = Math.ceil(lib.visiblePhotos.length / gridColumns);
+    const columns = Math.max(1, Math.min(12, Math.floor(width / targetCardW)));
+    const cardW = Math.floor((width - (columns - 1) * gridGap) / columns);
+    const thumbH = Math.max(90, Math.min(380, Math.round(cardW * 0.74)));
+    return buildSquareLayout(photos.length, {
+      width,
+      gap: gridGap,
+      headerHeight: 44,
+      columns,
+      cardHeight: thumbH + SQUARE_FOOTER_HEIGHT,
+      ...grouping,
+    });
+  }, [lib.visiblePhotos, lib.gridStyle, lib.zoomLevel, centerWidth, isDateSorted, gridGap]);
 
   const rowVirtualizer = useVirtualizer({
-    count: rowCount,
+    count: layout.rows.length,
     getScrollElement: () => gridContainerRef.current,
-    estimateSize: () => rowEstimateHeight,
+    estimateSize: (i) => {
+      const row = layout.rows[i];
+      if (!row) return 0;
+      return row.kind === "photos" ? row.height + gridGap : row.height;
+    },
     overscan: 3,
   });
 
   useEffect(() => {
     rowVirtualizer.measure();
-  }, [rowEstimateHeight, gridColumns, rowVirtualizer]);
+  }, [layout, rowVirtualizer]);
 
-  const navigateByOffset = useCallback(
-    (offset: number, extendSelection: boolean) => {
-      if (lib.visiblePhotos.length === 0) return;
-      const curIdx = lib.activeHash
-        ? lib.visiblePhotos.findIndex((p) => p.hash === lib.activeHash)
-        : -1;
-      const nextIdx =
-        curIdx === -1
-          ? 0
-          : Math.max(0, Math.min(lib.visiblePhotos.length - 1, curIdx + offset));
-
+  const navigateToIndex = useCallback(
+    (nextIdx: number, extendSelection: boolean) => {
       const targetPhoto = lib.visiblePhotos[nextIdx];
       if (!targetPhoto) return;
 
@@ -293,17 +312,28 @@ export default function App() {
         lib.selectionAnchorHashRef.current = targetPhoto.hash;
       }
 
-      const targetRow = Math.floor(nextIdx / gridColumns);
-      rowVirtualizer.scrollToIndex(targetRow, { align: "auto" });
+      rowVirtualizer.scrollToIndex(layout.rowOfPhoto[nextIdx] ?? 0, { align: "auto" });
     },
-    [
-      lib.visiblePhotos,
-      lib.activeHash,
-      gridColumns,
-      lib.selectedHashes,
-      rowVirtualizer,
-    ]
+    [lib.visiblePhotos, layout, lib.selectedHashes, rowVirtualizer]
   );
+
+  const activeIndex = () =>
+    lib.activeHash ? lib.visiblePhotos.findIndex((p) => p.hash === lib.activeHash) : -1;
+
+  // Left/right (and the Loupe): previous/next photo in the list
+  const navigateByOffset = (offset: number, extendSelection: boolean) => {
+    if (lib.visiblePhotos.length === 0) return;
+    const cur = activeIndex();
+    const next = cur === -1 ? 0 : Math.max(0, Math.min(lib.visiblePhotos.length - 1, cur + offset));
+    navigateToIndex(next, extendSelection);
+  };
+
+  // Up/down: the photo in the row above/below that is visually closest (rows differ in length)
+  const navigateVertical = (direction: 1 | -1, extendSelection: boolean) => {
+    if (lib.visiblePhotos.length === 0) return;
+    const cur = activeIndex();
+    navigateToIndex(cur === -1 ? 0 : verticalNeighbor(layout, cur, direction), extendSelection);
+  };
 
   // Explorer-style: right-clicking a photo inside the selection acts on the whole selection,
   // right-clicking any other photo acts on that photo only (and selects it)
@@ -366,8 +396,8 @@ export default function App() {
     setActiveBulkPopover: lib.setActiveBulkPopover,
     isBlockingModalOpen,
     closeBlockingModals,
-    gridColumns,
     navigateByOffset,
+    navigateVertical,
     autoAdvance: lib.autoAdvance,
     searchInputRef,
     handleSetFlag: lib.handleSetFlag,
@@ -385,7 +415,7 @@ export default function App() {
   return (
     <div
       onContextMenu={handleRootContextMenu}
-      className="flex flex-col h-screen bg-[#090a0f] text-zinc-100 select-none overflow-hidden relative"
+      className="flex flex-col h-screen bg-surface text-zinc-100 select-none overflow-hidden relative"
     >
       {/* Startup splash is the native splash window (closed by close_splashscreen once React runs) */}
       {/* Full-Window Drag-and-Drop Overlay */}
@@ -438,6 +468,10 @@ export default function App() {
         runBatchAiOnList={lib.runBatchAiOnList}
         simpleMode={lib.simpleMode}
         toggleSimpleMode={lib.toggleSimpleMode}
+        gridStyle={lib.gridStyle}
+        setGridStyle={lib.setGridStyle}
+        cardDetails={lib.cardDetails}
+        setCardDetails={lib.setCardDetails}
         canUndo={lib.canUndo}
         canRedo={lib.canRedo}
         handleUndo={lib.handleUndo}
@@ -504,8 +538,8 @@ export default function App() {
 
       {/* Top People Carousel with Pending Face Match Badges */}
       {lib.people.length > 0 && (
-        <div className="px-5 py-1.5 bg-[#0c0d14] border-b border-zinc-800/50 flex items-center gap-2 overflow-x-auto shrink-0">
-          <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mr-1 shrink-0">
+        <div className="px-5 py-1.5 bg-panel border-b border-zinc-800/50 flex items-center gap-2 overflow-x-auto shrink-0">
+          <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider mr-1 shrink-0">
             People
           </span>
 
@@ -538,7 +572,7 @@ export default function App() {
                     </div>
                   )}
                   <span className="font-medium text-[11px] capitalize">{p.name}</span>
-                  <span className="text-[10px] text-zinc-500 font-mono">{p.photo_count}</span>
+                  <span className="text-[11px] text-zinc-500 font-mono">{p.photo_count}</span>
                 </button>
 
                 {pendingCount > 0 && (
@@ -547,7 +581,7 @@ export default function App() {
                       e.stopPropagation();
                       lib.setFaceReviewPerson(p.name);
                     }}
-                    className="px-2 py-1 bg-amber-500/20 hover:bg-amber-500/35 border-l border-amber-500/30 text-amber-300 font-mono text-[10px] font-bold flex items-center gap-0.5 transition"
+                    className="px-2 py-1 bg-amber-500/20 hover:bg-amber-500/35 border-l border-amber-500/30 text-amber-300 font-mono text-[11px] font-bold flex items-center gap-0.5 transition"
                     title={`${pendingCount} unassigned face(s) look like ${p.name} — Click to review & confirm!`}
                   >
                     <span>+{pendingCount}?</span>
@@ -617,7 +651,7 @@ export default function App() {
         {/* CENTER VIRTUALIZED CANVAS */}
         <main
           ref={centerMainRef}
-          className="flex-1 bg-[#090a0f] flex flex-col overflow-hidden relative min-w-[260px]"
+          className="flex-1 bg-surface flex flex-col overflow-hidden relative min-w-[260px]"
         >
           {lib.isTimelineOpen && (
             <TimelineDrawer
@@ -632,7 +666,7 @@ export default function App() {
 
           {/* Streamlined Middle Toolbar */}
           {lib.photos.length > 0 && (
-            <div className="bg-[#0c0d14] border-b border-zinc-800/60 px-4 py-1.5 flex items-center justify-between text-xs gap-3 flex-wrap shrink-0">
+            <div className="bg-panel border-b border-zinc-800/60 px-4 py-1.5 flex items-center justify-between text-xs gap-3 flex-wrap shrink-0">
               <div className="flex items-center gap-2 flex-wrap">
                 <button
                   onClick={() => lib.setIsTimelineOpen((p) => !p)}
@@ -891,7 +925,7 @@ export default function App() {
               ref={gridContainerRef}
               className="flex-1 overflow-y-auto p-6 flex items-center justify-center"
             >
-              <div className="max-w-xl w-full rounded-2xl border-2 border-dashed border-zinc-800 bg-[#0c0d14]/90 hover:border-emerald-500/40 p-8 flex flex-col items-center text-center transition">
+              <div className="max-w-xl w-full rounded-2xl border-2 border-dashed border-zinc-800 bg-panel/90 hover:border-emerald-500/40 p-8 flex flex-col items-center text-center transition">
                 <div className="w-14 h-14 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center mb-4">
                   <FolderOpen className="w-7 h-7 text-emerald-400" />
                 </div>
@@ -914,7 +948,7 @@ export default function App() {
 
                 {lib.recentFolders.length > 0 && (
                   <div className="w-full mt-6 pt-5 border-t border-zinc-800/80 flex flex-col gap-2 text-left">
-                    <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider flex items-center gap-1.5">
+                    <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider flex items-center gap-1.5">
                       <Clock className="w-3 h-3 text-emerald-400" />
                       Recent Photo Libraries
                     </span>
@@ -926,7 +960,7 @@ export default function App() {
                           className="w-full px-3 py-2 rounded-lg bg-zinc-900/80 hover:bg-zinc-800 border border-zinc-800 text-xs text-zinc-300 hover:text-white flex items-center justify-between transition truncate"
                         >
                           <span className="truncate font-mono text-[11px]">{rf}</span>
-                          <span className="text-[10px] text-emerald-400 font-semibold ml-2 shrink-0">
+                          <span className="text-[11px] text-emerald-400 font-semibold ml-2 shrink-0">
                             Open →
                           </span>
                         </button>
@@ -960,9 +994,9 @@ export default function App() {
             <VirtualPhotoGrid
               gridContainerRef={gridContainerRef}
               rowVirtualizer={rowVirtualizer}
-              gridColumns={gridColumns}
-              cardThumbWidth={cardThumbWidth}
-              cardThumbHeight={cardThumbHeight}
+              layout={layout}
+              gridStyle={lib.gridStyle}
+              cardDetails={lib.cardDetails}
               visiblePhotos={lib.visiblePhotos}
               selectedHashes={lib.selectedHashes}
               activeHash={lib.activeHash}
@@ -1184,7 +1218,7 @@ export default function App() {
               setIsNewFolderModalOpen(false);
               setNewFolderInput("");
             }}
-            className="bg-[#12141c] border border-zinc-800 rounded-2xl w-full max-w-md p-5 shadow-2xl flex flex-col gap-3 text-xs"
+            className="bg-raised border border-zinc-800 rounded-2xl w-full max-w-md p-5 shadow-2xl flex flex-col gap-3 text-xs"
           >
             <div className="flex items-center justify-between">
               <span className="font-bold text-sm text-zinc-100 flex items-center gap-2">
@@ -1291,7 +1325,7 @@ export default function App() {
             aria-label="Keyboard shortcuts"
             tabIndex={-1}
             onClick={(e) => e.stopPropagation()}
-            className="bg-[#12141c] border border-zinc-800 rounded-2xl w-full max-w-lg p-5 shadow-2xl flex flex-col gap-3 text-xs"
+            className="bg-raised border border-zinc-800 rounded-2xl w-full max-w-lg p-5 shadow-2xl flex flex-col gap-3 text-xs"
           >
             <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
               <span className="text-sm font-bold text-zinc-100 flex items-center gap-2">
@@ -1327,7 +1361,7 @@ export default function App() {
                   className="p-2 rounded-lg bg-zinc-900/70 border border-zinc-800/80 flex items-center justify-between gap-2"
                 >
                   <span className="text-zinc-400">{desc}</span>
-                  <kbd className="px-1.5 py-0.5 bg-zinc-950 border border-zinc-700 rounded text-emerald-300 font-mono text-[10px] shrink-0">
+                  <kbd className="px-1.5 py-0.5 bg-zinc-950 border border-zinc-700 rounded text-emerald-300 font-mono text-[11px] shrink-0">
                     {key}
                   </kbd>
                 </div>

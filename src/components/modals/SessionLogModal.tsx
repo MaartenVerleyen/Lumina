@@ -53,7 +53,7 @@ export default function SessionLogModal({
         aria-label="Session activity log"
         tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
-        className="bg-[#12141c] border border-zinc-800 rounded-2xl w-full max-w-2xl max-h-[80vh] shadow-2xl flex flex-col overflow-hidden"
+        className="bg-raised border border-zinc-800 rounded-2xl w-full max-w-2xl max-h-[80vh] shadow-2xl flex flex-col overflow-hidden"
       >
         <div className="p-4 border-b border-zinc-800 flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -75,7 +75,7 @@ export default function SessionLogModal({
             className="flex-1 bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1 text-zinc-200 focus:outline-none focus:border-emerald-500 font-mono text-[11px]"
           />
 
-          <div className="flex bg-zinc-900 border border-zinc-800 rounded-lg p-0.5 text-[10px]">
+          <div className="flex bg-zinc-900 border border-zinc-800 rounded-lg p-0.5 text-[11px]">
             {["ALL", "ERROR", "TRIAGE", "DISK", "AI", "FACE", "PERF"].map((cat) => (
               <button
                 key={cat}
@@ -117,7 +117,7 @@ export default function SessionLogModal({
               >
                 <span className="text-zinc-500 shrink-0">{l.timestamp}</span>
                 <span
-                  className={`px-1.5 py-0.2 rounded text-[9px] font-bold shrink-0 ${
+                  className={`px-1.5 py-0.2 rounded text-[11px] font-bold shrink-0 ${
                     l.category === "TRIAGE"
                       ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
                       : l.category === "DISK"

@@ -612,7 +612,7 @@ fn bench_thumbnail_pipeline() {
         fs::create_dir_all(&thumbs_dir).unwrap();
         let started = Instant::now();
         let (mut ok, mut failed, mut damaged) = (0, 0, 0);
-        let (_, heic) = run_decode_pipeline(&items, io_threads, true, || false, |e| {
+        let (_, heic) = run_decode_pipeline(&items, io_threads, true, &HashSet::new(), || false, |e| {
             if let PipelineEvent::Item(item) = e {
                 if item.thumb_ok { ok += 1 } else { failed += 1 }
                 if item.damaged { damaged += 1 }

@@ -119,7 +119,7 @@ export default function BulkActionDock({
     <div className="absolute bottom-5 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2 z-50 animate-in fade-in slide-in-from-bottom-2">
       {/* Dynamic Inline Bulk Popover */}
       {activeBulkPopover && (
-        <div className="bg-[#10121a] border border-zinc-700 p-3 rounded-xl shadow-2xl flex flex-col gap-2 w-80 text-xs">
+        <div className="bg-card border border-zinc-700 p-3 rounded-xl shadow-2xl flex flex-col gap-2 w-80 text-xs">
           <div className="flex justify-between items-center text-zinc-300 font-semibold">
             <span>
               {activeBulkPopover === "tag" && "Add Tag to Selection"}
@@ -236,7 +236,7 @@ export default function BulkActionDock({
                       <span>
                         {c.name}, {c.country}
                       </span>
-                      <span className="text-[10px] text-zinc-500 font-mono">
+                      <span className="text-[11px] text-zinc-500 font-mono">
                         {c.latitude.toFixed(2)}, {c.longitude.toFixed(2)}
                       </span>
                     </button>
@@ -261,11 +261,11 @@ export default function BulkActionDock({
             <form onSubmit={handleShiftTimestamps} className="flex flex-col gap-2">
               <div className="flex items-center gap-2">
                 <div className="flex-1 flex flex-col gap-0.5">
-                  <span className="text-[10px] text-zinc-500">Hours (±)</span>
+                  <span className="text-[11px] text-zinc-500">Hours (±)</span>
                   <SignedIntInput value={shiftHoursInput} onChange={setShiftHoursInput} />
                 </div>
                 <div className="flex-1 flex flex-col gap-0.5">
-                  <span className="text-[10px] text-zinc-500">Minutes (±)</span>
+                  <span className="text-[11px] text-zinc-500">Minutes (±)</span>
                   <SignedIntInput value={shiftMinutesInput} onChange={setShiftMinutesInput} />
                 </div>
               </div>
@@ -281,7 +281,7 @@ export default function BulkActionDock({
       )}
 
       {/* Main Dock */}
-      <div className="bg-[#12141c]/95 border border-zinc-700/60 shadow-2xl backdrop-blur-xl px-4 py-2 rounded-2xl flex items-center gap-2.5 text-xs">
+      <div className="bg-raised/95 border border-zinc-700/60 shadow-2xl backdrop-blur-xl px-4 py-2 rounded-2xl flex items-center gap-2.5 text-xs">
         <div className="flex items-center gap-1.5 font-semibold text-zinc-200 border-r border-zinc-700 pr-2.5">
           <CheckSquare className="w-4 h-4 text-emerald-400" />
           <span>{selectedHashes.size} Selected</span>
@@ -328,7 +328,7 @@ export default function BulkActionDock({
           ))}
           <button
             onClick={() => handleBatchRate(0)}
-            className="text-[10px] text-zinc-500 hover:text-zinc-300 ml-1"
+            className="text-[11px] text-zinc-500 hover:text-zinc-300 ml-1"
             title="Clear rating (0)"
           >
             0★
@@ -359,7 +359,7 @@ export default function BulkActionDock({
           />
           <button
             onClick={() => handleSetColorLabel(null)}
-            className="text-[10px] text-zinc-500 hover:text-zinc-300 ml-1"
+            className="text-[11px] text-zinc-500 hover:text-zinc-300 ml-1"
           >
             Clear
           </button>

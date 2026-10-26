@@ -46,7 +46,7 @@ export default function ToastStack({ toasts, onDismiss, onOpenSessionLog }: Toas
           <div
             key={t.id}
             role="status"
-            className="px-4 py-2.5 bg-[#12141d]/95 border border-emerald-500/40 text-emerald-200 rounded-xl shadow-2xl backdrop-blur-md text-xs flex items-start justify-between gap-3 animate-in fade-in slide-in-from-bottom-2"
+            className="px-4 py-2.5 bg-raised/95 border border-emerald-500/40 text-emerald-200 rounded-xl shadow-2xl backdrop-blur-md text-xs flex items-start justify-between gap-3 animate-in fade-in slide-in-from-bottom-2"
           >
             <div className="flex items-start gap-2 min-w-0">
               <Sparkles className="w-4 h-4 text-emerald-400 shrink-0 mt-px" />

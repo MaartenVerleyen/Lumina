@@ -80,7 +80,7 @@ pub fn extract_embedded_raw_jpeg_sized(
     let buffer = read_file_prefix(&mut file, max_read).ok()?;
     let outer_orientation = read_exif_orientation(file_path);
     // Full-size requests only need enough pixels for a 1920px preview / face input, not 24+ MP
-    let min_edge = if prefer_fast_thumb { 360 } else { 2048 };
+    let min_edge = if prefer_fast_thumb { THUMB_EDGE } else { 2048 };
 
     if let Some(found) = extract_embedded_raw_jpeg_from_bytes(&buffer, prefer_fast_thumb, outer_orientation, min_edge) {
         return Some(found);
@@ -169,8 +169,8 @@ pub fn extract_embedded_raw_jpeg_from_bytes(
             if let (Some((w, h)), Some(end)) = (found_dims, end_pos) {
                 if end > start + 8192 {
                     candidates.push((start, end, w, h));
-                    // Fast exit: if we only need a 360px thumb and found a 300..2000px preview, decode immediately!
-                    if prefer_fast_thumb && w >= 300 && w <= 2048 {
+                    // Fast exit: for a thumbnail, the first preview of thumbnail size up to 2048 px will do
+                    if prefer_fast_thumb && w.max(h) >= THUMB_EDGE && w <= 2048 {
                         break;
                     }
                     i = end;
@@ -302,7 +302,7 @@ pub fn batch_decode_heic_thumbs_windows(_jobs: &[(String, String, u32)]) {}
 pub fn decode_via_windows_wic(file_path: &Path, max_dim: u32) -> Option<(DynamicImage, u32)> {
     // In-process WIC (≈25 ms for a HEIC thumbnail) instead of starting PowerShell (≈0.5-1.8 s per call).
     // WIC returns pixels as stored: JPEGs still need their EXIF rotation, HEIC comes out upright.
-    if let Some(img) = wic_decode(file_path, max_dim, max_dim <= 360) {
+    if let Some(img) = wic_decode(file_path, max_dim, max_dim <= THUMB_EDGE) {
         let ext = file_path
             .extension()
             .map(|e| e.to_string_lossy().to_lowercase())
@@ -367,7 +367,7 @@ fn decode_bytes_or_recover(
     }
     match image::load_from_memory(bytes) {
         Ok(img) => Ok((apply_exif_orientation(img, read_exif_orientation_from_bytes(bytes).unwrap_or(1)), false)),
-        Err(e) => match decode_via_windows_wic(file_path, min_edge.max(360)) {
+        Err(e) => match decode_via_windows_wic(file_path, min_edge.max(THUMB_EDGE)) {
             Some((img, orient)) => Ok((apply_exif_orientation(img, orient), true)),
             None => Err(e.to_string()),
         },
@@ -406,13 +406,13 @@ pub fn decode_for_thumb(path: &Path, bytes: Option<&[u8]>) -> Result<(DynamicIma
     };
     if is_raw_or_heic_ext(&ext) {
         let outer = read_exif_orientation_from_bytes(bytes).unwrap_or(1);
-        if let Some((img, orient)) = extract_embedded_raw_jpeg_from_bytes(bytes, true, outer, 360) {
+        if let Some((img, orient)) = extract_embedded_raw_jpeg_from_bytes(bytes, true, outer, THUMB_EDGE) {
             return Ok((apply_exif_orientation(img, orient), false));
         }
         // Preview beyond the first 6 MB, or a RAW codec via WIC
         return open_and_orient_image_for_thumb(path);
     }
-    decode_bytes_or_recover(path, bytes, 360)
+    decode_bytes_or_recover(path, bytes, THUMB_EDGE)
 }
 
 // Returns (thumbnail-ready image, file was damaged and only partially recovered)
@@ -429,8 +429,8 @@ pub fn open_and_orient_image_for_thumb(file_path: &Path) -> Result<(DynamicImage
                 return Ok((apply_exif_orientation(raw_preview, orient), false));
             }
         }
-        // Fast 360px WIC thumbnail extraction for HEIC
-        if let Some((wic_img, orient)) = decode_via_windows_wic(file_path, 360) {
+        // Fast thumbnail-size WIC decode for HEIC
+        if let Some((wic_img, orient)) = decode_via_windows_wic(file_path, THUMB_EDGE) {
             return Ok((apply_exif_orientation(wic_img, orient), false));
         }
         if let Some((heic_preview, orient)) = extract_embedded_raw_jpeg_sized(file_path, true) {
@@ -438,7 +438,7 @@ pub fn open_and_orient_image_for_thumb(file_path: &Path) -> Result<(DynamicImage
         }
     }
 
-    decode_standard_or_recover(file_path, 360)
+    decode_standard_or_recover(file_path, THUMB_EDGE)
 }
 
 // ~1920 px is plenty for previews, face detection/crops and AI input; big JPEGs decode straight to it

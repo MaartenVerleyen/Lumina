@@ -74,6 +74,8 @@ export interface PhotoItem {
   pair_raw_path?: string | null;
   // File is truncated/corrupt: its thumbnail was recovered from partial data (or could not be made)
   damaged: boolean;
+  // Bumped when the thumbnail file was replaced (cache-busts the grid image)
+  thumb_rev?: number;
 }
 
 export interface PersonItem {
@@ -93,6 +95,8 @@ export interface ThumbBatchItem {
   auto_tags: string[];
   thumb_ok: boolean;
   damaged: boolean;
+  // Long edge the thumbnail file was (re)written at; 0 when the existing file was reused
+  thumb_edge: number;
 }
 
 export interface ThumbBatchProgress {

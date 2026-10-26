@@ -273,7 +273,7 @@ export default function TimelineDrawer({
         setDragAnchorBucket(null);
         setHoverBucket(null);
       }}
-      className="bg-[#0b0d14] border-b border-zinc-800/80 px-5 py-3.5 flex flex-col gap-3 shrink-0 z-10 animate-in slide-in-from-top-2 duration-150 select-none"
+      className="bg-panel border-b border-zinc-800/80 px-5 py-3.5 flex flex-col gap-3 shrink-0 z-10 animate-in slide-in-from-top-2 duration-150 select-none"
     >
       {/* Top Header: Scale Breadcrumbs, Date Inputs & Quick Year Pills */}
       <div className="flex items-center justify-between text-xs flex-wrap gap-2">
@@ -284,7 +284,7 @@ export default function TimelineDrawer({
           </div>
 
           {/* Scale Level Indicator Pills */}
-          <div className="flex items-center bg-zinc-900/90 border border-zinc-800 rounded-lg p-0.5 text-[10px] font-semibold">
+          <div className="flex items-center bg-zinc-900/90 border border-zinc-800 rounded-lg p-0.5 text-[11px] font-semibold">
             {(["YEAR", "MONTH", "WEEK", "DAY"] as ScaleLevel[]).map((lvl, idx) => {
               const active = activeScale === lvl;
               return (
@@ -459,7 +459,7 @@ export default function TimelineDrawer({
               >
                 {/* Count badge above bar */}
                 <span
-                  className={`text-[9px] font-mono mb-1 transition-opacity ${
+                  className={`text-[11px] font-mono mb-1 transition-opacity ${
                     b.count > 0
                       ? isDaySelected
                         ? "text-indigo-300 font-bold opacity-100"
@@ -487,7 +487,7 @@ export default function TimelineDrawer({
                 {/* X-Axis Label */}
                 <div className="mt-1.5 flex flex-col items-center leading-tight">
                   <span
-                    className={`text-[10px] font-semibold whitespace-nowrap ${
+                    className={`text-[11px] font-semibold whitespace-nowrap ${
                       isDaySelected
                         ? "text-indigo-300"
                         : "text-zinc-300 group-hover:text-white"
@@ -496,7 +496,7 @@ export default function TimelineDrawer({
                     {b.label}
                   </span>
                   {b.subLabel && (
-                    <span className="text-[9px] font-mono text-zinc-500 whitespace-nowrap">
+                    <span className="text-[11px] font-mono text-zinc-500 whitespace-nowrap">
                       {b.subLabel}
                     </span>
                   )}

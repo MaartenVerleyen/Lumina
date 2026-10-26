@@ -46,7 +46,7 @@ export default function BottomStatusBar({
   onOpenSessionLog,
 }: BottomStatusBarProps) {
   return (
-    <footer className="h-7 px-4 bg-[#0c0d14] border-t border-zinc-800/80 flex items-center justify-between text-[11px] text-zinc-400 select-none shrink-0 z-20">
+    <footer className="h-7 px-4 bg-panel border-t border-zinc-800/80 flex items-center justify-between text-[11px] text-zinc-400 select-none shrink-0 z-20">
       {/* Left: Library Telemetry & Active Background Tasks */}
       <div className="flex items-center gap-3 overflow-hidden">
         <span className="flex items-center gap-1.5 text-zinc-300 font-medium shrink-0">
@@ -65,7 +65,7 @@ export default function BottomStatusBar({
         )}
 
         {progress && (
-          <span className="flex items-center gap-1.5 text-emerald-400 font-mono bg-emerald-950/50 border border-emerald-500/30 px-2 py-0.5 rounded text-[10px] shrink-0">
+          <span className="flex items-center gap-1.5 text-emerald-400 font-mono bg-emerald-950/50 border border-emerald-500/30 px-2 py-0.5 rounded text-[11px] shrink-0">
             <Zap className="w-3 h-3 animate-pulse" />
             <span>
               Thumbs: {progress.completed}/{progress.total}
@@ -74,7 +74,7 @@ export default function BottomStatusBar({
         )}
 
         {faceScanProgress && (
-          <span className="flex items-center gap-1.5 text-indigo-300 font-mono bg-indigo-950/50 border border-indigo-500/30 px-2 py-0.5 rounded text-[10px] shrink-0">
+          <span className="flex items-center gap-1.5 text-indigo-300 font-mono bg-indigo-950/50 border border-indigo-500/30 px-2 py-0.5 rounded text-[11px] shrink-0">
             <Loader2 className="w-3 h-3 animate-spin text-indigo-400" />
             <ScanFace className="w-3 h-3 text-indigo-400" />
             <span>
@@ -85,7 +85,7 @@ export default function BottomStatusBar({
         )}
 
         {aiBatchProgress && (
-          <span className="flex items-center gap-1.5 text-purple-300 font-mono bg-purple-950/50 border border-purple-500/30 px-2 py-0.5 rounded text-[10px] shrink-0">
+          <span className="flex items-center gap-1.5 text-purple-300 font-mono bg-purple-950/50 border border-purple-500/30 px-2 py-0.5 rounded text-[11px] shrink-0">
             <Loader2 className="w-3 h-3 animate-spin text-purple-400" />
             <Sparkles className="w-3 h-3 text-purple-400" />
             <span>
@@ -97,7 +97,7 @@ export default function BottomStatusBar({
       </div>
 
       {/* Center: Pro Keyboard Shortcut Hints */}
-      <div className="hidden lg:flex items-center gap-3 text-[10px] text-zinc-500 font-mono">
+      <div className="hidden lg:flex items-center gap-3 text-[11px] text-zinc-500 font-mono">
         <span>
           <kbd className="px-1 py-0.2 bg-zinc-900 border border-zinc-800 rounded text-zinc-400">
             Space
@@ -147,7 +147,7 @@ export default function BottomStatusBar({
         {onOpenSessionLog && (
           <button
             onClick={onOpenSessionLog}
-            className="flex items-center gap-1 text-[10px] text-zinc-400 hover:text-emerald-300 font-mono transition"
+            className="flex items-center gap-1 text-[11px] text-zinc-400 hover:text-emerald-300 font-mono transition"
             title="Open Session Activity Log (Ctrl+L)"
           >
             <FileText className="w-3 h-3 text-emerald-400" />

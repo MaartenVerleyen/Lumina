@@ -145,7 +145,7 @@ function LeftSidebar({
               />
               <span className="truncate">{node.name}</span>
             </div>
-            <span className="text-[10px] text-zinc-500 font-mono ml-1.5 shrink-0">
+            <span className="text-[11px] text-zinc-500 font-mono ml-1.5 shrink-0">
               {node.totalCount}
             </span>
           </div>
@@ -285,10 +285,10 @@ function LeftSidebar({
   return (
     <aside
       style={{ width: `${leftWidth}px` }}
-      className="bg-[#0c0d14] flex flex-col p-3 gap-5 overflow-y-auto shrink-0"
+      className="bg-panel flex flex-col p-3 gap-5 overflow-y-auto shrink-0"
     >
       <div>
-        <span className="text-[10px] font-bold text-zinc-500 tracking-wider uppercase">
+        <span className="text-[11px] font-bold text-zinc-500 tracking-wider uppercase">
           {simpleMode ? "Quick Filters" : "Culling & Triage"}
         </span>
         <div className="mt-2 flex flex-col gap-0.5 text-xs">
@@ -318,7 +318,7 @@ function LeftSidebar({
                   {item.icon}
                   <span className="truncate">{item.label}</span>
                 </span>
-                <span className="text-[10px] text-zinc-500 font-mono ml-1.5">{item.count}</span>
+                <span className="text-[11px] text-zinc-500 font-mono ml-1.5">{item.count}</span>
               </button>
             );
           })}
@@ -341,13 +341,13 @@ function LeftSidebar({
       {photos.length > 0 && (
         <div>
           <div className="flex items-center justify-between">
-            <span className="text-[10px] font-bold text-zinc-500 tracking-wider uppercase">
+            <span className="text-[11px] font-bold text-zinc-500 tracking-wider uppercase">
               Folders
             </span>
             {activeSubfolder !== "ALL" && (
               <button
                 onClick={() => setActiveSubfolder("ALL")}
-                className="text-[10px] text-emerald-400 hover:underline"
+                className="text-[11px] text-emerald-400 hover:underline"
               >
                 Reset
               </button>
@@ -384,7 +384,7 @@ function LeftSidebar({
                   />
                   <span>Root (Top Level)</span>
                 </div>
-                <span className="text-[10px] text-zinc-500 font-mono">{folderTree.rootCount}</span>
+                <span className="text-[11px] text-zinc-500 font-mono">{folderTree.rootCount}</span>
               </div>
             )}
             {renderFolderTreeNodes(folderTree.nodes, 0)}
@@ -395,7 +395,7 @@ function LeftSidebar({
       {/* Auto-Events & Trips */}
       {autoEvents.length > 0 && (
         <div>
-          <span className="text-[10px] font-bold text-zinc-500 tracking-wider uppercase">
+          <span className="text-[11px] font-bold text-zinc-500 tracking-wider uppercase">
             Events & Trips
           </span>
           <div className="mt-2 flex flex-col gap-0.5 text-xs max-h-36 overflow-y-auto">
@@ -412,7 +412,7 @@ function LeftSidebar({
                 <span className="truncate flex items-center gap-1.5">
                   <Calendar className="w-3 h-3 shrink-0 text-emerald-400" /> {ev}
                 </span>
-                <span className="text-[10px] text-zinc-500 font-mono ml-1">{count}</span>
+                <span className="text-[11px] text-zinc-500 font-mono ml-1">{count}</span>
               </button>
             ))}
           </div>
@@ -422,7 +422,7 @@ function LeftSidebar({
       {/* Object Tags */}
       {allLibraryTags.length > 0 && (
         <div>
-          <span className="text-[10px] font-bold text-zinc-500 tracking-wider uppercase">
+          <span className="text-[11px] font-bold text-zinc-500 tracking-wider uppercase">
             Tags ({allLibraryTags.length})
           </span>
           <div className="mt-2 flex flex-wrap gap-1.5">

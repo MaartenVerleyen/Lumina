@@ -1,7 +1,8 @@
-import { RefObject, useState } from "react";
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { RefObject, memo, useState } from "react";
 import { Virtualizer } from "@tanstack/react-virtual";
 import { PhotoItem } from "../../types/lumina";
+import { GridLayout, LayoutRow } from "../../utils/gridLayout";
+import { thumbSrc } from "../../utils/photoHelpers";
 import {
   Crosshair,
   Flag,
@@ -17,12 +18,18 @@ import {
   ImageOff,
 } from "lucide-react";
 
+export type GridStyle = "justified" | "square";
+export type CardDetails = "always" | "hover";
+
+// Footer below the image in the square style (the justified style shows the name on hover instead)
+export const SQUARE_FOOTER_HEIGHT = 32;
+
 interface VirtualPhotoGridProps {
   gridContainerRef: RefObject<HTMLDivElement | null>;
   rowVirtualizer: Virtualizer<HTMLDivElement, Element>;
-  gridColumns: number;
-  cardThumbWidth: number;
-  cardThumbHeight: number;
+  layout: GridLayout;
+  gridStyle: GridStyle;
+  cardDetails: CardDetails;
   visiblePhotos: PhotoItem[];
   selectedHashes: Set<string>;
   activeHash: string | null;
@@ -35,17 +42,28 @@ interface VirtualPhotoGridProps {
   setActiveHash: React.Dispatch<React.SetStateAction<string | null>>;
   setIsLoupeOpen: React.Dispatch<React.SetStateAction<boolean>>;
   toggleBurstGroupExpand: (groupNum: number, e: React.MouseEvent) => void;
-  // Optional props for Simple Mode & explicit Right-Click Context Menu callback
   simpleMode?: boolean;
   onPhotoContextMenu?: (photo: PhotoItem, e: React.MouseEvent) => void;
+}
+
+// The month of the photos at the top of the viewport, for the floating date label. Hidden while that
+// month's own header is still on screen.
+function currentHeaderLabel(rows: LayoutRow[], scrollTop: number): string | null {
+  let header: LayoutRow | null = null;
+  for (const row of rows) {
+    if (row.top > scrollTop) break;
+    if (row.kind === "header") header = row;
+  }
+  if (!header || header.top + header.height > scrollTop) return null;
+  return header.kind === "header" ? header.label : null;
 }
 
 export default function VirtualPhotoGrid({
   gridContainerRef,
   rowVirtualizer,
-  gridColumns,
-  cardThumbWidth,
-  cardThumbHeight,
+  layout,
+  gridStyle,
+  cardDetails,
   visiblePhotos,
   selectedHashes,
   activeHash,
@@ -63,9 +81,22 @@ export default function VirtualPhotoGrid({
 }: VirtualPhotoGridProps) {
   // Thumbnails that failed to load (file deleted or cache cleared) show a placeholder instead of a broken image
   const [failedThumbs, setFailedThumbs] = useState<Set<string>>(() => new Set());
+  const onThumbError = (thumbPath: string) =>
+    setFailedThumbs((prev) => new Set(prev).add(thumbPath));
+
+  const hasHeaders = layout.rows.some((r) => r.kind === "header");
+  const floatingLabel = hasHeaders ? currentHeaderLabel(layout.rows, rowVirtualizer.scrollOffset ?? 0) : null;
 
   return (
     <div ref={gridContainerRef} className="flex-1 overflow-y-auto p-4">
+      {floatingLabel && (
+        // Sticky month label: zero-height so it never shifts the grid
+        <div className="sticky top-0 z-30 h-0 pointer-events-none">
+          <span className="inline-block -mt-2 px-3 py-1 rounded-full bg-raised/90 border border-zinc-700/70 text-xs font-semibold text-zinc-200 shadow-lg backdrop-blur-md">
+            {floatingLabel}
+          </span>
+        </div>
+      )}
       <div
         role="listbox"
         aria-multiselectable="true"
@@ -77,269 +108,69 @@ export default function VirtualPhotoGrid({
         }}
       >
         {rowVirtualizer.getVirtualItems().map((virtualRow) => {
-          const startIndex = virtualRow.index * gridColumns;
-          const rowPhotos = visiblePhotos.slice(startIndex, startIndex + gridColumns);
-
+          const row = layout.rows[virtualRow.index];
+          if (!row) return null;
+          if (row.kind === "header") {
+            return (
+              <div
+                key={row.key}
+                role="presentation"
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  width: "100%",
+                  height: `${row.height}px`,
+                  transform: `translateY(${virtualRow.start}px)`,
+                }}
+                className="flex items-end pb-2.5"
+              >
+                <h3 className="text-sm font-semibold text-zinc-200">{row.label}</h3>
+              </div>
+            );
+          }
           return (
             <div
-              key={virtualRow.index}
+              key={row.key}
               role="presentation"
               style={{
                 position: "absolute",
                 top: 0,
                 left: 0,
                 width: "100%",
-                height: `${virtualRow.size}px`,
+                height: `${row.height}px`,
                 transform: `translateY(${virtualRow.start}px)`,
-                gridTemplateColumns: `repeat(${gridColumns}, minmax(0, 1fr))`,
               }}
-              className="grid gap-3.5 pb-3.5"
             >
-              {rowPhotos.map((photo, colIndex) => {
-                const globalIndex = startIndex + colIndex;
-                const isSelected = selectedHashes.has(photo.hash);
-                const isActive = photo.hash === activeHash;
-                const isAnalyzingThis = analyzingHashes.has(photo.hash);
-                const hasAiData = photo.tags.length > 0 || Boolean(photo.ai_caption);
-
+              {row.items.map((item) => {
+                const photo = visiblePhotos[item.index];
+                if (!photo) return null;
                 const grp = photo.duplicate_group;
-                const burstCount = grp ? burstGroupCounts.get(grp) || 1 : 1;
-                const isBurstExpanded = grp
-                  ? showAllBurstVersions || expandedBurstGroups.has(grp)
-                  : false;
-                const isSharpestPick = grp && sharpestInGroup.get(grp)?.hash === photo.hash;
-
                 return (
-                  <div
+                  <PhotoCard
                     key={photo.hash}
-                    data-photo-hash={photo.hash}
-                    role="option"
-                    aria-selected={isSelected}
-                    aria-label={photo.name}
-                    tabIndex={isActive ? 0 : -1}
-                    onClick={(e) => handlePhotoClick(globalIndex, photo.hash, e)}
-                    onContextMenu={(e) => {
-                      if (onPhotoContextMenu) {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        onPhotoContextMenu(photo, e);
-                      }
-                    }}
-                    onDoubleClick={() => {
-                      setActiveHash(photo.hash);
-                      setIsLoupeOpen(true);
-                    }}
-                    className={`group relative flex flex-col rounded-xl overflow-hidden bg-[#10121a] border transition duration-150 cursor-pointer ${
-                      isAnalyzingThis
-                        ? "border-indigo-500 ring-2 ring-indigo-500/50 shadow-[0_0_15px_rgba(99,102,241,0.35)]"
-                        : isActive
-                        ? "border-emerald-500 shadow-[0_0_12px_rgba(16,185,129,0.25)] ring-1 ring-emerald-500"
-                        : isSelected
-                        ? "border-emerald-500/60 bg-emerald-950/15"
-                        : isBurstExpanded && grp
-                        ? "border-amber-500/60 bg-amber-950/10"
-                        : "border-zinc-800/80 hover:border-zinc-600"
-                    }`}
-                  >
-                    {grp && !isBurstExpanded && burstCount > 1 && (
-                      <div className="absolute inset-x-2 -top-1 h-2 bg-amber-500/20 border-t border-amber-400/40 rounded-t-xl pointer-events-none z-20" />
-                    )}
-
-                    {/* Color Label Corner Ribbon */}
-                    {photo.color_label && (
-                      <div
-                        className={`absolute top-0 right-0 w-3.5 h-3.5 z-20 ${
-                          photo.color_label === "red"
-                            ? "bg-red-500"
-                            : photo.color_label === "yellow"
-                            ? "bg-yellow-400"
-                            : photo.color_label === "green"
-                            ? "bg-emerald-500"
-                            : "bg-blue-500"
-                        } [clip-path:polygon(100%_0,0_0,100%_100%)]`}
-                      />
-                    )}
-
-                    <div
-                      style={{ height: `${cardThumbHeight}px` }}
-                      className="relative w-full bg-zinc-950 flex items-center justify-center overflow-hidden"
-                    >
-                      {photo.thumb_ready && failedThumbs.has(photo.thumb_path) ? (
-                        <span className="flex flex-col items-center gap-1 text-[10px] text-zinc-600">
-                          <ImageOff className="w-5 h-5" />
-                          Preview unavailable
-                        </span>
-                      ) : photo.thumb_ready ? (
-                        <img
-                          src={convertFileSrc(photo.thumb_path)}
-                          alt={photo.name}
-                          decoding="async"
-                          draggable={false}
-                          onError={() =>
-                            setFailedThumbs((prev) => new Set(prev).add(photo.thumb_path))
-                          }
-                          style={
-                            photo.rotation === 90 || photo.rotation === 270
-                              ? {
-                                  // Rotated a quarter turn: lay the image out in the swapped box so it still
-                                  // fills the card after rotating
-                                  width: `${cardThumbHeight}px`,
-                                  height: `${cardThumbWidth}px`,
-                                  maxWidth: "none",
-                                  flexShrink: 0,
-                                  transform: `rotate(${photo.rotation}deg)`,
-                                }
-                              : photo.rotation
-                              ? { transform: `rotate(${photo.rotation}deg)` }
-                              : undefined
-                          }
-                          className={`object-cover select-none ${
-                            photo.rotation === 90 || photo.rotation === 270 ? "" : "w-full h-full"
-                          }`}
-                        />
-                      ) : (
-                        <span className="text-xs text-zinc-600 animate-pulse">Loading...</span>
-                      )}
-
-                      {isAnalyzingThis && (
-                        <div className="absolute inset-0 bg-indigo-950/60 backdrop-blur-[2px] flex flex-col items-center justify-center gap-1.5 z-10">
-                          <Loader2 className="w-6 h-6 text-indigo-300 animate-spin" />
-                          <span className="text-[10px] font-bold text-indigo-200 tracking-wide uppercase">
-                            AI Tagging...
-                          </span>
-                        </div>
-                      )}
-
-                      {/* Top-Left Badges */}
-                      <div className="absolute top-2 left-2 flex items-center gap-1 z-20">
-                        {photo.in_basket && (
-                          <span
-                            className="p-1 rounded bg-cyan-950/90 border border-cyan-400/60 text-cyan-300 backdrop-blur shadow"
-                            title="Pinned to Basket (B)"
-                          >
-                            <Pin className="w-3 h-3" />
-                          </span>
-                        )}
-                        {photo.flag === "pick" && (
-                          <span
-                            className="p-1 rounded bg-emerald-950/90 border border-emerald-400/60 text-emerald-400 backdrop-blur shadow"
-                            title="Picked (P)"
-                          >
-                            <Flag className="w-3 h-3" />
-                          </span>
-                        )}
-                        {photo.flag === "reject" && (
-                          <span
-                            className="p-1 rounded bg-red-950/90 border border-red-500/60 text-red-400 backdrop-blur shadow"
-                            title="Rejected (X)"
-                          >
-                            <XCircle className="w-3 h-3" />
-                          </span>
-                        )}
-
-                        {photo.staged_target && (
-                          <div className="px-1.5 py-0.5 rounded bg-emerald-950/90 border border-emerald-500/40 text-emerald-300 text-[9px] font-mono flex items-center gap-1 backdrop-blur-md">
-                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                            <span>Staged</span>
-                          </div>
-                        )}
-
-                        {photo.pair_raw_path && (
-                          <span
-                            className="px-1.5 py-0.5 rounded bg-amber-950/90 border border-amber-500/40 text-amber-300 text-[9px] font-mono font-bold backdrop-blur-md"
-                            title={`Linked RAW+JPEG Pair: ${photo.pair_raw_path}`}
-                          >
-                            RAW+J
-                          </span>
-                        )}
-
-                        {photo.damaged && (
-                          <span
-                            className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-orange-950/90 border border-orange-500/50 text-orange-300 text-[9px] font-mono font-bold backdrop-blur-md"
-                            title="Damaged file: it is incomplete or corrupt (for example an interrupted download). The preview shows only the data that is present. Replace it from the original source if you can."
-                          >
-                            <AlertTriangle className="w-3 h-3" />
-                            Damaged
-                          </span>
-                        )}
-
-                        {grp && burstCount > 1 && (
-                          <button
-                            onClick={(e) => toggleBurstGroupExpand(grp, e)}
-                            className={`px-2 py-0.5 rounded-md backdrop-blur-md text-[10px] font-semibold border flex items-center gap-1 transition shadow ${
-                              isBurstExpanded
-                                ? isSharpestPick
-                                  ? "bg-emerald-950/90 text-emerald-300 border-emerald-400/50 hover:bg-emerald-900"
-                                  : "bg-amber-950/90 text-amber-300 border-amber-500/50 hover:bg-amber-900"
-                                : "bg-amber-500/90 text-zinc-950 border-amber-300 hover:bg-amber-400"
-                            }`}
-                          >
-                            {isBurstExpanded && isSharpestPick ? (
-                              <Trophy className="w-3 h-3" />
-                            ) : (
-                              <Layers className="w-3 h-3" />
-                            )}
-                            {isBurstExpanded ? (
-                              <span>
-                                {isSharpestPick ? `Best (#${grp}) ▾` : `Burst #${grp} ▾`}
-                              </span>
-                            ) : (
-                              <span>
-                                {burstCount} {simpleMode ? "Similar" : "Burst"} ▸
-                              </span>
-                            )}
-                          </button>
-                        )}
-                      </div>
-
-                      {/* Star Badge */}
-                      {photo.rating > 0 && (
-                        <div className="absolute top-2 right-2 px-1.5 py-0.5 rounded bg-black/75 backdrop-blur-md text-amber-400 text-[10px] font-bold flex items-center gap-0.5">
-                          <Star className="w-2.5 h-2.5 fill-amber-400 text-amber-400" />
-                          <span>{photo.rating}</span>
-                        </div>
-                      )}
-
-                      {/* Persistent AI & Tag Pills */}
-                      {hasAiData && !isAnalyzingThis && (
-                        <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between gap-1 pointer-events-none">
-                          <div className="flex items-center gap-1 overflow-hidden">
-                            <span className="px-1.5 py-0.5 rounded bg-indigo-950/90 border border-indigo-500/40 text-indigo-200 text-[9px] font-semibold flex items-center gap-1 shrink-0 backdrop-blur-md">
-                              <Sparkles className="w-2.5 h-2.5 text-indigo-400" />
-                              <span>{photo.tags.length}</span>
-                            </span>
-                            {photo.tags.slice(0, 2).map((t) => (
-                              <span
-                                key={t}
-                                className="px-1.5 py-0.5 rounded bg-black/75 text-zinc-200 text-[9px] truncate backdrop-blur-md"
-                              >
-                                #{t}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="px-2.5 py-1.5 bg-[#10121a] flex items-center justify-between text-[10px] border-t border-zinc-800/50">
-                      <span className="truncate font-medium text-zinc-300" title={photo.name}>
-                        {photo.name}
-                      </span>
-                      <span className="font-mono text-zinc-500 shrink-0 ml-1 flex items-center gap-1">
-                        {photo.location ? (
-                          <>
-                            <MapPin className="w-2.5 h-2.5 text-emerald-400" />
-                            <span>{photo.location.split(",")[0]}</span>
-                          </>
-                        ) : !simpleMode && photo.sharpness > 0 ? (
-                          <>
-                            <span>{photo.sharpness}</span>
-                            <Crosshair className="w-2.5 h-2.5 text-zinc-600" />
-                          </>
-                        ) : null}
-                      </span>
-                    </div>
-                  </div>
+                    photo={photo}
+                    index={item.index}
+                    left={item.x}
+                    width={item.width}
+                    height={row.height}
+                    gridStyle={gridStyle}
+                    cardDetails={cardDetails}
+                    isSelected={selectedHashes.has(photo.hash)}
+                    isActive={photo.hash === activeHash}
+                    isAnalyzing={analyzingHashes.has(photo.hash)}
+                    burstCount={grp ? burstGroupCounts.get(grp) || 1 : 1}
+                    isBurstExpanded={grp ? showAllBurstVersions || expandedBurstGroups.has(grp) : false}
+                    isSharpestPick={Boolean(grp && sharpestInGroup.get(grp)?.hash === photo.hash)}
+                    thumbFailed={failedThumbs.has(photo.thumb_path)}
+                    simpleMode={simpleMode}
+                    handlePhotoClick={handlePhotoClick}
+                    setActiveHash={setActiveHash}
+                    setIsLoupeOpen={setIsLoupeOpen}
+                    toggleBurstGroupExpand={toggleBurstGroupExpand}
+                    onPhotoContextMenu={onPhotoContextMenu}
+                    onThumbError={onThumbError}
+                  />
                 );
               })}
             </div>
@@ -349,3 +180,313 @@ export default function VirtualPhotoGrid({
     </div>
   );
 }
+
+interface PhotoCardProps {
+  photo: PhotoItem;
+  index: number;
+  left: number;
+  width: number;
+  height: number;
+  gridStyle: GridStyle;
+  cardDetails: CardDetails;
+  isSelected: boolean;
+  isActive: boolean;
+  isAnalyzing: boolean;
+  burstCount: number;
+  isBurstExpanded: boolean;
+  isSharpestPick: boolean;
+  thumbFailed: boolean;
+  simpleMode: boolean;
+  handlePhotoClick: (index: number, hash: string, e: React.MouseEvent) => void;
+  setActiveHash: React.Dispatch<React.SetStateAction<string | null>>;
+  setIsLoupeOpen: React.Dispatch<React.SetStateAction<boolean>>;
+  toggleBurstGroupExpand: (groupNum: number, e: React.MouseEvent) => void;
+  onPhotoContextMenu?: (photo: PhotoItem, e: React.MouseEvent) => void;
+  onThumbError: (thumbPath: string) => void;
+}
+
+const PhotoCard = memo(function PhotoCard({
+  photo,
+  index,
+  left,
+  width,
+  height,
+  gridStyle,
+  cardDetails,
+  isSelected,
+  isActive,
+  isAnalyzing,
+  burstCount,
+  isBurstExpanded,
+  isSharpestPick,
+  thumbFailed,
+  simpleMode,
+  handlePhotoClick,
+  setActiveHash,
+  setIsLoupeOpen,
+  toggleBurstGroupExpand,
+  onPhotoContextMenu,
+  onThumbError,
+}: PhotoCardProps) {
+  const grp = photo.duplicate_group;
+  const justified = gridStyle === "justified";
+  const imageHeight = justified ? height : height - SQUARE_FOOTER_HEIGHT;
+  const hasAiData = photo.tags.length > 0 || Boolean(photo.ai_caption);
+  const quarterTurn = photo.rotation === 90 || photo.rotation === 270;
+  // "On hover" card details: secondary badges appear on hover, and always on the selected/active photo
+  const secondary =
+    cardDetails === "hover" && !isSelected && !isActive
+      ? "opacity-0 group-hover:opacity-100 transition-opacity duration-150"
+      : "";
+
+  return (
+    <div
+      data-photo-hash={photo.hash}
+      role="option"
+      aria-selected={isSelected}
+      aria-label={photo.name}
+      tabIndex={isActive ? 0 : -1}
+      onClick={(e) => handlePhotoClick(index, photo.hash, e)}
+      onContextMenu={(e) => {
+        if (onPhotoContextMenu) {
+          e.preventDefault();
+          e.stopPropagation();
+          onPhotoContextMenu(photo, e);
+        }
+      }}
+      onDoubleClick={() => {
+        setActiveHash(photo.hash);
+        setIsLoupeOpen(true);
+      }}
+      style={{ position: "absolute", left, top: 0, width, height }}
+      className={`group flex flex-col overflow-hidden bg-card border transition duration-150 cursor-pointer ${
+        justified ? "rounded-lg" : "rounded-xl"
+      } ${
+        isAnalyzing
+          ? "border-indigo-500 ring-2 ring-indigo-500/50 shadow-[0_0_15px_rgba(99,102,241,0.35)]"
+          : isActive
+          ? "border-emerald-500 shadow-[0_0_12px_rgba(16,185,129,0.25)] ring-1 ring-emerald-500"
+          : isSelected
+          ? "border-emerald-500/60 bg-emerald-950/15"
+          : isBurstExpanded && grp
+          ? "border-amber-500/60 bg-amber-950/10"
+          : justified
+          ? "border-transparent hover:border-zinc-600"
+          : "border-zinc-800/80 hover:border-zinc-600"
+      }`}
+    >
+      {grp && !isBurstExpanded && burstCount > 1 && (
+        <div className="absolute inset-x-2 -top-1 h-2 bg-amber-500/20 border-t border-amber-400/40 rounded-t-xl pointer-events-none z-20" />
+      )}
+
+      {/* Color Label Corner Ribbon */}
+      {photo.color_label && (
+        <div
+          className={`absolute top-0 right-0 w-3.5 h-3.5 z-20 ${
+            photo.color_label === "red"
+              ? "bg-red-500"
+              : photo.color_label === "yellow"
+              ? "bg-yellow-400"
+              : photo.color_label === "green"
+              ? "bg-emerald-500"
+              : "bg-blue-500"
+          } [clip-path:polygon(100%_0,0_0,100%_100%)]`}
+        />
+      )}
+
+      <div
+        style={{ height: `${imageHeight}px` }}
+        className="relative w-full bg-zinc-950 flex items-center justify-center overflow-hidden shrink-0"
+      >
+        {photo.thumb_ready && thumbFailed ? (
+          <span className="flex flex-col items-center gap-1 text-[11px] text-zinc-600">
+            <ImageOff className="w-5 h-5" />
+            Preview unavailable
+          </span>
+        ) : photo.thumb_ready ? (
+          <img
+            src={thumbSrc(photo)}
+            alt={photo.name}
+            decoding="async"
+            draggable={false}
+            onError={() => onThumbError(photo.thumb_path)}
+            style={
+              quarterTurn
+                ? {
+                    // Rotated a quarter turn: lay the image out in the swapped box so it still fills the card
+                    width: `${imageHeight}px`,
+                    height: `${width}px`,
+                    maxWidth: "none",
+                    flexShrink: 0,
+                    transform: `rotate(${photo.rotation}deg)`,
+                  }
+                : photo.rotation
+                ? { transform: `rotate(${photo.rotation}deg)` }
+                : undefined
+            }
+            className={`object-cover select-none ${quarterTurn ? "" : "w-full h-full"}`}
+          />
+        ) : (
+          // Skeleton while the thumbnail is being made
+          <div className="absolute inset-0 bg-gradient-to-br from-zinc-900 via-zinc-800/60 to-zinc-900 animate-pulse" />
+        )}
+
+        {isAnalyzing && (
+          <div className="absolute inset-0 bg-indigo-950/60 backdrop-blur-[2px] flex flex-col items-center justify-center gap-1.5 z-10">
+            <Loader2 className="w-6 h-6 text-indigo-300 animate-spin" />
+            <span className="text-[11px] font-bold text-indigo-200 tracking-wide uppercase">AI Tagging...</span>
+          </div>
+        )}
+
+        {/* Top-Left Badges */}
+        <div className="absolute top-2 left-2 flex items-center gap-1 z-20 flex-wrap">
+          {photo.in_basket && (
+            <span
+              className="p-1 rounded bg-cyan-950/90 border border-cyan-400/60 text-cyan-300 backdrop-blur shadow"
+              title="Pinned to Basket (B)"
+            >
+              <Pin className="w-3 h-3" />
+            </span>
+          )}
+          {photo.flag === "pick" && (
+            <span
+              className="p-1 rounded bg-emerald-950/90 border border-emerald-400/60 text-emerald-400 backdrop-blur shadow"
+              title="Picked (P)"
+            >
+              <Flag className="w-3 h-3" />
+            </span>
+          )}
+          {photo.flag === "reject" && (
+            <span
+              className="p-1 rounded bg-red-950/90 border border-red-500/60 text-red-400 backdrop-blur shadow"
+              title="Rejected (X)"
+            >
+              <XCircle className="w-3 h-3" />
+            </span>
+          )}
+
+          {photo.staged_target && (
+            <div
+              className="px-1.5 py-0.5 rounded bg-emerald-950/90 border border-emerald-500/40 text-emerald-300 text-[11px] font-mono flex items-center gap-1 backdrop-blur-md"
+              title={`Staged to move to ${photo.staged_target}`}
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+              <span>Staged</span>
+            </div>
+          )}
+
+          {photo.pair_raw_path && (
+            <span
+              className={`px-1.5 py-0.5 rounded bg-amber-950/90 border border-amber-500/40 text-amber-300 text-[11px] font-mono font-bold backdrop-blur-md ${secondary}`}
+              title={`Linked RAW+JPEG Pair: ${photo.pair_raw_path}`}
+            >
+              RAW+J
+            </span>
+          )}
+
+          {photo.damaged && (
+            <span
+              className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-orange-950/90 border border-orange-500/50 text-orange-300 text-[11px] font-mono font-bold backdrop-blur-md"
+              title="Damaged file: it is incomplete or corrupt (for example an interrupted download). The preview shows only the data that is present. Replace it from the original source if you can."
+            >
+              <AlertTriangle className="w-3 h-3" />
+              Damaged
+            </span>
+          )}
+
+          {grp && burstCount > 1 && (
+            <button
+              onClick={(e) => toggleBurstGroupExpand(grp, e)}
+              className={`px-2 py-0.5 rounded-md backdrop-blur-md text-[11px] font-semibold border flex items-center gap-1 transition shadow ${
+                isBurstExpanded
+                  ? isSharpestPick
+                    ? "bg-emerald-950/90 text-emerald-300 border-emerald-400/50 hover:bg-emerald-900"
+                    : "bg-amber-950/90 text-amber-300 border-amber-500/50 hover:bg-amber-900"
+                  : "bg-amber-500/90 text-zinc-950 border-amber-300 hover:bg-amber-400"
+              }`}
+            >
+              {isBurstExpanded && isSharpestPick ? <Trophy className="w-3 h-3" /> : <Layers className="w-3 h-3" />}
+              {isBurstExpanded ? (
+                <span>{isSharpestPick ? `Best (#${grp}) ▾` : `Burst #${grp} ▾`}</span>
+              ) : (
+                <span>
+                  {burstCount} {simpleMode ? "Similar" : "Burst"} ▸
+                </span>
+              )}
+            </button>
+          )}
+        </div>
+
+        {/* Star Badge */}
+        {photo.rating > 0 && (
+          <div className="absolute top-2 right-2 px-1.5 py-0.5 rounded bg-black/75 backdrop-blur-md text-amber-400 text-[11px] font-bold flex items-center gap-0.5 z-20">
+            <Star className="w-2.5 h-2.5 fill-amber-400 text-amber-400" />
+            <span>{photo.rating}</span>
+          </div>
+        )}
+
+        {/* AI & Tag Pills */}
+        {hasAiData && !isAnalyzing && !justified && (
+          <div className={`absolute bottom-2 left-2 right-2 flex items-center gap-1 overflow-hidden pointer-events-none ${secondary}`}>
+            <span className="px-1.5 py-0.5 rounded bg-indigo-950/90 border border-indigo-500/40 text-indigo-200 text-[11px] font-semibold flex items-center gap-1 shrink-0 backdrop-blur-md">
+              <Sparkles className="w-2.5 h-2.5 text-indigo-400" />
+              <span>{photo.tags.length}</span>
+            </span>
+            {photo.tags.slice(0, 2).map((t) => (
+              <span key={t} className="px-1.5 py-0.5 rounded bg-black/75 text-zinc-200 text-[11px] truncate backdrop-blur-md">
+                #{t}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {/* Justified style: name, place and tags fade in over the bottom of the photo */}
+        {justified && (
+          <div
+            className={`absolute inset-x-0 bottom-0 px-2.5 pt-6 pb-1.5 bg-gradient-to-t from-black/85 via-black/45 to-transparent text-[11px] flex items-end justify-between gap-2 pointer-events-none z-10 ${secondary}`}
+          >
+            <span className="truncate font-medium text-zinc-100">{photo.name}</span>
+            <span className="flex items-center gap-1 shrink-0 text-zinc-300">
+              {hasAiData && (
+                <>
+                  <Sparkles className="w-2.5 h-2.5 text-indigo-300" />
+                  <span>{photo.tags.length}</span>
+                </>
+              )}
+              {photo.location && (
+                <>
+                  <MapPin className="w-2.5 h-2.5 text-emerald-400 ml-1" />
+                  <span>{photo.location.split(",")[0]}</span>
+                </>
+              )}
+            </span>
+          </div>
+        )}
+      </div>
+
+      {!justified && (
+        <div
+          style={{ height: `${SQUARE_FOOTER_HEIGHT}px` }}
+          className="px-2.5 bg-card flex items-center justify-between text-[11px] border-t border-zinc-800/50 shrink-0"
+        >
+          <span className="truncate font-medium text-zinc-300" title={photo.name}>
+            {photo.name}
+          </span>
+          <span className={`font-mono text-zinc-500 shrink-0 ml-1 flex items-center gap-1 ${secondary}`}>
+            {photo.location ? (
+              <>
+                <MapPin className="w-2.5 h-2.5 text-emerald-400" />
+                <span>{photo.location.split(",")[0]}</span>
+              </>
+            ) : !simpleMode && photo.sharpness > 0 ? (
+              <>
+                <span>{photo.sharpness}</span>
+                <Crosshair className="w-2.5 h-2.5 text-zinc-600" />
+              </>
+            ) : null}
+          </span>
+        </div>
+      )}
+    </div>
+  );
+});

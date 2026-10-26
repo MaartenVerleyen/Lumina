@@ -6,7 +6,7 @@ use reverse_geocoder::ReverseGeocoder;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value as JsonValue};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::{BufReader, Cursor, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -180,6 +180,8 @@ pub struct ThumbBatchItem {
     pub auto_tags: Vec<String>,
     pub thumb_ok: bool,
     pub damaged: bool,
+    // Size the thumbnail file was written at (0 = existing file reused); stored as photos.thumb_edge
+    pub thumb_edge: u32,
 }
 
 #[derive(Serialize, Clone)]

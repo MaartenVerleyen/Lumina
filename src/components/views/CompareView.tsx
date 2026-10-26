@@ -98,9 +98,9 @@ export default function CompareView({
   }
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden bg-[#07080c]">
+    <div className="flex-1 flex flex-col overflow-hidden bg-surface">
       {/* Synchronized Compare Toolbar */}
-      <div className="bg-[#0c0d14] border-b border-zinc-800 px-4 py-2 flex items-center justify-between text-xs gap-3 flex-wrap">
+      <div className="bg-panel border-b border-zinc-800 px-4 py-2 flex items-center justify-between text-xs gap-3 flex-wrap">
         <div className="flex items-center gap-3">
           <span className="font-semibold text-emerald-300 flex items-center gap-1.5">
             <Columns className="w-4 h-4 text-emerald-400" />
@@ -241,7 +241,7 @@ export default function CompareView({
               </div>
 
               {/* Compare Card Bottom Bar */}
-              <div className="p-2.5 bg-[#10121a] border-t border-zinc-800 flex items-center justify-between text-xs z-10">
+              <div className="p-2.5 bg-card border-t border-zinc-800 flex items-center justify-between text-xs z-10">
                 <div className="truncate">
                   <div className="font-semibold text-zinc-200 truncate">{cp.name}</div>
                   <div className="text-[11px] font-mono text-emerald-400 flex items-center gap-1.5">

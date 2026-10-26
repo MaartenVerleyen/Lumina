@@ -72,7 +72,7 @@ export default function UnknownFaceClusters({
 
   return (
     <div className="flex-1 flex flex-col min-h-0">
-      <div className="px-6 py-3 bg-[#0e1017] border-b border-zinc-800/80 flex items-center justify-between text-xs shrink-0">
+      <div className="px-6 py-3 bg-card border-b border-zinc-800/80 flex items-center justify-between text-xs shrink-0">
         <div className="text-zinc-300">
           <span className="font-bold text-zinc-100">Who is this?</span>
           <span className="text-zinc-500 ml-2">

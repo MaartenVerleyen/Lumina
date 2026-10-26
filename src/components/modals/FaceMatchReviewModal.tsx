@@ -513,10 +513,10 @@ export default function FaceMatchReviewModal({
         aria-label="Face match review"
         tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
-        className="bg-[#0e1017] border border-zinc-800 rounded-2xl w-full max-w-6xl h-[86vh] shadow-2xl flex flex-col overflow-hidden"
+        className="bg-card border border-zinc-800 rounded-2xl w-full max-w-6xl h-[86vh] shadow-2xl flex flex-col overflow-hidden"
       >
         {/* Top Modal Header */}
-        <div className="px-6 py-4 bg-[#12141d] border-b border-zinc-800 flex items-center justify-between shrink-0 gap-4 flex-wrap">
+        <div className="px-6 py-4 bg-raised border-b border-zinc-800 flex items-center justify-between shrink-0 gap-4 flex-wrap">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-xl bg-indigo-500/15 border border-indigo-500/30 flex items-center justify-center">
               <ScanFace className="w-5 h-5 text-indigo-400" />
@@ -624,7 +624,7 @@ export default function FaceMatchReviewModal({
         {/* Body: Left People Sidebar + Main Candidate Workspace */}
         <div className="flex flex-1 min-h-0 overflow-hidden">
           {/* Left Sidebar: People List & Pending Counts */}
-          <aside className="w-64 bg-[#0b0c12] border-r border-zinc-800/80 flex flex-col overflow-y-auto p-3 gap-1.5 shrink-0">
+          <aside className="w-64 bg-panel border-r border-zinc-800/80 flex flex-col overflow-y-auto p-3 gap-1.5 shrink-0">
             <button
               onClick={() => setView("unknown")}
               className={`w-full flex items-center gap-2.5 p-2 rounded-xl text-xs transition mb-1 ${
@@ -639,10 +639,10 @@ export default function FaceMatchReviewModal({
               </div>
               <div className="text-left">
                 <div className="font-semibold">Who is this?</div>
-                <div className="text-[10px] text-zinc-500">Name unknown faces in groups</div>
+                <div className="text-[11px] text-zinc-500">Name unknown faces in groups</div>
               </div>
             </button>
-            <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider px-2 py-1">
+            <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider px-2 py-1">
               Confirmed People ({people.length})
             </span>
 
@@ -676,14 +676,14 @@ export default function FaceMatchReviewModal({
                     )}
                     <div className="text-left truncate">
                       <div className="font-semibold capitalize truncate">{p.name}</div>
-                      <div className="text-[10px] text-zinc-500 font-mono">
+                      <div className="text-[11px] text-zinc-500 font-mono">
                         {p.photo_count} confirmed
                       </div>
                     </div>
                   </div>
 
                   {pending > 0 && (
-                    <span className="px-2 py-0.5 rounded-full bg-amber-500/20 border border-amber-400/40 text-amber-300 font-mono text-[10px] font-bold shrink-0">
+                    <span className="px-2 py-0.5 rounded-full bg-amber-500/20 border border-amber-400/40 text-amber-300 font-mono text-[11px] font-bold shrink-0">
                       +{pending}?
                     </span>
                   )}
@@ -693,7 +693,7 @@ export default function FaceMatchReviewModal({
           </aside>
 
           {view === "unknown" && (
-            <div className="flex-1 flex flex-col min-h-0 overflow-hidden bg-[#090a0f]">
+            <div className="flex-1 flex flex-col min-h-0 overflow-hidden bg-surface">
               <UnknownFaceClusters
                 folder={folder}
                 peopleNames={people.map((p) => p.name)}
@@ -704,9 +704,9 @@ export default function FaceMatchReviewModal({
           )}
 
           {/* Main Workspace */}
-          <div className={`flex-1 flex flex-col min-h-0 overflow-hidden bg-[#090a0f] ${view === "unknown" ? "hidden" : ""}`}>
+          <div className={`flex-1 flex flex-col min-h-0 overflow-hidden bg-surface ${view === "unknown" ? "hidden" : ""}`}>
             {/* Action Sub-Toolbar */}
-            <div className="px-6 py-3 bg-[#0e1017] border-b border-zinc-800/80 flex items-center justify-between text-xs shrink-0 gap-2 flex-wrap">
+            <div className="px-6 py-3 bg-card border-b border-zinc-800/80 flex items-center justify-between text-xs shrink-0 gap-2 flex-wrap">
               <div className="flex items-center gap-3">
                 {activePersonObj?.cover_thumb && (
                   <img
@@ -938,7 +938,7 @@ export default function FaceMatchReviewModal({
                         }}
                         // Long lists: cards outside the viewport skip layout and paint until scrolled to
                         style={{ height: "250px", contentVisibility: "auto", containIntrinsicSize: "auto 250px" }}
-                        className={`group relative flex flex-col rounded-2xl overflow-hidden bg-[#12141d] border-2 transition cursor-pointer ${
+                        className={`group relative flex flex-col rounded-2xl overflow-hidden bg-raised border-2 transition cursor-pointer ${
                           isSelected
                             ? "border-emerald-500 ring-2 ring-emerald-500/30 shadow-lg"
                             : "border-zinc-800/90 hover:border-zinc-600"
@@ -970,12 +970,12 @@ export default function FaceMatchReviewModal({
                             </span>
                           )}
                           {statusTab === "confirmed" && (
-                            <span className="absolute top-2.5 left-2.5 px-2 py-0.5 rounded-md text-[10px] font-mono font-bold bg-emerald-950/90 text-emerald-300 border border-emerald-500/40 backdrop-blur-md">
+                            <span className="absolute top-2.5 left-2.5 px-2 py-0.5 rounded-md text-[11px] font-mono font-bold bg-emerald-950/90 text-emerald-300 border border-emerald-500/40 backdrop-blur-md">
                               ✓ Confirmed {activePerson}
                             </span>
                           )}
                           {statusTab === "denied" && (
-                            <span className="absolute top-2.5 left-2.5 px-2 py-0.5 rounded-md text-[10px] font-mono font-bold bg-red-950/90 text-red-300 border border-red-500/40 backdrop-blur-md">
+                            <span className="absolute top-2.5 left-2.5 px-2 py-0.5 rounded-md text-[11px] font-mono font-bold bg-red-950/90 text-red-300 border border-red-500/40 backdrop-blur-md">
                               ✕ Denied
                             </span>
                           )}
@@ -991,7 +991,7 @@ export default function FaceMatchReviewModal({
                                 if (idx >= 0) setSpotlightIndex(idx);
                                 setReviewMode("spotlight");
                               }}
-                              className="absolute top-2.5 right-2.5 px-2.5 py-1 rounded-md bg-black/80 hover:bg-indigo-600 text-zinc-200 hover:text-white text-[10px] font-semibold opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 transition backdrop-blur shadow"
+                              className="absolute top-2.5 right-2.5 px-2.5 py-1 rounded-md bg-black/80 hover:bg-indigo-600 text-zinc-200 hover:text-white text-[11px] font-semibold opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 transition backdrop-blur shadow"
                               title="Inspect full photo context"
                             >
                               Full Photo
@@ -1002,7 +1002,7 @@ export default function FaceMatchReviewModal({
                         {/* Card Footer (78px high: Filename + Action Buttons) */}
                         <div
                           style={{ height: "78px" }}
-                          className="px-3 py-2 flex flex-col justify-between bg-[#12141d] shrink-0"
+                          className="px-3 py-2 flex flex-col justify-between bg-raised shrink-0"
                         >
                           <span
                             className="text-xs text-zinc-200 font-medium truncate"
@@ -1109,7 +1109,7 @@ export default function FaceMatchReviewModal({
                         }}
                         className="absolute rounded-md border-2 border-emerald-400 bg-emerald-500/20 shadow-[0_0_20px_rgba(16,185,129,0.75)] pointer-events-none"
                       >
-                        <span className="absolute -top-6 left-0 px-2 py-0.5 rounded bg-emerald-600 text-white text-[10px] font-bold whitespace-nowrap shadow">
+                        <span className="absolute -top-6 left-0 px-2 py-0.5 rounded bg-emerald-600 text-white text-[11px] font-bold whitespace-nowrap shadow">
                           {activePerson}? ({currentSpotlight.similarity}%)
                         </span>
                       </div>
@@ -1117,7 +1117,7 @@ export default function FaceMatchReviewModal({
                   </div>
 
                   {/* Right: Close-up Face Crop & Keyboard Decision Controls */}
-                  <div className="w-80 bg-[#12141d] border border-zinc-800 rounded-2xl p-5 flex flex-col justify-between shrink-0">
+                  <div className="w-80 bg-raised border border-zinc-800 rounded-2xl p-5 flex flex-col justify-between shrink-0">
                     <div className="flex flex-col items-center text-center gap-3">
                       <div className="flex items-center justify-between w-full text-xs text-zinc-400 font-mono">
                         <span>

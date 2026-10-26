@@ -28,7 +28,7 @@ export default function AiBatchReportModal({
 
   return (
     <div className="fixed inset-0 z-[9990] bg-black/85 backdrop-blur-sm flex items-center justify-center p-6 select-none">
-      <div ref={dialogRef} role="dialog" aria-modal="true" aria-label="AI batch report" tabIndex={-1} className="bg-[#12141c] border border-zinc-800 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-label="AI batch report" tabIndex={-1} className="bg-raised border border-zinc-800 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col">
         {/* Header */}
         <div className="p-4 border-b border-zinc-800 flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -48,11 +48,11 @@ export default function AiBatchReportModal({
         <div className="p-5 flex flex-col gap-4 text-xs">
           <div className="grid grid-cols-2 gap-3">
             <div className="p-3 bg-zinc-900/60 border border-zinc-800 rounded-xl">
-              <span className="text-[10px] uppercase font-bold text-zinc-500">Completed Successfully</span>
+              <span className="text-[11px] uppercase font-bold text-zinc-500">Completed Successfully</span>
               <div className="text-lg font-bold text-emerald-400 mt-1 font-mono">{succeededCount} photos</div>
             </div>
             <div className="p-3 bg-zinc-900/60 border border-zinc-800 rounded-xl">
-              <span className="text-[10px] uppercase font-bold text-zinc-500">Failed with Errors</span>
+              <span className="text-[11px] uppercase font-bold text-zinc-500">Failed with Errors</span>
               <div className="text-lg font-bold text-red-400 mt-1 font-mono">{failures.length} photos</div>
             </div>
           </div>
@@ -68,9 +68,9 @@ export default function AiBatchReportModal({
                   >
                     <div className="flex justify-between items-center text-zinc-300 font-medium">
                       <span className="truncate">{f.photo.name}</span>
-                      <span className="text-[10px] text-zinc-500 font-mono">Retried {f.attempts}x</span>
+                      <span className="text-[11px] text-zinc-500 font-mono">Retried {f.attempts}x</span>
                     </div>
-                    <span className="text-[10px] text-red-300/80 font-mono break-words">{f.error}</span>
+                    <span className="text-[11px] text-red-300/80 font-mono break-words">{f.error}</span>
                   </div>
                 ))}
               </div>

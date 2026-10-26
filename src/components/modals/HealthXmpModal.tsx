@@ -24,7 +24,7 @@ export default function HealthXmpModal({
 
   return (
     <div className="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-sm flex items-center justify-center p-6">
-      <div ref={dialogRef} role="dialog" aria-modal="true" aria-label="Library health" tabIndex={-1} className="bg-[#12141c] border border-zinc-800 rounded-2xl w-full max-w-xl overflow-hidden shadow-2xl flex flex-col">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-label="Library health" tabIndex={-1} className="bg-raised border border-zinc-800 rounded-2xl w-full max-w-xl overflow-hidden shadow-2xl flex flex-col">
         <div className="p-5 border-b border-zinc-800 flex justify-between items-center">
           <div>
             <h2 className="text-base font-bold text-zinc-100 flex items-center gap-2">
@@ -45,7 +45,7 @@ export default function HealthXmpModal({
           <div className="p-5 flex flex-col gap-4 text-xs">
             <div className="grid grid-cols-3 gap-3">
               <div className="p-3 bg-zinc-900/80 border border-zinc-800 rounded-xl">
-                <div className="text-zinc-500 text-[10px] uppercase font-bold">Total Library</div>
+                <div className="text-zinc-500 text-[11px] uppercase font-bold">Total Library</div>
                 <div className="text-lg font-bold text-zinc-100 mt-0.5">
                   {healthStats.total_photos} photos
                 </div>
@@ -54,7 +54,7 @@ export default function HealthXmpModal({
                 </div>
               </div>
               <div className="p-3 bg-zinc-900/80 border border-zinc-800 rounded-xl">
-                <div className="text-zinc-500 text-[10px] uppercase font-bold">
+                <div className="text-zinc-500 text-[11px] uppercase font-bold">
                   Burst Duplicates
                 </div>
                 <div className="text-lg font-bold text-amber-300 mt-0.5">
@@ -65,7 +65,7 @@ export default function HealthXmpModal({
                 </div>
               </div>
               <div className="p-3 bg-zinc-900/80 border border-zinc-800 rounded-xl">
-                <div className="text-zinc-500 text-[10px] uppercase font-bold">
+                <div className="text-zinc-500 text-[11px] uppercase font-bold">
                   Thumb & Face Cache
                 </div>
                 <div className="text-lg font-bold text-zinc-100 mt-0.5">
@@ -79,7 +79,7 @@ export default function HealthXmpModal({
 
             {healthStats.damaged_count > 0 && (
               <div className="p-3.5 bg-orange-950/40 border border-orange-500/40 rounded-xl flex flex-col gap-1.5">
-                <span className="text-[10px] font-bold text-orange-300 uppercase tracking-wider flex items-center gap-1.5">
+                <span className="text-[11px] font-bold text-orange-300 uppercase tracking-wider flex items-center gap-1.5">
                   <AlertTriangle className="w-3.5 h-3.5" />
                   {healthStats.damaged_count} damaged file(s)
                 </span>
@@ -87,7 +87,7 @@ export default function HealthXmpModal({
                   These files are incomplete or corrupt (often an interrupted download). Lumina shows
                   what is present, but you may want to replace them from the original source.
                 </span>
-                <div className="flex flex-col gap-0.5 font-mono text-[10px] text-zinc-300 max-h-28 overflow-y-auto">
+                <div className="flex flex-col gap-0.5 font-mono text-[11px] text-zinc-300 max-h-28 overflow-y-auto">
                   {healthStats.damaged_files.map((f) => (
                     <span key={f} className="truncate" title={f}>
                       {f}
@@ -104,7 +104,7 @@ export default function HealthXmpModal({
 
             {/* Camera Model Breakdown */}
             <div className="p-3.5 bg-zinc-900/60 border border-zinc-800 rounded-xl flex flex-col gap-2">
-              <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">
+              <span className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">
                 Top Cameras / Devices
               </span>
               <div className="flex flex-col gap-1.5">

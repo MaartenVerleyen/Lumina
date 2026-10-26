@@ -3,6 +3,11 @@
 
 /* Register custom darkroom colors for Tailwind v4 */
 @theme {
+  /* Surfaces, darkest to lightest: app background, side panels and toolbars, photo cards, dialogs and popovers */
+  --color-surface: #090a0f;
+  --color-panel: #0c0d14;
+  --color-card: #10121a;
+  --color-raised: #12141c;
   --color-darkroom-950: #070a11;
   --color-darkroom-900: #0c1220;
   --color-darkroom-850: #111827;

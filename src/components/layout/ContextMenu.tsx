@@ -65,7 +65,7 @@ export function PhotoContextMenu({
         left: `${Math.min(window.innerWidth - 230, position.x)}px`,
         top: `${Math.min(window.innerHeight - 230, position.y)}px`,
       }}
-      className="fixed z-[99999] w-56 bg-[#12141d]/95 backdrop-blur-md border border-zinc-700/80 rounded-xl shadow-2xl p-1 text-xs select-none animate-in fade-in zoom-in-95"
+      className="fixed z-[99999] w-56 bg-raised/95 backdrop-blur-md border border-zinc-700/80 rounded-xl shadow-2xl p-1 text-xs select-none animate-in fade-in zoom-in-95"
     >
       <button
         onClick={() => {
@@ -185,9 +185,9 @@ export function FolderContextMenu({
         left: `${Math.min(window.innerWidth - 230, position.x)}px`,
         top: `${Math.min(window.innerHeight - 160, position.y)}px`,
       }}
-      className="fixed z-[99999] w-56 bg-[#12141d]/95 backdrop-blur-md border border-zinc-700/80 rounded-xl shadow-2xl p-1 text-xs select-none animate-in fade-in zoom-in-95"
+      className="fixed z-[99999] w-56 bg-raised/95 backdrop-blur-md border border-zinc-700/80 rounded-xl shadow-2xl p-1 text-xs select-none animate-in fade-in zoom-in-95"
     >
-      <div className="px-2.5 py-1 text-[10px] text-zinc-400 font-mono truncate border-b border-zinc-800 mb-1">
+      <div className="px-2.5 py-1 text-[11px] text-zinc-400 font-mono truncate border-b border-zinc-800 mb-1">
         📂 {folderPath || "Root"}
       </div>
 

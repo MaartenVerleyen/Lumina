@@ -41,6 +41,7 @@ import {
   computePresetTargetFolder,
 } from "../utils/photoHelpers";
 import { expandWithRawPairs, diskPathOf, RAW_OR_HEIC_NAME } from "../utils/rawPairs";
+import type { GridStyle, CardDetails } from "../components/views/VirtualPhotoGrid";
 
 const MAX_UNDO_STEPS = 20;
 const MAX_TOASTS = 4;
@@ -94,6 +95,22 @@ function topLibraryTags(list: PhotoItem[], max = 40): string[] {
 
 // Windows paths: compare case-insensitively and ignore a trailing separator
 type LocationValue = { location: string; latitude: number | null; longitude: number | null };
+
+// localStorage can throw (private mode, blocked storage): settings then just aren't remembered
+function readSetting<T extends string>(key: string, fallback: T, allowed: T[]): T {
+  try {
+    const value = localStorage.getItem(key) as T | null;
+    return value && allowed.includes(value) ? value : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeSetting(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {}
+}
 
 function isSameFolder(a: string, b: string): boolean {
   const norm = (p: string) => p.replace(/[\\/]+$/, "").toLowerCase();
@@ -355,6 +372,21 @@ export function useLibraryState() {
   const [simpleMode, setSimpleMode] = useState<boolean>(() => {
     return localStorage.getItem("lumina_simple_mode") === "true";
   });
+  // Grid appearance (Tools menu), remembered between sessions
+  const [gridStyle, setGridStyleState] = useState<GridStyle>(() =>
+    readSetting("lumina_grid_style", "justified", ["justified", "square"])
+  );
+  const [cardDetails, setCardDetailsState] = useState<CardDetails>(() =>
+    readSetting("lumina_card_details", "hover", ["hover", "always"])
+  );
+  const setGridStyle = (value: GridStyle) => {
+    setGridStyleState(value);
+    writeSetting("lumina_grid_style", value);
+  };
+  const setCardDetails = (value: CardDetails) => {
+    setCardDetailsState(value);
+    writeSetting("lumina_card_details", value);
+  };
   const [isShortcutsModalOpen, setIsShortcutsModalOpen] = useState<boolean>(false);
   const [ollamaPullProgress, setOllamaPullProgress] = useState<OllamaPullProgress | null>(null);
   const [people, setPeople] = useState<PersonItem[]>([]);
@@ -841,6 +873,8 @@ export function useLibraryState() {
             ...p,
             path: displayPath,
             thumb_path: hit.thumb_path,
+            // The file was rewritten (e.g. upgraded to 480 px): a new revision makes the grid reload it
+            thumb_rev: p.thumb_ready && hit.thumb_edge > 0 ? (p.thumb_rev || 0) + 1 : p.thumb_rev,
             dhash: hit.dhash,
             sharpness: hit.sharpness,
             width: hit.width || p.width,
@@ -2817,6 +2851,10 @@ export function useLibraryState() {
     recentFolders,
     simpleMode,
     toggleSimpleMode,
+    gridStyle,
+    setGridStyle,
+    cardDetails,
+    setCardDetails,
     isShortcutsModalOpen,
     setIsShortcutsModalOpen,
     ollamaPullProgress,

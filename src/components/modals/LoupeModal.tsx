@@ -1,3 +1,4 @@
+import { thumbSrc } from "../../utils/photoHelpers";
 import { useState, useRef, useEffect } from "react";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { diskPathOf } from "../../utils/rawPairs";
@@ -328,7 +329,7 @@ export default function LoupeModal({
               setIsMovePopoverOpen(false);
               setMoveTargetInput("");
             }}
-            className="bg-[#10121a] border border-zinc-700 p-2.5 rounded-xl shadow-2xl flex items-center gap-2 text-xs"
+            className="bg-card border border-zinc-700 p-2.5 rounded-xl shadow-2xl flex items-center gap-2 text-xs"
           >
             <Folder className="w-4 h-4 text-emerald-400" />
             <input
@@ -356,7 +357,7 @@ export default function LoupeModal({
         )}
 
         {/* Complete Interactive Triage Action HUD */}
-        <div className="bg-[#10121a]/95 border border-zinc-700/70 backdrop-blur-xl px-4 py-2 rounded-2xl flex items-center gap-3 text-xs text-zinc-200 shadow-2xl flex-wrap justify-center">
+        <div className="bg-card/95 border border-zinc-700/70 backdrop-blur-xl px-4 py-2 rounded-2xl flex items-center gap-3 text-xs text-zinc-200 shadow-2xl flex-wrap justify-center">
           {/* Pick / Reject / Unflag */}
           <div className="flex items-center gap-1">
             <button
@@ -423,7 +424,7 @@ export default function LoupeModal({
             {activePhoto.rating > 0 && (
               <button
                 onClick={() => handleBatchRate(0)}
-                className="text-[10px] text-zinc-500 hover:text-zinc-300 ml-1"
+                className="text-[11px] text-zinc-500 hover:text-zinc-300 ml-1"
                 title="Clear Rating (0)"
               >
                 0★
@@ -456,7 +457,7 @@ export default function LoupeModal({
             {localColor && (
               <button
                 onClick={() => onColorSelect(null)}
-                className="text-[10px] text-zinc-500 hover:text-zinc-300 ml-0.5"
+                className="text-[11px] text-zinc-500 hover:text-zinc-300 ml-0.5"
               >
                 Clear
               </button>
@@ -526,7 +527,7 @@ export default function LoupeModal({
 
         {/* Bottom Filmstrip Scrubber (when visiblePhotos are provided) */}
         {filmstripPhotos.length > 1 && setActiveHash && setSelectedHashes && (
-          <div className="flex items-center gap-1.5 bg-[#0c0d14]/90 border border-zinc-800/80 p-1.5 rounded-xl overflow-x-auto max-w-full">
+          <div className="flex items-center gap-1.5 bg-panel/90 border border-zinc-800/80 p-1.5 rounded-xl overflow-x-auto max-w-full">
             {filmstripPhotos.map((fp) => {
               const isCur = fp.hash === activePhoto.hash;
               return (
@@ -543,7 +544,7 @@ export default function LoupeModal({
                   }`}
                 >
                   <img
-                    src={convertFileSrc(fp.thumb_ready ? fp.thumb_path : fp.path)}
+                    src={fp.thumb_ready ? thumbSrc(fp) : convertFileSrc(fp.path)}
                     alt={fp.name}
                     className="w-full h-full object-cover"
                   />

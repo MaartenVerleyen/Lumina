@@ -1,3 +1,4 @@
+import { thumbSrc } from "../../utils/photoHelpers";
 import { memo, useEffect, useRef } from "react";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import {
@@ -129,7 +130,7 @@ function HistogramCanvas({ imageSrc }: { imageSrc: string }) {
 
   return (
     <div className="flex flex-col gap-1 p-2 bg-zinc-900/90 rounded-xl border border-zinc-800">
-      <div className="flex items-center justify-between text-[9px] font-mono uppercase text-zinc-500 px-1">
+      <div className="flex items-center justify-between text-[11px] font-mono uppercase text-zinc-500 px-1">
         <span>RGB + Luma Histogram</span>
         <span className="flex items-center gap-1.5 font-bold">
           <span className="text-zinc-300">L</span>
@@ -142,7 +143,7 @@ function HistogramCanvas({ imageSrc }: { imageSrc: string }) {
         ref={canvasRef}
         width={256}
         height={56}
-        className="w-full h-14 rounded-lg bg-[#090a0f] border border-zinc-800/60"
+        className="w-full h-14 rounded-lg bg-surface border border-zinc-800/60"
       />
     </div>
   );
@@ -287,14 +288,12 @@ function RightInspector({
 
 
 
-  const previewSource = activePhoto.thumb_ready
-    ? activePhoto.thumb_path
-    : activePhoto.path;
+  const previewSrc = activePhoto.thumb_ready ? thumbSrc(activePhoto) : convertFileSrc(activePhoto.path);
 
   return (
     <aside
       style={{ width: `${rightWidth}px` }}
-      className="bg-[#0c0d14] flex flex-col p-4 gap-3.5 overflow-y-auto shrink-0"
+      className="bg-panel flex flex-col p-4 gap-3.5 overflow-y-auto shrink-0"
     >
       {/* Proportional Preview with Aspect-Ratio Lock & Face Canvas */}
       <div className="flex flex-col gap-2 shrink-0">
@@ -310,7 +309,7 @@ function RightInspector({
             }`}
           >
             <img
-              src={convertFileSrc(previewSource)}
+              src={previewSrc}
               alt={activePhoto.name}
               decoding="async"
               draggable={false}
@@ -345,7 +344,7 @@ function RightInspector({
                   }`}
                 >
                   <span
-                    className={`absolute -top-5 left-0 px-1.5 py-0.2 rounded text-[9px] font-bold whitespace-nowrap shadow ${
+                    className={`absolute -top-5 left-0 px-1.5 py-0.2 rounded text-[11px] font-bold whitespace-nowrap shadow ${
                       face.person_name
                         ? "bg-emerald-600 text-white"
                         : "bg-amber-500 text-zinc-950"
@@ -367,7 +366,7 @@ function RightInspector({
                 }}
                 className="absolute rounded-md border-2 border-indigo-400 bg-indigo-500/25 pointer-events-none"
               >
-                <span className="absolute -top-5 left-0 px-1.5 py-0.2 rounded bg-indigo-600 text-white text-[9px] font-bold">
+                <span className="absolute -top-5 left-0 px-1.5 py-0.2 rounded bg-indigo-600 text-white text-[11px] font-bold">
                   Selected Face
                 </span>
               </div>
@@ -381,7 +380,7 @@ function RightInspector({
               setIsDrawingFace((p) => !p);
               setSelectedFaceId(null);
             }}
-            className={`absolute top-2.5 left-2.5 px-2.5 py-1 rounded-md text-[10px] font-semibold flex items-center gap-1 transition backdrop-blur shadow ${
+            className={`absolute top-2.5 left-2.5 px-2.5 py-1 rounded-md text-[11px] font-semibold flex items-center gap-1 transition backdrop-blur shadow ${
               isDrawingFace
                 ? "bg-indigo-600 text-white"
                 : "bg-black/70 hover:bg-zinc-800 text-zinc-200 border border-white/10"
@@ -402,7 +401,7 @@ function RightInspector({
 
         {/* Phase 6: Live RGB + Luminance Histogram (Pro Mode) */}
         {!simpleMode && (
-          <HistogramCanvas imageSrc={convertFileSrc(previewSource)} />
+          <HistogramCanvas imageSrc={previewSrc} />
         )}
 
         {/* Phase 6: Camera Telemetry LCD Pill */}
@@ -431,7 +430,7 @@ function RightInspector({
               </div>
             </div>
             {activePhoto.lens_model && (
-              <div className="text-[10px] text-zinc-500 border-t border-zinc-800/80 pt-1 truncate">
+              <div className="text-[11px] text-zinc-500 border-t border-zinc-800/80 pt-1 truncate">
                 Lens: {activePhoto.lens_model}
               </div>
             )}
@@ -446,7 +445,7 @@ function RightInspector({
               <span>RAW + JPEG Linked Pair</span>
             </span>
             <span
-              className="text-[10px] text-zinc-400 truncate max-w-[140px]"
+              className="text-[11px] text-zinc-400 truncate max-w-[140px]"
               title={activePhoto.pair_raw_path}
             >
               {activePhoto.pair_raw_path.split(/[\\/]/).pop()}
@@ -457,14 +456,14 @@ function RightInspector({
         {/* Face Strip & Namer */}
         <div className="p-2.5 bg-zinc-900/90 border border-zinc-800 rounded-xl flex flex-col gap-2">
           <div className="flex items-center justify-between">
-            <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider flex items-center gap-1">
+            <span className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider flex items-center gap-1">
               <ScanFace className="w-3.5 h-3.5 text-indigo-400" />
               Faces in Photo ({activePhoto.faces.length})
             </span>
             <button
               onClick={handleDetectFacesSingleOnnx}
               disabled={isDetectingSingleFace}
-              className="px-2 py-0.5 rounded bg-indigo-950/70 hover:bg-indigo-900 text-indigo-300 border border-indigo-500/40 text-[10px] font-semibold transition flex items-center gap-1"
+              className="px-2 py-0.5 rounded bg-indigo-950/70 hover:bg-indigo-900 text-indigo-300 border border-indigo-500/40 text-[11px] font-semibold transition flex items-center gap-1"
               title="Run Pure-Rust ONNX Neural Face Detector on this photo"
             >
               {isDetectingSingleFace ? (
@@ -584,7 +583,7 @@ function RightInspector({
           {/* Assigned People Pills with 1-Click Unassign (X) */}
           {activePhoto.people.length > 0 && (
             <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-zinc-800/70">
-              <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mr-1">
+              <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider mr-1">
                 People:
               </span>
               {activePhoto.people.map((personName) => (
@@ -737,7 +736,7 @@ function RightInspector({
 
         {/* Interactive 1-5 Star Rating Bar */}
         <div className="flex items-center justify-between pt-2 border-t border-zinc-800/80 text-xs">
-          <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">
+          <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider">
             Star Rating (1–5)
           </span>
           <div className="flex items-center gap-1">
@@ -765,7 +764,7 @@ function RightInspector({
             {activePhoto.rating > 0 && (
               <button
                 onClick={() => handleBatchRate(0)}
-                className="ml-1 text-[10px] text-zinc-500 hover:text-zinc-300"
+                className="ml-1 text-[11px] text-zinc-500 hover:text-zinc-300"
                 title="Clear rating (0)"
               >
                 Clear
@@ -950,7 +949,7 @@ function RightInspector({
                       <MapPin className="w-3 h-3 text-emerald-400" />
                       {c.name}, {c.country}
                     </span>
-                    <span className="text-[10px] text-zinc-500 font-mono">
+                    <span className="text-[11px] text-zinc-500 font-mono">
                       {c.latitude.toFixed(2)}, {c.longitude.toFixed(2)}
                     </span>
                   </button>
@@ -981,7 +980,7 @@ function RightInspector({
 
         {/* Tags */}
         <div className="flex flex-col gap-2 p-3 bg-zinc-900/90 rounded-xl border border-zinc-800">
-          <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">
+          <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider">
             Tags ({activePhoto.tags.length})
           </span>
           <div className="flex flex-wrap gap-1.5">
@@ -1040,7 +1039,7 @@ function RightInspector({
 
         {activePhoto.ocr_text && (
           <div className="p-3 bg-zinc-900/90 border border-zinc-800 rounded-xl flex flex-col gap-1 text-xs">
-            <span className="text-[10px] font-bold text-indigo-400 uppercase tracking-wider flex items-center gap-1.5">
+            <span className="text-[11px] font-bold text-indigo-400 uppercase tracking-wider flex items-center gap-1.5">
               <FileText className="w-3.5 h-3.5" />
               Detected Text (OCR)
             </span>

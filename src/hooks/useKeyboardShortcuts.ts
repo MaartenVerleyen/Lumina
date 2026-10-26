@@ -17,8 +17,9 @@ interface UseKeyboardShortcutsParams {
   // A dialog (commit, health, face review, ...) is open: grid shortcuts must not act on photos behind it
   isBlockingModalOpen: boolean;
   closeBlockingModals: () => void;
-  gridColumns: number;
   navigateByOffset: (offset: number, extendSelection: boolean) => void;
+  // Up/down in the grid: the visually nearest photo in the row above/below
+  navigateVertical: (direction: 1 | -1, extendSelection: boolean) => void;
   autoAdvance: boolean;
   searchInputRef: RefObject<HTMLInputElement | null>;
   handleSetFlag: (flag: "pick" | "reject" | null) => Promise<void>;
@@ -86,10 +87,12 @@ export function useKeyboardShortcuts(params: UseKeyboardShortcutsParams) {
         p.navigateByOffset(-1, e.shiftKey);
       } else if (e.key === "ArrowDown") {
         e.preventDefault();
-        p.navigateByOffset(p.isLoupeOpen ? 1 : p.gridColumns, e.shiftKey);
+        if (p.isLoupeOpen) p.navigateByOffset(1, e.shiftKey);
+        else p.navigateVertical(1, e.shiftKey);
       } else if (e.key === "ArrowUp") {
         e.preventDefault();
-        p.navigateByOffset(p.isLoupeOpen ? -1 : -p.gridColumns, e.shiftKey);
+        if (p.isLoupeOpen) p.navigateByOffset(-1, e.shiftKey);
+        else p.navigateVertical(-1, e.shiftKey);
       } else if (e.key === " ") {
         // Let Space activate a focused button as usual
         if (isActivatableTarget(e.target)) return;

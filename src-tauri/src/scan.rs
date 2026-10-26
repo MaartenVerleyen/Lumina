@@ -211,6 +211,7 @@ pub struct CachedRow {
     pub iso: Option<String>,
     pub lens_model: Option<String>,
     pub damaged: bool,
+    pub thumb_edge: u32,
 }
 
 #[tauri::command]
@@ -274,7 +275,7 @@ pub async fn scan_folder(
                             COALESCE(exif_checked, 0), flag, color_label, COALESCE(rotation, 0), COALESCE(in_basket, 0),
                             COALESCE(width, 0), COALESCE(height, 0),
                             focal_length, aperture, shutter_speed, iso, lens_model,
-                            COALESCE(damaged, 0)
+                            COALESCE(damaged, 0), COALESCE(thumb_edge, 0)
                      FROM photos WHERE current_path LIKE ?1 ESCAPE '!'",
                 )
                 .map_err(|e| e.to_string())?;
@@ -310,6 +311,7 @@ pub async fn scan_folder(
                             iso: row.get(25).ok().flatten(),
                             lens_model: row.get(26).ok().flatten(),
                             damaged: row.get::<_, i32>(27).unwrap_or(0) != 0,
+                            thumb_edge: row.get::<_, u32>(28).unwrap_or(0),
                         },
                     ))
                 })
@@ -848,14 +850,29 @@ pub async fn scan_folder(
         photos.sort_by(|a, b| a.subfolder.cmp(&b.subfolder).then(a.name.cmp(&b.name)));
         assign_duplicate_groups(&mut photos);
 
+        // Thumbnails from before the 480 px size keep showing until their replacement is written
+        let upgrade: HashSet<String> = if force {
+            HashSet::new()
+        } else {
+            let outdated: HashSet<&str> = cache_map
+                .values()
+                .filter(|c| c.thumb_edge < THUMB_EDGE)
+                .map(|c| c.hash.as_str())
+                .collect();
+            photos
+                .iter()
+                .filter(|p| p.thumb_ready && outdated.contains(p.hash.as_str()))
+                .map(|p| p.hash.clone())
+                .collect()
+        };
         let needs_processing: Vec<PhotoItem> = photos
             .iter()
-            .filter(|p| force || !p.thumb_ready || p.dhash.is_empty())
+            .filter(|p| force || !p.thumb_ready || p.dhash.is_empty() || upgrade.contains(&p.hash))
             .cloned()
             .collect();
 
         if !needs_processing.is_empty() {
-            spawn_thumbnail_pass(app.clone(), needs_processing, root_path.clone(), generation, force);
+            spawn_thumbnail_pass(app.clone(), needs_processing, root_path.clone(), generation, force, upgrade);
         }
 
         Ok(photos)

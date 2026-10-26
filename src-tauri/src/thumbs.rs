@@ -8,6 +8,11 @@ use std::time::Duration;
 // and the disk keeps streaming while the CPUs decode.
 
 const UI_BATCH_SIZE: usize = 48;
+
+// Grid thumbnails: 480 px stays sharp on large cards and HiDPI screens
+pub const THUMB_EDGE: u32 = 480;
+// dHash and focus scores are measured at 360 px, the size they were tuned on, whatever the thumbnail size
+const METRICS_EDGE: u32 = 360;
 const UI_BATCH_MAX_WAIT: Duration = Duration::from_millis(250);
 
 // The photo's own file on disk. For RAW/HEIC `path` is the cached preview and the original is in
@@ -26,8 +31,10 @@ pub fn disk_path_of(p: &PhotoItem) -> PathBuf {
 struct ThumbInput {
     idx: usize,
     bytes: Option<Vec<u8>>,
-    // The 360px thumbnail already exists (only dHash/sharpness are missing): decode it instead of the original
+    // The thumbnail already exists (only dHash/sharpness are missing): decode it instead of the original
     reuse_thumb: bool,
+    // An older, smaller thumbnail exists: make a new one from the original and replace it
+    upgrade: bool,
 }
 
 #[derive(Default)]
@@ -39,11 +46,25 @@ struct PassStats {
     db_ms: u64,
 }
 
-pub fn spawn_thumbnail_pass(app: AppHandle, items: Vec<PhotoItem>, root: PathBuf, generation: u64, force: bool) {
-    std::thread::spawn(move || run_thumbnail_pass(&app, &items, &root, generation, force));
+pub fn spawn_thumbnail_pass(
+    app: AppHandle,
+    items: Vec<PhotoItem>,
+    root: PathBuf,
+    generation: u64,
+    force: bool,
+    upgrade: HashSet<String>,
+) {
+    std::thread::spawn(move || run_thumbnail_pass(&app, &items, &root, generation, force, &upgrade));
 }
 
-fn run_thumbnail_pass(app: &AppHandle, items: &[PhotoItem], root: &Path, generation: u64, force: bool) {
+fn run_thumbnail_pass(
+    app: &AppHandle,
+    items: &[PhotoItem],
+    root: &Path,
+    generation: u64,
+    force: bool,
+    upgrade: &HashSet<String>,
+) {
     let started = Instant::now();
     let is_superseded = move || SCAN_GENERATION.load(Ordering::Acquire) != generation;
     let total = items.len();
@@ -62,7 +83,7 @@ fn run_thumbnail_pass(app: &AppHandle, items: &[PhotoItem], root: &Path, generat
                 let ext = src.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
                 (ext == "heic" || ext == "heif") && (force || !Path::new(&p.thumb_path).exists())
             })
-            .map(|p| (disk_path_of(p).to_string_lossy().to_string(), p.thumb_path.clone(), 360))
+            .map(|p| (disk_path_of(p).to_string_lossy().to_string(), p.thumb_path.clone(), THUMB_EDGE))
             .collect();
         powershell_heic = jobs.len();
         batch_decode_heic_thumbs_windows(&jobs);
@@ -73,7 +94,7 @@ fn run_thumbnail_pass(app: &AppHandle, items: &[PhotoItem], root: &Path, generat
     let mut batch: Vec<ThumbBatchItem> = Vec::with_capacity(UI_BATCH_SIZE);
     let mut last_flush = Instant::now();
     let mut completed = 0usize;
-    let (reused, heic) = run_decode_pipeline(items, io_threads, force, is_superseded, |event| {
+    let (reused, heic) = run_decode_pipeline(items, io_threads, force, upgrade, is_superseded, |event| {
         let finished = match event {
             PipelineEvent::Item(item) => {
                 batch.push(item);
@@ -147,6 +168,7 @@ pub fn run_decode_pipeline(
     items: &[PhotoItem],
     io_threads: usize,
     force: bool,
+    upgrade: &HashSet<String>,
     is_superseded: impl Fn() -> bool + Copy + Send + Sync,
     mut on_event: impl FnMut(PipelineEvent),
 ) -> (usize, usize) {
@@ -170,7 +192,9 @@ pub fn run_decode_pipeline(
                 }
                 let photo = &items[idx];
                 let thumb_file = Path::new(&photo.thumb_path);
-                let reuse_thumb = !force && thumb_file.metadata().map(|m| m.len() > 256).unwrap_or(false);
+                let upgrade = upgrade.contains(&photo.hash);
+                let reuse_thumb =
+                    !force && !upgrade && thumb_file.metadata().map(|m| m.len() > 256).unwrap_or(false);
                 let source = disk_path_of(photo);
                 let bytes = if reuse_thumb {
                     reused_count.fetch_add(1, Ordering::Relaxed);
@@ -182,7 +206,7 @@ pub fn run_decode_pipeline(
                     }
                     read_for_thumb(&source)
                 };
-                if in_tx.send(ThumbInput { idx, bytes, reuse_thumb }).is_err() {
+                if in_tx.send(ThumbInput { idx, bytes, reuse_thumb, upgrade }).is_err() {
                     break;
                 }
             });
@@ -242,6 +266,7 @@ fn process_one(photo: &PhotoItem, input: ThumbInput, force: bool) -> ThumbBatchI
         thumb_ok: false,
         // Unreadable unless decoding succeeds below
         damaged: true,
+        thumb_edge: 0,
     };
 
     if let Ok((img, damaged)) = decoded {
@@ -256,15 +281,38 @@ fn process_one(photo: &PhotoItem, input: ThumbInput, force: bool) -> ThumbBatchI
         if is_likely_screenshot(&source, &photo.camera_model, Some(&img), source_dims) {
             item.auto_tags.push("screenshot".to_string());
         }
-        let thumb = if iw <= 360 && ih <= 360 { img } else { img.thumbnail(360, 360) };
-        item.dhash = compute_dhash(&thumb);
-        item.sharpness = compute_sharpness(&thumb);
-        if (force || !thumb_file.exists()) && thumb.to_rgb8().save(thumb_file).is_err() {
-            item.thumb_path = photo.path.clone();
+        let thumb = if iw <= THUMB_EDGE && ih <= THUMB_EDGE { img } else { img.thumbnail(THUMB_EDGE, THUMB_EDGE) };
+        let (tw, th) = thumb.dimensions();
+        let metrics_img;
+        let metrics = if tw <= METRICS_EDGE && th <= METRICS_EDGE {
+            &thumb
+        } else {
+            metrics_img = thumb.thumbnail(METRICS_EDGE, METRICS_EDGE);
+            &metrics_img
+        };
+        item.dhash = compute_dhash(metrics);
+        item.sharpness = compute_sharpness(metrics);
+        if force || input.upgrade || !thumb_file.exists() {
+            if write_thumbnail(&thumb, thumb_file) {
+                item.thumb_edge = THUMB_EDGE;
+            } else if !thumb_file.exists() {
+                item.thumb_path = photo.path.clone();
+            }
         }
     }
     item.thumb_ok = Path::new(&item.thumb_path).exists();
     item
+}
+
+// Written next to the target and renamed, so the grid never loads a half-written file while an older
+// thumbnail is being replaced
+fn write_thumbnail(img: &DynamicImage, target: &Path) -> bool {
+    let tmp = target.with_extension("tmp.jpg");
+    if img.to_rgb8().save(&tmp).is_err() {
+        let _ = fs::remove_file(&tmp);
+        return false;
+    }
+    fs::rename(&tmp, target).is_ok()
 }
 
 fn flush_batch(
@@ -287,6 +335,12 @@ fn flush_batch(
                     "UPDATE photos SET dhash = ?1, sharpness = ?2, width = CASE WHEN ?3 > 0 THEN ?3 ELSE width END, height = CASE WHEN ?4 > 0 THEN ?4 ELSE height END, damaged = ?6 WHERE hash = ?5",
                     params![item.dhash, item.sharpness, item.width, item.height, item.hash, item.damaged],
                 );
+                if item.thumb_edge > 0 {
+                    let _ = tx.execute(
+                        "UPDATE photos SET thumb_edge = ?1 WHERE hash = ?2",
+                        params![item.thumb_edge, item.hash],
+                    );
+                }
                 if !item.auto_tags.is_empty() {
                     let _ = tx.execute(
                         "INSERT OR IGNORE INTO photo_tags (hash, tag) VALUES (?1, 'screenshot')",
