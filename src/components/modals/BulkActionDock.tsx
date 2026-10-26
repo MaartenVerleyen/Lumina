@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Album, BulkPopover, CitySearchResult, PhotoItem } from "../../types/lumina";
+import { Album, BulkPopover, CitySearchResult, PhotoItem, ViewMode } from "../../types/lumina";
 import {
   CheckSquare,
   Clock,
@@ -69,7 +69,7 @@ interface BulkActionDockProps {
   shiftMinutesInput: number;
   setShiftMinutesInput: React.Dispatch<React.SetStateAction<number>>;
   setIsPickingMapLocation: React.Dispatch<React.SetStateAction<boolean>>;
-  setViewMode: React.Dispatch<React.SetStateAction<"grid" | "map" | "compare">>;
+  setViewMode: React.Dispatch<React.SetStateAction<ViewMode>>;
   setCompareZoom: React.Dispatch<React.SetStateAction<number>>;
   setComparePan: React.Dispatch<React.SetStateAction<{ x: number; y: number }>>;
   handleSetFlag: (flag: "pick" | "reject" | null) => Promise<void>;

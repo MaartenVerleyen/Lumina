@@ -13,6 +13,7 @@ import BottomStatusBar from "./components/layout/BottomStatusBar";
 import ToastStack from "./components/layout/ToastStack";
 import AlbumsSection from "./components/layout/AlbumsSection";
 import ExportModal from "./components/modals/ExportModal";
+import CollectionsView from "./components/views/CollectionsView";
 import { describeTerm, removeTerm, TermKey } from "./utils/searchQuery";
 import CommandPalette, { PaletteAction } from "./components/modals/CommandPalette";
 import { usePhotoDrag, DropTarget } from "./hooks/usePhotoDrag";
@@ -163,7 +164,7 @@ export default function App() {
 
   // Global Undo/Redo (`Ctrl+Z` / `Ctrl+Y`), Shortcuts (`?`), and Session Log (`Ctrl+L`) Listener.
   // Registered once; reads the latest handlers through a ref.
-  const extraKeysRef = useRef({ lib, isBlockingModalOpen: false, togglePalette: () => {} });
+  const extraKeysRef = useRef({ lib, isBlockingModalOpen: false, isDialogOpen: false, togglePalette: () => {} });
   useEffect(() => {
     function handleExtraKeys(e: KeyboardEvent) {
       const key = e.key.toLowerCase();
@@ -172,6 +173,14 @@ export default function App() {
       if (mod && key === "p" && !e.shiftKey && !e.altKey) {
         e.preventDefault();
         extraKeysRef.current.togglePalette();
+        return;
+      }
+      // Ctrl+1…4: Photos, Map, People, Collections (not while a dialog is open)
+      if (mod && !e.shiftKey && !e.altKey && ["1", "2", "3", "4"].includes(e.key)) {
+        if (extraKeysRef.current.isDialogOpen) return;
+        e.preventDefault();
+        const tabs = ["grid", "map", "people", "collections"] as const;
+        extraKeysRef.current.lib.setViewMode(tabs[Number(e.key) - 1]);
         return;
       }
       if (isEditableTarget(e.target)) return;
@@ -360,17 +369,19 @@ export default function App() {
 
   // Dialogs that sit on top of the grid: while one is open, grid shortcuts must not touch photos behind it.
   // (The Loupe is deliberately not here: triaging inside the Loupe is the point of it.)
-  const isBlockingModalOpen =
+  const isDialogOpen =
     isPaletteOpen ||
     lib.exportTargets !== null ||
     lib.isCommitModalOpen ||
     lib.isHealthModalOpen ||
     lib.isSessionLogModalOpen ||
     lib.isShortcutsModalOpen ||
-    Boolean(lib.faceReviewPerson) ||
     Boolean(lib.aiBatchReport) ||
     isNewFolderModalOpen ||
     Boolean(lib.isScanningFolder || lib.scanProgress || lib.ollamaPullProgress);
+  // People and Collections show no photo grid: grid shortcuts (P, X, 1-5 ...) must not act on a hidden selection
+  const isPhotoTab = lib.viewMode === "grid" || lib.viewMode === "compare" || lib.viewMode === "map";
+  const isBlockingModalOpen = isDialogOpen || !isPhotoTab;
 
   const closeBlockingModals = () => {
     setIsPaletteOpen(false);
@@ -382,6 +393,13 @@ export default function App() {
     lib.setAiBatchReport(null);
     setIsNewFolderModalOpen(false);
     // Face Review handles Escape itself (it may first close its own spotlight view)
+  };
+
+  // Collections and People open the Photos tab filtered to one album, smart album, trip or person
+  const openInPhotos = (apply: () => void) => {
+    lib.clearAllFilters();
+    apply();
+    lib.setViewMode("grid");
   };
 
   const openFaceReview = () =>
@@ -405,9 +423,9 @@ export default function App() {
   // The palette opens over the app, but not on top of another dialog
   const togglePalette = () => {
     if (isPaletteOpen) setIsPaletteOpen(false);
-    else if (!isBlockingModalOpen) setIsPaletteOpen(true);
+    else if (!isDialogOpen) setIsPaletteOpen(true);
   };
-  extraKeysRef.current = { lib, isBlockingModalOpen, togglePalette };
+  extraKeysRef.current = { lib, isBlockingModalOpen, isDialogOpen, togglePalette };
 
   // ---------- Drag photos onto folders, people and quick filters ----------
   const hashesForDrag = (hash: string): string[] => {
@@ -661,6 +679,10 @@ export default function App() {
     { id: "similar", group: "Select", label: "Find photos similar to this one", keywords: "smart clip like", enabled: Boolean(lib.activePhoto), run: () => lib.activePhoto && lib.handleFindSimilar(lib.activePhoto) },
     { id: "index", group: "Select", label: "Index this folder for smart search", enabled: hasPhotos && Boolean(lib.semanticStatus?.models_ready) && !lib.semanticProgress, run: () => lib.startSemanticIndex() },
     { id: "loupe", group: "View", label: "Open in Loupe", shortcut: "Space", enabled: Boolean(lib.activePhoto), run: () => lib.setIsLoupeOpen(true) },
+    { id: "tab-photos", group: "Go to", label: "Photos", shortcut: "Ctrl+1", run: () => lib.setViewMode("grid") },
+    { id: "tab-map", group: "Go to", label: "Map", shortcut: "Ctrl+2", run: () => lib.setViewMode("map") },
+    { id: "tab-people", group: "Go to", label: "People", shortcut: "Ctrl+3", run: () => lib.setViewMode("people") },
+    { id: "tab-collections", group: "Go to", label: "Collections (albums, trips)", shortcut: "Ctrl+4", run: () => lib.setViewMode("collections") },
     { id: "view-grid", group: "View", label: "Grid view", shortcut: "G", run: () => lib.setViewMode("grid") },
     { id: "view-compare", group: "View", label: "Compare view", shortcut: "C", enabled: hasPhotos, run: () => lib.setViewMode("compare") },
     { id: "view-map", group: "View", label: "Map view", shortcut: "M", enabled: hasPhotos, run: () => lib.setViewMode("map") },
@@ -751,8 +773,6 @@ export default function App() {
         isScanningFolder={lib.isScanningFolder}
         viewMode={lib.viewMode}
         setViewMode={lib.setViewMode}
-        setCompareZoom={lib.setCompareZoom}
-        setComparePan={lib.setComparePan}
         searchQuery={lib.searchQuery}
         setSearchQuery={lib.setSearchQuery}
         searchInputRef={searchInputRef}
@@ -919,7 +939,7 @@ export default function App() {
 
       {/* Main Resizable 3-Pane Workspace */}
       <div className="flex flex-1 overflow-hidden relative">
-        {!isLeftCollapsed && (
+        {!isLeftCollapsed && isPhotoTab && (
           <>
             <LeftSidebar
               leftWidth={leftWidth}
@@ -984,6 +1004,40 @@ export default function App() {
           ref={centerMainRef}
           className="flex-1 bg-surface flex flex-col overflow-hidden relative min-w-[260px]"
         >
+          {lib.viewMode === "people" ? (
+            <FaceMatchReviewModal
+              embedded
+              isOpen
+              initialPerson={lib.faceReviewPerson}
+              onClose={() => lib.setViewMode("grid")}
+              people={lib.people}
+              pendingCounts={lib.pendingFaceCounts}
+              setPhotos={lib.setPhotos}
+              refreshPeople={lib.refreshPeople}
+              folder={lib.folder}
+              onRenamePerson={lib.handleRenamePerson}
+              onSetPersonHidden={lib.handleSetPersonHidden}
+              onShowPhotos={(person) => openInPhotos(() => lib.setSelectedPerson(person))}
+            />
+          ) : lib.viewMode === "collections" ? (
+            <CollectionsView
+              albums={lib.albums}
+              albumCounts={lib.albumCounts}
+              savedSearches={lib.savedSearches}
+              trips={lib.trips}
+              tripEntries={lib.autoEvents}
+              photoByHash={lib.photoByHash}
+              onOpenAlbum={(id) => openInPhotos(() => lib.setActiveAlbumId(id))}
+              onOpenSavedSearch={(saved) => openInPhotos(() => lib.runSavedSearch(saved))}
+              onOpenTrip={(id) => openInPhotos(() => lib.setActiveEvent(id))}
+              onCreateAlbum={(name) => lib.handleCreateAlbum(name)}
+              onRenameAlbum={lib.handleRenameAlbum}
+              onDeleteAlbum={lib.handleDeleteAlbum}
+              onDeleteSavedSearch={lib.handleDeleteSavedSearch}
+              onRenameTrip={lib.handleRenameTrip}
+            />
+          ) : (
+          <>
           {lib.isTimelineOpen && (
             <TimelineDrawer
               timelineBuckets={lib.timelineBuckets}
@@ -1180,8 +1234,36 @@ export default function App() {
             </div>
           )}
 
-          {(lib.parsedSearch.terms.length > 0 || lib.activeAlbumId !== null) && (
+          {(lib.parsedSearch.terms.length > 0 ||
+            lib.activeAlbumId !== null ||
+            lib.activeEvent !== "ALL" ||
+            lib.selectedPerson !== null ||
+            lib.activeTag !== "ALL") && (
             <div className="bg-panel border-b border-zinc-800/60 px-4 py-1.5 flex items-center gap-1.5 flex-wrap shrink-0 text-xs">
+              {lib.activeEvent !== "ALL" && (
+                <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-sky-500/15 border border-sky-500/40 text-sky-200">
+                  {lib.autoEvents.find((ev) => ev.id === lib.activeEvent)?.label ?? "Trip"}
+                  <button onClick={() => lib.setActiveEvent("ALL")} className="hover:text-white" aria-label="Leave trip">
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              )}
+              {lib.selectedPerson !== null && (
+                <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/40 text-emerald-200 capitalize">
+                  Person: {lib.selectedPerson}
+                  <button onClick={() => lib.setSelectedPerson(null)} className="hover:text-white" aria-label="Show everyone">
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              )}
+              {lib.activeTag !== "ALL" && (
+                <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-indigo-500/15 border border-indigo-500/40 text-indigo-200">
+                  Tag: #{lib.activeTag}
+                  <button onClick={() => lib.setActiveTag("ALL")} className="hover:text-white" aria-label="Clear tag">
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              )}
               {lib.activeAlbumId !== null && (
                 <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-indigo-500/15 border border-indigo-500/40 text-indigo-200">
                   Album: {lib.albums.find((a) => a.id === lib.activeAlbumId)?.name ?? "?"}
@@ -1488,10 +1570,12 @@ export default function App() {
             handleCreateAlbum={lib.handleCreateAlbum}
             onExport={() => lib.openExport()}
           />
+          </>
+          )}
         </main>
 
         {/* RIGHT INSPECTOR PANE */}
-        {!isRightCollapsed && lib.activePhoto && (
+        {!isRightCollapsed && isPhotoTab && lib.activePhoto && (
           <>
             <div
               onMouseDown={() => {
@@ -1818,6 +1902,7 @@ export default function App() {
                 ["B", "Toggle Pinboard Basket"],
                 ["A", "Run AI Vision on Active Photo"],
                 ["C / G / M", "Compare / Grid / Map View"],
+                ["Ctrl + 1 – 4", "Photos / Map / People / Collections"],
                 ["Ctrl + Z / Y", "Undo / Redo Last Action"],
                 ["Ctrl + K", "Search"],
                 ["Ctrl + P", "Command Palette (every action)"],
@@ -1858,19 +1943,6 @@ export default function App() {
         isExportingXmp={lib.isExportingXmp}
         handlePruneCache={lib.handlePruneCache}
         handleExportXmp={lib.handleExportXmp}
-      />
-
-      <FaceMatchReviewModal
-        isOpen={Boolean(lib.faceReviewPerson)}
-        initialPerson={lib.faceReviewPerson}
-        onClose={() => lib.setFaceReviewPerson(null)}
-        people={lib.people}
-        pendingCounts={lib.pendingFaceCounts}
-        setPhotos={lib.setPhotos}
-        refreshPeople={lib.refreshPeople}
-        folder={lib.folder}
-        onRenamePerson={lib.handleRenamePerson}
-        onSetPersonHidden={lib.handleSetPersonHidden}
       />
 
       <ExportModal

@@ -1,5 +1,5 @@
 import { useEffect, useRef, RefObject } from "react";
-import { BulkPopover, PhotoItem } from "../types/lumina";
+import { BulkPopover, PhotoItem, ViewMode } from "../types/lumina";
 
 interface UseKeyboardShortcutsParams {
   activeHash: string | null;
@@ -28,7 +28,7 @@ interface UseKeyboardShortcutsParams {
   handleSetColorLabel: (color: "red" | "yellow" | "green" | "blue" | null) => Promise<void>;
   handleRotateSelection: (deltaDegrees: number) => Promise<void>;
   handleAiAnalyzeSingle: () => Promise<void>;
-  setViewMode: React.Dispatch<React.SetStateAction<"grid" | "map" | "compare">>;
+  setViewMode: React.Dispatch<React.SetStateAction<ViewMode>>;
   setCompareZoom: React.Dispatch<React.SetStateAction<number>>;
   setComparePan: React.Dispatch<React.SetStateAction<{ x: number; y: number }>>;
   handleToggleBasketSelection: () => Promise<void>;

@@ -383,3 +383,6 @@ export interface ExportResult {
   failures: FileOpFailure[];
   cancelled: boolean;
 }
+
+// Top-level tabs: Photos ("grid", or "compare" inside Photos) · Map · People · Collections
+export type ViewMode = "grid" | "map" | "compare" | "people" | "collections";

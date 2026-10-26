@@ -1,7 +1,7 @@
 import { useRef, useMemo } from "react";
 import { useWheel } from "../../hooks/useWheel";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { PhotoItem } from "../../types/lumina";
+import { PhotoItem, ViewMode } from "../../types/lumina";
 import {
   ChevronLeft,
   ChevronRight,
@@ -20,7 +20,7 @@ interface CompareViewProps {
   setCompareZoom: React.Dispatch<React.SetStateAction<number>>;
   comparePan: { x: number; y: number };
   setComparePan: React.Dispatch<React.SetStateAction<{ x: number; y: number }>>;
-  setViewMode: React.Dispatch<React.SetStateAction<"grid" | "map" | "compare">>;
+  setViewMode: React.Dispatch<React.SetStateAction<ViewMode>>;
   photos?: PhotoItem[];
   setSelectedHashes?: React.Dispatch<React.SetStateAction<Set<string>>>;
   setAutoMatchNotice?: (message: string) => void;

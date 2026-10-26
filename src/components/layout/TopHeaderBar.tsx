@@ -11,6 +11,7 @@ import {
   FaceScanProgress,
   FaceModelDownloadProgress,
   PhotoItem,
+  ViewMode,
 } from "../../types/lumina";
 import {
   FolderOpen,
@@ -30,7 +31,6 @@ import {
   ScanFace,
   RefreshCw,
   Zap,
-  Columns,
   HardDrive,
   ChevronDown,
   X,
@@ -41,6 +41,7 @@ import {
   Download,
   Sliders,
   FileText,
+  Library,
 } from "lucide-react";
 
 interface TopHeaderBarProps {
@@ -62,10 +63,8 @@ interface TopHeaderBarProps {
   isRightCollapsed: boolean;
   setIsRightCollapsed: React.Dispatch<React.SetStateAction<boolean>>;
   isScanningFolder: boolean;
-  viewMode: "grid" | "map" | "compare";
-  setViewMode: React.Dispatch<React.SetStateAction<"grid" | "map" | "compare">>;
-  setCompareZoom: React.Dispatch<React.SetStateAction<number>>;
-  setComparePan: React.Dispatch<React.SetStateAction<{ x: number; y: number }>>;
+  viewMode: ViewMode;
+  setViewMode: React.Dispatch<React.SetStateAction<ViewMode>>;
   searchQuery: string;
   setSearchQuery: React.Dispatch<React.SetStateAction<string>>;
   searchInputRef: RefObject<HTMLInputElement | null>;
@@ -130,8 +129,6 @@ export default function TopHeaderBar({
   isScanningFolder,
   viewMode,
   setViewMode,
-  setCompareZoom,
-  setComparePan,
   searchQuery,
   setSearchQuery,
   searchInputRef,
@@ -375,49 +372,41 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
           )}
         </div>
 
-        {/* View Mode Switcher */}
-        <div className="flex bg-zinc-900/90 p-0.5 rounded-lg border border-zinc-800">
-          <button
-            onClick={() => setViewMode("grid")}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition ${
-              viewMode === "grid"
-                ? "bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 shadow-sm"
-                : "text-zinc-400 hover:text-zinc-200 border border-transparent"
-            }`}
-            title="Grid View (G)"
-          >
-            <LayoutGrid className="w-3.5 h-3.5" />
-            <span>Grid</span>
-          </button>
-          <button
-            onClick={() => {
-              setCompareZoom(1);
-              setComparePan({ x: 0, y: 0 });
-              setViewMode("compare");
-            }}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition ${
-              viewMode === "compare"
-                ? "bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 shadow-sm"
-                : "text-zinc-400 hover:text-zinc-200 border border-transparent"
-            }`}
-            title="Synchronized Side-by-Side Compare Mode (C)"
-          >
-            <Columns className="w-3.5 h-3.5" />
-            <span>Compare</span>
-          </button>
-          <button
-            onClick={() => setViewMode("map")}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition ${
-              viewMode === "map"
-                ? "bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 shadow-sm"
-                : "text-zinc-400 hover:text-zinc-200 border border-transparent"
-            }`}
-            title="Map View (M)"
-          >
-            <MapPin className="w-3.5 h-3.5" />
-            <span>Map ({gpsPhotosCount})</span>
-          </button>
-        </div>
+        {/* Top-level tabs: Photos (grid / compare) · Map · People · Collections (Ctrl+1…4) */}
+        <nav role="tablist" aria-label="Sections" className="flex bg-zinc-900/90 p-0.5 rounded-lg border border-zinc-800">
+          {(
+            [
+              { id: "photos", label: "Photos", icon: <LayoutGrid className="w-3.5 h-3.5" />, mode: "grid", key: "1" },
+              { id: "map", label: `Map${gpsPhotosCount ? ` (${gpsPhotosCount})` : ""}`, icon: <MapPin className="w-3.5 h-3.5" />, mode: "map", key: "2" },
+              { id: "people", label: "People", icon: <ScanFace className="w-3.5 h-3.5" />, mode: "people", key: "3" },
+              { id: "collections", label: "Collections", icon: <Library className="w-3.5 h-3.5" />, mode: "collections", key: "4" },
+            ] as const
+          ).map((tab) => {
+            const active = tab.id === "photos" ? viewMode === "grid" || viewMode === "compare" : viewMode === tab.mode;
+            return (
+              <button
+                key={tab.id}
+                role="tab"
+                aria-selected={active}
+                onClick={() => setViewMode(tab.mode)}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition ${
+                  active
+                    ? "bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 shadow-sm"
+                    : "text-zinc-400 hover:text-zinc-200 border border-transparent"
+                }`}
+                title={`${tab.label} (Ctrl+${tab.key})`}
+              >
+                {tab.icon}
+                <span>{tab.label}</span>
+                {tab.id === "people" && totalPendingFaceMatches > 0 && (
+                  <span className="px-1.5 rounded-full bg-amber-500 text-zinc-950 font-mono text-[11px] font-bold">
+                    {totalPendingFaceMatches}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </nav>
 
         {/* Compact Undo / Redo */}
         {handleUndo && handleRedo && photos.length > 0 && (
@@ -478,6 +467,8 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
             onChange={(e) => {
               setSearchQuery(e.target.value);
               setSuggestionIndex(0);
+              // Results show in Photos: searching from People or Collections goes there
+              if (viewMode === "people" || viewMode === "collections") setViewMode("grid");
             }}
             placeholder={
               smartSearch

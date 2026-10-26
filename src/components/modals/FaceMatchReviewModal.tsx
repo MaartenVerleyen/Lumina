@@ -28,6 +28,10 @@ import {
 } from "lucide-react";
 
 interface FaceMatchReviewModalProps {
+  // Shown as the People tab (fills the main area, no backdrop, Escape doesn't close it)
+  embedded?: boolean;
+  // "Show photos" for the active person: filter the photo grid to them
+  onShowPhotos?: (person: string) => void;
   onRenamePerson?: (oldName: string, newName: string) => Promise<string | null>;
   onSetPersonHidden?: (name: string, hidden: boolean) => Promise<void>;
   isOpen: boolean;
@@ -55,6 +59,8 @@ interface HistoryStep {
 }
 
 export default function FaceMatchReviewModal({
+  embedded = false,
+  onShowPhotos,
   onRenamePerson,
   onSetPersonHidden,
   isOpen,
@@ -74,7 +80,7 @@ export default function FaceMatchReviewModal({
   const [actionError, setActionError] = useState<string>("");
   // Loading the list itself failed (shown instead of the "nothing left to review" message)
   const [loadFailed, setLoadFailed] = useState<boolean>(false);
-  const dialogRef = useDialogFocus<HTMLDivElement>(isOpen);
+  const dialogRef = useDialogFocus<HTMLDivElement>(isOpen && !embedded);
   const [strongMatchPercent, setStrongMatchPercent] = useState<number>(62);
   const [statusTab, setStatusTab] = useState<StatusTab>("pending");
   // "person": one person's suggestions / confirmed / denied faces; "unknown": groups of unnamed faces
@@ -441,6 +447,7 @@ export default function FaceMatchReviewModal({
       if (view === "unknown" && e.key !== "Escape") return;
       if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA") && e.key !== "Escape") return;
       if (e.key === "Escape") {
+        if (embedded) return;
         e.preventDefault();
         e.stopPropagation();
         onClose();
@@ -491,6 +498,7 @@ export default function FaceMatchReviewModal({
     handleDenyBatch,
     handleUndoLastDecision,
     onClose,
+    embedded,
   ]);
 
   if (!isOpen) return null;
@@ -510,17 +518,23 @@ export default function FaceMatchReviewModal({
 
   return (
     <div
-      onClick={onClose}
-      className="fixed inset-0 z-[9998] bg-black/85 backdrop-blur-md flex items-center justify-center p-6 select-none animate-in fade-in"
+      onClick={embedded ? undefined : onClose}
+      className={
+        embedded
+          ? "flex-1 flex min-h-0 overflow-hidden select-none"
+          : "fixed inset-0 z-[9998] bg-black/85 backdrop-blur-md flex items-center justify-center p-6 select-none animate-in fade-in"
+      }
     >
       <div
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
+        ref={embedded ? undefined : dialogRef}
+        {...(embedded ? {} : { role: "dialog", "aria-modal": true, tabIndex: -1 })}
         aria-label="Face match review"
-        tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
-        className="bg-card border border-zinc-800 rounded-2xl w-full max-w-6xl h-[86vh] shadow-2xl flex flex-col overflow-hidden"
+        className={
+          embedded
+            ? "bg-card w-full h-full flex flex-col overflow-hidden"
+            : "bg-card border border-zinc-800 rounded-2xl w-full max-w-6xl h-[86vh] shadow-2xl flex flex-col overflow-hidden"
+        }
       >
         {/* Top Modal Header */}
         <div className="px-6 py-4 bg-raised border-b border-zinc-800 flex items-center justify-between shrink-0 gap-4 flex-wrap">
@@ -530,10 +544,10 @@ export default function FaceMatchReviewModal({
             </div>
             <div>
               <h2 className="text-base font-bold text-zinc-100 flex items-center gap-2">
-                <span>Face Match Review & Confirmation Studio</span>
+                <span>{embedded ? "People" : "Face Match Review & Confirmation Studio"}</span>
               </h2>
               <p className="text-xs text-zinc-400">
-                Review potential matches, manage confirmed faces, or restore accidentally denied faces.
+                Review suggested matches, name unknown faces and manage everyone you've named.
               </p>
             </div>
           </div>
@@ -618,13 +632,26 @@ export default function FaceMatchReviewModal({
               </div>
             )}
 
-            <button
-              onClick={onClose}
-              className="p-2 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-white border border-zinc-800"
-              aria-label="Close Face Review"
-            >
-              <X className="w-4 h-4" />
-            </button>
+            {onShowPhotos && view === "person" && activePerson && (
+              <button
+                onClick={() => onShowPhotos(activePerson)}
+                className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center gap-1.5"
+                title={`Show the photos of ${activePerson} in the Photos tab`}
+              >
+                <LayoutGrid className="w-3.5 h-3.5" />
+                <span>Show photos</span>
+              </button>
+            )}
+
+            {!embedded && (
+              <button
+                onClick={onClose}
+                className="p-2 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-white border border-zinc-800"
+                aria-label="Close Face Review"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
           </div>
         </div>
 

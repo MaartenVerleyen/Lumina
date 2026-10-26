@@ -42,6 +42,7 @@ import {
   ExportResult,
   PhotoActionSnapshot,
   UndoHistoryEntry,
+  ViewMode,
 } from "../types/lumina";
 import {
   buildFolderTree,
@@ -404,7 +405,8 @@ export function useLibraryState() {
   const [people, setPeople] = useState<PersonItem[]>([]);
   const [selectedPerson, setSelectedPerson] = useState<string | null>(null);
   const [pendingFaceCounts, setPendingFaceCounts] = useState<Record<string, number>>({});
-  const [faceReviewPerson, setFaceReviewPerson] = useState<string | null>(null);
+  // The person the People tab should show first (asking for one also switches to that tab)
+  const [faceReviewPerson, setFaceReviewPersonState] = useState<string | null>(null);
 
   const [smartFilter, setSmartFilter] = useState<SmartFilter>("ALL");
   const [orientationFilter, setOrientationFilter] = useState<OrientationFilter>("ALL");
@@ -451,7 +453,11 @@ export function useLibraryState() {
 
   // Zoom & View State
   const [zoomLevel, setZoomLevel] = useState<number>(0.45);
-  const [viewMode, setViewMode] = useState<"grid" | "map" | "compare">("grid");
+  const [viewMode, setViewMode] = useState<ViewMode>("grid");
+  const setFaceReviewPerson = useCallback((person: string | null) => {
+    setFaceReviewPersonState(person);
+    if (person) setViewMode("people");
+  }, []);
   const [selectedHashes, setSelectedHashes] = useState<Set<string>>(new Set());
   const [activeHash, setActiveHash] = useState<string | null>(null);
   // Shift-click / Shift+arrow range anchor (a photo hash, resolved to an index at use time)
@@ -3169,6 +3175,8 @@ export function useLibraryState() {
     pendingFaceCounts,
     faceReviewPerson,
     setFaceReviewPerson,
+    trips,
+    photoByHash,
     smartFilter,
     setSmartFilter,
     orientationFilter,

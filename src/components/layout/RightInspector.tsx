@@ -5,6 +5,7 @@ import {
   CitySearchResult,
   FaceInstance,
   PhotoItem,
+  ViewMode,
 } from "../../types/lumina";
 import {
   Aperture,
@@ -177,7 +178,7 @@ interface RightInspectorProps {
   tagInput: string;
   setTagInput: React.Dispatch<React.SetStateAction<string>>;
   setIsLoupeOpen: React.Dispatch<React.SetStateAction<boolean>>;
-  setViewMode: React.Dispatch<React.SetStateAction<"grid" | "map" | "compare">>;
+  setViewMode: React.Dispatch<React.SetStateAction<ViewMode>>;
   setSelectedHashes: React.Dispatch<React.SetStateAction<Set<string>>>;
   setIsPickingMapLocation: React.Dispatch<React.SetStateAction<boolean>>;
   handleDetectFacesSingleOnnx: () => Promise<void>;

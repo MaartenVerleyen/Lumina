@@ -1,3 +1,4 @@
+import type { ViewMode } from "../../types/lumina";
 import { useEffect, useRef, useState } from "react";
 import { CheckSquare, FileText, Grid, Images, Loader2, Square, X } from "lucide-react";
 
@@ -18,7 +19,7 @@ interface BottomStatusBarProps {
   totalPhotos: number;
   visibleCount: number;
   selectedCount: number;
-  viewMode: "grid" | "map" | "compare";
+  viewMode: ViewMode;
   zoomLevel: number;
   setZoomLevel: React.Dispatch<React.SetStateAction<number>>;
   jobs: BackgroundJob[];
