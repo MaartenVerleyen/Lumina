@@ -32,6 +32,7 @@ mod perf;
 mod storage;
 mod fastdecode;
 mod thumbs;
+mod face_ort;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -49,6 +50,7 @@ use perf::*;
 use storage::*;
 use fastdecode::*;
 use thumbs::*;
+use face_ort::*;
 
 static GEOCODER: LazyLock<ReverseGeocoder> = LazyLock::new(ReverseGeocoder::new);
 static DB_SCHEMA_READY: AtomicBool = AtomicBool::new(false);

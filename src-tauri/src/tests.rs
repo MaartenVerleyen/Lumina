@@ -752,3 +752,42 @@ fn folder_scope_without_root_matches_everything() {
     assert_eq!(make_folder_prefix(Some("  ")), "%");
     assert_eq!(paths_in_scope(None, &[r"C:\a.jpg", r"D:\b.jpg"]).len(), 2);
 }
+
+// ----------------- FACE ALIGNMENT (engine v2) -----------------
+
+#[test]
+fn similarity_transform_recovers_a_known_transform() {
+    use crate::face_ort::similarity_transform;
+    let src = [(10.0, 20.0), (50.0, 18.0), (30.0, 40.0), (14.0, 60.0), (48.0, 62.0)];
+    // Known transform: scale 1.5, rotation 20 degrees, translation (7, -3)
+    let (s, r) = (1.5f32, 20f32.to_radians());
+    let (a, b) = (s * r.cos(), s * r.sin());
+    let dst = src.map(|(x, y)| (a * x - b * y + 7.0, b * x + a * y - 3.0));
+    let (fa, fb, tx, ty) = similarity_transform(&src, &dst);
+    assert!((fa - a).abs() < 1e-4 && (fb - b).abs() < 1e-4, "rotation/scale: {fa} {fb}");
+    assert!((tx - 7.0).abs() < 1e-3 && (ty + 3.0).abs() < 1e-3, "translation: {tx} {ty}");
+}
+
+#[test]
+fn align_face_maps_landmarks_onto_the_arcface_template() {
+    use crate::face_ort::align_face;
+    // A synthetic image with a bright dot at each "landmark"; after alignment each dot must land on the template
+    let mut img = image::RgbImage::new(400, 300);
+    let landmarks = [(150.0f32, 120.0), (230.0, 116.0), (190.0, 165.0), (158.0, 210.0), (226.0, 207.0)];
+    for (x, y) in landmarks {
+        for dy in -2i32..=2 {
+            for dx in -2i32..=2 {
+                img.put_pixel((x as i32 + dx) as u32, (y as i32 + dy) as u32, image::Rgb([255, 255, 255]));
+            }
+        }
+    }
+    let aligned = align_face(&img, &landmarks);
+    let template = [(38.2946f32, 51.6963f32), (73.5318, 51.5014), (56.0252, 71.7366), (41.5493, 92.3655), (70.7299, 92.2041)];
+    // Landmarks were chosen close to (but not exactly) a similarity of the template: allow a few pixels
+    for (tx, ty) in template {
+        let found = (-3i32..=3).any(|dy| {
+            (-3i32..=3).any(|dx| aligned.get_pixel((tx as i32 + dx) as u32, (ty as i32 + dy) as u32)[0] > 100)
+        });
+        assert!(found, "no landmark near template point ({tx}, {ty})");
+    }
+}

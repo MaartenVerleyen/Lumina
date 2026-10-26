@@ -35,12 +35,34 @@ fn image_files(dir: &Path) -> Vec<PathBuf> {
     files
 }
 
-fn faces_in(detector: &OnnxPlan, path: &Path) -> Option<Vec<DetectedFace>> {
-    let img = open_and_orient_image(path).ok()?;
-    Some(detect_and_embed_faces(detector, &img))
+// Either the current engine (UltraFace + unaligned MobileFaceNet) or engine v2 (SCRFD + aligned ArcFace r50)
+enum Engine {
+    V1(Arc<OnnxPlan>),
+    V2(FaceModels),
 }
 
-fn largest(faces: Vec<DetectedFace>) -> Option<DetectedFace> {
+struct EvalFace {
+    bbox: (f64, f64, f64, f64),
+    embedding: Vec<f32>,
+}
+
+fn faces_in(engine: &Engine, path: &Path) -> Option<Vec<EvalFace>> {
+    let img = open_and_orient_image(path).ok()?;
+    Some(match engine {
+        Engine::V1(detector) => detect_and_embed_faces(detector, &img)
+            .into_iter()
+            .map(|f| EvalFace { bbox: f.bbox, embedding: f.embedding })
+            .collect(),
+        Engine::V2(models) => models
+            .analyze(&img)
+            .ok()?
+            .into_iter()
+            .map(|f| EvalFace { bbox: f.detection.bbox, embedding: f.embedding })
+            .collect(),
+    })
+}
+
+fn largest(faces: Vec<EvalFace>) -> Option<EvalFace> {
     faces.into_iter().max_by(|a, b| {
         (a.bbox.2 * a.bbox.3)
             .partial_cmp(&(b.bbox.2 * b.bbox.3))
@@ -99,8 +121,16 @@ fn face_eval() {
     let label = std::env::var("LUMINA_EVAL_LABEL").unwrap_or_else(|_| "current engine".to_string());
     let started = Instant::now();
 
-    let detector = get_or_load_ultraface_from(&models).expect("face detector model not found");
-    get_or_load_mobilefacenet_from(&models).expect("face embedding model not found");
+    let engine = if std::env::var("LUMINA_EVAL_ENGINE").as_deref() == Ok("v2") {
+        let dir = std::env::var("LUMINA_NEW_MODELS").map(PathBuf::from).unwrap_or(models.clone());
+        let loaded = FaceModels::load(&dir).expect("engine v2 models not found");
+        eprintln!("engine v2 on {}", loaded.device);
+        Engine::V2(loaded)
+    } else {
+        get_or_load_mobilefacenet_from(&models).expect("face embedding model not found");
+        Engine::V1(get_or_load_ultraface_from(&models).expect("face detector model not found"))
+    };
+    let detector = &engine;
 
     let set = PathBuf::from(set);
     let mut people: Vec<(String, Vec<PathBuf>)> = fs::read_dir(&set)
@@ -120,9 +150,9 @@ fn face_eval() {
         .collect();
     let mut probes: Vec<Probe> = Vec::new();
     let mut misses: Vec<String> = Vec::new();
-    let results: Vec<(usize, PathBuf, Option<DetectedFace>)> = jobs
+    let results: Vec<(usize, PathBuf, Option<EvalFace>)> = jobs
         .par_iter()
-        .map(|(i, f)| (*i, f.clone(), faces_in(&detector, f).and_then(largest)))
+        .map(|(i, f)| (*i, f.clone(), faces_in(detector, f).and_then(largest)))
         .collect();
     for (person, file, face) in results {
         let name = format!("{}\\{}", people[person].0, file.file_name().unwrap().to_string_lossy());
@@ -136,7 +166,7 @@ fn face_eval() {
     let stranger_files = image_files(&set.join("_strangers"));
     let strangers: Vec<Vec<f32>> = stranger_files
         .par_iter()
-        .filter_map(|f| faces_in(&detector, f).and_then(largest).map(|face| face.embedding))
+        .filter_map(|f| faces_in(detector, f).and_then(largest).map(|face| face.embedding))
         .collect();
 
     // Groups: detected faces vs the count in the file name
@@ -145,7 +175,7 @@ fn face_eval() {
         .map(|f| {
             let name = f.file_name().unwrap().to_string_lossy().to_string();
             let expected = name.split('_').next().and_then(|n| n.parse().ok()).unwrap_or(0);
-            let found = faces_in(&detector, f).map(|v| v.len()).unwrap_or(0);
+            let found = faces_in(detector, f).map(|v| v.len()).unwrap_or(0);
             (name, expected, found)
         })
         .collect();
@@ -295,5 +325,61 @@ fn face_eval() {
         let file = PathBuf::from(out).join(format!("face_eval_{}.json", label.replace(' ', "_")));
         let _ = fs::write(&file, serde_json::to_string_pretty(&report).unwrap());
         eprintln!("\nReport written to {}", file.display());
+    }
+}
+
+// Manual: checks that ONNX Runtime + DirectML load the new face models, prints their inputs/outputs and timings.
+// PowerShell: $env:LUMINA_NEW_MODELS="<folder with det_10g.onnx and w600k_r50.onnx>";
+//             cargo test --release --lib ort_probe -- --ignored --nocapture
+#[test]
+#[ignore]
+fn ort_probe() {
+    use ort::session::Session;
+    let dir = PathBuf::from(std::env::var("LUMINA_NEW_MODELS").expect("set LUMINA_NEW_MODELS"));
+    let env = ort::init().with_name("lumina-probe").build().expect("ORT environment");
+    eprintln!("DirectML available in this ONNX Runtime build: {}", ort::ep::directml::api().is_some());
+    for (file, shape) in [("det_10g.onnx", [1usize, 3, 640, 640]), ("w600k_r50.onnx", [1usize, 3, 112, 112])] {
+        for gpu in [true, false] {
+            let mut builder = Session::builder(&env).unwrap();
+            if gpu {
+                builder = builder
+                    .with_memory_pattern(false)
+                    .unwrap()
+                    .with_parallel_execution(false)
+                    .unwrap()
+                    .with_execution_providers([ort::ep::DirectML::default().build().error_on_failure()])
+                    .unwrap();
+            }
+            let t = Instant::now();
+            let mut session = match builder.commit_from_file(dir.join(file)) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("{file} gpu={gpu}: session failed: {e}");
+                    continue;
+                }
+            };
+            let load_ms = t.elapsed().as_millis();
+            if !gpu {
+                for i in session.inputs() {
+                    eprintln!("  input  {} {:?}", i.name(), i.dtype());
+                }
+                for o in session.outputs() {
+                    eprintln!("  output {} {:?}", o.name(), o.dtype());
+                }
+            }
+            let input = ort::value::Tensor::from_array((shape, vec![0.1f32; shape.iter().product()])).unwrap();
+            let mut runs = Vec::new();
+            for _ in 0..6 {
+                let t = Instant::now();
+                let out = session.run(ort::inputs![input.view()]).unwrap();
+                runs.push(t.elapsed().as_secs_f64() * 1000.0);
+                drop(out);
+            }
+            eprintln!(
+                "{file} gpu={gpu}: load {load_ms} ms, first run {:.1} ms, then {:.1} ms/run",
+                runs[0],
+                runs[1..].iter().sum::<f64>() / (runs.len() - 1) as f64
+            );
+        }
     }
 }
