@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import { invoke, convertFileSrc } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useLibraryState } from "./hooks/useLibraryState";
@@ -11,7 +11,7 @@ import LeftSidebar from "./components/layout/LeftSidebar";
 import RightInspector from "./components/layout/RightInspector";
 import BottomStatusBar from "./components/layout/BottomStatusBar";
 import ToastStack from "./components/layout/ToastStack";
-import AlbumsSection from "./components/layout/AlbumsSection";
+import PhotoToolbar from "./components/layout/PhotoToolbar";
 import ExportModal from "./components/modals/ExportModal";
 import CollectionsView from "./components/views/CollectionsView";
 import { describeTerm, removeTerm, TermKey } from "./utils/searchQuery";
@@ -43,42 +43,77 @@ import OperationProgressModal from "./components/modals/OperationProgressModal";
 import AiBatchReportModal from "./components/modals/AiBatchReportModal";
 import SessionLogModal from "./components/modals/SessionLogModal";
 import FaceMatchReviewModal, { UNKNOWN_FACES } from "./components/modals/FaceMatchReviewModal";
+import { PhotoItem, SortOption, ViewMode } from "./types/lumina";
 import {
-  AutoStagePreset,
-  OrientationFilter,
-  PhotoItem,
-  SortOption,
-} from "./types/lumina";
-import {
-  ArrowUpDown,
-  Calendar,
-  ChevronDown,
   Clock,
   Compass,
   Crosshair,
-  Folder,
   FolderOpen,
   FolderPlus,
-  FolderSync,
   HelpCircle,
-  Layers,
-  Loader2,
   MapPin,
-  ScanFace,
   Search,
   Sparkles,
-  User,
   X,
 } from "lucide-react";
+
+// Layout remembered between sessions (one localStorage entry; anything missing or invalid falls back)
+interface SavedLayout {
+  tab: ViewMode;
+  zoom: number;
+  sort: SortOption;
+  leftWidth: number;
+  rightWidth: number;
+  leftCollapsed: boolean;
+  rightCollapsed: boolean;
+  collapsedSections: string[];
+}
+
+const LAYOUT_KEY = "lumina_layout";
+const DEFAULT_LAYOUT: SavedLayout = {
+  tab: "grid",
+  zoom: 0.45,
+  sort: "NAME_ASC",
+  leftWidth: 250,
+  rightWidth: 380,
+  leftCollapsed: false,
+  rightCollapsed: false,
+  collapsedSections: [],
+};
+
+function loadLayout(): SavedLayout {
+  try {
+    const raw = JSON.parse(localStorage.getItem(LAYOUT_KEY) || "{}");
+    const num = (v: unknown, min: number, max: number, fallback: number) =>
+      typeof v === "number" && v >= min && v <= max ? v : fallback;
+    return {
+      tab: ["grid", "map", "people", "collections"].includes(raw.tab) ? raw.tab : DEFAULT_LAYOUT.tab,
+      zoom: num(raw.zoom, 0, 1, DEFAULT_LAYOUT.zoom),
+      sort: typeof raw.sort === "string" && raw.sort ? raw.sort : DEFAULT_LAYOUT.sort,
+      leftWidth: num(raw.leftWidth, 160, 2000, DEFAULT_LAYOUT.leftWidth),
+      rightWidth: num(raw.rightWidth, 260, 2000, DEFAULT_LAYOUT.rightWidth),
+      leftCollapsed: raw.leftCollapsed === true,
+      rightCollapsed: raw.rightCollapsed === true,
+      collapsedSections: Array.isArray(raw.collapsedSections)
+        ? raw.collapsedSections.filter((x: unknown) => typeof x === "string")
+        : [],
+    };
+  } catch {
+    return DEFAULT_LAYOUT;
+  }
+}
 
 export default function App() {
   const lib = useLibraryState();
 
   // 3-Pane Resizable & Collapsible State
-  const [leftWidth, setLeftWidth] = useState<number>(250);
-  const [rightWidth, setRightWidth] = useState<number>(380);
-  const [isLeftCollapsed, setIsLeftCollapsed] = useState<boolean>(false);
-  const [isRightCollapsed, setIsRightCollapsed] = useState<boolean>(false);
+  // Pane sizes and collapsed parts come back as they were left (see the layout effect below)
+  const [savedLayout] = useState(loadLayout);
+  const [leftWidth, setLeftWidth] = useState<number>(savedLayout.leftWidth);
+  const [rightWidth, setRightWidth] = useState<number>(savedLayout.rightWidth);
+  const [isLeftCollapsed, setIsLeftCollapsed] = useState<boolean>(savedLayout.leftCollapsed);
+  const [isRightCollapsed, setIsRightCollapsed] = useState<boolean>(savedLayout.rightCollapsed);
+  const [collapsedSections, setCollapsedSections] = useState<string[]>(savedLayout.collapsedSections);
   const [centerWidth, setCenterWidth] = useState<number>(960);
   const draggingPaneRef = useRef<"left" | "right" | null>(null);
 
@@ -101,6 +136,31 @@ export default function App() {
   const [isPaletteOpen, setIsPaletteOpen] = useState<boolean>(false);
   const newFolderDialogRef = useDialogFocus<HTMLFormElement>(isNewFolderModalOpen);
   const shortcutsDialogRef = useDialogFocus<HTMLDivElement>(lib.isShortcutsModalOpen);
+
+  useEffect(() => {
+    lib.setZoomLevel(savedLayout.zoom);
+    lib.setSortBy(savedLayout.sort);
+    lib.setViewMode(savedLayout.tab);
+  }, []);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      const layout: SavedLayout = {
+        tab: lib.viewMode === "compare" ? "grid" : lib.viewMode,
+        zoom: lib.zoomLevel,
+        sort: lib.sortBy,
+        leftWidth,
+        rightWidth,
+        leftCollapsed: isLeftCollapsed,
+        rightCollapsed: isRightCollapsed,
+        collapsedSections,
+      };
+      try {
+        localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout));
+      } catch {}
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [lib.viewMode, lib.zoomLevel, lib.sortBy, leftWidth, rightWidth, isLeftCollapsed, isRightCollapsed, collapsedSections]);
 
   // Pane Resize Listeners
   useEffect(() => {
@@ -451,9 +511,6 @@ export default function App() {
         break;
       case "basket":
         lib.handleToggleBasketSelection(hashes, true);
-        break;
-      case "album":
-        lib.handleAddToAlbum(Number(target.value), hashes);
         break;
       default:
         return;
@@ -816,127 +873,6 @@ export default function App() {
         onOpenFaceReviewStudio={openFaceReview}
       />
 
-      {/* Live Batch AI Progress Banner with Filename, Success/Fail Telemetry & Stop Button */}
-      {lib.aiBatchProgress && (
-        <div className="px-5 py-2 bg-indigo-950/90 border-b border-indigo-500/40 flex items-center justify-between gap-4 text-xs shrink-0 z-20">
-          <div className="flex items-center gap-2.5 truncate">
-            <Loader2 className="w-4 h-4 animate-spin text-indigo-400 shrink-0" />
-            <span className="font-semibold text-indigo-100">
-              AI Batch Tagging ({lib.aiBatchProgress.current} / {lib.aiBatchProgress.total})
-            </span>
-            {lib.aiBatchProgress.currentFile && (
-              <span className="text-indigo-300 font-mono text-[11px] truncate">
-                — {lib.aiBatchProgress.currentFile}
-              </span>
-            )}
-          </div>
-          <div className="flex items-center gap-3 shrink-0">
-            <div className="w-44 h-2 bg-zinc-900 rounded-full overflow-hidden border border-indigo-500/30">
-              <div
-                style={{
-                  width: `${Math.min(
-                    100,
-                    Math.round(
-                      (lib.aiBatchProgress.current / Math.max(1, lib.aiBatchProgress.total)) * 100
-                    )
-                  )}%`,
-                }}
-                className="h-full bg-indigo-500 transition-all duration-200"
-              />
-            </div>
-            <span className="font-mono text-[11px] text-emerald-400">
-              ✓ {lib.aiBatchProgress.succeeded}
-            </span>
-            {lib.aiBatchProgress.failed > 0 && (
-              <span className="font-mono text-[11px] text-amber-400">
-                ⚠ {lib.aiBatchProgress.failed}
-              </span>
-            )}
-            {aiBatchRate && (
-              <span className="font-mono text-[11px] text-indigo-200" title="Photos per minute · estimated time remaining">
-                {aiBatchRate.perMinute.toFixed(1)}/min · ~{aiBatchRate.etaLabel} left
-              </span>
-            )}
-            <button
-              onClick={lib.handleStopAiBatch}
-              disabled={lib.aiBatchProgress.stopping}
-              className="px-2.5 py-0.5 bg-red-600 hover:bg-red-500 disabled:opacity-70 text-white rounded font-semibold text-[11px]"
-            >
-              {lib.aiBatchProgress.stopping ? "Stopping…" : "Stop"}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Top People Carousel with Pending Face Match Badges */}
-      {lib.people.some((p) => !p.hidden) && (
-        <div className="px-5 py-1.5 bg-panel border-b border-zinc-800/50 flex items-center gap-2 overflow-x-auto shrink-0">
-          <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider mr-1 shrink-0">
-            People
-          </span>
-
-          {lib.people.filter((p) => !p.hidden).map((p) => {
-            const isSelected = lib.selectedPerson === p.name;
-            const pendingCount = lib.pendingFaceCounts[p.name] || 0;
-            return (
-              <div
-                key={p.name}
-                data-drop-kind="person"
-                data-drop-value={p.name}
-                data-drop-label={`Tag ${p.name}`}
-                className={`flex items-center rounded-full text-xs transition shrink-0 border overflow-hidden ${
-                  isSelected
-                    ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/50 shadow-sm"
-                    : "bg-zinc-900/80 hover:bg-zinc-800 text-zinc-300 border-zinc-800/80"
-                }`}
-              >
-                <button
-                  onClick={() => lib.setSelectedPerson(isSelected ? null : p.name)}
-                  className="flex items-center gap-2 px-2.5 py-1"
-                  title={`Filter photos by ${p.name}`}
-                >
-                  {p.cover_thumb ? (
-                    <img
-                      src={convertFileSrc(p.cover_thumb)}
-                      alt={p.name}
-                      className="w-5 h-5 rounded-full object-cover border border-zinc-700"
-                    />
-                  ) : (
-                    <div className="w-5 h-5 rounded-full bg-zinc-800 flex items-center justify-center">
-                      <User className="w-3 h-3 text-zinc-400" />
-                    </div>
-                  )}
-                  <span className="font-medium text-[11px] capitalize">{p.name}</span>
-                  <span className="text-[11px] text-zinc-500 font-mono">{p.photo_count}</span>
-                </button>
-
-                {pendingCount > 0 && (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      lib.setFaceReviewPerson(p.name);
-                    }}
-                    className="px-2 py-1 bg-amber-500/20 hover:bg-amber-500/35 border-l border-amber-500/30 text-amber-300 font-mono text-[11px] font-bold flex items-center gap-0.5 transition"
-                    title={`${pendingCount} unassigned face(s) look like ${p.name} — Click to review & confirm!`}
-                  >
-                    <span>+{pendingCount}?</span>
-                  </button>
-                )}
-              </div>
-            );
-          })}
-
-          <button
-            onClick={openFaceReview}
-            className="ml-auto px-2.5 py-1 rounded-full bg-indigo-950/70 hover:bg-indigo-900 text-indigo-300 border border-indigo-500/40 text-[11px] font-semibold flex items-center gap-1.5 shrink-0 transition"
-            title="Open Face Match Review & Confirmation Studio"
-          >
-            <ScanFace className="w-3.5 h-3.5 text-indigo-400" />
-            <span>Review Face Matches</span>
-          </button>
-        </div>
-      )}
-
       {/* Main Resizable 3-Pane Workspace */}
       <div className="flex flex-1 overflow-hidden relative">
         {!isLeftCollapsed && isPhotoTab && (
@@ -953,7 +889,6 @@ export default function App() {
               setActiveSubfolder={lib.setActiveSubfolder}
               activeEvent={lib.activeEvent}
               setActiveEvent={lib.setActiveEvent}
-              activeTag={lib.activeTag}
               setActiveTag={lib.setActiveTag}
               picksCount={lib.picksCount}
               basketCount={lib.basketCount}
@@ -966,25 +901,11 @@ export default function App() {
               folderTree={lib.folderTree}
               expandedFolders={lib.expandedFolders}
               setExpandedFolders={lib.setExpandedFolders}
-              autoEvents={lib.autoEvents}
-              onRenameTrip={lib.handleRenameTrip}
-              allLibraryTags={lib.allLibraryTags}
               handleEmptyTrashToRecycleBin={lib.handleEmptyTrashToRecycleBin}
               onFolderContextMenu={handleFolderContextMenu}
-              albumsSection={
-                <AlbumsSection
-                  albums={lib.albums}
-                  albumCounts={lib.albumCounts}
-                  savedSearches={lib.savedSearches}
-                  activeAlbumId={lib.activeAlbumId}
-                  searchQuery={lib.searchQuery}
-                  onSelectAlbum={lib.setActiveAlbumId}
-                  onCreateAlbum={(name) => lib.handleCreateAlbum(name)}
-                  onRenameAlbum={lib.handleRenameAlbum}
-                  onDeleteAlbum={lib.handleDeleteAlbum}
-                  onRunSavedSearch={lib.runSavedSearch}
-                  onDeleteSavedSearch={lib.handleDeleteSavedSearch}
-                />
+              collapsedSections={collapsedSections}
+              onToggleSection={(id) =>
+                setCollapsedSections((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
               }
             />
 
@@ -1049,190 +970,7 @@ export default function App() {
             />
           )}
 
-          {/* Streamlined Middle Toolbar */}
-          {lib.photos.length > 0 && (
-            <div className="bg-panel border-b border-zinc-800/60 px-4 py-1.5 flex items-center justify-between text-xs gap-3 flex-wrap shrink-0">
-              <div className="flex items-center gap-2 flex-wrap">
-                <button
-                  onClick={() => lib.setIsTimelineOpen((p) => !p)}
-                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium border transition ${
-                    lib.isTimelineOpen || lib.selectedPeriodRange
-                      ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/40 shadow-sm"
-                      : "bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border-zinc-800"
-                  }`}
-                  title="Slide out interactive day-by-day Date Timeline Slicer"
-                >
-                  <Calendar className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>
-                    {lib.selectedPeriodRange
-                      ? `${lib.selectedPeriodRange[0]} ➔ ${lib.selectedPeriodRange[1]}`
-                      : lib.simpleMode
-                      ? "Filter by Date"
-                      : "Timeline"}
-                  </span>
-                  <ChevronDown
-                    className={`w-3 h-3 transition-transform ${
-                      lib.isTimelineOpen ? "rotate-180" : ""
-                    }`}
-                  />
-                </button>
-
-                <label className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-zinc-900 border border-zinc-800 text-[11px] text-zinc-300 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={lib.autoAdvance}
-                    onChange={(e) => lib.setAutoAdvance(e.target.checked)}
-                    className="rounded bg-zinc-800 border-zinc-700 text-emerald-500 focus:ring-0 cursor-pointer"
-                  />
-                  <span>Auto-Advance</span>
-                </label>
-
-                {lib.totalBurstGroups > 0 && (
-                  <button
-                    onClick={() => lib.setShowAllBurstVersions((prev) => !prev)}
-                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium border transition ${
-                      lib.showAllBurstVersions
-                        ? "bg-amber-500/20 text-amber-300 border-amber-500/40 shadow-sm"
-                        : "bg-zinc-900 hover:bg-zinc-800 text-zinc-400 border-zinc-800"
-                    }`}
-                    title="Expand or collapse all burst / duplicate stacks"
-                  >
-                    <Layers className="w-3.5 h-3.5 text-amber-400" />
-                    <span>
-                      {lib.showAllBurstVersions
-                        ? "Collapse Bursts"
-                        : lib.simpleMode
-                        ? "Show Similar Shots"
-                        : "Show All Bursts"}
-                    </span>
-                  </button>
-                )}
-
-                {lib.activeSubfolder !== "ALL" && (
-                  <span className="bg-emerald-950/60 border border-emerald-500/30 text-emerald-300 px-2.5 py-0.5 rounded-full flex items-center gap-1.5 text-[11px]">
-                    <Folder className="w-3 h-3 text-emerald-400" />
-                    <span>{lib.activeSubfolder}</span>
-                    <button
-                      onClick={() => lib.setActiveSubfolder("ALL")}
-                      className="hover:text-white ml-0.5"
-                    >
-                      <X className="w-3 h-3" />
-                    </button>
-                  </span>
-                )}
-              </div>
-
-              <div className="flex items-center gap-2.5">
-                {/* Orientation Filter */}
-                <div className="flex bg-zinc-900 border border-zinc-800 rounded-lg p-0.5 text-[11px]">
-                  {(["ALL", "LANDSCAPE", "PORTRAIT", "SQUARE"] as OrientationFilter[]).map(
-                    (mode) => (
-                      <button
-                        key={mode}
-                        onClick={() => lib.setOrientationFilter(mode)}
-                        className={`px-2 py-0.5 rounded transition ${
-                          lib.orientationFilter === mode
-                            ? "bg-emerald-500/15 text-emerald-300 font-medium"
-                            : "text-zinc-500 hover:text-zinc-300"
-                        }`}
-                      >
-                        {mode === "ALL"
-                          ? "All"
-                          : mode === "LANDSCAPE"
-                          ? "Wide"
-                          : mode === "PORTRAIT"
-                          ? "Tall"
-                          : "Square"}
-                      </button>
-                    )
-                  )}
-                </div>
-
-                {/* Sort Selector */}
-                <div className="flex items-center gap-1.5 bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1">
-                  <ArrowUpDown className="w-3.5 h-3.5 text-emerald-400" />
-                  <select
-                    value={lib.sortBy}
-                    onChange={(e) => lib.setSortBy(e.target.value as SortOption)}
-                    className="bg-transparent text-zinc-200 font-medium text-xs focus:outline-none cursor-pointer"
-                  >
-                    <option value="NAME_ASC" className="bg-zinc-900">
-                      Alphabetical (A → Z)
-                    </option>
-                    <option value="NAME_DESC" className="bg-zinc-900">
-                      Alphabetical (Z → A)
-                    </option>
-                    <option value="DATE_DESC" className="bg-zinc-900">
-                      Date Captured (Newest)
-                    </option>
-                    <option value="DATE_ASC" className="bg-zinc-900">
-                      Date Captured (Oldest)
-                    </option>
-                    {!lib.simpleMode && (
-                      <>
-                        <option value="SCORE_DESC" className="bg-zinc-900">
-                          Focus Score (Sharpest)
-                        </option>
-                        <option value="SCORE_ASC" className="bg-zinc-900">
-                          Focus Score (Blurriest)
-                        </option>
-                      </>
-                    )}
-                    <option value="RATING_DESC" className="bg-zinc-900">
-                      Star Rating (High → Low)
-                    </option>
-                    <option value="TAG_NAME" className="bg-zinc-900">
-                      Primary Tag Name (A → Z)
-                    </option>
-                    <option value="SIZE_DESC" className="bg-zinc-900">
-                      File Size (Largest)
-                    </option>
-                  </select>
-                </div>
-
-                <div className="flex items-center bg-zinc-900 border border-zinc-800 rounded-lg overflow-hidden">
-                  <select
-                    value={lib.autoStagePreset}
-                    onChange={(e) =>
-                      lib.setAutoStagePreset(e.target.value as AutoStagePreset)
-                    }
-                    className="bg-transparent text-zinc-300 text-[11px] px-2 py-1 focus:outline-none cursor-pointer border-r border-zinc-800"
-                    title="Choose folder structure rule preset"
-                  >
-                    <option value="YEAR_MONTH_CITY" className="bg-zinc-900">
-                      {lib.simpleMode
-                        ? "By Year / Month & City"
-                        : "Rule: {Year}/{YYYY-MM}_{City}"}
-                    </option>
-                    <option value="YEAR_MONTH" className="bg-zinc-900">
-                      {lib.simpleMode ? "By Year / Month" : "Rule: {Year}/{YYYY-MM}"}
-                    </option>
-                    <option value="PERSON_YEAR" className="bg-zinc-900">
-                      {lib.simpleMode
-                        ? "By Person / Year"
-                        : "Rule: People/{Person}/{Year}"}
-                    </option>
-                    <option value="SCREENSHOTS_BY_MONTH" className="bg-zinc-900">
-                      {lib.simpleMode
-                        ? "Screenshots by Month"
-                        : "Rule: _Screenshots/{YYYY-MM}"}
-                    </option>
-                    <option value="FAVORITES_YEAR" className="bg-zinc-900">
-                      {lib.simpleMode ? "Favorites by Year" : "Rule: Favorites/{Year}"}
-                    </option>
-                  </select>
-                  <button
-                    onClick={lib.handleAutoOrganizeByPreset}
-                    className="flex items-center gap-1.5 text-indigo-200 hover:text-white bg-indigo-950/50 hover:bg-indigo-600 px-2.5 py-1 transition font-medium text-xs"
-                    title="Stage visible photos using selected folder rule"
-                  >
-                    <FolderSync className="w-3.5 h-3.5 text-indigo-400" />
-                    <span>{lib.simpleMode ? "Auto-Sort" : "Auto-Stage"}</span>
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
+          {lib.photos.length > 0 && <PhotoToolbar lib={lib} />}
 
           {(lib.parsedSearch.terms.length > 0 ||
             lib.activeAlbumId !== null ||
@@ -1726,6 +1464,22 @@ export default function App() {
         onExport={() => {
           if (contextPhoto) lib.openExport(contextMenuTargets(contextPhoto.hash));
         }}
+        albums={lib.albums}
+        onAddToAlbum={(albumId) => {
+          if (contextPhoto) lib.handleAddToAlbum(albumId, contextMenuTargets(contextPhoto.hash));
+        }}
+        onCreateAlbum={(name) => {
+          if (contextPhoto) lib.handleCreateAlbum(name, contextMenuTargets(contextPhoto.hash));
+        }}
+        onRemoveFromAlbum={
+          lib.activeAlbumId !== null
+            ? () => {
+                if (contextPhoto && lib.activeAlbumId !== null) {
+                  lib.handleRemoveFromAlbum(lib.activeAlbumId, contextMenuTargets(contextPhoto.hash));
+                }
+              }
+            : undefined
+        }
       />
 
       {/* Right-Click Folder Tree Context Menu */}

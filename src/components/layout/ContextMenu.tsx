@@ -1,5 +1,7 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
+  BookImage,
+  ChevronRight,
   Copy,
   Download,
   ExternalLink,
@@ -29,6 +31,12 @@ interface PhotoContextMenuProps {
   onCopyPath?: () => void;
   onFindSimilar?: () => void;
   onExport?: () => void;
+  // "Add to album ▸": existing albums, or a new one named on the spot
+  albums?: { id: number; name: string }[];
+  onAddToAlbum?: (albumId: number) => void;
+  onCreateAlbum?: (name: string) => void;
+  // Set while an album is shown: removes the right-clicked photos from it
+  onRemoveFromAlbum?: () => void;
 }
 
 export function PhotoContextMenu({
@@ -42,8 +50,19 @@ export function PhotoContextMenu({
   onCopyPath,
   onFindSimilar,
   onExport,
+  albums,
+  onAddToAlbum,
+  onCreateAlbum,
+  onRemoveFromAlbum,
 }: PhotoContextMenuProps) {
   const ref = useRef<HTMLDivElement>(null);
+  const [albumsOpen, setAlbumsOpen] = useState(false);
+  const [newAlbum, setNewAlbum] = useState("");
+
+  useEffect(() => {
+    setAlbumsOpen(false);
+    setNewAlbum("");
+  }, [position]);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -69,7 +88,7 @@ export function PhotoContextMenu({
       ref={ref}
       style={{
         left: `${Math.min(window.innerWidth - 230, position.x)}px`,
-        top: `${Math.min(window.innerHeight - 230, position.y)}px`,
+        top: `${Math.max(8, Math.min(window.innerHeight - (albumsOpen ? 420 : 300), position.y))}px`,
       }}
       className="fixed z-[99999] w-56 bg-raised/95 backdrop-blur-md border border-zinc-700/80 rounded-xl shadow-2xl p-1 text-xs select-none animate-in fade-in zoom-in-95"
     >
@@ -116,6 +135,72 @@ export function PhotoContextMenu({
         >
           <FileText className="w-3.5 h-3.5 text-zinc-400" />
           <span>Copy File Path</span>
+        </button>
+      )}
+
+      {onAddToAlbum && onCreateAlbum && (
+        <>
+          <button
+            onClick={() => setAlbumsOpen((o) => !o)}
+            aria-expanded={albumsOpen}
+            className="w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg hover:bg-zinc-800 text-zinc-200 transition text-left"
+          >
+            <span className="flex items-center gap-2">
+              <BookImage className="w-3.5 h-3.5 text-indigo-400" />
+              <span>Add to Album</span>
+            </span>
+            <ChevronRight className={`w-3.5 h-3.5 text-zinc-500 transition-transform ${albumsOpen ? "rotate-90" : ""}`} />
+          </button>
+          {albumsOpen && (
+            <div className="ml-3 pl-2 border-l border-zinc-800 flex flex-col gap-0.5 max-h-48 overflow-y-auto">
+              {(albums ?? []).map((a) => (
+                <button
+                  key={a.id}
+                  onClick={() => {
+                    onAddToAlbum(a.id);
+                    onClose();
+                  }}
+                  className="w-full px-2 py-1 rounded-md hover:bg-zinc-800 text-zinc-300 text-left truncate"
+                >
+                  {a.name}
+                </button>
+              ))}
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (!newAlbum.trim()) return;
+                  onCreateAlbum(newAlbum);
+                  onClose();
+                }}
+                className="flex items-center gap-1 py-0.5"
+              >
+                <input
+                  autoFocus
+                  value={newAlbum}
+                  onChange={(e) => setNewAlbum(e.target.value)}
+                  onKeyDown={(e) => e.stopPropagation()}
+                  placeholder="New album…"
+                  className="flex-1 min-w-0 bg-zinc-950 border border-zinc-700 rounded px-2 py-1 text-[11px] text-zinc-200 select-text focus:outline-none focus:border-indigo-500"
+                />
+                <button type="submit" className="px-1.5 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-[11px]">
+                  Add
+                </button>
+              </form>
+            </div>
+          )}
+        </>
+      )}
+
+      {onRemoveFromAlbum && (
+        <button
+          onClick={() => {
+            onRemoveFromAlbum();
+            onClose();
+          }}
+          className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-zinc-800 text-zinc-300 transition text-left"
+        >
+          <BookImage className="w-3.5 h-3.5 text-zinc-500" />
+          <span>Remove from This Album</span>
         </button>
       )}
 

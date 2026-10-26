@@ -1,8 +1,7 @@
-import { memo, useMemo, useState } from "react";
+import { memo, useMemo } from "react";
 import { FolderTreeNode, PhotoItem, SmartFilter } from "../../types/lumina";
 import {
   BrainCircuit,
-  Calendar,
   Camera,
   ChevronDown,
   ChevronRight,
@@ -12,9 +11,7 @@ import {
   Layers,
   MapPin,
   Package,
-  Pencil,
   Pin,
-  Plane,
   Smartphone,
   Sparkles,
   Star,
@@ -33,7 +30,6 @@ interface LeftSidebarProps {
   setActiveSubfolder: React.Dispatch<React.SetStateAction<string>>;
   activeEvent: string;
   setActiveEvent: React.Dispatch<React.SetStateAction<string>>;
-  activeTag: string;
   setActiveTag: React.Dispatch<React.SetStateAction<string>>;
   picksCount: number;
   basketCount: number;
@@ -46,15 +42,13 @@ interface LeftSidebarProps {
   folderTree: { rootCount: number; nodes: FolderTreeNode[] };
   expandedFolders: Set<string>;
   setExpandedFolders: React.Dispatch<React.SetStateAction<Set<string>>>;
-  autoEvents: { id: string; label: string; count: number; kind: "event" | "trip" }[];
-  onRenameTrip?: (id: string, name: string) => Promise<void>;
-  allLibraryTags: string[];
   // Optional props for Simple Mode & Empty Trash / Context Menu
   simpleMode?: boolean;
   handleEmptyTrashToRecycleBin?: () => Promise<void>;
   onFolderContextMenu?: (folderRelPath: string, e: React.MouseEvent) => void;
-  // Albums & smart albums list (rendered between the quick filters and the folders)
-  albumsSection?: React.ReactNode;
+  // Collapsed section ids ("filters", "folders"), remembered with the layout
+  collapsedSections: string[];
+  onToggleSection: (id: string) => void;
 }
 
 // Quick filters that accept dropped photos: Picks flags them, Basket pins them, Rejects rejects + stages them
@@ -75,7 +69,6 @@ function LeftSidebar({
   setActiveSubfolder,
   activeEvent,
   setActiveEvent,
-  activeTag,
   setActiveTag,
   picksCount,
   basketCount,
@@ -88,16 +81,29 @@ function LeftSidebar({
   folderTree,
   expandedFolders,
   setExpandedFolders,
-  autoEvents,
-  onRenameTrip,
-  allLibraryTags,
   simpleMode = false,
   handleEmptyTrashToRecycleBin,
   onFolderContextMenu,
-  albumsSection,
+  collapsedSections,
+  onToggleSection,
 }: LeftSidebarProps) {
-  const [renamingTrip, setRenamingTrip] = useState<string | null>(null);
-  const [tripNameInput, setTripNameInput] = useState("");
+  // Section header that collapses its section (state kept by the caller)
+  const sectionHeader = (id: string, label: string, extra?: React.ReactNode) => {
+    const collapsed = collapsedSections.includes(id);
+    return (
+      <div className="flex items-center justify-between">
+        <button
+          onClick={() => onToggleSection(id)}
+          aria-expanded={!collapsed}
+          className="flex items-center gap-1 text-[11px] font-bold text-zinc-500 hover:text-zinc-300 tracking-wider uppercase"
+        >
+          {collapsed ? <ChevronRight className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+          {label}
+        </button>
+        {extra}
+      </div>
+    );
+  };
 
   function toggleFolderExpand(fullPath: string, e: React.MouseEvent) {
     e.stopPropagation();
@@ -309,9 +315,8 @@ function LeftSidebar({
       className="bg-panel flex flex-col p-3 gap-5 overflow-y-auto shrink-0"
     >
       <div>
-        <span className="text-[11px] font-bold text-zinc-500 tracking-wider uppercase">
-          {simpleMode ? "Quick Filters" : "Culling & Triage"}
-        </span>
+        {sectionHeader("filters", simpleMode ? "Quick Filters" : "Culling & Triage")}
+        {!collapsedSections.includes("filters") && (
         <div className="mt-2 flex flex-col gap-0.5 text-xs">
           {filterItems.map((item) => {
             const isSelected =
@@ -345,6 +350,7 @@ function LeftSidebar({
             );
           })}
         </div>
+        )}
 
         {/* 1-Click Empty _Trash to OS Recycle Bin */}
         {trashFolderCount > 0 && handleEmptyTrashToRecycleBin && (
@@ -359,26 +365,24 @@ function LeftSidebar({
         )}
       </div>
 
-      {albumsSection}
-
       {/* Hierarchical Folder Tree */}
       {photos.length > 0 && (
         <div>
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] font-bold text-zinc-500 tracking-wider uppercase">
-              Folders
-            </span>
-            {activeSubfolder !== "ALL" && (
+          {sectionHeader(
+            "folders",
+            "Folders",
+            activeSubfolder !== "ALL" ? (
               <button
                 onClick={() => setActiveSubfolder("ALL")}
                 className="text-[11px] text-emerald-400 hover:underline"
               >
                 Reset
               </button>
-            )}
-          </div>
+            ) : undefined
+          )}
 
-          <div className="mt-2 flex flex-col gap-0.5 max-h-56 overflow-y-auto pr-1">
+          {!collapsedSections.includes("folders") && (
+          <div className="mt-2 flex flex-col gap-0.5">
             {folderTree.rootCount > 0 && (
               <div
                 data-folder-path="Root"
@@ -413,111 +417,10 @@ function LeftSidebar({
             )}
             {renderFolderTreeNodes(folderTree.nodes, 0)}
           </div>
+          )}
         </div>
       )}
 
-      {/* Auto-Events & Trips */}
-      {autoEvents.length > 0 && (
-        <div>
-          <span className="text-[11px] font-bold text-zinc-500 tracking-wider uppercase">
-            Events & Trips
-          </span>
-          <div className="mt-2 flex flex-col gap-0.5 text-xs max-h-36 overflow-y-auto">
-            {autoEvents.map((ev) =>
-              renamingTrip === ev.id ? (
-                <form
-                  key={ev.id}
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    onRenameTrip?.(ev.id, tripNameInput);
-                    setRenamingTrip(null);
-                  }}
-                  className="px-1 py-0.5"
-                >
-                  <input
-                    autoFocus
-                    value={tripNameInput}
-                    onChange={(e) => setTripNameInput(e.target.value)}
-                    onKeyDown={(e) => {
-                      e.stopPropagation();
-                      if (e.key === "Escape") setRenamingTrip(null);
-                    }}
-                    onBlur={() => setRenamingTrip(null)}
-                    placeholder="Name (empty = automatic)"
-                    className="w-full bg-zinc-950 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-200 select-text focus:outline-none focus:border-emerald-500"
-                  />
-                </form>
-              ) : (
-                <div
-                  key={ev.id}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => setActiveEvent(ev.id === activeEvent ? "ALL" : ev.id)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") setActiveEvent(ev.id === activeEvent ? "ALL" : ev.id);
-                  }}
-                  title={ev.kind === "trip" ? "Trip: several days away from home" : "Event"}
-                  className={`group flex justify-between items-center px-2.5 py-1.5 rounded-md text-left border cursor-pointer transition ${
-                    activeEvent === ev.id
-                      ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/30 font-medium"
-                      : "text-zinc-400 hover:bg-zinc-900/60 border-transparent"
-                  }`}
-                >
-                  <span className="truncate flex items-center gap-1.5">
-                    {ev.kind === "trip" ? (
-                      <Plane className="w-3 h-3 shrink-0 text-sky-400" />
-                    ) : (
-                      <Calendar className="w-3 h-3 shrink-0 text-emerald-400" />
-                    )}
-                    <span className="truncate">{ev.label}</span>
-                  </span>
-                  <span className="flex items-center gap-1 shrink-0">
-                    {onRenameTrip && (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setRenamingTrip(ev.id);
-                          setTripNameInput("");
-                        }}
-                        className="p-0.5 rounded text-zinc-500 hover:text-zinc-200 opacity-0 group-hover:opacity-100 focus:opacity-100"
-                        aria-label={`Rename ${ev.label}`}
-                        title="Rename"
-                      >
-                        <Pencil className="w-3 h-3" />
-                      </button>
-                    )}
-                    <span className="text-[11px] text-zinc-500 font-mono ml-1">{ev.count}</span>
-                  </span>
-                </div>
-              )
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Object Tags */}
-      {allLibraryTags.length > 0 && (
-        <div>
-          <span className="text-[11px] font-bold text-zinc-500 tracking-wider uppercase">
-            Tags ({allLibraryTags.length})
-          </span>
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            {allLibraryTags.map((tag) => (
-              <button
-                key={tag}
-                onClick={() => setActiveTag(tag === activeTag ? "ALL" : tag)}
-                className={`px-2 py-0.5 rounded-md text-[11px] font-medium transition ${
-                  activeTag === tag
-                    ? "bg-indigo-600 text-white border border-indigo-500 shadow-sm"
-                    : "bg-zinc-900/80 hover:bg-zinc-800 text-zinc-400 border border-zinc-800/80"
-                }`}
-              >
-                #{tag}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
     </aside>
   );
 }

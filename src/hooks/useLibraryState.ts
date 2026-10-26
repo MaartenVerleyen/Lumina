@@ -3397,3 +3397,5 @@ export function useLibraryState() {
     handleRedo: undo.handleRedo,
   };
 }
+
+export type LibraryState = ReturnType<typeof useLibraryState>;

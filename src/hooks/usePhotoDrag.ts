@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 // Where photos can be dropped. Drop targets are plain elements marked with
 // data-drop-kind / data-drop-value / data-drop-label (sidebar folders, filters, people chips).
-export type DropKind = "folder" | "person" | "trash" | "pick" | "basket" | "album";
+export type DropKind = "folder" | "person" | "trash" | "pick" | "basket";
 export interface DropTarget {
   kind: DropKind;
   value: string;
