@@ -443,7 +443,7 @@ export default function BulkActionDock({
         </button>
 
         <button
-          onClick={handleToggleBasketSelection}
+          onClick={() => handleToggleBasketSelection()}
           className="flex items-center gap-1 text-zinc-300 hover:text-white"
           title="Toggle Pinboard Basket (B)"
         >

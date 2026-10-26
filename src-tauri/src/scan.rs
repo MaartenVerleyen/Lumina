@@ -137,6 +137,13 @@ pub fn cancel_folder_scan() {
     SCAN_GENERATION.fetch_add(1, Ordering::AcqRel);
 }
 
+// Jobs panel: stops the background thumbnail pass only. Same mechanism: the pass sees a newer generation;
+// photos it didn't reach are picked up by the next scan.
+#[tauri::command]
+pub fn cancel_thumbnail_pass() {
+    SCAN_GENERATION.fetch_add(1, Ordering::AcqRel);
+}
+
 pub fn salt_hash_with_path(hash: &str, disk_path: &str) -> String {
     let mut hasher = blake3::Hasher::new();
     hasher.update(hash.as_bytes());

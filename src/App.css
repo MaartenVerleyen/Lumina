@@ -74,3 +74,10 @@ textarea {
   color: #d1fae5;
   font-weight: 700;
 }
+
+/* Drop target under the pointer while dragging photos */
+.lumina-drop-hover {
+  outline: 2px solid rgb(16 185 129);
+  outline-offset: -2px;
+  background-color: rgb(16 185 129 / 0.18) !important;
+}

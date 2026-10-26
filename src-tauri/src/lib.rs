@@ -366,6 +366,7 @@ pub fn run() {
             face_commands::scan_library_faces_batch,
             face_commands::cancel_face_scan,
             scan::cancel_folder_scan,
+            scan::cancel_thumbnail_pass,
             ai::cancel_ollama_pull,
             face_commands::get_outdated_face_photos,
             face_commands::get_unknown_face_clusters,

@@ -11,6 +11,10 @@ import LeftSidebar from "./components/layout/LeftSidebar";
 import RightInspector from "./components/layout/RightInspector";
 import BottomStatusBar from "./components/layout/BottomStatusBar";
 import ToastStack from "./components/layout/ToastStack";
+import CommandPalette, { PaletteAction } from "./components/modals/CommandPalette";
+import { usePhotoDrag, DropTarget } from "./hooks/usePhotoDrag";
+import { thumbSrc } from "./utils/photoHelpers";
+import type { BackgroundJob } from "./components/layout/BottomStatusBar";
 import {
   PhotoContextMenu,
   FolderContextMenu,
@@ -89,6 +93,7 @@ export default function App() {
   // New Subfolder Modal State
   const [isNewFolderModalOpen, setIsNewFolderModalOpen] = useState<boolean>(false);
   const [newFolderInput, setNewFolderInput] = useState<string>("");
+  const [isPaletteOpen, setIsPaletteOpen] = useState<boolean>(false);
   const newFolderDialogRef = useDialogFocus<HTMLFormElement>(isNewFolderModalOpen);
   const shortcutsDialogRef = useDialogFocus<HTMLDivElement>(lib.isShortcutsModalOpen);
 
@@ -154,13 +159,19 @@ export default function App() {
 
   // Global Undo/Redo (`Ctrl+Z` / `Ctrl+Y`), Shortcuts (`?`), and Session Log (`Ctrl+L`) Listener.
   // Registered once; reads the latest handlers through a ref.
-  const extraKeysRef = useRef({ lib, isBlockingModalOpen: false });
+  const extraKeysRef = useRef({ lib, isBlockingModalOpen: false, togglePalette: () => {} });
   useEffect(() => {
     function handleExtraKeys(e: KeyboardEvent) {
-      if (isEditableTarget(e.target)) return;
-      const { lib: l, isBlockingModalOpen: blocked } = extraKeysRef.current;
       const key = e.key.toLowerCase();
       const mod = e.ctrlKey || e.metaKey;
+      // Ctrl+P opens the command palette (and never the WebView's print dialog), even from a text field
+      if (mod && key === "p" && !e.shiftKey && !e.altKey) {
+        e.preventDefault();
+        extraKeysRef.current.togglePalette();
+        return;
+      }
+      if (isEditableTarget(e.target)) return;
+      const { lib: l, isBlockingModalOpen: blocked } = extraKeysRef.current;
 
       if (mod && key === "z" && !e.shiftKey) {
         // Undo/redo would change photos behind an open dialog (Face Review has its own Ctrl+Z)
@@ -346,6 +357,7 @@ export default function App() {
   // Dialogs that sit on top of the grid: while one is open, grid shortcuts must not touch photos behind it.
   // (The Loupe is deliberately not here: triaging inside the Loupe is the point of it.)
   const isBlockingModalOpen =
+    isPaletteOpen ||
     lib.isCommitModalOpen ||
     lib.isHealthModalOpen ||
     lib.isSessionLogModalOpen ||
@@ -356,6 +368,7 @@ export default function App() {
     Boolean(lib.isScanningFolder || lib.scanProgress || lib.ollamaPullProgress);
 
   const closeBlockingModals = () => {
+    setIsPaletteOpen(false);
     lib.setIsCommitModalOpen(false);
     lib.setIsHealthModalOpen(false);
     lib.setIsSessionLogModalOpen(false);
@@ -383,7 +396,191 @@ export default function App() {
     return { perMinute, etaLabel };
   })();
 
-  extraKeysRef.current = { lib, isBlockingModalOpen };
+  // The palette opens over the app, but not on top of another dialog
+  const togglePalette = () => {
+    if (isPaletteOpen) setIsPaletteOpen(false);
+    else if (!isBlockingModalOpen) setIsPaletteOpen(true);
+  };
+  extraKeysRef.current = { lib, isBlockingModalOpen, togglePalette };
+
+  // ---------- Drag photos onto folders, people and quick filters ----------
+  const hashesForDrag = (hash: string): string[] => {
+    if (lib.selectedHashes.has(hash)) return Array.from(lib.selectedHashes);
+    lib.setSelectedHashes(new Set([hash]));
+    lib.setActiveHash(hash);
+    lib.selectionAnchorHashRef.current = hash;
+    return [hash];
+  };
+  const handleDropPhotos = (hashes: string[], target: DropTarget) => {
+    switch (target.kind) {
+      case "folder":
+        lib.handleBatchStageMove(target.value, hashes);
+        break;
+      case "person":
+        lib.handleBatchAssignPerson(target.value, hashes);
+        break;
+      case "trash":
+        lib.handleRejectToTrash(hashes);
+        break;
+      case "pick":
+        lib.handleSetFlag("pick", hashes);
+        break;
+      case "basket":
+        lib.handleToggleBasketSelection(hashes, true);
+        break;
+      default:
+        return;
+    }
+    lib.setAutoMatchNotice(`${target.label}: ${hashes.length} photo(s). Ctrl+Z undoes it.`);
+  };
+  const { drag, onCardPointerDown } = usePhotoDrag(hashesForDrag, handleDropPhotos);
+  const dragPhoto = drag ? lib.visiblePhotos.find((p) => p.hash === drag.thumbHash) : undefined;
+
+  // ---------- Background jobs (status bar panel) ----------
+  const jobs: BackgroundJob[] = [];
+  if (lib.ollamaPullProgress) {
+    jobs.push({
+      id: "model-pull",
+      label: `Downloading ${lib.ollamaPullProgress.model}`,
+      detail: `${lib.ollamaPullProgress.completed_mb} / ${lib.ollamaPullProgress.total_mb} MB`,
+      completed: lib.ollamaPullProgress.percent,
+      total: 100,
+      onCancel: lib.handleCancelOperation,
+    });
+  } else if (lib.isScanningFolder || lib.scanProgress) {
+    jobs.push({
+      id: "folder-scan",
+      label: lib.scanProgress?.stage || "Scanning folder",
+      detail: lib.scanProgress?.current_file,
+      completed: lib.scanProgress?.completed ?? 0,
+      total: lib.scanProgress?.total ?? 0,
+      onCancel: lib.handleCancelOperation,
+    });
+  }
+  if (lib.progress) {
+    jobs.push({
+      id: "thumbnails",
+      label: "Making thumbnails",
+      completed: lib.progress.completed,
+      total: lib.progress.total,
+      onCancel: lib.handleCancelThumbnails,
+      cancelLabel: "Stop",
+    });
+  }
+  if (lib.faceModelDownload) {
+    jobs.push({
+      id: "face-models",
+      label: "Downloading face models (once)",
+      detail: `${lib.faceModelDownload.downloaded_mb} / ${lib.faceModelDownload.total_mb} MB`,
+      completed: lib.faceModelDownload.percent,
+      total: 100,
+    });
+  } else if (lib.faceScanProgress) {
+    jobs.push({
+      id: "face-scan",
+      label: "Face scan",
+      detail: `${lib.faceScanProgress.faces_found} faces found`,
+      completed: lib.faceScanProgress.completed,
+      total: lib.faceScanProgress.total,
+      onCancel: lib.handleCancelFaceScan,
+      cancelLabel: "Stop",
+    });
+  }
+  if (lib.aiBatchProgress) {
+    jobs.push({
+      id: "ai-batch",
+      label: "Batch AI",
+      detail: aiBatchRate ? `${aiBatchRate.perMinute.toFixed(1)} photos/min` : lib.aiBatchProgress.currentFile,
+      completed: lib.aiBatchProgress.current,
+      total: lib.aiBatchProgress.total,
+      onCancel: lib.handleStopAiBatch,
+      cancelLabel: "Stop",
+      cancelling: lib.aiBatchProgress.stopping,
+    });
+  }
+
+  // ---------- Command palette actions ----------
+  const hasSelection = lib.selectedHashes.size > 0;
+  const hasPhotos = lib.photos.length > 0;
+  const selected = () => lib.visiblePhotos.filter((p) => lib.selectedHashes.has(p.hash));
+  const paletteActions: PaletteAction[] = [
+    { id: "open-folder", group: "Library", label: "Open folder…", keywords: "library switch", run: lib.handleOpenFolder },
+    ...lib.recentFolders.slice(0, 5).map((f) => ({
+      id: `recent-${f}`,
+      group: "Library",
+      label: `Open recent: ${f.split(/[\\/]/).pop()}`,
+      keywords: f,
+      run: () => lib.handleLoadFolderPath(f),
+    })),
+    { id: "rescan", group: "Library", label: "Quick rescan folder", enabled: hasPhotos, run: lib.handleRescanFolder },
+    { id: "deep", group: "Library", label: "Deep reprocess thumbnails", enabled: hasPhotos, run: lib.handleRescanAndProcessFolder },
+    { id: "health", group: "Library", label: "Library health & XMP export", keywords: "cache sidecar lightroom", enabled: hasPhotos, run: lib.handleOpenHealthDashboard },
+    { id: "xmp-all", group: "Library", label: "Export XMP sidecars (all photos)", keywords: "lightroom", enabled: hasPhotos, run: () => lib.handleExportXmp(false) },
+    { id: "xmp-sel", group: "Library", label: "Export XMP sidecars (selection)", keywords: "lightroom", enabled: hasSelection, run: () => lib.handleExportXmp(true) },
+    { id: "commit", group: "Organize", label: "Review & commit staged moves", keywords: "disk move apply", enabled: lib.stagedPhotos.length > 0, run: () => lib.setIsCommitModalOpen(true) },
+    { id: "dismiss", group: "Organize", label: "Dismiss all staged moves", enabled: lib.stagedPhotos.length > 0, run: lib.handleDismissAllStaged },
+    { id: "auto-stage", group: "Organize", label: "Auto-stage visible photos by rule", keywords: "organize sort folders", enabled: hasPhotos, run: lib.handleAutoOrganizeByPreset },
+    { id: "keep-sharpest", group: "Organize", label: "Keep sharpest in every burst, stage rest for _Trash", keywords: "duplicates", enabled: lib.totalBurstGroups > 0, run: lib.handleKeepSharpestInAllGroups },
+    { id: "empty-trash", group: "Organize", label: "Empty _Trash to Recycle Bin", keywords: "delete", enabled: hasPhotos, run: lib.handleEmptyTrashToRecycleBin },
+    { id: "pick", group: "Triage", label: "Flag as pick", shortcut: "P", enabled: hasSelection, run: () => lib.handleSetFlag("pick") },
+    { id: "reject", group: "Triage", label: "Reject & stage for _Trash", shortcut: "X", enabled: hasSelection, run: () => lib.handleRejectToTrash() },
+    { id: "unflag", group: "Triage", label: "Remove flag", shortcut: "U", enabled: hasSelection, run: () => lib.handleSetFlag(null) },
+    ...[0, 1, 2, 3, 4, 5].map((r) => ({
+      id: `rate-${r}`,
+      group: "Triage",
+      label: r === 0 ? "Clear rating" : `Rate ${r} star${r === 1 ? "" : "s"}`,
+      shortcut: String(r),
+      enabled: hasSelection,
+      run: () => lib.handleBatchRate(r),
+    })),
+    ...(["red", "yellow", "green", "blue"] as const).map((c, i) => ({
+      id: `label-${c}`,
+      group: "Triage",
+      label: `Color label ${c}`,
+      shortcut: String(6 + i),
+      enabled: hasSelection,
+      run: () => lib.handleSetColorLabel(c),
+    })),
+    { id: "label-clear", group: "Triage", label: "Clear color label", enabled: hasSelection, run: () => lib.handleSetColorLabel(null) },
+    { id: "rotate-left", group: "Triage", label: "Rotate left", shortcut: "[", enabled: hasSelection, run: () => lib.handleRotateSelection(-90) },
+    { id: "rotate-right", group: "Triage", label: "Rotate right", shortcut: "]", enabled: hasSelection, run: () => lib.handleRotateSelection(90) },
+    { id: "basket", group: "Triage", label: "Pin / unpin in Basket", shortcut: "B", enabled: hasSelection, run: () => lib.handleToggleBasketSelection() },
+    { id: "select-all", group: "Select", label: "Select all visible photos", keywords: "everything", enabled: lib.visiblePhotos.length > 0, run: () => lib.setSelectedHashes(new Set(lib.visiblePhotos.map((p) => p.hash))) },
+    { id: "select-none", group: "Select", label: "Clear selection", enabled: hasSelection, run: () => lib.setSelectedHashes(new Set()) },
+    { id: "clear-filters", group: "Select", label: "Clear all filters", keywords: "reset show everything", enabled: hasPhotos, run: lib.clearAllFilters },
+    { id: "search", group: "Select", label: "Search photos", shortcut: "Ctrl+K", enabled: hasPhotos, run: () => searchInputRef.current?.focus() },
+    { id: "loupe", group: "View", label: "Open in Loupe", shortcut: "Space", enabled: Boolean(lib.activePhoto), run: () => lib.setIsLoupeOpen(true) },
+    { id: "view-grid", group: "View", label: "Grid view", shortcut: "G", run: () => lib.setViewMode("grid") },
+    { id: "view-compare", group: "View", label: "Compare view", shortcut: "C", enabled: hasPhotos, run: () => lib.setViewMode("compare") },
+    { id: "view-map", group: "View", label: "Map view", shortcut: "M", enabled: hasPhotos, run: () => lib.setViewMode("map") },
+    { id: "timeline", group: "View", label: "Show / hide date timeline", enabled: hasPhotos, run: () => lib.setIsTimelineOpen((o) => !o) },
+    { id: "bursts", group: "View", label: lib.showAllBurstVersions ? "Collapse burst stacks" : "Expand all burst stacks", enabled: lib.totalBurstGroups > 0, run: () => lib.setShowAllBurstVersions((v) => !v) },
+    { id: "grid-justified", group: "View", label: "Grid style: justified", enabled: lib.gridStyle !== "justified", run: () => lib.setGridStyle("justified") },
+    { id: "grid-square", group: "View", label: "Grid style: square", enabled: lib.gridStyle !== "square", run: () => lib.setGridStyle("square") },
+    { id: "details-hover", group: "View", label: "Card details: on hover", enabled: lib.cardDetails !== "hover", run: () => lib.setCardDetails("hover") },
+    { id: "details-always", group: "View", label: "Card details: always", enabled: lib.cardDetails !== "always", run: () => lib.setCardDetails("always") },
+    { id: "zoom-in", group: "View", label: "Larger thumbnails", run: () => lib.setZoomLevel((z) => Math.min(1, z + 0.15)) },
+    { id: "zoom-out", group: "View", label: "Smaller thumbnails", run: () => lib.setZoomLevel((z) => Math.max(0, z - 0.15)) },
+    { id: "left-pane", group: "View", label: isLeftCollapsed ? "Show left sidebar" : "Hide left sidebar", run: () => setIsLeftCollapsed((v) => !v) },
+    { id: "right-pane", group: "View", label: isRightCollapsed ? "Show inspector" : "Hide inspector", run: () => setIsRightCollapsed((v) => !v) },
+    { id: "mode", group: "View", label: lib.simpleMode ? "Switch to Pro mode" : "Switch to Simple mode", run: lib.toggleSimpleMode },
+    { id: "scan-faces", group: "Faces", label: "Scan faces in this folder", enabled: hasPhotos && !lib.faceScanProgress, run: lib.handleBatchScanFacesOnnx },
+    { id: "stop-faces", group: "Faces", label: "Stop face scan", enabled: Boolean(lib.faceScanProgress), run: lib.handleCancelFaceScan },
+    { id: "review-faces", group: "Faces", label: "Review face matches", keywords: "people suggestions", enabled: hasPhotos, run: openFaceReview },
+    { id: "who", group: "Faces", label: "Who is this? (name unknown faces)", keywords: "people clusters", enabled: hasPhotos, run: () => lib.setFaceReviewPerson(UNKNOWN_FACES) },
+    { id: "detect-one", group: "Faces", label: "Detect faces in this photo", enabled: Boolean(lib.activePhoto), run: lib.handleDetectFacesSingleOnnx },
+    { id: "ai-visible", group: "AI", label: "Batch AI on visible photos", keywords: "caption tags", enabled: hasPhotos && !lib.aiBatchProgress, run: () => lib.runBatchAiOnList(lib.visiblePhotos) },
+    { id: "ai-selected", group: "AI", label: "Batch AI on selected photos", keywords: "caption tags", enabled: hasSelection && !lib.aiBatchProgress, run: () => lib.runBatchAiOnList(selected()) },
+    { id: "ai-one", group: "AI", label: "AI analyze this photo", shortcut: "A", enabled: Boolean(lib.activePhoto), run: lib.handleAiAnalyzeSingle },
+    { id: "ai-stop", group: "AI", label: "Stop Batch AI", enabled: Boolean(lib.aiBatchProgress), run: lib.handleStopAiBatch },
+    { id: "exif", group: "Photo", label: "Re-read EXIF of selection", keywords: "date camera gps refresh", enabled: hasSelection, run: lib.handleForceRescanExifSelected },
+    { id: "reveal", group: "Photo", label: "Show in Explorer", enabled: Boolean(lib.activePhoto), run: () => lib.activePhoto && lib.handleRevealInFileManager(diskPathOf(lib.activePhoto)) },
+    { id: "external", group: "Photo", label: "Open in default app", enabled: Boolean(lib.activePhoto), run: () => lib.activePhoto && lib.handleOpenInDefaultViewer(diskPathOf(lib.activePhoto)) },
+    { id: "undo", group: "Edit", label: "Undo", shortcut: "Ctrl+Z", enabled: lib.canUndo, run: lib.handleUndo },
+    { id: "redo", group: "Edit", label: "Redo", shortcut: "Ctrl+Y", enabled: lib.canRedo, run: lib.handleRedo },
+    { id: "log", group: "Help", label: "Session log", shortcut: "Ctrl+L", run: () => lib.setIsSessionLogModalOpen(true) },
+    { id: "shortcuts", group: "Help", label: "Keyboard shortcuts", shortcut: "?", run: () => lib.setIsShortcutsModalOpen(true) },
+  ];
 
   useKeyboardShortcuts({
     activeHash: lib.activeHash,
@@ -549,6 +746,9 @@ export default function App() {
             return (
               <div
                 key={p.name}
+                data-drop-kind="person"
+                data-drop-value={p.name}
+                data-drop-label={`Tag ${p.name}`}
                 className={`flex items-center rounded-full text-xs transition shrink-0 border overflow-hidden ${
                   isSelected
                     ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/50 shadow-sm"
@@ -1008,6 +1208,7 @@ export default function App() {
               simpleMode={lib.simpleMode}
               handlePhotoClick={lib.handlePhotoClick}
               onPhotoContextMenu={handlePhotoContextMenu}
+              onCardPointerDown={onCardPointerDown}
               setActiveHash={lib.setActiveHash}
               setIsLoupeOpen={lib.setIsLoupeOpen}
               toggleBurstGroupExpand={lib.toggleBurstGroupExpand}
@@ -1122,12 +1323,32 @@ export default function App() {
         viewMode={lib.viewMode}
         zoomLevel={lib.zoomLevel}
         setZoomLevel={lib.setZoomLevel}
-        progress={lib.progress}
-        faceScanProgress={lib.faceScanProgress}
-        aiBatchProgress={lib.aiBatchProgress}
+        jobs={jobs}
         sessionLogsCount={lib.sessionLogs.length}
         onOpenSessionLog={() => lib.setIsSessionLogModalOpen(true)}
       />
+
+      <CommandPalette isOpen={isPaletteOpen} onClose={() => setIsPaletteOpen(false)} actions={paletteActions} />
+
+      {/* Drag ghost: follows the pointer while photos are dragged onto a folder, person or quick filter */}
+      {drag && (
+        <div
+          style={{ left: drag.x + 14, top: drag.y + 14 }}
+          className="fixed z-[99995] pointer-events-none flex items-center gap-2 px-2 py-1.5 rounded-xl bg-raised/95 border border-emerald-500/50 shadow-2xl text-xs text-zinc-100"
+        >
+          {dragPhoto?.thumb_ready && (
+            <img src={thumbSrc(dragPhoto)} alt="" className="w-10 h-10 rounded-md object-cover" />
+          )}
+          <div className="flex flex-col">
+            <span className="font-semibold">
+              {drag.count} photo{drag.count === 1 ? "" : "s"}
+            </span>
+            <span className={drag.target ? "text-emerald-300" : "text-zinc-400"}>
+              {drag.target ? drag.target.label : "Drop on a folder, person, Picks, Basket or Rejects"}
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* Right-Click Photo Context Menu */}
       <PhotoContextMenu
@@ -1352,6 +1573,7 @@ export default function App() {
                 ["C / G / M", "Compare / Grid / Map View"],
                 ["Ctrl + Z / Y", "Undo / Redo Last Action"],
                 ["Ctrl + K", "Search"],
+                ["Ctrl + P", "Command Palette (every action)"],
                 ["Ctrl + L", "Open Session Activity Log"],
                 ["?", "Show This Cheat Sheet"],
                 ["Esc", "Close Dialog / Loupe"],

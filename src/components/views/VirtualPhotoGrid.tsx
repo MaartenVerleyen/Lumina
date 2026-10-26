@@ -44,6 +44,8 @@ interface VirtualPhotoGridProps {
   toggleBurstGroupExpand: (groupNum: number, e: React.MouseEvent) => void;
   simpleMode?: boolean;
   onPhotoContextMenu?: (photo: PhotoItem, e: React.MouseEvent) => void;
+  // Start of a possible drag (see usePhotoDrag)
+  onCardPointerDown?: (hash: string, e: React.PointerEvent) => void;
 }
 
 // The month of the photos at the top of the viewport, for the floating date label. Hidden while that
@@ -78,6 +80,7 @@ export default function VirtualPhotoGrid({
   toggleBurstGroupExpand,
   simpleMode = false,
   onPhotoContextMenu,
+  onCardPointerDown,
 }: VirtualPhotoGridProps) {
   // Thumbnails that failed to load (file deleted or cache cleared) show a placeholder instead of a broken image
   const [failedThumbs, setFailedThumbs] = useState<Set<string>>(() => new Set());
@@ -169,6 +172,7 @@ export default function VirtualPhotoGrid({
                     setIsLoupeOpen={setIsLoupeOpen}
                     toggleBurstGroupExpand={toggleBurstGroupExpand}
                     onPhotoContextMenu={onPhotoContextMenu}
+                    onCardPointerDown={onCardPointerDown}
                     onThumbError={onThumbError}
                   />
                 );
@@ -202,6 +206,7 @@ interface PhotoCardProps {
   setIsLoupeOpen: React.Dispatch<React.SetStateAction<boolean>>;
   toggleBurstGroupExpand: (groupNum: number, e: React.MouseEvent) => void;
   onPhotoContextMenu?: (photo: PhotoItem, e: React.MouseEvent) => void;
+  onCardPointerDown?: (hash: string, e: React.PointerEvent) => void;
   onThumbError: (thumbPath: string) => void;
 }
 
@@ -226,6 +231,7 @@ const PhotoCard = memo(function PhotoCard({
   setIsLoupeOpen,
   toggleBurstGroupExpand,
   onPhotoContextMenu,
+  onCardPointerDown,
   onThumbError,
 }: PhotoCardProps) {
   const grp = photo.duplicate_group;
@@ -247,6 +253,7 @@ const PhotoCard = memo(function PhotoCard({
       aria-label={photo.name}
       tabIndex={isActive ? 0 : -1}
       onClick={(e) => handlePhotoClick(index, photo.hash, e)}
+      onPointerDown={(e) => onCardPointerDown?.(photo.hash, e)}
       onContextMenu={(e) => {
         if (onPhotoContextMenu) {
           e.preventDefault();

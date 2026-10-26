@@ -1561,6 +1561,17 @@ export function useLibraryState() {
     return () => clearTimeout(timer);
   }, [folder, hasPhotos]);
 
+  // Jobs panel: stop making thumbnails (the rest is picked up the next time the folder is opened)
+  async function handleCancelThumbnails() {
+    try {
+      await invoke("cancel_thumbnail_pass");
+      setProgress(null);
+      addLog("LIBRARY", "Stopped making thumbnails; the rest follows the next time this folder is opened");
+    } catch (err) {
+      setError(String(err));
+    }
+  }
+
   // Cancel button of the progress dialog: stops a model download or the folder scan, whichever is running
   async function handleCancelOperation() {
     try {
@@ -2091,11 +2102,11 @@ export function useLibraryState() {
     }
   }
 
-  async function handleBatchAssignPerson(personName: string) {
+  async function handleBatchAssignPerson(personName: string, targetHashes?: string[]) {
     const clean = personName.trim();
-    if (!clean || selectedHashes.size === 0) return;
+    const hashes = resolveTargets(targetHashes);
+    if (!clean || hashes.length === 0) return;
     try {
-      const hashes = expandWithRawPairs(Array.from(selectedHashes), photos);
       // Undo removes the person only from photos that didn't have them before
       const added = hashes.filter((h) => !photoByHash.get(h)?.people.includes(clean));
       const addedSet = new Set(added);
@@ -2226,12 +2237,13 @@ export function useLibraryState() {
     }
   }
 
-  async function handleToggleBasketSelection() {
-    if (selectedHashes.size === 0) return;
+  // B toggles the basket for the selection; dropping photos on the Basket pins them (`pin` = true)
+  async function handleToggleBasketSelection(targetHashes?: string[], pin?: boolean) {
+    const hashes = resolveTargets(targetHashes);
+    if (hashes.length === 0) return;
     try {
-      const hashes = expandWithRawPairs(Array.from(selectedHashes), photos);
       const hashSet = new Set(hashes);
-      const anyNotInBasket = photos.some((p) => hashSet.has(p.hash) && !p.in_basket);
+      const anyNotInBasket = pin ?? photos.some((p) => hashSet.has(p.hash) && !p.in_basket);
       const before = captureSnapshots(photos, hashSet);
       await invoke("set_photo_basket", { hashes, inBasket: anyNotInBasket });
       pushSnapshotUndo(
@@ -2817,6 +2829,7 @@ export function useLibraryState() {
     handleBatchScanFacesOnnx,
     handleCancelFaceScan,
     handleCancelOperation,
+    handleCancelThumbnails,
     faceModelDownload,
     handleSetFlag,
     handleRejectToTrash,

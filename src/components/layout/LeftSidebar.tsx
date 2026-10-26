@@ -52,6 +52,13 @@ interface LeftSidebarProps {
   onFolderContextMenu?: (folderRelPath: string, e: React.MouseEvent) => void;
 }
 
+// Quick filters that accept dropped photos: Picks flags them, Basket pins them, Rejects rejects + stages them
+const DROP_FILTERS: Record<string, Record<string, string>> = {
+  PICKS: { "data-drop-kind": "pick", "data-drop-label": "Flag as pick" },
+  BASKET: { "data-drop-kind": "basket", "data-drop-label": "Pin to Basket" },
+  REJECTS: { "data-drop-kind": "trash", "data-drop-label": "Reject & stage for _Trash" },
+};
+
 function LeftSidebar({
   leftWidth,
   photos,
@@ -102,6 +109,10 @@ function LeftSidebar({
         <div key={node.fullPath} className="flex flex-col">
           <div
             data-folder-path={node.fullPath}
+            // Photos dropped here are staged to move into this folder
+            data-drop-kind="folder"
+            data-drop-value={node.fullPath.replace(/ \/ /g, "/")}
+            data-drop-label={`Move to ${node.fullPath}`}
             onClick={() => {
               setActiveSubfolder(isSelected ? "ALL" : node.fullPath);
               if (hasChildren && !isExpanded) {
@@ -301,6 +312,7 @@ function LeftSidebar({
             return (
               <button
                 key={item.id}
+                {...(DROP_FILTERS[item.id] ?? {})}
                 onClick={() => {
                   setSmartFilter(item.id as SmartFilter);
                   setSelectedPerson(null);
