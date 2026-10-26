@@ -43,7 +43,7 @@ zip = { version = "9", default-features = false, features = ["deflate"] }
 sha2 = "0.10"
 trash = "5"
 # Already in the tree via Tauri; `select!`/`Notify` let a Stop abort an in-flight AI request
-tokio = { version = "1", features = ["sync", "macros"] }
+tokio = { version = "1", features = ["sync", "macros", "time"] }
 # DCT-domain downscaled JPEG decoding (1/2, 1/4, 1/8) for thumbnails, previews and face/AI input
 jpeg-decoder = { version = "0.3", default-features = false }
 

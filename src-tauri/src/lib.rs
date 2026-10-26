@@ -400,6 +400,8 @@ pub fn run() {
             ai::ai_analyze_photo,
             ai::prepare_ai_image,
             ai::cancel_ai_analysis,
+            ai::ollama_tuning_status,
+            ai::enable_ollama_flash_attention,
             ai::check_ollama_status,
             ai::start_ollama_service,
             ai::preload_ollama_vram,

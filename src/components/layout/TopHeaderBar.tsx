@@ -169,6 +169,37 @@ export default function TopHeaderBar({
 }: TopHeaderBarProps) {
   const [isLibraryMenuOpen, setIsLibraryMenuOpen] = useState(false);
   const [isAiMenuOpen, setIsAiMenuOpen] = useState(false);
+  // Flash attention: when Ollama runs without it, offer to switch it on (saves a Windows setting, restarts Ollama)
+  const [flashAttention, setFlashAttention] = useState<{ value: string | null; canEnable: boolean } | null>(null);
+  const [tuningState, setTuningState] = useState<"idle" | "working" | "done" | "error">("idle");
+  const [tuningError, setTuningError] = useState("");
+  useEffect(() => {
+    if (!isAiMenuOpen) return;
+    invoke<{ flash_attention: string | null; can_enable: boolean }>("ollama_tuning_status")
+      .then((s) => setFlashAttention({ value: s.flash_attention, canEnable: s.can_enable }))
+      .catch(() => {});
+  }, [isAiMenuOpen]);
+  const flashAttentionOff =
+    flashAttention !== null && flashAttention.canEnable && !["1", "true"].includes((flashAttention.value || "").toLowerCase());
+
+  async function enableFlashAttention() {
+    const ok = await ask(
+      "Ollama runs about 10–15% faster with flash attention, with the same results.\n\nLumina saves OLLAMA_FLASH_ATTENTION=1 in your Windows user settings and restarts Ollama. Anything else using Ollama pauses for a few seconds.",
+      { title: "Faster AI tagging", kind: "info", okLabel: "Turn on and restart Ollama", cancelLabel: "Not now" }
+    );
+    if (!ok) return;
+    setTuningState("working");
+    setTuningError("");
+    try {
+      await invoke("enable_ollama_flash_attention");
+      setFlashAttention((f) => (f ? { ...f, value: "1" } : f));
+      setOllamaStatus(await invoke<OllamaStatus>("check_ollama_status"));
+      setTuningState("done");
+    } catch (err) {
+      setTuningError(String(err));
+      setTuningState("error");
+    }
+  }
   const [isToolsMenuOpen, setIsToolsMenuOpen] = useState(false);
 
   const libraryMenuRef = useRef<HTMLDivElement>(null);
@@ -703,6 +734,32 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                     </button>
                   )}
                 </div>
+
+                {(flashAttentionOff || tuningState === "done" || tuningState === "error") && (
+                  <div className="p-2 rounded-lg bg-emerald-950/30 border border-emerald-500/30 flex flex-col gap-1.5">
+                    {tuningState === "done" ? (
+                      <span className="text-[11px] text-emerald-300">
+                        Flash attention is on: AI tagging is now about 10–15% faster.
+                      </span>
+                    ) : (
+                      <>
+                        <span className="text-[11px] text-zinc-300">
+                          Ollama runs without flash attention. Turning it on makes AI tagging about 10–15% faster.
+                        </span>
+                        <button
+                          onClick={enableFlashAttention}
+                          disabled={tuningState === "working" || Boolean(aiBatchProgress)}
+                          title={aiBatchProgress ? "Wait for Batch AI to finish" : undefined}
+                          className="self-start flex items-center gap-1 text-[11px] bg-emerald-700 hover:bg-emerald-600 disabled:opacity-60 text-white px-2.5 py-1 rounded-lg font-medium"
+                        >
+                          <Zap className="w-3 h-3" />
+                          <span>{tuningState === "working" ? "Restarting Ollama…" : "Turn on flash attention"}</span>
+                        </button>
+                        {tuningState === "error" && <span className="text-[11px] text-red-300">{tuningError}</span>}
+                      </>
+                    )}
+                  </div>
+                )}
 
                 {ollamaStatus?.running &&
                   (hasVisionModel ? (
