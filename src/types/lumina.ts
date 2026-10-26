@@ -194,6 +194,13 @@ export interface TrashResult {
 }
 
 // One-time download of the face recognition models (InsightFace buffalo_l, 288 MB)
+// A group of unnamed faces that look like the same person ("Who is this?")
+export interface FaceCluster {
+  size: number;
+  face_ids: string[];
+  samples: SimilarFaceCandidate[];
+}
+
 export interface FaceModelDownloadProgress {
   downloaded_mb: number;
   total_mb: number;

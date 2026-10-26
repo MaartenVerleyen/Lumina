@@ -26,7 +26,7 @@ import LoupeModal from "./components/modals/LoupeModal";
 import OperationProgressModal from "./components/modals/OperationProgressModal";
 import AiBatchReportModal from "./components/modals/AiBatchReportModal";
 import SessionLogModal from "./components/modals/SessionLogModal";
-import FaceMatchReviewModal from "./components/modals/FaceMatchReviewModal";
+import FaceMatchReviewModal, { UNKNOWN_FACES } from "./components/modals/FaceMatchReviewModal";
 import {
   AutoStagePreset,
   OrientationFilter,
@@ -451,7 +451,7 @@ export default function App() {
         handlePullDefaultAiModel={lib.handlePullDefaultAiModel}
         totalPendingFaceMatches={Object.values(lib.pendingFaceCounts).reduce((a, b) => a + b, 0)}
         onOpenFaceReviewStudio={() =>
-          lib.setFaceReviewPerson(lib.people[0]?.name || "")
+          lib.setFaceReviewPerson(lib.people[0]?.name || UNKNOWN_FACES)
         }
       />
 

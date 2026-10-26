@@ -32,6 +32,7 @@ mod storage;
 mod fastdecode;
 mod thumbs;
 mod face_ort;
+mod face_match;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -50,6 +51,7 @@ use storage::*;
 use fastdecode::*;
 use thumbs::*;
 use face_ort::*;
+use face_match::*;
 
 static GEOCODER: LazyLock<ReverseGeocoder> = LazyLock::new(ReverseGeocoder::new);
 static DB_SCHEMA_READY: AtomicBool = AtomicBool::new(false);
@@ -360,6 +362,7 @@ pub fn run() {
             face_commands::scan_library_faces_batch,
             face_commands::cancel_face_scan,
             face_commands::get_outdated_face_photos,
+            face_commands::get_unknown_face_clusters,
             face_engine::get_face_match_config,
             face_commands::assign_face_region_and_automatch,
             face_commands::remove_face_box,

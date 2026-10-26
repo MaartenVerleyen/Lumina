@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import UnknownFaceClusters from "./UnknownFaceClusters";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import {
   FaceInstance,
@@ -20,6 +21,7 @@ import {
   Sparkles,
   User,
   UserMinus,
+  Users,
   X,
 } from "lucide-react";
 
@@ -35,6 +37,9 @@ interface FaceMatchReviewModalProps {
 }
 
 type StatusTab = "pending" | "confirmed" | "denied";
+
+// Pass as the initial person to open the modal on "Who is this?" (groups of unnamed faces)
+export const UNKNOWN_FACES = "__unknown_faces__";
 
 interface HistoryStep {
   action: "accept" | "deny";
@@ -60,6 +65,8 @@ export default function FaceMatchReviewModal({
   const [actionError, setActionError] = useState<string>("");
   const [strongMatchPercent, setStrongMatchPercent] = useState<number>(62);
   const [statusTab, setStatusTab] = useState<StatusTab>("pending");
+  // "person": one person's suggestions / confirmed / denied faces; "unknown": groups of unnamed faces
+  const [view, setView] = useState<"person" | "unknown">("person");
   const [candidates, setCandidates] = useState<SimilarFaceCandidate[]>([]);
   const [confirmedFaces, setConfirmedFaces] = useState<SimilarFaceCandidate[]>([]);
   const [deniedFaces, setDeniedFaces] = useState<SimilarFaceCandidate[]>([]);
@@ -125,8 +132,9 @@ export default function FaceMatchReviewModal({
           });
           if (isStale()) return;
           setCandidates(res);
-          // Do NOT pre-select all candidates automatically: only confirm what the user explicitly selects or clicks!
-          setSelectedIds(new Set());
+          // "Likely" matches (>= the strong threshold: every one was correct in face_eval) start selected,
+          // so one click on "Accept Selected" confirms them; "maybe" matches need an explicit choice
+          setSelectedIds(new Set(res.filter((c) => c.similarity >= strongMatchPercent).map((c) => c.face_id)));
           setSpotlightIndex(0);
         } else if (tab === "confirmed") {
           const res = await invoke<SimilarFaceCandidate[]>(
@@ -158,7 +166,7 @@ export default function FaceMatchReviewModal({
         if (!isStale()) setIsLoading(false);
       }
     },
-    [statusTab, folder]
+    [statusTab, folder, strongMatchPercent]
   );
 
   useEffect(() => {
@@ -174,6 +182,11 @@ export default function FaceMatchReviewModal({
     if (!isOpen) return;
     setStatusTab("pending");
     setHistoryStack([]);
+    if (initialPerson === UNKNOWN_FACES || people.length === 0) {
+      setView("unknown");
+      return;
+    }
+    setView("person");
     const target =
       initialPerson ||
       people.find((p) => (pendingCounts[p.name] || 0) > 0)?.name ||
@@ -398,6 +411,9 @@ export default function FaceMatchReviewModal({
   useEffect(() => {
     if (!isOpen) return;
     function onKeyDown(e: KeyboardEvent) {
+      const target = e.target as HTMLElement | null;
+      if (view === "unknown" && e.key !== "Escape") return;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA") && e.key !== "Escape") return;
       if (e.key === "Escape") {
         e.preventDefault();
         e.stopPropagation();
@@ -440,6 +456,7 @@ export default function FaceMatchReviewModal({
     return () => window.removeEventListener("keydown", onKeyDown, true);
   }, [
     isOpen,
+    view,
     statusTab,
     reviewMode,
     candidates,
@@ -490,7 +507,7 @@ export default function FaceMatchReviewModal({
           </div>
 
           {/* 3-Tab Status Switcher: Pending Suggestions | Confirmed Faces | Denied / Ignored */}
-          <div className="flex items-center gap-2 bg-zinc-950 border border-zinc-800 rounded-xl p-1 text-xs">
+          <div className={`flex items-center gap-2 bg-zinc-950 border border-zinc-800 rounded-xl p-1 text-xs ${view === "unknown" ? "invisible" : ""}`}>
             <button
               onClick={() => handleSwitchTab("pending")}
               className={`px-3 py-1.5 rounded-lg font-semibold flex items-center gap-1.5 transition ${
@@ -582,17 +599,37 @@ export default function FaceMatchReviewModal({
         <div className="flex flex-1 min-h-0 overflow-hidden">
           {/* Left Sidebar: People List & Pending Counts */}
           <aside className="w-64 bg-[#0b0c12] border-r border-zinc-800/80 flex flex-col overflow-y-auto p-3 gap-1.5 shrink-0">
+            <button
+              onClick={() => setView("unknown")}
+              className={`w-full flex items-center gap-2.5 p-2 rounded-xl text-xs transition mb-1 ${
+                view === "unknown"
+                  ? "bg-indigo-600/20 text-indigo-200 border border-indigo-500/40 shadow-sm"
+                  : "hover:bg-zinc-900 text-zinc-300 border border-zinc-800"
+              }`}
+              title="Groups of unnamed faces that look like the same person"
+            >
+              <div className="w-8 h-8 rounded-full bg-zinc-800 flex items-center justify-center shrink-0">
+                <Users className="w-4 h-4 text-indigo-300" />
+              </div>
+              <div className="text-left">
+                <div className="font-semibold">Who is this?</div>
+                <div className="text-[10px] text-zinc-500">Name unknown faces in groups</div>
+              </div>
+            </button>
             <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider px-2 py-1">
               Confirmed People ({people.length})
             </span>
 
             {people.map((p) => {
-              const isSelected = p.name.toLowerCase() === activePerson.toLowerCase();
+              const isSelected = view === "person" && p.name.toLowerCase() === activePerson.toLowerCase();
               const pending = pendingCounts[p.name] || 0;
               return (
                 <button
                   key={p.name}
-                  onClick={() => loadDataForPerson(p.name, statusTab)}
+                  onClick={() => {
+                    setView("person");
+                    loadDataForPerson(p.name, statusTab);
+                  }}
                   className={`w-full flex items-center justify-between p-2 rounded-xl text-xs transition ${
                     isSelected
                       ? "bg-indigo-600/20 text-indigo-200 border border-indigo-500/40 shadow-sm"
@@ -629,8 +666,19 @@ export default function FaceMatchReviewModal({
             })}
           </aside>
 
+          {view === "unknown" && (
+            <div className="flex-1 flex flex-col min-h-0 overflow-hidden bg-[#090a0f]">
+              <UnknownFaceClusters
+                folder={folder}
+                peopleNames={people.map((p) => p.name)}
+                setPhotos={setPhotos}
+                refreshPeople={refreshPeople}
+              />
+            </div>
+          )}
+
           {/* Main Workspace */}
-          <div className="flex-1 flex flex-col min-h-0 overflow-hidden bg-[#090a0f]">
+          <div className={`flex-1 flex flex-col min-h-0 overflow-hidden bg-[#090a0f] ${view === "unknown" ? "hidden" : ""}`}>
             {/* Action Sub-Toolbar */}
             <div className="px-6 py-3 bg-[#0e1017] border-b border-zinc-800/80 flex items-center justify-between text-xs shrink-0 gap-2 flex-wrap">
               <div className="flex items-center gap-3">
@@ -860,7 +908,7 @@ export default function FaceMatchReviewModal({
                                   : "bg-amber-950/90 text-amber-300 border border-amber-500/40"
                               }`}
                             >
-                              {cand.similarity}% match
+                              {cand.similarity >= strongMatchPercent ? "Likely" : "Maybe"} · {cand.similarity}%
                             </span>
                           )}
                           {statusTab === "confirmed" && (

@@ -94,13 +94,6 @@ pub fn bbox_iou(a: (f64, f64, f64, f64), b: (f64, f64, f64, f64)) -> f64 {
     if union > 0.0 { inter / union } else { 0.0 }
 }
 
-pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
-    if a.len() != b.len() || a.is_empty() {
-        return 0.0;
-    }
-    a.iter().zip(b.iter()).map(|(x, y)| x * y).sum()
-}
-
 pub fn compute_normalized_centroid(embeddings: &[Vec<f32>], dim: usize) -> Option<Vec<f32>> {
     let valid: Vec<&Vec<f32>> = embeddings.iter().filter(|e| e.len() == dim).collect();
     if valid.is_empty() {
@@ -117,30 +110,6 @@ pub fn compute_normalized_centroid(embeddings: &[Vec<f32>], dim: usize) -> Optio
         *v /= norm;
     }
     Some(centroid)
-}
-
-pub fn score_against_person_profile(
-    cand_emb: &[f32],
-    ref_embeddings: &[Vec<f32>],
-    centroid_512: Option<&Vec<f32>>,
-    _centroid_384: Option<&Vec<f32>>,
-) -> f32 {
-    if cand_emb.len() != 512 {
-        return 0.0;
-    }
-    let best_exemplar = ref_embeddings
-        .iter()
-        .filter(|r| r.len() == 512)
-        .map(|r| cosine_similarity(r, cand_emb))
-        .fold(0.0f32, f32::max);
-    let centroid_sim = centroid_512
-        .map(|c| cosine_similarity(c, cand_emb))
-        .unwrap_or(0.0);
-    if centroid_sim > 0.0 {
-        0.55 * best_exemplar + 0.45 * centroid_sim
-    } else {
-        best_exemplar
-    }
 }
 
 pub fn find_overlapping_face_id(

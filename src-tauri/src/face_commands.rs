@@ -650,21 +650,210 @@ pub fn format_display_photo_path(
     (photo_name, display_photo_path)
 }
 
+// All pending face suggestions for a folder, keyed by person name. Every unnamed face (engine v2) is
+// suggested to at most one person: its best match, only if that clears FACE_MATCH_MIN_SIMILARITY, beats the
+// runner-up by FACE_ASSIGN_MARGIN, and doesn't look more like a face the user rejected for that person.
+// A person is suggested at most once per photo (the best-scoring face), and never on a photo they are
+// already confirmed in. The badge counts and the review modal both come from this, so they always agree.
+pub fn compute_face_suggestions(
+    app: &AppHandle,
+    conn: &Connection,
+    root_folder: Option<&str>,
+) -> Result<HashMap<String, Vec<SimilarFaceCandidate>>, String> {
+    ensure_embedding_cache_loaded(conn);
+    let prefix = make_folder_prefix(root_folder);
+    let thumbs_dir = get_app_storage_dir(app).join("thumbnails");
+    let previews_dir = get_app_storage_dir(app).join("previews");
+
+    // Confirmed faces per person (case-insensitive; the first spelling seen is displayed)
+    let mut person_names: Vec<String> = Vec::new();
+    let mut person_index: HashMap<String, usize> = HashMap::new();
+    let mut person_ref_ids: Vec<Vec<String>> = Vec::new();
+    {
+        let mut stmt = conn
+            .prepare(
+                "SELECT face_id, person_name FROM photo_faces
+                 WHERE person_name IS NOT NULL AND person_name != '' AND engine = ?1",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params![FACE_ENGINE_V2], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+            .map_err(|e| e.to_string())?;
+        for (fid, name) in rows.flatten() {
+            let key = name.trim().to_lowercase();
+            let idx = *person_index.entry(key).or_insert_with(|| {
+                person_names.push(name.trim().to_string());
+                person_ref_ids.push(Vec::new());
+                person_names.len() - 1
+            });
+            person_ref_ids[idx].push(fid);
+        }
+    }
+    if person_names.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    // Rejections: excluded pairs, and the rejected faces' embeddings as negatives per person
+    let mut rejected_pairs: std::collections::HashSet<(String, usize)> = std::collections::HashSet::new();
+    let mut negative_ids: Vec<Vec<String>> = vec![Vec::new(); person_names.len()];
+    if let Ok(mut stmt) = conn.prepare("SELECT face_id, lower(person_name) FROM face_rejections") {
+        if let Ok(rows) = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))) {
+            for (fid, lower) in rows.flatten() {
+                if let Some(&idx) = person_index.get(lower.trim()) {
+                    negative_ids[idx].push(fid.clone());
+                    rejected_pairs.insert((fid, idx));
+                }
+            }
+        }
+    }
+
+    // People already confirmed on each photo
+    let mut assigned: std::collections::HashSet<(String, usize)> = std::collections::HashSet::new();
+    if let Ok(mut stmt) = conn.prepare("SELECT hash, lower(person_name) FROM photo_people") {
+        if let Ok(rows) = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))) {
+            for (hash, lower) in rows.flatten() {
+                if let Some(&idx) = person_index.get(lower.trim()) {
+                    assigned.insert((hash, idx));
+                }
+            }
+        }
+    }
+
+    // Unnamed faces of this engine in the folder
+    struct Unassigned {
+        face_id: String,
+        hash: String,
+        face_thumb: String,
+        photo_path: String,
+        bbox: (f64, f64, f64, f64),
+    }
+    let unassigned: Vec<Unassigned>;
+    {
+        let mut stmt = conn
+            .prepare(
+                "SELECT pf.face_id, pf.hash, pf.face_thumb, COALESCE(p.current_path, ''),
+                        pf.bbox_x, pf.bbox_y, pf.bbox_w, pf.bbox_h
+                 FROM photo_faces pf JOIN photos p ON pf.hash = p.hash
+                 WHERE (pf.person_name IS NULL OR pf.person_name = '') AND pf.engine = ?1
+                   AND p.current_path LIKE ?2 ESCAPE '!'",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params![FACE_ENGINE_V2, prefix], |r| {
+                Ok(Unassigned {
+                    face_id: r.get(0)?,
+                    hash: r.get(1)?,
+                    face_thumb: r.get(2)?,
+                    photo_path: r.get(3)?,
+                    bbox: (r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?),
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        unassigned = rows.flatten().collect();
+    }
+    if unassigned.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    // Copy what we need out of the shared cache, then score without holding its lock
+    let (profiles, candidates): (Vec<Option<PersonProfile>>, Vec<Option<Vec<f32>>>) = {
+        let cache = FACE_EMBEDDING_CACHE.lock().map_err(|e| e.to_string())?;
+        let get = |ids: &[String]| -> Vec<Vec<f32>> { ids.iter().filter_map(|id| cache.get(id).cloned()).collect() };
+        let profiles = person_names
+            .iter()
+            .enumerate()
+            .map(|(i, _)| build_profile(get(&person_ref_ids[i]), get(&negative_ids[i])))
+            .collect();
+        let candidates = unassigned.iter().map(|u| cache.get(&u.face_id).cloned()).collect();
+        (profiles, candidates)
+    };
+    // Keep the index mapping: assign_face returns an index into the profiles that exist
+    let usable: Vec<(usize, PersonProfile)> = profiles
+        .into_iter()
+        .enumerate()
+        .filter_map(|(i, p)| p.map(|p| (i, p)))
+        .collect();
+    let (person_of_profile, profile_list): (Vec<usize>, Vec<PersonProfile>) = usable.into_iter().unzip();
+    if profile_list.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let assignments: Vec<Option<(usize, f32)>> = candidates
+        .par_iter()
+        .map(|emb| {
+            let emb = emb.as_ref()?;
+            let a = assign_face(emb, &profile_list, SCORE_METHOD, FACE_MATCH_MIN_SIMILARITY, FACE_ASSIGN_MARGIN)?;
+            Some((person_of_profile[a.person], a.score))
+        })
+        .collect();
+
+    // At most one suggestion per (photo, person): the best-scoring face
+    let mut best_per_photo: HashMap<(String, usize), (usize, f32)> = HashMap::new();
+    for (i, assignment) in assignments.iter().enumerate() {
+        let Some((person, score)) = *assignment else { continue };
+        let u = &unassigned[i];
+        if rejected_pairs.contains(&(u.face_id.clone(), person)) || assigned.contains(&(u.hash.clone(), person)) {
+            continue;
+        }
+        let key = (u.hash.clone(), person);
+        if best_per_photo.get(&key).map(|&(_, s)| score > s).unwrap_or(true) {
+            best_per_photo.insert(key, (i, score));
+        }
+    }
+
+    let mut out: HashMap<String, Vec<SimilarFaceCandidate>> = HashMap::new();
+    for ((_, person), (i, score)) in best_per_photo {
+        let u = &unassigned[i];
+        let (photo_name, display_photo_path) =
+            format_display_photo_path(u.photo_path.clone(), &u.hash, &previews_dir, &thumbs_dir);
+        out.entry(person_names[person].clone()).or_default().push(SimilarFaceCandidate {
+            face_id: u.face_id.clone(),
+            hash: u.hash.clone(),
+            face_thumb: u.face_thumb.clone(),
+            photo_name,
+            photo_path: display_photo_path,
+            bbox_x: u.bbox.0,
+            bbox_y: u.bbox.1,
+            bbox_w: u.bbox.2,
+            bbox_h: u.bbox.3,
+            current_person: None,
+            similarity: (score * 1000.0).round() / 10.0,
+        });
+    }
+    for list in out.values_mut() {
+        list.sort_by(|a, b| b.similarity.partial_cmp(&a.similarity).unwrap_or(std::cmp::Ordering::Equal));
+        list.truncate(MAX_SUGGESTIONS_PER_PERSON);
+    }
+    Ok(out)
+}
+
+// Recomputes the folder's suggestions and stores them in the pending cache (keyed per person + folder)
+fn refresh_suggestion_cache(
+    app: &AppHandle,
+    conn: &Connection,
+    root_folder: Option<&str>,
+) -> Result<HashMap<String, Vec<SimilarFaceCandidate>>, String> {
+    let suggestions = compute_face_suggestions(app, conn, root_folder)?;
+    let keyed: HashMap<String, Vec<SimilarFaceCandidate>> = suggestions
+        .iter()
+        .map(|(name, list)| (pending_cache_key(name, root_folder), list.clone()))
+        .collect();
+    replace_pending_for_folder(root_folder, keyed);
+    Ok(suggestions)
+}
+
 #[tauri::command]
 pub async fn find_similar_faces(
     app: AppHandle,
     person_name: String,
     root_folder: Option<String>,
-    min_similarity: Option<f32>,
     force_refresh: Option<bool>,
 ) -> Result<Vec<SimilarFaceCandidate>, String> {
     let clean_name = person_name.trim().to_string();
     let cache_key = pending_cache_key(&clean_name, root_folder.as_deref());
-    // Only results at the standard threshold are cached, so a custom threshold never pollutes the badge counts
-    let uses_standard_threshold = min_similarity.is_none();
 
-    // Fast path (<0.1ms): if get_pending_face_match_counts already precomputed the candidates for this person, return them immediately!
-    if !force_refresh.unwrap_or(false) && uses_standard_threshold {
+    // Fast path: the badge computation already cached this folder's suggestions
+    if !force_refresh.unwrap_or(false) {
         if let Ok(guard) = PENDING_CANDIDATES_CACHE.lock() {
             if let Some(cached) = guard.get(&cache_key) {
                 return Ok(cached.clone());
@@ -674,131 +863,12 @@ pub async fn find_similar_faces(
 
     tauri::async_runtime::spawn_blocking(move || {
         let conn = open_global_db(&app)?;
-        ensure_embedding_cache_loaded(&conn);
-        let prefix = make_folder_prefix(root_folder.as_deref());
-
-        // 1. Query only face_id for confirmed faces of this person (ZERO embedding blob reads!)
-        let mut ref_ids: Vec<String> = Vec::new();
-        {
-            let mut stmt = conn
-                .prepare("SELECT face_id FROM photo_faces WHERE lower(person_name) = lower(?1)")
-                .map_err(|e| e.to_string())?;
-            let rows = stmt
-                .query_map(params![clean_name], |r| r.get::<_, String>(0))
-                .map_err(|e| e.to_string())?;
-            for fid in rows.flatten() {
-                ref_ids.push(fid);
-            }
-        }
-
-        if ref_ids.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let thumbs_dir = get_app_storage_dir(&app).join("thumbnails");
-        let previews_dir = get_app_storage_dir(&app).join("previews");
-
-        // 2. Query only UNASSIGNED faces within the active library folder that haven't been rejected
-        let mut stmt = conn
-            .prepare(
-                "SELECT pf.face_id, pf.hash, pf.face_thumb, pf.person_name,
-                        COALESCE(p.current_path, ''), pf.bbox_x, pf.bbox_y, pf.bbox_w, pf.bbox_h
-                 FROM photo_faces pf
-                 JOIN photos p ON pf.hash = p.hash
-                 WHERE (pf.person_name IS NULL OR pf.person_name = '')
-                   AND p.current_path LIKE ?2 ESCAPE '!'
-                   AND NOT EXISTS (
-                       SELECT 1 FROM face_rejections fr
-                       WHERE fr.face_id = pf.face_id AND lower(fr.person_name) = lower(?1)
-                   )
-                   AND NOT EXISTS (
-                       SELECT 1 FROM photo_people pp
-                       WHERE pp.hash = pf.hash AND lower(pp.person_name) = lower(?1)
-                   )",
-            )
-            .map_err(|e| e.to_string())?;
-
-        let raw_rows: Vec<(String, String, String, Option<String>, String, f64, f64, f64, f64)> = stmt
-            .query_map(params![clean_name, prefix], |r| {
-                Ok((
-                    r.get(0)?,
-                    r.get(1)?,
-                    r.get(2)?,
-                    r.get(3)?,
-                    r.get(4)?,
-                    r.get(5)?,
-                    r.get(6)?,
-                    r.get(7)?,
-                    r.get(8)?,
-                ))
-            })
-            .map_err(|e| e.to_string())?
-            .flatten()
-            .collect();
-
-        // 3. Score in memory using a single lock on FACE_EMBEDDING_CACHE
-        let cache_guard = FACE_EMBEDDING_CACHE.lock().map_err(|e| e.to_string())?;
-        let ref_embeddings: Vec<Vec<f32>> = ref_ids
-            .iter()
-            .filter_map(|id| cache_guard.get(id).cloned())
-            .collect();
-
-        if ref_embeddings.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let centroid_512 = compute_normalized_centroid(&ref_embeddings, 512);
-        let centroid_384 = compute_normalized_centroid(&ref_embeddings, 384);
-
-        let mut candidates = Vec::new();
-        for (face_id, hash, face_thumb, cur_person, photo_path, bx, by, bw, bh) in raw_rows {
-            let Some(cand_emb) = cache_guard.get(&face_id) else {
-                continue;
-            };
-            let thresh = min_similarity.unwrap_or(FACE_MATCH_MIN_SIMILARITY);
-
-            let best_sim = score_against_person_profile(
-                cand_emb,
-                &ref_embeddings,
-                centroid_512.as_ref(),
-                centroid_384.as_ref(),
-            );
-
-            if best_sim >= thresh {
-                let (photo_name, display_photo_path) =
-                    format_display_photo_path(photo_path, &hash, &previews_dir, &thumbs_dir);
-
-                candidates.push(SimilarFaceCandidate {
-                    face_id,
-                    hash,
-                    face_thumb,
-                    photo_name,
-                    photo_path: display_photo_path,
-                    bbox_x: bx,
-                    bbox_y: by,
-                    bbox_w: bw,
-                    bbox_h: bh,
-                    current_person: cur_person,
-                    similarity: (best_sim * 1000.0).round() / 10.0,
-                });
-            }
-        }
-        drop(cache_guard);
-
-        candidates.sort_by(|a, b| {
-            b.similarity
-                .partial_cmp(&a.similarity)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-        candidates.truncate(120);
-
-        if uses_standard_threshold {
-            if let Ok(mut pending_guard) = PENDING_CANDIDATES_CACHE.lock() {
-                pending_guard.insert(cache_key, candidates.clone());
-            }
-        }
-
-        Ok(candidates)
+        let suggestions = refresh_suggestion_cache(&app, &conn, root_folder.as_deref())?;
+        Ok(suggestions
+            .into_iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case(&clean_name))
+            .map(|(_, list)| list)
+            .unwrap_or_default())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -1050,185 +1120,8 @@ pub async fn get_pending_face_match_counts(
 ) -> Result<HashMap<String, usize>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let conn = open_global_db(&app)?;
-        ensure_embedding_cache_loaded(&conn);
-        let prefix = make_folder_prefix(root_folder.as_deref());
-        let thumbs_dir = get_app_storage_dir(&app).join("thumbnails");
-        let previews_dir = get_app_storage_dir(&app).join("previews");
-
-        // 1. Query only (face_id, person_name) without reading the 8KB embedding strings!
-        let mut person_ref_ids: HashMap<String, Vec<String>> = HashMap::new();
-        {
-            let mut stmt = conn
-                .prepare(
-                    "SELECT face_id, person_name FROM photo_faces
-                     WHERE person_name IS NOT NULL AND person_name != ''",
-                )
-                .map_err(|e| e.to_string())?;
-            let rows = stmt
-                .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
-                .map_err(|e| e.to_string())?;
-            for (fid, pname) in rows.flatten() {
-                person_ref_ids.entry(pname).or_default().push(fid);
-            }
-        }
-
-        if person_ref_ids.is_empty() {
-            replace_pending_for_folder(root_folder.as_deref(), HashMap::new());
-            return Ok(HashMap::new());
-        }
-
-        // 2. Load all rejected (face_id, lower_person_name) pairs
-        let mut rejected_set: std::collections::HashSet<(String, String)> =
-            std::collections::HashSet::new();
-        if let Ok(mut stmt) = conn.prepare("SELECT face_id, lower(person_name) FROM face_rejections") {
-            if let Ok(rows) =
-                stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
-            {
-                for pair in rows.flatten() {
-                    rejected_set.insert(pair);
-                }
-            }
-        }
-
-        // 3. Query unassigned face metadata within the active folder (ZERO embedding blob reads!)
-        struct UnassignedMeta {
-            face_id: String,
-            hash: String,
-            face_thumb: String,
-            photo_name: String,
-            display_photo_path: String,
-            bbox_x: f64,
-            bbox_y: f64,
-            bbox_w: f64,
-            bbox_h: f64,
-        }
-
-        let mut unassigned_items: Vec<UnassignedMeta> = Vec::new();
-        {
-            let mut stmt = conn
-                .prepare(
-                    "SELECT pf.face_id, pf.hash, pf.face_thumb, COALESCE(p.current_path, ''),
-                            pf.bbox_x, pf.bbox_y, pf.bbox_w, pf.bbox_h
-                     FROM photo_faces pf
-                     JOIN photos p ON pf.hash = p.hash
-                     WHERE (pf.person_name IS NULL OR pf.person_name = '')
-                       AND p.current_path LIKE ?1 ESCAPE '!'",
-                )
-                .map_err(|e| e.to_string())?;
-            let rows = stmt
-                .query_map(params![prefix], |r| {
-                    Ok((
-                        r.get::<_, String>(0)?,
-                        r.get::<_, String>(1)?,
-                        r.get::<_, String>(2)?,
-                        r.get::<_, String>(3)?,
-                        r.get::<_, f64>(4)?,
-                        r.get::<_, f64>(5)?,
-                        r.get::<_, f64>(6)?,
-                        r.get::<_, f64>(7)?,
-                    ))
-                })
-                .map_err(|e| e.to_string())?;
-            for (face_id, hash, face_thumb, photo_path, bbox_x, bbox_y, bbox_w, bbox_h) in rows.flatten() {
-                let (photo_name, display_photo_path) =
-                    format_display_photo_path(photo_path, &hash, &previews_dir, &thumbs_dir);
-                unassigned_items.push(UnassignedMeta {
-                    face_id,
-                    hash,
-                    face_thumb,
-                    photo_name,
-                    display_photo_path,
-                    bbox_x,
-                    bbox_y,
-                    bbox_w,
-                    bbox_h,
-                });
-            }
-        }
-
-        let mut counts: HashMap<String, usize> = HashMap::new();
-        let mut new_pending_cache: HashMap<String, Vec<SimilarFaceCandidate>> = HashMap::new();
-
-        if unassigned_items.is_empty() {
-            replace_pending_for_folder(root_folder.as_deref(), HashMap::new());
-            return Ok(counts);
-        }
-
-        let cache_guard = FACE_EMBEDDING_CACHE.lock().map_err(|e| e.to_string())?;
-
-        // Load all assigned (hash, lower_person_name) pairs so a person is never matched to another face in a photo they are already in
-        let mut assigned_people_set: std::collections::HashSet<(String, String)> =
-            std::collections::HashSet::new();
-        if let Ok(mut stmt) = conn.prepare("SELECT hash, lower(person_name) FROM photo_people") {
-            if let Ok(rows) =
-                stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
-            {
-                for pair in rows.flatten() {
-                    assigned_people_set.insert(pair);
-                }
-            }
-        }
-
-        for (pname, fids) in &person_ref_ids {
-            let refs: Vec<Vec<f32>> = fids
-                .iter()
-                .filter_map(|id| cache_guard.get(id).cloned())
-                .filter(|v| v.len() == 512)
-                .collect();
-            if refs.is_empty() {
-                continue;
-            }
-            let lower_p = pname.to_lowercase();
-            let c512 = compute_normalized_centroid(&refs, 512);
-            let mut person_candidates: Vec<SimilarFaceCandidate> = Vec::new();
-
-            for item in &unassigned_items {
-                if rejected_set.contains(&(item.face_id.clone(), lower_p.clone())) {
-                    continue;
-                }
-                if assigned_people_set.contains(&(item.hash.clone(), lower_p.clone())) {
-                    continue;
-                }
-                let Some(cand_emb) = cache_guard.get(&item.face_id) else {
-                    continue;
-                };
-                if cand_emb.len() != 512 {
-                    continue;
-                }
-                // Same threshold as find_similar_faces, so the badge count and the modal always agree
-                let sim = score_against_person_profile(cand_emb, &refs, c512.as_ref(), None);
-                if sim >= FACE_MATCH_MIN_SIMILARITY {
-                    person_candidates.push(SimilarFaceCandidate {
-                        face_id: item.face_id.clone(),
-                        hash: item.hash.clone(),
-                        face_thumb: item.face_thumb.clone(),
-                        photo_name: item.photo_name.clone(),
-                        photo_path: item.display_photo_path.clone(),
-                        bbox_x: item.bbox_x,
-                        bbox_y: item.bbox_y,
-                        bbox_w: item.bbox_w,
-                        bbox_h: item.bbox_h,
-                        current_person: None,
-                        similarity: (sim * 1000.0).round() / 10.0,
-                    });
-                }
-            }
-
-            if !person_candidates.is_empty() {
-                person_candidates.sort_by(|a, b| {
-                    b.similarity
-                        .partial_cmp(&a.similarity)
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                });
-                person_candidates.truncate(120);
-                counts.insert(pname.clone(), person_candidates.len());
-                new_pending_cache.insert(pending_cache_key(pname, root_folder.as_deref()), person_candidates);
-            }
-        }
-        drop(cache_guard);
-
-        replace_pending_for_folder(root_folder.as_deref(), new_pending_cache);
-        Ok(counts)
+        let suggestions = refresh_suggestion_cache(&app, &conn, root_folder.as_deref())?;
+        Ok(suggestions.into_iter().map(|(name, list)| (name, list.len())).collect())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -1319,6 +1212,112 @@ pub async fn get_outdated_face_photos(app: AppHandle, root_folder: Option<String
             .query_map(params![FACE_ENGINE_V2, prefix], |r| r.get::<_, String>(0))
             .map_err(|e| e.to_string())?;
         Ok(rows.flatten().collect())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+// ----------------- "WHO IS THIS?": CLUSTERS OF UNKNOWN FACES -----------------
+
+#[derive(Serialize, Clone)]
+pub struct FaceCluster {
+    pub size: usize,
+    // Every face in the cluster (naming the cluster assigns all of them)
+    pub face_ids: Vec<String>,
+    // Up to 12 faces closest to the cluster's centre, for display
+    pub samples: Vec<SimilarFaceCandidate>,
+}
+
+const MAX_FACES_TO_CLUSTER: usize = 20_000;
+const MAX_CLUSTERS: usize = 200;
+// Detections below this confidence are often partial or blurry faces: they would only add noise
+const MIN_CLUSTER_FACE_CONFIDENCE: f64 = 0.6;
+
+// Groups the folder's unnamed faces that aren't already suggested for someone, largest group first
+#[tauri::command]
+pub async fn get_unknown_face_clusters(app: AppHandle, root_folder: Option<String>) -> Result<Vec<FaceCluster>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let conn = open_global_db(&app)?;
+        let suggestions = refresh_suggestion_cache(&app, &conn, root_folder.as_deref())?;
+        let suggested: std::collections::HashSet<String> =
+            suggestions.values().flatten().map(|c| c.face_id.clone()).collect();
+        let prefix = make_folder_prefix(root_folder.as_deref());
+        let thumbs_dir = get_app_storage_dir(&app).join("thumbnails");
+        let previews_dir = get_app_storage_dir(&app).join("previews");
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT pf.face_id, pf.hash, pf.face_thumb, COALESCE(p.current_path, ''),
+                        pf.bbox_x, pf.bbox_y, pf.bbox_w, pf.bbox_h
+                 FROM photo_faces pf JOIN photos p ON pf.hash = p.hash
+                 WHERE (pf.person_name IS NULL OR pf.person_name = '') AND pf.engine = ?1
+                   AND COALESCE(pf.confidence, 0) >= ?2 AND p.current_path LIKE ?3 ESCAPE '!'
+                 ORDER BY pf.confidence DESC
+                 LIMIT ?4",
+            )
+            .map_err(|e| e.to_string())?;
+        let faces: Vec<SimilarFaceCandidate> = stmt
+            .query_map(
+                params![FACE_ENGINE_V2, MIN_CLUSTER_FACE_CONFIDENCE, prefix, MAX_FACES_TO_CLUSTER as i64],
+                |r| {
+                    let hash: String = r.get(1)?;
+                    let (photo_name, photo_path) =
+                        format_display_photo_path(r.get(3)?, &hash, &previews_dir, &thumbs_dir);
+                    Ok(SimilarFaceCandidate {
+                        face_id: r.get(0)?,
+                        hash,
+                        face_thumb: r.get(2)?,
+                        photo_name,
+                        photo_path,
+                        bbox_x: r.get(4)?,
+                        bbox_y: r.get(5)?,
+                        bbox_w: r.get(6)?,
+                        bbox_h: r.get(7)?,
+                        current_person: None,
+                        similarity: 0.0,
+                    })
+                },
+            )
+            .map_err(|e| e.to_string())?
+            .flatten()
+            .filter(|f| !suggested.contains(&f.face_id))
+            .collect();
+
+        let (faces, embeddings): (Vec<SimilarFaceCandidate>, Vec<Vec<f32>>) = {
+            let cache = FACE_EMBEDDING_CACHE.lock().map_err(|e| e.to_string())?;
+            faces
+                .into_iter()
+                .filter_map(|f| cache.get(&f.face_id).cloned().map(|e| (f, e)))
+                .unzip()
+        };
+
+        let labels = cluster_faces(&embeddings, CLUSTER_SIMILARITY, 20);
+        let mut groups: HashMap<usize, Vec<usize>> = HashMap::new();
+        for (i, label) in labels.iter().enumerate() {
+            groups.entry(*label).or_default().push(i);
+        }
+        let mut clusters: Vec<FaceCluster> = groups
+            .into_values()
+            .filter(|members| members.len() >= 2)
+            .map(|members| {
+                let member_embs: Vec<Vec<f32>> = members.iter().map(|&i| embeddings[i].clone()).collect();
+                let centre = compute_normalized_centroid(&member_embs, 512).unwrap_or_default();
+                let mut ranked: Vec<(usize, f32)> = members.iter().map(|&i| (i, dot(&embeddings[i], &centre))).collect();
+                ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+                FaceCluster {
+                    size: members.len(),
+                    face_ids: members.iter().map(|&i| faces[i].face_id.clone()).collect(),
+                    samples: ranked
+                        .iter()
+                        .take(12)
+                        .map(|&(i, sim)| SimilarFaceCandidate { similarity: (sim * 1000.0).round() / 10.0, ..faces[i].clone() })
+                        .collect(),
+                }
+            })
+            .collect();
+        clusters.sort_by(|a, b| b.size.cmp(&a.size));
+        clusters.truncate(MAX_CLUSTERS);
+        Ok(clusters)
     })
     .await
     .map_err(|e| e.to_string())?

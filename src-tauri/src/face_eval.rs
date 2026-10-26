@@ -1,6 +1,6 @@
 // ----------------- FACE EVALUATION BENCHMARK (manual, #[ignore]) -----------------
 // Measures detection and person matching on a labelled folder, using exactly the app's pipeline
-// (open_and_orient_image -> detect_and_embed_faces -> score_against_person_profile).
+// (open_and_orient_image -> FaceModels::analyze -> face_match::profile_score / assign_face / cluster_faces).
 //
 // Folder layout:  <set>\<Person>\*.jpg   one person per folder; their largest face in each photo is them
 //                 <set>\_strangers\*      people who are not in the set (any suggestion is wrong)
@@ -67,12 +67,11 @@ fn largest(faces: Vec<EvalFace>) -> Option<EvalFace> {
     })
 }
 
+// The app's scoring (face_match::profile_score with the production SCORE_METHOD)
 fn person_score(cand: &[f32], refs: &[Vec<f32>]) -> f32 {
-    if refs.is_empty() {
-        return 0.0;
-    }
-    let centroid = compute_normalized_centroid(refs, 512);
-    score_against_person_profile(cand, refs, centroid.as_ref(), None)
+    build_profile(refs.to_vec(), Vec::new())
+        .map(|profile| profile_score(cand, &profile, SCORE_METHOD))
+        .unwrap_or(0.0)
 }
 
 #[derive(Serialize)]
@@ -300,6 +299,8 @@ fn face_eval() {
         scenarios.push(RefScenario { references: scenario.to_string(), rank1_accuracy: rank1, rows });
     }
 
+    evaluate_matching_v2(&people, &probes, &strangers);
+
     let report = EvalReport {
         label: label.clone(),
         people: people.len(),
@@ -372,5 +373,120 @@ fn ort_probe() {
                 runs[1..].iter().sum::<f64>() / (runs.len() - 1) as f64
             );
         }
+    }
+}
+
+// ----------------- PHASE 4b: SCORING, EXCLUSIVE ASSIGNMENT, CLUSTERING -----------------
+
+fn profiles_for(people: &[(String, Vec<PathBuf>)], probes: &[Probe], exclude: usize, max_refs: usize) -> Vec<PersonProfile> {
+    (0..people.len())
+        .filter_map(|person| {
+            let refs: Vec<Vec<f32>> = probes
+                .iter()
+                .enumerate()
+                .filter(|(i, p)| p.person == person && *i != exclude)
+                .take(max_refs)
+                .map(|(_, p)| p.embedding.clone())
+                .collect();
+            build_profile(refs, Vec::new())
+        })
+        .collect()
+}
+
+fn evaluate_matching_v2(people: &[(String, Vec<PathBuf>)], probes: &[Probe], strangers: &[Vec<f32>]) {
+    let n = probes.len().max(1) as f64;
+    for (refs_label, max_refs) in [("9 refs", usize::MAX), ("3 refs", 3)] {
+        eprintln!("\n--- {refs_label}: scoring method (suggest to every person above the threshold) ---");
+        eprintln!("  method            | T=0.45 found/wrong | T=0.50 found/wrong | T=0.55 found/wrong | T=0.60 found/wrong");
+        for method in [ScoreMethod::BestPlusCentroid, ScoreMethod::Top3PlusCentroid] {
+            let mut line = format!("  {:<17} |", format!("{method:?}"));
+            for t in [0.45f32, 0.50, 0.55, 0.60] {
+                let (mut found, mut wrong) = (0usize, 0usize);
+                for (pi, p) in probes.iter().enumerate() {
+                    for (k, prof) in profiles_for(people, probes, pi, max_refs).iter().enumerate() {
+                        let s = profile_score(&p.embedding, prof, method);
+                        if s >= t {
+                            // profiles_for skips nobody here (every person has photos), so index == person
+                            if k == p.person { found += 1 } else { wrong += 1 }
+                        }
+                    }
+                }
+                line += &format!(" {:>5.1}% / {:<5.2}     |", found as f64 / n * 100.0, wrong as f64 / n);
+            }
+            eprintln!("{line}");
+        }
+
+        eprintln!("--- {refs_label}: exclusive assignment ({:?}, T=0.50) ---", SCORE_METHOD);
+        eprintln!("  margin | found own person | wrong person | strangers suggested");
+        for margin in [0.0f32, 0.03, 0.05, 0.08] {
+            let (mut found, mut wrong) = (0usize, 0usize);
+            for (pi, p) in probes.iter().enumerate() {
+                let profiles = profiles_for(people, probes, pi, max_refs);
+                if let Some(a) = assign_face(&p.embedding, &profiles, SCORE_METHOD, 0.50, margin) {
+                    if a.person == p.person { found += 1 } else { wrong += 1 }
+                }
+            }
+            let all = profiles_for(people, probes, usize::MAX, max_refs);
+            let alarms = strangers
+                .iter()
+                .filter(|s| assign_face(s, &all, SCORE_METHOD, 0.50, margin).is_some())
+                .count();
+            eprintln!(
+                "  {margin:.2}   | {:>5.1}%           | {:>5.1}%       | {:>5.1}%",
+                found as f64 / n * 100.0,
+                wrong as f64 / n * 100.0,
+                alarms as f64 / strangers.len().max(1) as f64 * 100.0
+            );
+        }
+    }
+
+    // Clustering all person faces + strangers as if nobody were named yet
+    eprintln!("\n--- clustering unknown faces (Chinese Whispers) ---");
+    eprintln!("  threshold | clusters | pure clusters | people split into >1 cluster | biggest cluster per person (avg) | strangers merged into a person's cluster");
+    let mut embs: Vec<Vec<f32>> = probes.iter().map(|p| p.embedding.clone()).collect();
+    let mut truth: Vec<Option<usize>> = probes.iter().map(|p| Some(p.person)).collect();
+    embs.extend(strangers.iter().cloned());
+    truth.extend(strangers.iter().map(|_| None));
+    for t in [0.35f32, 0.40, 0.45, 0.50, 0.55] {
+        let labels = cluster_faces(&embs, t, 20);
+        let mut members: HashMap<usize, Vec<usize>> = HashMap::new();
+        for (i, l) in labels.iter().enumerate() {
+            members.entry(*l).or_default().push(i);
+        }
+        let multi: Vec<&Vec<usize>> = members.values().filter(|m| m.len() >= 2).collect();
+        let pure = multi
+            .iter()
+            .filter(|m| {
+                let first = truth[m[0]];
+                first.is_some() && m.iter().all(|&i| truth[i] == first)
+            })
+            .count();
+        let mut split = 0;
+        let mut biggest_share = 0f64;
+        for person in 0..people.len() {
+            let mine: Vec<usize> = (0..embs.len()).filter(|&i| truth[i] == Some(person)).collect();
+            let mut per_label: HashMap<usize, usize> = HashMap::new();
+            for &i in &mine {
+                *per_label.entry(labels[i]).or_default() += 1;
+            }
+            if per_label.len() > 1 {
+                split += 1;
+            }
+            biggest_share += *per_label.values().max().unwrap_or(&0) as f64 / mine.len().max(1) as f64;
+        }
+        let strangers_merged = (0..embs.len())
+            .filter(|&i| truth[i].is_none())
+            .filter(|&i| members[&labels[i]].iter().any(|&j| truth[j].is_some()))
+            .count();
+        eprintln!(
+            "  {t:.2}      | {:>8} | {:>3} of {:<3}     | {:>2} of {:<2}                      | {:>5.1}%                           | {}",
+            members.len(),
+            pure,
+            multi.len(),
+            split,
+            people.len(),
+            biggest_share / people.len().max(1) as f64 * 100.0,
+            strangers_merged
+        );
     }
 }
