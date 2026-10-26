@@ -7,6 +7,7 @@ import {
   Flag,
   Folder,
   FolderPlus,
+  Sparkles,
   Trash2,
 } from "lucide-react";
 
@@ -25,6 +26,7 @@ interface PhotoContextMenuProps {
   // Optional callbacks for quick Pick & Copy Path
   onPickPhoto?: () => void;
   onCopyPath?: () => void;
+  onFindSimilar?: () => void;
 }
 
 export function PhotoContextMenu({
@@ -36,6 +38,7 @@ export function PhotoContextMenu({
   onStageTrash,
   onPickPhoto,
   onCopyPath,
+  onFindSimilar,
 }: PhotoContextMenuProps) {
   const ref = useRef<HTMLDivElement>(null);
 
@@ -110,6 +113,19 @@ export function PhotoContextMenu({
         >
           <FileText className="w-3.5 h-3.5 text-zinc-400" />
           <span>Copy File Path</span>
+        </button>
+      )}
+
+      {onFindSimilar && (
+        <button
+          onClick={() => {
+            onFindSimilar();
+            onClose();
+          }}
+          className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-indigo-950/60 text-indigo-200 transition text-left"
+        >
+          <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+          <span>Find Similar Photos</span>
         </button>
       )}
 

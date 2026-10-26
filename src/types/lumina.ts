@@ -331,3 +331,25 @@ export interface SimilarFaceCandidate {
   current_person?: string | null;
   similarity: number;
 }
+
+// Smart search (CLIP)
+export interface SemanticStatus {
+  models_ready: boolean;
+  indexed: number;
+  total: number;
+  running: boolean;
+}
+
+export interface SemanticProgress {
+  stage: "download" | "index";
+  completed: number;
+  total: number;
+  message: string;
+  done: boolean;
+  cancelled: boolean;
+}
+
+export interface SemanticHit {
+  hash: string;
+  score: number;
+}

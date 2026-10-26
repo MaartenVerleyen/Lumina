@@ -56,7 +56,7 @@ pub struct FaceV2 {
 static ORT_ENV: LazyLock<Option<ort::environment::Environment>> =
     LazyLock::new(|| ort::init().with_name("lumina").build().ok());
 
-fn build_session(path: &Path, gpu: bool) -> Result<Session, String> {
+pub fn build_session(path: &Path, gpu: bool) -> Result<Session, String> {
     let env = ORT_ENV.as_ref().ok_or("ONNX Runtime could not be initialised")?;
     let mut builder = Session::builder(env).map_err(|e| e.to_string())?;
     if gpu {

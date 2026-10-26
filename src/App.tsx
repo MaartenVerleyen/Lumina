@@ -62,6 +62,7 @@ import {
   MapPin,
   ScanFace,
   Search,
+  Sparkles,
   User,
   X,
 } from "lucide-react";
@@ -486,6 +487,18 @@ export default function App() {
       cancelLabel: "Stop",
     });
   }
+  if (lib.semanticProgress) {
+    const downloading = lib.semanticProgress.stage === "download";
+    jobs.push({
+      id: "semantic",
+      label: downloading ? "Downloading smart search models (once)" : "Indexing for smart search",
+      detail: downloading ? `${lib.semanticProgress.completed} / ${lib.semanticProgress.total} MB` : undefined,
+      completed: lib.semanticProgress.completed,
+      total: lib.semanticProgress.total,
+      onCancel: lib.handleCancelSemanticIndex,
+      cancelLabel: "Stop",
+    });
+  }
   if (lib.aiBatchProgress) {
     jobs.push({
       id: "ai-batch",
@@ -549,6 +562,19 @@ export default function App() {
     { id: "select-none", group: "Select", label: "Clear selection", enabled: hasSelection, run: () => lib.setSelectedHashes(new Set()) },
     { id: "clear-filters", group: "Select", label: "Clear all filters", keywords: "reset show everything", enabled: hasPhotos, run: lib.clearAllFilters },
     { id: "search", group: "Select", label: "Search photos", shortcut: "Ctrl+K", enabled: hasPhotos, run: () => searchInputRef.current?.focus() },
+    {
+      id: "smart-search",
+      group: "Select",
+      label: lib.smartSearch ? "Turn smart search off" : "Smart search (describe the photo)",
+      keywords: "clip semantic ai find",
+      enabled: hasPhotos,
+      run: async () => {
+        await lib.toggleSmartSearch();
+        searchInputRef.current?.focus();
+      },
+    },
+    { id: "similar", group: "Select", label: "Find photos similar to this one", keywords: "smart clip like", enabled: Boolean(lib.activePhoto), run: () => lib.activePhoto && lib.handleFindSimilar(lib.activePhoto) },
+    { id: "index", group: "Select", label: "Index this folder for smart search", enabled: hasPhotos && Boolean(lib.semanticStatus?.models_ready) && !lib.semanticProgress, run: () => lib.startSemanticIndex() },
     { id: "loupe", group: "View", label: "Open in Loupe", shortcut: "Space", enabled: Boolean(lib.activePhoto), run: () => lib.setIsLoupeOpen(true) },
     { id: "view-grid", group: "View", label: "Grid view", shortcut: "G", run: () => lib.setViewMode("grid") },
     { id: "view-compare", group: "View", label: "Compare view", shortcut: "C", enabled: hasPhotos, run: () => lib.setViewMode("compare") },
@@ -669,6 +695,8 @@ export default function App() {
         setGridStyle={lib.setGridStyle}
         cardDetails={lib.cardDetails}
         setCardDetails={lib.setCardDetails}
+        smartSearch={lib.smartSearch}
+        onToggleSmartSearch={lib.toggleSmartSearch}
         canUndo={lib.canUndo}
         canRedo={lib.canRedo}
         handleUndo={lib.handleUndo}
@@ -1049,6 +1077,36 @@ export default function App() {
             </div>
           )}
 
+          {lib.semanticScores && lib.semanticResult && (
+            <div className="bg-indigo-950/40 border-b border-indigo-500/30 px-5 py-2 flex items-center justify-between gap-3 shrink-0 text-xs">
+              <span className="flex items-center gap-2 text-indigo-100 min-w-0">
+                <Sparkles className="w-4 h-4 text-indigo-300 shrink-0" />
+                <span className="truncate">
+                  {lib.semanticResult.source.kind === "similar" ? (
+                    <>Photos similar to <strong>{lib.semanticResult.source.name}</strong></>
+                  ) : (
+                    <>
+                      Best matches for <strong>"{lib.semanticResult.source.query}"</strong>
+                      {lib.semanticResult.source.query !== lib.searchQuery.trim() && " · searching…"}
+                    </>
+                  )}{" "}
+                  · {lib.visiblePhotos.length} photo{lib.visiblePhotos.length === 1 ? "" : "s"}, best first
+                </span>
+                {lib.semanticStatus && lib.semanticStatus.indexed < lib.semanticStatus.total && (
+                  <span className="text-indigo-300/80 shrink-0">
+                    ({lib.semanticStatus.indexed} of {lib.semanticStatus.total} photos indexed so far)
+                  </span>
+                )}
+              </span>
+              <button
+                onClick={lib.clearSemanticResult}
+                className="px-2.5 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-zinc-200 shrink-0"
+              >
+                Show all photos
+              </button>
+            </div>
+          )}
+
           {(lib.smartFilter === "DUPLICATES" || lib.showAllBurstVersions) &&
             lib.duplicatePhotosCount > 0 && (
               <div className="bg-amber-950/30 border-b border-amber-500/30 px-5 py-2 flex items-center justify-between shrink-0">
@@ -1394,6 +1452,9 @@ export default function App() {
         }}
         onStageTrash={() => {
           if (contextPhoto) lib.handleRejectToTrash(contextMenuTargets(contextPhoto.hash));
+        }}
+        onFindSimilar={() => {
+          if (contextPhoto) lib.handleFindSimilar(contextPhoto);
         }}
       />
 

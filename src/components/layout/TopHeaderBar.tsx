@@ -41,6 +41,8 @@ import {
 } from "lucide-react";
 
 interface TopHeaderBarProps {
+  smartSearch: boolean;
+  onToggleSmartSearch: () => void;
   gridStyle: GridStyle;
   setGridStyle: (value: GridStyle) => void;
   cardDetails: CardDetails;
@@ -104,6 +106,8 @@ interface TopHeaderBarProps {
 }
 
 export default function TopHeaderBar({
+  smartSearch,
+  onToggleSmartSearch,
   gridStyle,
   setGridStyle,
   cardDetails,
@@ -404,17 +408,39 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
             value={searchQuery}
             onKeyDown={(e) => e.stopPropagation()}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search people, tags, OCR text, places... (Ctrl+K)"
-            className="w-full bg-zinc-900/90 border border-zinc-800 hover:border-zinc-700 focus:border-emerald-500/80 rounded-full pl-9 pr-8 py-1.5 text-xs text-zinc-200 select-text focus:outline-none transition placeholder-zinc-500"
+            placeholder={
+              smartSearch
+                ? "Describe the photo… (e.g. dog on the beach, verjaardagstaart)"
+                : "Search people, tags, OCR text, places... (Ctrl+K)"
+            }
+            className={`w-full bg-zinc-900/90 border hover:border-zinc-700 rounded-full pl-9 pr-24 py-1.5 text-xs text-zinc-200 select-text focus:outline-none transition placeholder-zinc-500 ${
+              smartSearch ? "border-indigo-500/60 focus:border-indigo-400" : "border-zinc-800 focus:border-emerald-500/80"
+            }`}
           />
-          {searchQuery && (
+          <div className="absolute right-1.5 top-1 flex items-center gap-1">
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery("")}
+                className="p-0.5 text-zinc-500 hover:text-zinc-300"
+                aria-label="Clear search"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
             <button
-              onClick={() => setSearchQuery("")}
-              className="absolute right-2.5 top-2 text-zinc-500 hover:text-zinc-300"
+              onClick={onToggleSmartSearch}
+              aria-pressed={smartSearch}
+              className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold border transition ${
+                smartSearch
+                  ? "bg-indigo-600 text-white border-indigo-400"
+                  : "bg-zinc-800/80 text-zinc-400 border-zinc-700 hover:text-indigo-200"
+              }`}
+              title="Smart search: find photos by describing them, in any language (runs locally)"
             >
-              <X className="w-3.5 h-3.5" />
+              <Sparkles className="w-3 h-3" />
+              <span>Smart</span>
             </button>
-          )}
+          </div>
         </div>
       )}
 

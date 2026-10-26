@@ -32,6 +32,7 @@ mod storage;
 mod fastdecode;
 mod thumbs;
 mod face_ort;
+mod clip;
 mod face_match;
 #[cfg(test)]
 mod tests;
@@ -366,6 +367,11 @@ pub fn run() {
             face_commands::scan_library_faces_batch,
             face_commands::cancel_face_scan,
             scan::cancel_folder_scan,
+            clip::semantic_status,
+            clip::start_semantic_index,
+            clip::cancel_semantic_index,
+            clip::semantic_search,
+            clip::find_similar_photos,
             scan::cancel_thumbnail_pass,
             ai::cancel_ollama_pull,
             face_commands::get_outdated_face_photos,

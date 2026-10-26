@@ -32,6 +32,9 @@ import {
   AiFailureItem,
   AiBatchReport,
   SessionLogEntry,
+  SemanticStatus,
+  SemanticProgress,
+  SemanticHit,
   PhotoActionSnapshot,
   UndoHistoryEntry,
 } from "../types/lumina";
@@ -78,6 +81,8 @@ const AI_CANCELLED = "AI analysis cancelled";
 // Matching scan::SCAN_CANCELLED and ai::PULL_CANCELLED
 const SCAN_CANCELLED = "Folder scan cancelled";
 const PULL_CANCELLED = "Model download cancelled";
+// Matching clip::SEMANTIC_CANCELLED
+const SEMANTIC_CANCELLED = "Smart search indexing cancelled";
 
 // The library's most used tags, offered to the model so the same subject gets the same tag everywhere
 function topLibraryTags(list: PhotoItem[], max = 40): string[] {
@@ -400,6 +405,15 @@ export function useLibraryState() {
   const [activeEvent, setActiveEvent] = useState<string>("ALL");
   const [activeTag, setActiveTag] = useState<string>("ALL");
   const [searchQuery, setSearchQuery] = useState<string>("");
+  // Smart search: the search box describes the photo ("dog on the beach") and CLIP ranks the library.
+  // `semanticHits` holds the ranked matches with what they were for (a text query or "similar to" a photo).
+  const [smartSearch, setSmartSearch] = useState<boolean>(false);
+  const [semanticResult, setSemanticResult] = useState<{
+    source: { kind: "text"; query: string } | { kind: "similar"; hash: string; name: string };
+    scores: Map<string, number>;
+  } | null>(null);
+  const [semanticStatus, setSemanticStatus] = useState<SemanticStatus | null>(null);
+  const [semanticProgress, setSemanticProgress] = useState<SemanticProgress | null>(null);
   const [sortBy, setSortBy] = useState<SortOption>("NAME_ASC");
 
   // Slide-Out Timeline Slicer State
@@ -972,8 +986,16 @@ export function useLibraryState() {
     };
   }, [photos]);
 
+  // Smart results apply to the current query (or a "similar to" request); while a new query is being
+  // embedded, the previous matches stay visible instead of flickering back to the full grid
+  const semanticScores =
+    semanticResult &&
+    (semanticResult.source.kind === "similar" || (smartSearch && deferredSearchQuery.trim() !== ""))
+      ? semanticResult.scores
+      : null;
+
   const visiblePhotos = useMemo(() => {
-    const q = deferredSearchQuery.trim().toLowerCase();
+    const q = semanticScores ? "" : deferredSearchQuery.trim().toLowerCase();
     const filtered = photos.filter((p) => {
       if (smartFilter === "PICKS" && p.flag !== "pick") return false;
       if (smartFilter === "REJECTS" && p.flag !== "reject") return false;
@@ -1027,8 +1049,14 @@ export function useLibraryState() {
       if (activeTag !== "ALL" && !p.tags.includes(activeTag)) return false;
 
       if (q && !searchTextOf(p).includes(q)) return false;
+      if (semanticScores && !semanticScores.has(p.hash)) return false;
       return true;
     });
+
+    // Smart search: best match first, every photo shown (no burst stacking)
+    if (semanticScores) {
+      return filtered.sort((a, b) => (semanticScores.get(b.hash) ?? 0) - (semanticScores.get(a.hash) ?? 0));
+    }
 
     // `filtered` is already a fresh array: sort it in place
     const sorted = filtered.sort((a, b) => {
@@ -1118,6 +1146,7 @@ export function useLibraryState() {
     showAllBurstVersions,
     expandedBurstGroups,
     viewMode,
+    semanticScores,
   ]);
 
   const photoByHash = useMemo(() => {
@@ -1228,6 +1257,7 @@ export function useLibraryState() {
     setSearchQuery("");
     setSelectedPerson(null);
     setSelectedPeriodRange(null);
+    setSemanticResult(null);
   }
 
   function toggleBurstGroupExpand(groupNum: number, e: React.MouseEvent) {
@@ -2458,6 +2488,131 @@ export function useLibraryState() {
     }
   }
 
+  // ---------- Smart search (CLIP) ----------
+  const refreshSemanticStatus = useCallback(async (currentFolder: string) => {
+    if (!currentFolder) return null;
+    try {
+      const status = await invoke<SemanticStatus>("semantic_status", { rootFolder: currentFolder });
+      setSemanticStatus(status);
+      return status;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  useEffect(() => {
+    const unlisten = listen<SemanticProgress>("semantic-progress", (event) => {
+      const prog = event.payload;
+      if (prog.done) {
+        setSemanticProgress(null);
+        refreshSemanticStatus(folderRef.current);
+        if (prog.stage === "index" && prog.completed > 0) {
+          addLog("AI", `Smart search: indexed ${prog.completed} of ${prog.total} photo(s)${prog.cancelled ? " (stopped)" : ""}`);
+        }
+      } else {
+        setSemanticProgress(prog);
+      }
+    });
+    return () => {
+      unlisten.then((f) => f());
+    };
+  }, [addLog, refreshSemanticStatus]);
+
+  async function startSemanticIndex(currentFolder = folder) {
+    if (!currentFolder) return;
+    try {
+      await invoke<number>("start_semantic_index", { rootFolder: currentFolder });
+    } catch (err) {
+      setSemanticProgress(null);
+      if (!String(err).includes(SEMANTIC_CANCELLED)) setError(`Smart search: ${String(err)}`);
+    }
+  }
+
+  // Once the models are installed, new photos are indexed automatically after their thumbnails are made
+  const thumbnailsBusy = progress !== null;
+  useEffect(() => {
+    if (!folder || !hasPhotos || thumbnailsBusy) return;
+    const timer = setTimeout(async () => {
+      const status = await refreshSemanticStatus(folder);
+      if (status?.models_ready && !status.running && status.indexed < status.total) {
+        startSemanticIndex(folder);
+      }
+    }, 2000);
+    return () => clearTimeout(timer);
+  }, [folder, hasPhotos, thumbnailsBusy, photos.length]);
+
+  // Turning smart search on the first time downloads the models (asks first)
+  async function toggleSmartSearch() {
+    if (smartSearch) {
+      setSmartSearch(false);
+      if (semanticResult?.source.kind === "text") setSemanticResult(null);
+      return;
+    }
+    const status = await refreshSemanticStatus(folder);
+    if (status && !status.models_ready) {
+      const ok = await ask(
+        "Smart search finds photos by describing them, in Dutch, English and about 50 other languages (\"hond op het strand\", \"birthday cake\").\n\nIt needs a one-time download of about 470 MB of AI models, then indexes this library on your graphics card (about 1 minute per 5,000 photos). Everything stays on this computer.",
+        { title: "Smart search", kind: "info", okLabel: "Download and index", cancelLabel: "Not now" }
+      );
+      if (!ok) return;
+      addLog("AI", "Downloading the smart search models");
+    }
+    setSmartSearch(true);
+    if (!status || status.indexed < status.total) startSemanticIndex(folder);
+  }
+
+  // Text queries: embedded after a short pause in typing; only the newest query may set the results
+  const semanticSeqRef = useRef(0);
+  useEffect(() => {
+    const query = searchQuery.trim();
+    if (!smartSearch || !query) return;
+    const seq = ++semanticSeqRef.current;
+    const timer = setTimeout(async () => {
+      try {
+        const hits = await invoke<SemanticHit[]>("semantic_search", { query });
+        if (seq !== semanticSeqRef.current) return;
+        setSemanticResult({
+          source: { kind: "text", query },
+          scores: new Map(hits.map((h) => [h.hash, h.score])),
+        });
+      } catch (err) {
+        if (seq === semanticSeqRef.current) setError(`Smart search: ${String(err)}`);
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery, smartSearch]);
+
+  async function handleFindSimilar(photo: PhotoItem) {
+    try {
+      const hits = await invoke<SemanticHit[]>("find_similar_photos", { hash: photo.hash });
+      ++semanticSeqRef.current;
+      setSemanticResult({
+        source: { kind: "similar", hash: photo.hash, name: photo.name },
+        scores: new Map(hits.map((h) => [h.hash, h.score])),
+      });
+      setViewMode("grid");
+    } catch (err) {
+      setError(String(err));
+      if (semanticStatus?.models_ready === false) {
+        setAutoMatchNotice('Turn on Smart search (the ✨ button in the search box) to index your photos first.');
+      }
+    }
+  }
+
+  function clearSemanticResult() {
+    ++semanticSeqRef.current;
+    setSemanticResult(null);
+    if (smartSearch) setSearchQuery("");
+  }
+
+  async function handleCancelSemanticIndex() {
+    try {
+      await invoke("cancel_semantic_index");
+    } catch (err) {
+      setError(String(err));
+    }
+  }
+
   // Latest photos for the long-running AI loop (the tag vocabulary is recomputed from the live library)
   const photosRef = useRef(photos);
   photosRef.current = photos;
@@ -2821,6 +2976,16 @@ export function useLibraryState() {
     handlePhotoClick,
     toggleBurstGroupExpand,
     clearAllFilters,
+    smartSearch,
+    toggleSmartSearch,
+    semanticResult,
+    semanticScores,
+    semanticStatus,
+    semanticProgress,
+    startSemanticIndex,
+    handleFindSimilar,
+    clearSemanticResult,
+    handleCancelSemanticIndex,
     handleOpenFolder,
     handleRescanFolder,
     handleRescanAndProcessFolder,
