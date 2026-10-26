@@ -1,3 +1,4 @@
+import { useDialogFocus } from "../../hooks/useDialogFocus";
 import { useState } from "react";
 import { Download, FileText, Trash2, X } from "lucide-react";
 import { SessionLogEntry } from "../../types/lumina";
@@ -17,6 +18,7 @@ export default function SessionLogModal({
 }: SessionLogModalProps) {
   const [filter, setFilter] = useState<string>("ALL");
   const [search, setSearch] = useState<string>("");
+  const dialogRef = useDialogFocus<HTMLDivElement>(isOpen);
 
   if (!isOpen) return null;
 
@@ -45,6 +47,11 @@ export default function SessionLogModal({
       className="fixed inset-0 z-[9990] bg-black/80 backdrop-blur-sm flex items-center justify-center p-6 select-none"
     >
       <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Session activity log"
+        tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
         className="bg-[#12141c] border border-zinc-800 rounded-2xl w-full max-w-2xl max-h-[80vh] shadow-2xl flex flex-col overflow-hidden"
       >
@@ -53,7 +60,7 @@ export default function SessionLogModal({
             <FileText className="w-5 h-5 text-emerald-400" />
             <h3 className="text-sm font-bold text-zinc-100">Session Activity Log ({logs.length})</h3>
           </div>
-          <button onClick={onClose} className="text-zinc-500 hover:text-zinc-300">
+          <button onClick={onClose} className="text-zinc-500 hover:text-zinc-300" aria-label="Close">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -69,7 +76,7 @@ export default function SessionLogModal({
           />
 
           <div className="flex bg-zinc-900 border border-zinc-800 rounded-lg p-0.5 text-[10px]">
-            {["ALL", "TRIAGE", "DISK", "AI", "FACE", "PERF"].map((cat) => (
+            {["ALL", "ERROR", "TRIAGE", "DISK", "AI", "FACE", "PERF"].map((cat) => (
               <button
                 key={cat}
                 onClick={() => setFilter(cat)}
@@ -119,12 +126,14 @@ export default function SessionLogModal({
                       ? "bg-indigo-500/10 text-indigo-400 border border-indigo-500/20"
                       : l.category === "PERF"
                       ? "bg-fuchsia-500/10 text-fuchsia-400 border border-fuchsia-500/20"
+                      : l.category === "ERROR"
+                      ? "bg-red-500/10 text-red-400 border border-red-500/20"
                       : "bg-cyan-500/10 text-cyan-400 border border-cyan-500/20"
                   }`}
                 >
                   {l.category}
                 </span>
-                <div className="flex-1 truncate">
+                <div className="flex-1 min-w-0 break-words">
                   <span className="text-zinc-200">{l.message}</span>
                   {l.details && <span className="text-zinc-500 ml-1.5">({l.details})</span>}
                 </div>

@@ -301,12 +301,15 @@ export interface UndoHistoryEntry {
   previousSelectedHashes: string[];
   before: PhotoActionSnapshot[];
   after: PhotoActionSnapshot[];
+  // Changes the snapshots can't express (tags, location, capture time, people) bring their own undo/redo
+  undoAction?: () => Promise<void>;
+  redoAction?: () => Promise<void>;
 }
 
 export interface SessionLogEntry {
   id: string;
   timestamp: string;
-  category: "LIBRARY" | "TRIAGE" | "FACE" | "AI" | "DISK" | "PERF";
+  category: "LIBRARY" | "TRIAGE" | "FACE" | "AI" | "DISK" | "PERF" | "ERROR";
   message: string;
   details?: string;
 }

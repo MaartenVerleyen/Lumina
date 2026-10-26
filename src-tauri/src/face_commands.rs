@@ -584,6 +584,23 @@ pub fn add_person_to_photos(app: AppHandle, hashes: Vec<String>, name: String) -
     Ok(hashes.len())
 }
 
+// Removes a photo-level person tag from many photos (undo of a batch person assignment). Named face boxes are
+// left alone: the batch assignment never names faces.
+#[tauri::command]
+pub fn remove_person_from_photos(app: AppHandle, hashes: Vec<String>, name: String) -> Result<(), String> {
+    let mut conn = open_global_db(&app)?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    {
+        let mut stmt = tx
+            .prepare("DELETE FROM photo_people WHERE hash = ?1 AND person_name = ?2")
+            .map_err(|e| e.to_string())?;
+        for h in &hashes {
+            stmt.execute(params![h, name]).map_err(|e| e.to_string())?;
+        }
+    }
+    tx.commit().map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn remove_person_from_photo(app: AppHandle, hash: String, name: String) -> Result<Vec<String>, String> {
     let conn = open_global_db(&app)?;

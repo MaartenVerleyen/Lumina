@@ -4,12 +4,13 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useLibraryState } from "./hooks/useLibraryState";
 import { useKeyboardShortcuts, isEditableTarget } from "./hooks/useKeyboardShortcuts";
+import { useDialogFocus } from "./hooks/useDialogFocus";
 import { diskPathOf } from "./utils/rawPairs";
 import TopHeaderBar from "./components/layout/TopHeaderBar";
 import LeftSidebar from "./components/layout/LeftSidebar";
 import RightInspector from "./components/layout/RightInspector";
 import BottomStatusBar from "./components/layout/BottomStatusBar";
-import SplashScreen from "./components/layout/SplashScreen";
+import ToastStack from "./components/layout/ToastStack";
 import {
   PhotoContextMenu,
   FolderContextMenu,
@@ -34,7 +35,6 @@ import {
   SortOption,
 } from "./types/lumina";
 import {
-  AlertCircle,
   ArrowUpDown,
   Calendar,
   ChevronDown,
@@ -50,7 +50,7 @@ import {
   Loader2,
   MapPin,
   ScanFace,
-  Sparkles,
+  Search,
   User,
   X,
 } from "lucide-react";
@@ -82,6 +82,8 @@ export default function App() {
   // New Subfolder Modal State
   const [isNewFolderModalOpen, setIsNewFolderModalOpen] = useState<boolean>(false);
   const [newFolderInput, setNewFolderInput] = useState<string>("");
+  const newFolderDialogRef = useDialogFocus<HTMLFormElement>(isNewFolderModalOpen);
+  const shortcutsDialogRef = useDialogFocus<HTMLDivElement>(lib.isShortcutsModalOpen);
 
   // Pane Resize Listeners
   useEffect(() => {
@@ -220,30 +222,21 @@ export default function App() {
     const gridEl = gridContainerRef.current;
     if (!mainEl && !gridEl) return;
 
+    // Always the same basis: the grid's inner width (clientWidth excludes the scrollbar) minus its p-4
+    // padding. Observing two elements and mixing their widths made the column count flicker.
+    const target = gridEl || mainEl!;
     const updateWidth = () => {
-      const w = gridEl?.clientWidth || mainEl?.clientWidth || 960;
-      if (w > 100) {
-        setCenterWidth(w - 32); // subtract 32px for p-4 horizontal grid padding
-      }
+      const w = target.clientWidth - 32;
+      if (w > 100) setCenterWidth(w);
     };
 
     updateWidth();
-
-    const ro = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        const w = entry.contentRect.width;
-        if (w > 100) {
-          setCenterWidth(w);
-        }
-      }
-    });
-
-    if (mainEl) ro.observe(mainEl);
-    if (gridEl) ro.observe(gridEl);
+    const ro = new ResizeObserver(updateWidth);
+    ro.observe(target);
     return () => ro.disconnect();
   }, [lib.viewMode, lib.photos.length, isLeftCollapsed, isRightCollapsed]);
 
-  const { gridColumns, cardThumbHeight, rowEstimateHeight } = useMemo(() => {
+  const { gridColumns, cardThumbWidth, cardThumbHeight, rowEstimateHeight } = useMemo(() => {
     const safeWidth = Math.max(320, centerWidth);
     const targetCardW = 115 + lib.zoomLevel * 325;
     const cols = Math.max(1, Math.min(12, Math.floor(safeWidth / targetCardW)));
@@ -251,6 +244,7 @@ export default function App() {
     const thumbH = Math.max(90, Math.min(380, Math.round(actualCardW * 0.74)));
     return {
       gridColumns: cols,
+      cardThumbWidth: actualCardW,
       cardThumbHeight: thumbH,
       rowEstimateHeight: thumbH + 46,
     };
@@ -341,6 +335,11 @@ export default function App() {
     // Face Review handles Escape itself (it may first close its own spotlight view)
   };
 
+  const openFaceReview = () =>
+    lib.setFaceReviewPerson(
+      lib.people.find((p) => (lib.pendingFaceCounts[p.name] || 0) > 0)?.name || UNKNOWN_FACES
+    );
+
   // Batch AI speed and remaining time, from the photos finished so far
   const aiBatchRate = (() => {
     const prog = lib.aiBatchProgress;
@@ -388,9 +387,7 @@ export default function App() {
       onContextMenu={handleRootContextMenu}
       className="flex flex-col h-screen bg-[#090a0f] text-zinc-100 select-none overflow-hidden relative"
     >
-      {/* Smooth In-App Startup Splash Overlay */}
-      <SplashScreen isReady={lib.isAppReady} />
-
+      {/* Startup splash is the native splash window (closed by close_splashscreen once React runs) */}
       {/* Full-Window Drag-and-Drop Overlay */}
       {isDraggingOverWindow && (
         <div className="fixed inset-0 z-[99990] bg-emerald-950/80 backdrop-blur-md border-4 border-dashed border-emerald-400 flex flex-col items-center justify-center gap-3 pointer-events-none animate-in fade-in">
@@ -450,9 +447,7 @@ export default function App() {
         sessionLogsCount={lib.sessionLogs.length}
         handlePullDefaultAiModel={lib.handlePullDefaultAiModel}
         totalPendingFaceMatches={Object.values(lib.pendingFaceCounts).reduce((a, b) => a + b, 0)}
-        onOpenFaceReviewStudio={() =>
-          lib.setFaceReviewPerson(lib.people[0]?.name || UNKNOWN_FACES)
-        }
+        onOpenFaceReviewStudio={openFaceReview}
       />
 
       {/* Live Batch AI Progress Banner with Filename, Success/Fail Telemetry & Stop Button */}
@@ -563,13 +558,7 @@ export default function App() {
           })}
 
           <button
-            onClick={() =>
-              lib.setFaceReviewPerson(
-                lib.people.find((p) => (lib.pendingFaceCounts[p.name] || 0) > 0)?.name ||
-                  lib.people[0]?.name ||
-                  ""
-              )
-            }
+            onClick={openFaceReview}
             className="ml-auto px-2.5 py-1 rounded-full bg-indigo-950/70 hover:bg-indigo-900 text-indigo-300 border border-indigo-500/40 text-[11px] font-semibold flex items-center gap-1.5 shrink-0 transition"
             title="Open Face Match Review & Confirmation Studio"
           >
@@ -895,6 +884,7 @@ export default function App() {
               setSelectedHashes={lib.setSelectedHashes}
               setAutoMatchNotice={lib.setAutoMatchNotice}
               onKeepAndTrashRest={lib.handleKeepAndTrashRest}
+              compareCandidateCount={lib.compareCandidateCount}
             />
           ) : lib.photos.length === 0 ? (
             <div
@@ -946,11 +936,32 @@ export default function App() {
                 )}
               </div>
             </div>
+          ) : lib.visiblePhotos.length === 0 ? (
+            <div
+              ref={gridContainerRef}
+              className="flex-1 overflow-y-auto p-6 flex items-center justify-center"
+            >
+              <div className="max-w-sm text-center flex flex-col items-center gap-2 text-xs text-zinc-400">
+                <Search className="w-8 h-8 text-zinc-600" />
+                <span className="text-sm font-bold text-zinc-200">No photos match these filters</span>
+                <span>
+                  {lib.photos.length} photo(s) are in this library, but the current search, filter, folder, person or
+                  date range hides all of them.
+                </span>
+                <button
+                  onClick={lib.clearAllFilters}
+                  className="mt-2 px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold"
+                >
+                  Clear all filters
+                </button>
+              </div>
+            </div>
           ) : (
             <VirtualPhotoGrid
               gridContainerRef={gridContainerRef}
               rowVirtualizer={rowVirtualizer}
               gridColumns={gridColumns}
+              cardThumbWidth={cardThumbWidth}
               cardThumbHeight={cardThumbHeight}
               visiblePhotos={lib.visiblePhotos}
               selectedHashes={lib.selectedHashes}
@@ -976,6 +987,7 @@ export default function App() {
             activeBulkPopover={lib.activeBulkPopover}
             setActiveBulkPopover={lib.setActiveBulkPopover}
             bulkInput={lib.bulkInput}
+            cityQuery={lib.cityQuery}
             setBulkInput={lib.setBulkInput}
             citySearchResults={lib.citySearchResults}
             shiftHoursInput={lib.shiftHoursInput}
@@ -1061,40 +1073,11 @@ export default function App() {
           </>
         )}
 
-        {/* Non-Jumping Floating Toast Notification Stack */}
-        {(lib.error || lib.autoMatchNotice) && (
-          <div className="fixed bottom-10 right-5 z-[9990] flex flex-col gap-2 max-w-md pointer-events-auto">
-            {lib.error && (
-              <div className="px-4 py-2.5 bg-red-950/95 border border-red-500/50 text-red-200 rounded-xl shadow-2xl backdrop-blur-md text-xs flex items-center justify-between gap-3 animate-in fade-in slide-in-from-bottom-2">
-                <div className="flex items-center gap-2">
-                  <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
-                  <span>{lib.error}</span>
-                </div>
-                <button
-                  onClick={() => lib.setError("")}
-                  className="text-red-400 hover:text-white shrink-0"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            )}
-
-            {lib.autoMatchNotice && (
-              <div className="px-4 py-2.5 bg-[#12141d]/95 border border-emerald-500/40 text-emerald-200 rounded-xl shadow-2xl backdrop-blur-md text-xs flex items-center justify-between gap-3 animate-in fade-in slide-in-from-bottom-2">
-                <div className="flex items-center gap-2">
-                  <Sparkles className="w-4 h-4 text-emerald-400 shrink-0" />
-                  <span>{lib.autoMatchNotice}</span>
-                </div>
-                <button
-                  onClick={() => lib.setAutoMatchNotice("")}
-                  className="text-zinc-400 hover:text-white shrink-0"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            )}
-          </div>
-        )}
+        <ToastStack
+          toasts={lib.toasts}
+          onDismiss={lib.dismissToast}
+          onOpenSessionLog={() => lib.setIsSessionLogModalOpen(true)}
+        />
       </div>
 
       {/* Permanent Studio Status Bar */}
@@ -1141,7 +1124,6 @@ export default function App() {
             lib.setAutoMatchNotice(
               `Copied "${contextPhoto.name}" (full resolution) to clipboard!`
             );
-            setTimeout(() => lib.setAutoMatchNotice(""), 3500);
           } catch (err) {
             lib.setError(String(err));
           }
@@ -1151,7 +1133,6 @@ export default function App() {
           const diskPath = diskPathOf(contextPhoto);
           navigator.clipboard?.writeText(diskPath).catch(() => {});
           lib.setAutoMatchNotice(`Copied file path: ${diskPath}`);
-          setTimeout(() => lib.setAutoMatchNotice(""), 3000);
         }}
         onPickPhoto={() => {
           if (contextPhoto) lib.handleSetFlag("pick", contextMenuTargets(contextPhoto.hash));
@@ -1191,6 +1172,10 @@ export default function App() {
           className="fixed inset-0 z-[9995] bg-black/80 backdrop-blur-sm flex items-center justify-center p-6 select-none"
         >
           <form
+            ref={newFolderDialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Create new subfolder"
             onClick={(e) => e.stopPropagation()}
             onSubmit={async (e) => {
               e.preventDefault();
@@ -1210,6 +1195,7 @@ export default function App() {
                 type="button"
                 onClick={() => setIsNewFolderModalOpen(false)}
                 className="text-zinc-500 hover:text-white"
+                aria-label="Close"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -1266,11 +1252,9 @@ export default function App() {
             ? lib.ollamaPullProgress.percent
             : lib.scanProgress?.completed ?? 0
         }
-        total={
-          lib.ollamaPullProgress
-            ? 100
-            : Math.max(1, lib.scanProgress?.total ?? 100)
-        }
+        total={lib.ollamaPullProgress ? 100 : lib.scanProgress?.total ?? 0}
+        onCancel={lib.handleCancelOperation}
+        cancelLabel={lib.ollamaPullProgress ? "Cancel Download" : "Cancel"}
       />
 
       {/* Batch AI Post-Run Report Modal with 1-Click Retry Failures */}
@@ -1301,6 +1285,11 @@ export default function App() {
           className="fixed inset-0 z-[9995] bg-black/80 backdrop-blur-sm flex items-center justify-center p-6 select-none"
         >
           <div
+            ref={shortcutsDialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Keyboard shortcuts"
+            tabIndex={-1}
             onClick={(e) => e.stopPropagation()}
             className="bg-[#12141c] border border-zinc-800 rounded-2xl w-full max-w-lg p-5 shadow-2xl flex flex-col gap-3 text-xs"
           >
@@ -1312,6 +1301,7 @@ export default function App() {
               <button
                 onClick={() => lib.setIsShortcutsModalOpen(false)}
                 className="text-zinc-500 hover:text-white"
+                aria-label="Close"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -1327,7 +1317,10 @@ export default function App() {
                 ["A", "Run AI Vision on Active Photo"],
                 ["C / G / M", "Compare / Grid / Map View"],
                 ["Ctrl + Z / Y", "Undo / Redo Last Action"],
+                ["Ctrl + K", "Search"],
                 ["Ctrl + L", "Open Session Activity Log"],
+                ["?", "Show This Cheat Sheet"],
+                ["Esc", "Close Dialog / Loupe"],
               ].map(([key, desc]) => (
                 <div
                   key={key}

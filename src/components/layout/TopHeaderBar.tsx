@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, RefObject } from "react";
+import { ask } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import luminaMark from "../../assets/lumina-mark.svg";
 import {
@@ -173,7 +174,38 @@ export default function TopHeaderBar({
 
   const hasVisionModel = (ollamaStatus?.installed_models.length ?? 0) > 0;
 
+  const [isStartingOllama, setIsStartingOllama] = useState(false);
+  // Batch AI needs a running Ollama: start it from here instead of letting every photo fail
+  async function startOllama() {
+    setIsStartingOllama(true);
+    try {
+      await invoke("start_ollama_service");
+      // Ollama needs a moment before it answers
+      for (let i = 0; i < 10; i++) {
+        await new Promise((r) => setTimeout(r, 800));
+        try {
+          const s = await invoke<OllamaStatus>("check_ollama_status");
+          if (s.running) {
+            setOllamaStatus(s);
+            break;
+          }
+        } catch {}
+      }
+    } catch (err) {
+      console.error("Could not start Ollama:", err);
+    } finally {
+      setIsStartingOllama(false);
+    }
+  }
+
   async function triggerModelPull(model = "qwen3-vl:8b") {
+    const ok = await ask(
+      `Batch AI needs a vision model. Download ${model} now?
+
+It is about 6 GB and is stored by Ollama. You can cancel the download at any time.`,
+      { title: "Download AI model", kind: "info", okLabel: "Download", cancelLabel: "Not now" }
+    );
+    if (!ok) return;
     if (handlePullDefaultAiModel) {
       await handlePullDefaultAiModel(model);
     } else {
@@ -450,17 +482,34 @@ export default function TopHeaderBar({
                       : `Stop (${aiBatchProgress.current}/${aiBatchProgress.total})`}
                   </span>
                 </button>
+              ) : ollamaStatus && !ollamaStatus.running ? (
+                <button
+                  onClick={startOllama}
+                  disabled={isStartingOllama}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-70 text-zinc-100 text-xs font-semibold transition"
+                  title="Batch AI needs Ollama, which isn't running. Click to start it."
+                >
+                  {isStartingOllama ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Power className="w-3.5 h-3.5 text-red-300" />
+                  )}
+                  <span>{isStartingOllama ? "Starting Ollama…" : "Start Ollama"}</span>
+                </button>
+              ) : ollamaStatus?.running && !hasVisionModel ? (
+                <button
+                  onClick={() => triggerModelPull("qwen3-vl:8b")}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold transition"
+                  title="No vision model installed yet: download one to use Batch AI"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Get AI Model</span>
+                </button>
               ) : (
                 <button
-                  onClick={() => {
-                    if (ollamaStatus?.running && !hasVisionModel) {
-                      triggerModelPull("qwen3-vl:8b");
-                      return;
-                    }
-                    // The runner skips photos that already have AI results (and asks before re-analysing)
-                    runBatchAiOnList(visiblePhotos);
-                  }}
-                  className="flex items-center gap-1.5 px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold transition"
+                  onClick={() => runBatchAiOnList(visiblePhotos)}
+                  disabled={!ollamaStatus}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 text-white text-xs font-semibold transition"
                   title="Run AI captioning & tagging on the visible photos (photos that already have AI results are skipped unless you choose otherwise)"
                 >
                   <Sparkles className="w-3.5 h-3.5" />
@@ -522,10 +571,11 @@ export default function TopHeaderBar({
                     </span>
                   ) : (
                     <button
-                      onClick={() => invoke("start_ollama_service")}
+                      onClick={startOllama}
+                      disabled={isStartingOllama}
                       className="text-[10px] bg-red-950/60 border border-red-800/60 text-red-300 px-2 py-0.5 rounded hover:bg-red-900/60"
                     >
-                      Start Ollama
+                      {isStartingOllama ? "Starting…" : "Start Ollama"}
                     </button>
                   )}
                 </div>

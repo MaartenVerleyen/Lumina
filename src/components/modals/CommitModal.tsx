@@ -1,3 +1,4 @@
+import { useDialogFocus } from "../../hooks/useDialogFocus";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { PhotoItem } from "../../types/lumina";
 import { ArrowRight, CheckCircle, Folder, Sparkles, X } from "lucide-react";
@@ -23,11 +24,18 @@ export default function CommitModal({
   handleDismissAllStaged,
   handleCommitAllStaged,
 }: CommitModalProps) {
+  const dialogRef = useDialogFocus<HTMLDivElement>(isOpen);
   if (!isOpen) return null;
+
+  const trashCount = stagedPhotos.filter((p) => p.staged_target === "_Trash").length;
+  const moveTargets = new Set(
+    stagedPhotos.filter((p) => p.staged_target && p.staged_target !== "_Trash").map((p) => p.staged_target)
+  );
+  const moveCount = stagedPhotos.length - trashCount;
 
   return (
     <div className="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-sm flex items-center justify-center p-6">
-      <div className="bg-[#12141c] border border-zinc-800 rounded-2xl w-full max-w-2xl max-h-[80vh] flex flex-col overflow-hidden shadow-2xl">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-label="Review staged disk moves" tabIndex={-1} className="bg-[#12141c] border border-zinc-800 rounded-2xl w-full max-w-2xl max-h-[80vh] flex flex-col overflow-hidden shadow-2xl">
         <div className="p-5 border-b border-zinc-800 flex justify-between items-center">
           <div>
             <h2 className="text-base font-bold text-zinc-100 flex items-center gap-2">
@@ -35,10 +43,22 @@ export default function CommitModal({
               Review Staged Disk Moves
             </h2>
             <p className="text-xs text-zinc-400 mt-0.5">
-              The following physical files will be moved on your drive.
+              {moveCount > 0 && (
+                <>
+                  <strong className="text-zinc-200">{moveCount}</strong> file(s) move into{" "}
+                  <strong className="text-zinc-200">{moveTargets.size}</strong> folder(s)
+                </>
+              )}
+              {moveCount > 0 && trashCount > 0 && " · "}
+              {trashCount > 0 && (
+                <>
+                  <strong className="text-red-300">{trashCount}</strong> go to _Trash
+                </>
+              )}
+              . Paired RAW files and .xmp sidecars move along. Files are moved on your drive.
             </p>
           </div>
-          <button onClick={onClose} className="text-zinc-500 hover:text-zinc-300">
+          <button onClick={onClose} className="text-zinc-500 hover:text-zinc-300" aria-label="Close">
             <X className="w-4 h-4" />
           </button>
         </div>

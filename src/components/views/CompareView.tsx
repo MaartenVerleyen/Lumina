@@ -1,4 +1,5 @@
 import { useRef, useMemo } from "react";
+import { useWheel } from "../../hooks/useWheel";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { PhotoItem } from "../../types/lumina";
 import {
@@ -22,8 +23,10 @@ interface CompareViewProps {
   setViewMode: React.Dispatch<React.SetStateAction<"grid" | "map" | "compare">>;
   photos?: PhotoItem[];
   setSelectedHashes?: React.Dispatch<React.SetStateAction<Set<string>>>;
-  setAutoMatchNotice?: React.Dispatch<React.SetStateAction<string>>;
+  setAutoMatchNotice?: (message: string) => void;
   onKeepAndTrashRest: (keepHash: string, otherHashes: string[]) => Promise<void>;
+  // How many photos qualified for comparing (only the first 4 are shown)
+  compareCandidateCount?: number;
 }
 
 export default function CompareView({
@@ -39,9 +42,20 @@ export default function CompareView({
   setSelectedHashes,
   setAutoMatchNotice,
   onKeepAndTrashRest,
+  compareCandidateCount = 0,
 }: CompareViewProps) {
   const isPanningCompareRef = useRef<boolean>(false);
   const panStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const canvasRef = useRef<HTMLDivElement>(null);
+  useWheel(canvasRef, (e) => {
+    const delta = e.deltaY < 0 ? 0.35 : -0.35;
+    setCompareZoom((z) => {
+      const next = Math.max(1, Math.min(6, +(z + delta).toFixed(2)));
+      if (next === 1) setComparePan({ x: 0, y: 0 });
+      return next;
+    });
+  });
+  const hiddenCount = Math.max(0, compareCandidateCount - comparePhotos.length);
 
   // Identify all unresolved burst groups in the library (groups with >= 2 un-trashed photos and no "pick" chosen yet)
   const unresolvedBurstGroups = useMemo(() => {
@@ -92,6 +106,14 @@ export default function CompareView({
             <Columns className="w-4 h-4 text-emerald-400" />
             <span>Synchronized Compare ({comparePhotos.length} photos)</span>
           </span>
+          {hiddenCount > 0 && (
+            <span
+              className="px-2 py-0.5 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-400 text-[11px]"
+              title="Compare shows at most 4 photos side by side. Select fewer photos to choose which ones."
+            >
+              +{hiddenCount} more not shown
+            </span>
+          )}
 
           {currentBurstIdx >= 0 && unresolvedBurstGroups.length > 0 && (
             <div className="flex items-center gap-1.5 bg-amber-500/10 border border-amber-500/30 text-amber-300 px-2.5 py-0.5 rounded-lg font-mono text-[11px]">
@@ -137,6 +159,7 @@ export default function CompareView({
           <button
             onClick={() => setCompareZoom((z) => Math.max(1, +(z - 0.5).toFixed(1)))}
             className="p-1.5 bg-zinc-900 hover:bg-zinc-800 rounded border border-zinc-800 text-zinc-300"
+            aria-label="Zoom out"
           >
             <ZoomOut className="w-3.5 h-3.5" />
           </button>
@@ -146,6 +169,7 @@ export default function CompareView({
           <button
             onClick={() => setCompareZoom((z) => Math.min(6, +(z + 0.5).toFixed(1)))}
             className="p-1.5 bg-zinc-900 hover:bg-zinc-800 rounded border border-zinc-800 text-zinc-300"
+            aria-label="Zoom in"
           >
             <ZoomIn className="w-3.5 h-3.5" />
           </button>
@@ -169,15 +193,7 @@ export default function CompareView({
 
       {/* Multi-Pane Synchronized Canvas */}
       <div
-        onWheel={(e) => {
-          e.preventDefault();
-          const delta = e.deltaY < 0 ? 0.35 : -0.35;
-          setCompareZoom((z) => {
-            const next = Math.max(1, Math.min(6, +(z + delta).toFixed(2)));
-            if (next === 1) setComparePan({ x: 0, y: 0 });
-            return next;
-          });
-        }}
+        ref={canvasRef}
         onMouseDown={(e) => {
           if (compareZoom <= 1) return;
           isPanningCompareRef.current = true;
@@ -269,7 +285,6 @@ export default function CompareView({
                           setAutoMatchNotice(
                             `Kept "${cp.name}" • Auto-advanced to Burst #${nextGroup.groupId} (${remainingGroups.length} remaining)`
                           );
-                          setTimeout(() => setAutoMatchNotice(""), 3500);
                         }
                       } else {
                         if (setSelectedHashes) {
@@ -283,7 +298,6 @@ export default function CompareView({
                               ? `Kept "${cp.name}" — All burst groups resolved!`
                               : `Kept "${cp.name}" and staged ${others.length} other photo(s) for _Trash.`
                           );
-                          setTimeout(() => setAutoMatchNotice(""), 4000);
                         }
                       }
                     }}

@@ -43,6 +43,13 @@ import {
 import { expandWithRawPairs, diskPathOf, RAW_OR_HEIC_NAME } from "../utils/rawPairs";
 
 const MAX_UNDO_STEPS = 20;
+const MAX_TOASTS = 4;
+
+export interface Toast {
+  id: number;
+  kind: "info" | "error";
+  message: string;
+}
 
 // One collator for all sorting: String.localeCompare(..., options) builds a new collator on every call,
 // which dominated sort time on large libraries
@@ -67,6 +74,9 @@ function searchTextOf(p: PhotoItem): string {
 
 // Error text of an AI request aborted by the Stop button (matches ai::AI_CANCELLED in Rust)
 const AI_CANCELLED = "AI analysis cancelled";
+// Matching scan::SCAN_CANCELLED and ai::PULL_CANCELLED
+const SCAN_CANCELLED = "Folder scan cancelled";
+const PULL_CANCELLED = "Model download cancelled";
 
 // The library's most used tags, offered to the model so the same subject gets the same tag everywhere
 function topLibraryTags(list: PhotoItem[], max = 40): string[] {
@@ -83,6 +93,8 @@ function topLibraryTags(list: PhotoItem[], max = 40): string[] {
 }
 
 // Windows paths: compare case-insensitively and ignore a trailing separator
+type LocationValue = { location: string; latitude: number | null; longitude: number | null };
+
 function isSameFolder(a: string, b: string): boolean {
   const norm = (p: string) => p.replace(/[\\/]+$/, "").toLowerCase();
   return norm(a) === norm(b);
@@ -230,7 +242,7 @@ export function useUndoStack(
   setPhotos: React.Dispatch<React.SetStateAction<PhotoItem[]>>,
   setActiveHash: React.Dispatch<React.SetStateAction<string | null>>,
   setSelectedHashes: React.Dispatch<React.SetStateAction<Set<string>>>,
-  setAutoMatchNotice: React.Dispatch<React.SetStateAction<string>>
+  setAutoMatchNotice: (message: string) => void
 ) {
   // Stacks live in refs so rapid Ctrl+Z presses each see the stack as left by the previous one;
   // `version` only exists to re-render buttons (canUndo/canRedo).
@@ -267,10 +279,10 @@ export function useUndoStack(
         const last = undoRef.current[undoRef.current.length - 1];
         if (!last) return;
         try {
-          await applySnapshotsToBackend(last.before, changedSnapshotFields(last), setPhotos);
+          if (last.undoAction) await last.undoAction();
+          else await applySnapshotsToBackend(last.before, changedSnapshotFields(last), setPhotos);
         } catch (err) {
           setAutoMatchNotice(`Undo failed (${last.description}): ${String(err)}`);
-          setTimeout(() => setAutoMatchNotice(""), 5000);
           return;
         }
         // Only move the entry once the backend accepted it, so a failed undo can be retried
@@ -284,7 +296,6 @@ export function useUndoStack(
           setSelectedHashes(new Set(last.previousSelectedHashes));
         }
         setAutoMatchNotice(`Undid: ${last.description}`);
-        setTimeout(() => setAutoMatchNotice(""), 3000);
       }),
     [enqueue, bump, setPhotos, setActiveHash, setSelectedHashes, setAutoMatchNotice]
   );
@@ -295,17 +306,16 @@ export function useUndoStack(
         const next = redoRef.current[redoRef.current.length - 1];
         if (!next) return;
         try {
-          await applySnapshotsToBackend(next.after, changedSnapshotFields(next), setPhotos);
+          if (next.redoAction) await next.redoAction();
+          else await applySnapshotsToBackend(next.after, changedSnapshotFields(next), setPhotos);
         } catch (err) {
           setAutoMatchNotice(`Redo failed (${next.description}): ${String(err)}`);
-          setTimeout(() => setAutoMatchNotice(""), 5000);
           return;
         }
         redoRef.current = redoRef.current.slice(0, -1);
         undoRef.current = [...undoRef.current, next];
         bump();
         setAutoMatchNotice(`Redid: ${next.description}`);
-        setTimeout(() => setAutoMatchNotice(""), 3000);
       }),
     [enqueue, bump, setPhotos, setAutoMatchNotice]
   );
@@ -423,6 +433,8 @@ export function useLibraryState() {
     "tag" | "person" | "move" | "location" | "time" | null
   >(null);
   const [bulkInput, setBulkInput] = useState<string>("");
+  // City search has its own text, so typing a city never overwrites the tag/person/move input
+  const [cityQuery, setCityQuery] = useState<string>("");
   const [citySearchResults, setCitySearchResults] = useState<CitySearchResult[]>([]);
 
   // Interactive Face Box State
@@ -433,7 +445,6 @@ export function useLibraryState() {
     null
   );
   const [faceNameInput, setFaceNameInput] = useState<string>("");
-  const [autoMatchNotice, setAutoMatchNotice] = useState<string>("");
   const [isScanningFolder, setIsScanningFolder] = useState<boolean>(false);
 
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
@@ -455,7 +466,6 @@ export function useLibraryState() {
   const cancelBatchRef = useRef<boolean>(false);
 
   const [progress, setProgress] = useState<{ completed: number; total: number } | null>(null);
-  const [error, setError] = useState<string>("");
   const [tagInput, setTagInput] = useState<string>("");
 
   const lastLogRef = useRef<{ key: string; time: number }>({ key: "", time: 0 });
@@ -480,6 +490,34 @@ export function useLibraryState() {
   );
 
   const clearSessionLogs = useCallback(() => setSessionLogs([]), []);
+
+  // Notifications: a small queue where every toast has its own timer, so a new message is never wiped by
+  // an older message's timeout. Errors stay longer and are also written to the Session Log.
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const toastSeqRef = useRef(0);
+  const dismissToast = useCallback((id: number) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+  const notify = useCallback(
+    (message: string, kind: Toast["kind"] = "info") => {
+      if (!message) return;
+      const id = ++toastSeqRef.current;
+      // The same message again (e.g. a repeated failure) replaces the old toast instead of stacking
+      setToasts((prev) => [...prev.filter((t) => t.message !== message), { id, kind, message }].slice(-MAX_TOASTS));
+      const ttl = kind === "error" ? 12000 : Math.min(9000, 3500 + message.length * 25);
+      window.setTimeout(() => dismissToast(id), ttl);
+    },
+    [dismissToast]
+  );
+  const setError = useCallback(
+    (message: string) => {
+      if (!message) return;
+      notify(message, "error");
+      addLog("ERROR", message);
+    },
+    [notify, addLog]
+  );
+  const setAutoMatchNotice = useCallback((message: string) => notify(message, "info"), [notify]);
 
   const undo = useUndoStack(
     setPhotos,
@@ -562,7 +600,6 @@ export function useLibraryState() {
         setOllamaPullProgress(null);
         setAutoMatchNotice(`Smart Photo Assistant (${prog.model}) installed and ready!`);
         addLog("AI", `Downloaded & installed Ollama model: ${prog.model}`);
-        setTimeout(() => setAutoMatchNotice(""), 5000);
       } else {
         setOllamaPullProgress(prog);
       }
@@ -694,10 +731,8 @@ export function useLibraryState() {
           }!`
         );
         addLog("FACE", `Auto-matched "${person_name}" across ${total_matched} photo(s)`);
-        setTimeout(() => setAutoMatchNotice(""), 6000);
       } else {
         setAutoMatchNotice(`Saved "${person_name}"!`);
-        setTimeout(() => setAutoMatchNotice(""), 3500);
       }
       refreshPeople();
     });
@@ -754,7 +789,6 @@ export function useLibraryState() {
           setAutoMatchNotice(
             `Face Scan complete: detected ${prog.faces_found} face(s) & updated potential match badges!`
           );
-          setTimeout(() => setAutoMatchNotice(""), 6000);
         });
       } else {
         setFaceScanProgress(prog);
@@ -1065,6 +1099,17 @@ export function useLibraryState() {
     [photoByHash, activeHash]
   );
 
+  // Photos that qualify for Compare before the 4-photo cap (Compare shows "+N more")
+  const compareCandidateCount = useMemo(() => {
+    if (selectedHashes.size >= 2) return visiblePhotos.filter((p) => selectedHashes.has(p.hash)).length;
+    if (activePhoto?.duplicate_group) {
+      return photos.filter(
+        (p) => p.duplicate_group === activePhoto.duplicate_group && p.subfolder !== "_Trash"
+      ).length;
+    }
+    return 0;
+  }, [selectedHashes, visiblePhotos, activePhoto, photos]);
+
   const comparePhotos = useMemo(() => {
     if (selectedHashes.size >= 2) {
       return visiblePhotos.filter((p) => selectedHashes.has(p.hash)).slice(0, 4);
@@ -1139,6 +1184,18 @@ export function useLibraryState() {
     }
   }
 
+  // Empty-grid "Clear all filters": back to the whole library
+  function clearAllFilters() {
+    setSmartFilter("ALL");
+    setOrientationFilter("ALL");
+    setActiveSubfolder("ALL");
+    setActiveEvent("ALL");
+    setActiveTag("ALL");
+    setSearchQuery("");
+    setSelectedPerson(null);
+    setSelectedPeriodRange(null);
+  }
+
   function toggleBurstGroupExpand(groupNum: number, e: React.MouseEvent) {
     e.stopPropagation();
     if (showAllBurstVersions) {
@@ -1162,7 +1219,6 @@ export function useLibraryState() {
     const isSuperseded = () => requestId !== folderLoadRequestRef.current;
     const previousFolder = folder;
     try {
-      setError("");
       setFolder(targetPath);
       setSelectedHashes(new Set());
       setActiveHash(null);
@@ -1174,8 +1230,8 @@ export function useLibraryState() {
         stage: "Scanning directory & EXIF headers...",
         current_file: targetPath,
         completed: 0,
-        total: 100,
-        percent: 5,
+        total: 0,
+        percent: 0,
         done: false,
       });
       const res = await invoke<PhotoItem[]>("scan_folder", {
@@ -1200,13 +1256,13 @@ export function useLibraryState() {
       setFolder(previousFolder);
       setIsScanningFolder(false);
       setScanProgress(null);
-      setError(String(err));
+      if (String(err).includes(SCAN_CANCELLED)) setAutoMatchNotice("Opening the folder was cancelled.");
+      else setError(String(err));
     }
   }
 
   async function handleOpenFolder() {
     try {
-      setError("");
       const selected = await open({ directory: true, multiple: false });
       if (selected && typeof selected === "string") {
         await handleLoadFolderPath(selected);
@@ -1221,7 +1277,6 @@ export function useLibraryState() {
   async function handlePullDefaultAiModel(modelToPull = "qwen3-vl:8b") {
     if (ollamaPullProgress) return;
     try {
-      setError("");
       addLog("AI", `Started downloading Ollama model: ${modelToPull}`);
       await invoke<string>("pull_ollama_model", { modelName: modelToPull });
       const s = await invoke<OllamaStatus>("check_ollama_status");
@@ -1229,14 +1284,28 @@ export function useLibraryState() {
       setAiModel(modelToPull);
     } catch (err) {
       setOllamaPullProgress(null);
-      setError(String(err));
+      if (String(err).includes(PULL_CANCELLED)) {
+        setAutoMatchNotice("Model download cancelled. Starting it again resumes where it stopped.");
+        addLog("AI", `Cancelled downloading Ollama model: ${modelToPull}`);
+      } else {
+        setError(String(err));
+      }
     }
   }
 
   async function handleEmptyTrashToRecycleBin() {
     if (!folder) return;
+    const inTrash = photos.filter((p) => p.subfolder === "_Trash" || p.subfolder.startsWith("_Trash / ")).length;
+    if (inTrash === 0) {
+      setAutoMatchNotice("_Trash is empty: commit staged rejects first to move them there.");
+      return;
+    }
+    const ok = await confirmAction(
+      `Move the ${inTrash} photo(s) in _Trash to the Windows Recycle Bin?\n\nYou can still restore them from the Recycle Bin, but not from Lumina.`,
+      "Move to Recycle Bin"
+    );
+    if (!ok) return;
     try {
-      setError("");
       const result = await invoke<TrashResult>("empty_library_trash_to_os", {
         rootFolder: folder,
       });
@@ -1257,7 +1326,6 @@ export function useLibraryState() {
         setPhotos(res);
         setAutoMatchNotice(`Moved ${count} rejected photo(s) to your OS Recycle Bin.`);
         addLog("DISK", `Moved ${count} _Trash photo(s) to OS Recycle Bin`);
-        setTimeout(() => setAutoMatchNotice(""), 4500);
       }
     } catch (err) {
       setError(String(err));
@@ -1267,14 +1335,13 @@ export function useLibraryState() {
   async function handleRescanFolder() {
     if (!folder || isScanningFolder) return;
     try {
-      setError("");
       setIsScanningFolder(true);
       setScanProgress({
         stage: "Quick Rescanning folder...",
         current_file: folder,
         completed: 0,
-        total: 100,
-        percent: 10,
+        total: 0,
+        percent: 0,
         done: false,
       });
       const res = await invoke<PhotoItem[]>("scan_folder", {
@@ -1288,7 +1355,8 @@ export function useLibraryState() {
         setSelectedHashes(new Set([res[0].hash]));
       }
     } catch (err) {
-      setError(String(err));
+      if (String(err).includes(SCAN_CANCELLED)) setAutoMatchNotice("Rescan cancelled.");
+      else setError(String(err));
     } finally {
       setIsScanningFolder(false);
       setScanProgress(null);
@@ -1297,15 +1365,19 @@ export function useLibraryState() {
 
   async function handleRescanAndProcessFolder() {
     if (!folder || isScanningFolder) return;
+    const ok = await confirmAction(
+      `Rebuild thumbnails, duplicate detection and focus scores for all ${photos.length} photo(s)?\n\nThis reads every file again and can take several minutes on a large library. Ratings, tags, faces and AI results are kept.`,
+      "Reprocess"
+    );
+    if (!ok) return;
     try {
-      setError("");
       setIsScanningFolder(true);
       setScanProgress({
         stage: "Deep Reprocessing thumbnails, dHash & focus scores...",
         current_file: folder,
         completed: 0,
-        total: 100,
-        percent: 10,
+        total: 0,
+        percent: 0,
         done: false,
       });
       const res = await invoke<PhotoItem[]>("scan_folder", {
@@ -1315,7 +1387,8 @@ export function useLibraryState() {
       setPhotos(res);
       addLog("LIBRARY", `Deep reprocessed library (${res.length} items)`, folder);
     } catch (err) {
-      setError(String(err));
+      if (String(err).includes(SCAN_CANCELLED)) setAutoMatchNotice("Rescan cancelled.");
+      else setError(String(err));
     } finally {
       setIsScanningFolder(false);
       setScanProgress(null);
@@ -1331,7 +1404,6 @@ export function useLibraryState() {
         : [];
     if (targets.length === 0) return;
     try {
-      setError("");
       const results = await invoke<ExifRefreshResult[]>("rescan_exif_batch", {
         hashes: targets,
       });
@@ -1364,7 +1436,6 @@ export function useLibraryState() {
             first.captured_at ? first.captured_at.split(" ")[0] : "None"
           } • Cam=${first.camera_model || "None"} • Loc=${first.location || "None"}`
         );
-        setTimeout(() => setAutoMatchNotice(""), 4500);
       }
     } catch (err) {
       setError(String(err));
@@ -1374,7 +1445,6 @@ export function useLibraryState() {
   async function handleDetectFacesSingleOnnx() {
     if (!activePhoto || isDetectingSingleFace) return;
     try {
-      setError("");
       setIsDetectingSingleFace(true);
       const detected = await invoke<FaceInstance[]>("detect_faces_in_photo", {
         hash: activePhoto.hash,
@@ -1394,7 +1464,6 @@ export function useLibraryState() {
           ? `ONNX Neural Detector found ${detected.length} human face(s) in ${activePhoto.name}!`
           : `ONNX Neural Detector confirmed 0 human faces in ${activePhoto.name}.`
       );
-      setTimeout(() => setAutoMatchNotice(""), 4000);
     } catch (err) {
       setError(String(err));
     } finally {
@@ -1407,7 +1476,6 @@ export function useLibraryState() {
   async function startFaceScan(hashes: string[], logMessage: string) {
     if (faceScanProgressRef.current || hashes.length === 0) return;
     try {
-      setError("");
       setPendingFaceCounts({});
       setFaceScanProgress({
         completed: 0,
@@ -1459,6 +1527,15 @@ export function useLibraryState() {
     return () => clearTimeout(timer);
   }, [folder, hasPhotos]);
 
+  // Cancel button of the progress dialog: stops a model download or the folder scan, whichever is running
+  async function handleCancelOperation() {
+    try {
+      await invoke(ollamaPullProgress ? "cancel_ollama_pull" : "cancel_folder_scan");
+    } catch (err) {
+      setError(String(err));
+    }
+  }
+
   async function handleCancelFaceScan() {
     try {
       await invoke("cancel_face_scan");
@@ -1473,6 +1550,86 @@ export function useLibraryState() {
   function resolveTargets(targetHashes?: string[]): string[] {
     const base = targetHashes ?? Array.from(selectedHashes);
     return base.length === 0 ? [] : expandWithRawPairs(base, photos);
+  }
+
+  // Undo step for changes the photo snapshots can't express: the caller supplies undo and redo
+  function pushCustomUndo(
+    description: string,
+    hashes: string[],
+    undoAction: () => Promise<void>,
+    redoAction: () => Promise<void>
+  ) {
+    undo.pushUndoEntry({
+      description,
+      previousActiveHash: activeHash,
+      previousSelectedHashes: hashes,
+      before: [],
+      after: [],
+      undoAction,
+      redoAction,
+    });
+  }
+
+  // Undo step for a staging/basket change on many photos (snapshot based)
+  function pushSnapshotUndo(description: string, before: PhotoActionSnapshot[], after: PhotoActionSnapshot[]) {
+    if (before.length === 0) return;
+    undo.pushUndoEntry({
+      description,
+      previousActiveHash: activeHash,
+      previousSelectedHashes: [],
+      before,
+      after,
+    });
+  }
+
+  // Native confirmation for bulk, destructive or slow actions
+  function confirmAction(message: string, okLabel: string) {
+    return ask(message, { title: "Lumina", kind: "warning", okLabel, cancelLabel: "Cancel" });
+  }
+
+  // Undo step for a location change: undo restores every photo's previous place (one backend call per
+  // distinct previous value), redo applies the new value again
+  function pushLocationUndo(
+    description: string,
+    hashes: string[],
+    next: (previous: LocationValue) => LocationValue,
+    redoArgs: { location: string; latitude: number | null; longitude: number | null }
+  ) {
+    const before = new Map<string, LocationValue>();
+    for (const h of hashes) {
+      const p = photoByHash.get(h);
+      if (p) before.set(h, { location: p.location, latitude: p.latitude ?? null, longitude: p.longitude ?? null });
+    }
+    if (before.size === 0) return;
+    const applyLocal = (values: Map<string, LocationValue>) =>
+      setPhotos((prev) =>
+        prev.map((p) => {
+          const v = values.get(p.hash);
+          return v ? { ...p, ...v } : p;
+        })
+      );
+    const targets = Array.from(before.keys());
+    pushCustomUndo(
+      description,
+      targets,
+      async () => {
+        const groups = new Map<string, { value: LocationValue; hashes: string[] }>();
+        for (const [h, v] of before) {
+          const key = `${v.location}|${v.latitude}|${v.longitude}`;
+          const g = groups.get(key) || { value: v, hashes: [] };
+          g.hashes.push(h);
+          groups.set(key, g);
+        }
+        for (const g of groups.values()) {
+          await invoke("set_manual_location", { hashes: g.hashes, ...g.value });
+        }
+        applyLocal(before);
+      },
+      async () => {
+        await invoke("set_manual_location", { hashes: targets, ...redoArgs });
+        applyLocal(new Map(targets.map((h) => [h, next(before.get(h)!)])));
+      }
+    );
   }
 
   async function handleSetFlag(flag: "pick" | "reject" | null, targetHashes?: string[]) {
@@ -1655,15 +1812,33 @@ export function useLibraryState() {
     if (!tag.trim() || selectedHashes.size === 0) return;
     try {
       const hashes = expandWithRawPairs(Array.from(selectedHashes), photos);
-      const hashSet = new Set(hashes);
       const clean = await invoke<string>("add_tag_batch", { hashes, tag });
-      setPhotos((prev) =>
-        prev.map((p) =>
-          hashSet.has(p.hash) && !p.tags.includes(clean)
-            ? { ...p, tags: [...p.tags, clean].sort() }
-            : p
-        )
-      );
+      // Undo removes the tag only from photos that didn't have it before
+      const added = hashes.filter((h) => !photoByHash.get(h)?.tags.includes(clean));
+      const addedSet = new Set(added);
+      const applyTag = (on: boolean) =>
+        setPhotos((prev) =>
+          prev.map((p) => {
+            if (!addedSet.has(p.hash)) return p;
+            if (!on) return { ...p, tags: p.tags.filter((t) => t !== clean) };
+            return p.tags.includes(clean) ? p : { ...p, tags: [...p.tags, clean].sort() };
+          })
+        );
+      applyTag(true);
+      if (added.length > 0) {
+        pushCustomUndo(
+          `Tag #${clean} on ${added.length} photo(s)`,
+          hashes,
+          async () => {
+            await invoke("remove_tag_batch", { hashes: added, tag: clean });
+            applyTag(false);
+          },
+          async () => {
+            await invoke("add_tag_batch", { hashes: added, tag: clean });
+            applyTag(true);
+          }
+        );
+      }
       addLog("TRIAGE", `Added tag "#${clean}" to ${hashes.length} photo(s)`);
       setTagInput("");
       setBulkInput("");
@@ -1703,16 +1878,23 @@ export function useLibraryState() {
     }
   }
 
+  // Typing a city searches after a short pause; only the newest search may update the results
+  const citySearchSeqRef = useRef(0);
+  const citySearchTimerRef = useRef<number | undefined>(undefined);
   async function handleSearchCities(q: string) {
-    setBulkInput(q);
-    if (q.trim().length >= 2) {
+    setCityQuery(q);
+    window.clearTimeout(citySearchTimerRef.current);
+    const seq = ++citySearchSeqRef.current;
+    if (q.trim().length < 2) {
+      setCitySearchResults([]);
+      return;
+    }
+    citySearchTimerRef.current = window.setTimeout(async () => {
       try {
         const matches = await invoke<CitySearchResult[]>("search_cities_offline", { query: q });
-        setCitySearchResults(matches);
+        if (seq === citySearchSeqRef.current) setCitySearchResults(matches);
       } catch {}
-    } else {
-      setCitySearchResults([]);
-    }
+    }, 150);
   }
 
   async function handleAssignCity(c: CitySearchResult) {
@@ -1724,26 +1906,20 @@ export function useLibraryState() {
         : [];
     if (targets.length === 0) return;
     try {
-      const locStr = `${c.name}, ${c.country}`;
-      await invoke("set_manual_location", {
-        hashes: targets,
-        location: locStr,
+      const value: LocationValue = {
+        location: `${c.name}, ${c.country}`,
         latitude: c.latitude,
         longitude: c.longitude,
-      });
+      };
+      await invoke("set_manual_location", { hashes: targets, ...value });
+      pushLocationUndo(`Location "${value.location}" on ${targets.length} photo(s)`, targets, () => value, value);
       const targetSet = new Set(targets);
-      setPhotos((prev) =>
-        prev.map((p) =>
-          targetSet.has(p.hash)
-            ? { ...p, location: locStr, latitude: c.latitude, longitude: c.longitude }
-            : p
-        )
-      );
-      addLog("TRIAGE", `Assigned location "${locStr}" to ${targets.length} photo(s)`);
+      setPhotos((prev) => prev.map((p) => (targetSet.has(p.hash) ? { ...p, ...value } : p)));
+      addLog("TRIAGE", `Assigned location "${value.location}" to ${targets.length} photo(s)`);
       setActiveBulkPopover(null);
       setIsEditingInspectorLocation(false);
       setCitySearchResults([]);
-      setBulkInput("");
+      setCityQuery("");
       setInspectorLocationQuery("");
     } catch (err) {
       setError(String(err));
@@ -1759,23 +1935,26 @@ export function useLibraryState() {
         ? [activeHash]
         : [];
     if (targets.length === 0) return;
+    // A typed place name keeps the photos' GPS coordinates; clearing the name clears them too
+    const nextValue = (prev: LocationValue): LocationValue => ({
+      location: clean,
+      latitude: clean ? prev.latitude : null,
+      longitude: clean ? prev.longitude : null,
+    });
     try {
-      await invoke("set_manual_location", {
-        hashes: targets,
-        location: clean,
-        latitude: null,
-        longitude: null,
-      });
+      const redoArgs = { location: clean, latitude: null, longitude: null };
+      await invoke("set_manual_location", { hashes: targets, ...redoArgs });
+      pushLocationUndo(
+        clean ? `Location "${clean}" on ${targets.length} photo(s)` : `Clear location on ${targets.length} photo(s)`,
+        targets,
+        nextValue,
+        redoArgs
+      );
       const targetSet = new Set(targets);
       setPhotos((prev) =>
         prev.map((p) =>
           targetSet.has(p.hash)
-            ? {
-                ...p,
-                location: clean,
-                latitude: clean ? p.latitude : null,
-                longitude: clean ? p.longitude : null,
-              }
+            ? { ...p, ...nextValue({ location: p.location, latitude: p.latitude ?? null, longitude: p.longitude ?? null }) }
             : p
         )
       );
@@ -1783,7 +1962,7 @@ export function useLibraryState() {
       setIsEditingInspectorLocation(false);
       setActiveBulkPopover(null);
       setInspectorLocationQuery("");
-      setBulkInput("");
+      setCityQuery("");
     } catch (err) {
       setError(String(err));
     }
@@ -1833,7 +2012,6 @@ export function useLibraryState() {
     }
 
     try {
-      setError("");
       setAutoMatchNotice(`Saving "${cleanName}" & matching against verified faces...`);
       const updatedFaces = await invoke<FaceInstance[]>("assign_face_region_and_automatch", {
         hash: activePhoto.hash,
@@ -1884,15 +2062,35 @@ export function useLibraryState() {
     if (!clean || selectedHashes.size === 0) return;
     try {
       const hashes = expandWithRawPairs(Array.from(selectedHashes), photos);
-      const hashSet = new Set(hashes);
+      // Undo removes the person only from photos that didn't have them before
+      const added = hashes.filter((h) => !photoByHash.get(h)?.people.includes(clean));
+      const addedSet = new Set(added);
+      const applyPerson = (on: boolean) =>
+        setPhotos((prev) =>
+          prev.map((p) => {
+            if (!addedSet.has(p.hash)) return p;
+            if (!on) return { ...p, people: p.people.filter((n) => n !== clean) };
+            return p.people.includes(clean) ? p : { ...p, people: [...p.people, clean].sort() };
+          })
+        );
       await invoke<number>("add_person_to_photos", { hashes, name: clean });
-      setPhotos((prev) =>
-        prev.map((p) =>
-          hashSet.has(p.hash) && !p.people.includes(clean)
-            ? { ...p, people: [...p.people, clean].sort() }
-            : p
-        )
-      );
+      applyPerson(true);
+      if (added.length > 0) {
+        pushCustomUndo(
+          `Person "${clean}" on ${added.length} photo(s)`,
+          hashes,
+          async () => {
+            await invoke("remove_person_from_photos", { hashes: added, name: clean });
+            applyPerson(false);
+            refreshPeople();
+          },
+          async () => {
+            await invoke<number>("add_person_to_photos", { hashes: added, name: clean });
+            applyPerson(true);
+            refreshPeople();
+          }
+        );
+      }
       addLog("FACE", `Assigned person "${clean}" to ${hashes.length} selected photo(s)`);
       setBulkInput("");
       setActiveBulkPopover(null);
@@ -1904,7 +2102,14 @@ export function useLibraryState() {
 
   async function handleDismissAllStaged() {
     try {
+      const staged = photos.filter((p) => p.staged_target);
+      const before = captureSnapshots(staged, staged.map((p) => p.hash));
       const count = await invoke<number>("clear_all_staged", { rootFolder: folder || null });
+      pushSnapshotUndo(
+        `Dismiss ${before.length} staged move(s)`,
+        before,
+        before.map((s) => ({ ...s, staged_target: null }))
+      );
       setPhotos((prev) => prev.map((p) => (p.staged_target ? { ...p, staged_target: null } : p)));
       setIsCommitModalOpen(false);
       if (smartFilter === "STAGED") setSmartFilter("ALL");
@@ -1924,15 +2129,29 @@ export function useLibraryState() {
         ops.push({ hash: p.hash, target_subfolder: target });
         updates.set(p.hash, target);
       }
-      if (ops.length > 0) {
-        await invoke("stage_photos_move", { ops });
-        setPhotos((prev) =>
-          prev.map((p) =>
-            updates.has(p.hash) ? { ...p, staged_target: updates.get(p.hash)! } : p
-          )
-        );
-        addLog("DISK", `Auto-staged ${ops.length} photos using preset ${autoStagePreset}`);
+      if (ops.length === 0) {
+        setAutoMatchNotice("None of the visible photos have the details this rule needs (date, place or person).");
+        return;
       }
+      const restaged = visiblePhotos.filter((p) => updates.has(p.hash) && p.staged_target).length;
+      const ok = await confirmAction(
+        `Stage ${ops.length} visible photo(s) into folders with this rule?` +
+          (restaged > 0 ? `\n\n${restaged} of them are already staged elsewhere and will get the new target.` : "") +
+          "\n\nNothing moves on disk until you Commit. You can undo this with Ctrl+Z.",
+        "Stage photos"
+      );
+      if (!ok) return;
+      const before = captureSnapshots(photos, Array.from(updates.keys()));
+      await invoke("stage_photos_move", { ops });
+      pushSnapshotUndo(
+        `Auto-stage ${ops.length} photo(s)`,
+        before,
+        before.map((s) => ({ ...s, staged_target: updates.get(s.hash) ?? s.staged_target }))
+      );
+      setPhotos((prev) =>
+        prev.map((p) => (updates.has(p.hash) ? { ...p, staged_target: updates.get(p.hash)! } : p))
+      );
+      addLog("DISK", `Auto-staged ${ops.length} photos using preset ${autoStagePreset}`);
     } catch (err) {
       setError(String(err));
     }
@@ -1979,7 +2198,13 @@ export function useLibraryState() {
       const hashes = expandWithRawPairs(Array.from(selectedHashes), photos);
       const hashSet = new Set(hashes);
       const anyNotInBasket = photos.some((p) => hashSet.has(p.hash) && !p.in_basket);
+      const before = captureSnapshots(photos, hashSet);
       await invoke("set_photo_basket", { hashes, inBasket: anyNotInBasket });
+      pushSnapshotUndo(
+        `${anyNotInBasket ? "Pin" : "Unpin"} ${hashes.length} photo(s) ${anyNotInBasket ? "to" : "from"} Basket`,
+        before,
+        before.map((s) => ({ ...s, in_basket: anyNotInBasket }))
+      );
       setPhotos((prev) =>
         prev.map((p) =>
           hashSet.has(p.hash) ? { ...p, in_basket: anyNotInBasket } : p
@@ -2007,18 +2232,15 @@ export function useLibraryState() {
         latitude: lat,
         longitude: lon,
       });
+      const value: LocationValue = { location, latitude: lat, longitude: lon };
+      pushLocationUndo(`Map location on ${hashes.length} photo(s)`, hashes, () => value, value);
       // Patch just these photos (this used to rescan the whole folder)
-      setPhotos((prev) =>
-        prev.map((p) =>
-          hashSet.has(p.hash) ? { ...p, location, latitude: lat, longitude: lon } : p
-        )
-      );
+      setPhotos((prev) => prev.map((p) => (hashSet.has(p.hash) ? { ...p, ...value } : p)));
       setIsPickingMapLocation(false);
       addLog("TRIAGE", `Assigned map GPS (${lat.toFixed(4)}, ${lon.toFixed(4)}) to ${hashes.length} photo(s)`);
       setAutoMatchNotice(
         `Assigned GPS (${lat.toFixed(4)}, ${lon.toFixed(4)}) to ${hashes.length} photo(s)!`
       );
-      setTimeout(() => setAutoMatchNotice(""), 4500);
     } catch (err) {
       setError(String(err));
     }
@@ -2029,25 +2251,45 @@ export function useLibraryState() {
     if (selectedHashes.size === 0) return;
     const totalMinutes = shiftHoursInput * 60 + shiftMinutesInput;
     if (totalMinutes === 0) return;
+    const applyShift = (rows: TimestampShiftResult[]) => {
+      const map = new Map(rows.map((s) => [s.hash, s.captured_at]));
+      setPhotos((prev) =>
+        prev.map((p) => (map.has(p.hash) ? { ...p, captured_at: map.get(p.hash)! } : p))
+      );
+      refreshTimeline();
+    };
     try {
       const hashes = Array.from(selectedHashes);
       const shifted = await invoke<TimestampShiftResult[]>("shift_capture_timestamps", {
         hashes,
         offsetMinutes: totalMinutes,
       });
-      const map = new Map(shifted.map((s) => [s.hash, s.captured_at]));
-      setPhotos((prev) =>
-        prev.map((p) => (map.has(p.hash) ? { ...p, captured_at: map.get(p.hash)! } : p))
-      );
-      refreshTimeline();
+      applyShift(shifted);
+      const shiftedHashes = shifted.map((s) => s.hash);
+      const label = `${totalMinutes > 0 ? `+${totalMinutes}` : totalMinutes} min`;
+      if (shiftedHashes.length > 0) {
+        pushCustomUndo(
+          `Shift capture time ${label} on ${shiftedHashes.length} photo(s)`,
+          shiftedHashes,
+          async () =>
+            applyShift(
+              await invoke<TimestampShiftResult[]>("shift_capture_timestamps", {
+                hashes: shiftedHashes,
+                offsetMinutes: -totalMinutes,
+              })
+            ),
+          async () =>
+            applyShift(
+              await invoke<TimestampShiftResult[]>("shift_capture_timestamps", {
+                hashes: shiftedHashes,
+                offsetMinutes: totalMinutes,
+              })
+            )
+        );
+      }
       setActiveBulkPopover(null);
       addLog("TRIAGE", `Shifted timestamps on ${shifted.length} photo(s) by ${totalMinutes} min`);
-      setAutoMatchNotice(
-        `Shifted ${shifted.length} timestamp(s) by ${
-          totalMinutes > 0 ? `+${totalMinutes}` : totalMinutes
-        } min.`
-      );
-      setTimeout(() => setAutoMatchNotice(""), 4000);
+      setAutoMatchNotice(`Shifted ${shifted.length} timestamp(s) by ${label}.`);
     } catch (err) {
       setError(String(err));
     }
@@ -2083,7 +2325,6 @@ export function useLibraryState() {
       const summary = `Exported ${res.exported} .xmp sidecar file(s)`;
       addLog("DISK", summary, notes.join(" · ") || undefined);
       setAutoMatchNotice(notes.length > 0 ? `${summary} — ${notes.join(", ")}` : `${summary}!`);
-      setTimeout(() => setAutoMatchNotice(""), 6000);
     } catch (err) {
       setError(String(err));
     } finally {
@@ -2100,7 +2341,6 @@ export function useLibraryState() {
       setHealthStats(stats);
       addLog("DISK", `Pruned ${removed} orphaned cache file(s)`);
       setAutoMatchNotice(`Pruned ${removed} orphaned cache file(s)!`);
-      setTimeout(() => setAutoMatchNotice(""), 4000);
     } catch (err) {
       setError(String(err));
     }
@@ -2115,16 +2355,22 @@ export function useLibraryState() {
           sharpestInGroup.get(p.duplicate_group)?.hash !== p.hash
       );
       if (toTrash.length === 0) return;
+      const ok = await confirmAction(
+        `Keep the sharpest photo of each of the ${totalBurstGroups} burst groups and stage the other ${toTrash.length} photo(s) for _Trash?\n\nNothing is deleted until you Commit. You can undo this with Ctrl+Z.`,
+        "Stage for _Trash"
+      );
+      if (!ok) return;
+      const trashHashes = new Set(toTrash.map((p) => p.hash));
+      const before = captureSnapshots(photos, trashHashes);
       const ops = toTrash.map((p) => ({ hash: p.hash, target_subfolder: "_Trash" }));
       await invoke("stage_photos_move", { ops });
+      pushSnapshotUndo(
+        `Keep sharpest: stage ${toTrash.length} photo(s) for _Trash`,
+        before,
+        before.map((s) => ({ ...s, staged_target: "_Trash" }))
+      );
       setPhotos((prev) =>
-        prev.map((p) =>
-          p.duplicate_group &&
-          p.subfolder !== "_Trash" &&
-          sharpestInGroup.get(p.duplicate_group)?.hash !== p.hash
-            ? { ...p, staged_target: "_Trash" }
-            : p
-        )
+        prev.map((p) => (trashHashes.has(p.hash) ? { ...p, staged_target: "_Trash" } : p))
       );
       addLog("TRIAGE", `Kept sharpest in all burst groups & staged ${toTrash.length} extras for _Trash`);
     } catch (err) {
@@ -2160,7 +2406,6 @@ export function useLibraryState() {
       });
       addLog("DISK", `Created new subfolder: ${relativePath.trim()}`, created);
       setAutoMatchNotice(`Created folder: ${relativePath.trim()}`);
-      setTimeout(() => setAutoMatchNotice(""), 3500);
       await handleRescanFolder();
     } catch (err) {
       setError(String(err));
@@ -2197,9 +2442,12 @@ export function useLibraryState() {
       setError("Batch AI is running: wait for it to finish or stop it first.");
       return;
     }
+    if (ollamaStatus && !ollamaStatus.running) {
+      setError('Ollama is not running: click "Start Ollama" in the header first.');
+      return;
+    }
     const photo = activePhoto;
     try {
-      setError("");
       setAnalyzingHashes((prev) => new Set(prev).add(photo.hash));
       const res = await invoke<AiAnalysisResult>("ai_analyze_photo", {
         hash: photo.hash,
@@ -2237,6 +2485,10 @@ export function useLibraryState() {
   // Photos that already have AI results are skipped unless the user chooses to re-analyse them.
   async function runBatchAiOnList(requested: PhotoItem[], options: { reanalyze?: boolean } = {}) {
     if (aiBatchProgress || requested.length === 0) return;
+    if (ollamaStatus && !ollamaStatus.running) {
+      setError('Ollama is not running: click "Start Ollama" in the header first.');
+      return;
+    }
 
     let targets = requested;
     if (!options.reanalyze) {
@@ -2260,7 +2512,6 @@ export function useLibraryState() {
     if (targets.length === 0) return;
 
     cancelBatchRef.current = false;
-    setError("");
     setAiBatchReport(null);
     setAiBatchProgress({
       current: 0,
@@ -2474,6 +2725,7 @@ export function useLibraryState() {
     setBulkInput,
     citySearchResults,
     setCitySearchResults,
+    cityQuery,
     selectedFaceId,
     setSelectedFaceId,
     isDrawingFace,
@@ -2484,7 +2736,8 @@ export function useLibraryState() {
     setDrawnBox,
     faceNameInput,
     setFaceNameInput,
-    autoMatchNotice,
+    toasts,
+    dismissToast,
     setAutoMatchNotice,
     isScanningFolder,
     expandedFolders,
@@ -2499,7 +2752,6 @@ export function useLibraryState() {
     aiBatchProgress,
     cancelBatchRef,
     progress,
-    error,
     setError,
     tagInput,
     setTagInput,
@@ -2519,8 +2771,10 @@ export function useLibraryState() {
     visiblePhotos,
     activePhoto,
     comparePhotos,
+    compareCandidateCount,
     handlePhotoClick,
     toggleBurstGroupExpand,
+    clearAllFilters,
     handleOpenFolder,
     handleRescanFolder,
     handleRescanAndProcessFolder,
@@ -2528,6 +2782,7 @@ export function useLibraryState() {
     handleDetectFacesSingleOnnx,
     handleBatchScanFacesOnnx,
     handleCancelFaceScan,
+    handleCancelOperation,
     faceModelDownload,
     handleSetFlag,
     handleRejectToTrash,

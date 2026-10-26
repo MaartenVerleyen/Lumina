@@ -242,11 +242,27 @@ function RightInspector({
   const previewImgWrapRef = useRef<HTMLDivElement>(null);
   const faceInputRef = useRef<HTMLInputElement>(null);
 
+  // Mouse position as 0..1 coordinates of the photo itself. The preview is rotated with CSS, and
+  // getBoundingClientRect() returns the rotated, on-screen box, so undo the quarter turns first.
+  function pointInPhoto(e: React.MouseEvent<HTMLDivElement>, el: HTMLDivElement) {
+    const rect = el.getBoundingClientRect();
+    const sx = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const sy = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
+    switch (((activePhoto.rotation % 360) + 360) % 360) {
+      case 90:
+        return { x: sy, y: 1 - sx };
+      case 180:
+        return { x: 1 - sx, y: 1 - sy };
+      case 270:
+        return { x: 1 - sy, y: sx };
+      default:
+        return { x: sx, y: sy };
+    }
+  }
+
   function handlePreviewMouseDown(e: React.MouseEvent<HTMLDivElement>) {
     if (!isDrawingFace || !previewImgWrapRef.current) return;
-    const rect = previewImgWrapRef.current.getBoundingClientRect();
-    const x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    const y = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
+    const { x, y } = pointInPhoto(e, previewImgWrapRef.current);
     setDrawStart({ x, y });
     setDrawnBox({ x, y, w: 0.01, h: 0.01 });
     setSelectedFaceId(null);
@@ -254,9 +270,7 @@ function RightInspector({
 
   function handlePreviewMouseMove(e: React.MouseEvent<HTMLDivElement>) {
     if (!isDrawingFace || !drawStart || !previewImgWrapRef.current) return;
-    const rect = previewImgWrapRef.current.getBoundingClientRect();
-    const curX = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    const curY = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
+    const { x: curX, y: curY } = pointInPhoto(e, previewImgWrapRef.current);
     const x = Math.min(drawStart.x, curX);
     const y = Math.min(drawStart.y, curY);
     const w = Math.max(0.04, Math.abs(curX - drawStart.x));
@@ -928,7 +942,7 @@ function RightInspector({
               <div className="flex flex-col gap-1 max-h-32 overflow-y-auto">
                 {citySearchResults.map((c) => (
                   <button
-                    key={`${c.name}_${c.country}`}
+                    key={`${c.name}_${c.country}_${c.latitude}_${c.longitude}`}
                     onClick={() => handleAssignCity(c)}
                     className="text-left px-2 py-1 bg-zinc-950 hover:bg-zinc-800 rounded flex justify-between items-center text-zinc-300"
                   >

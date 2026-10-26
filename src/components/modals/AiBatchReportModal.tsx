@@ -1,3 +1,4 @@
+import { useDialogFocus } from "../../hooks/useDialogFocus";
 import { AlertTriangle, CheckCircle2, RefreshCw, X } from "lucide-react";
 import { PhotoItem } from "../../types/lumina";
 
@@ -22,11 +23,12 @@ export default function AiBatchReportModal({
   failures,
   onRetryFailures,
 }: AiBatchReportModalProps) {
+  const dialogRef = useDialogFocus<HTMLDivElement>(isOpen);
   if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-[9990] bg-black/85 backdrop-blur-sm flex items-center justify-center p-6 select-none">
-      <div className="bg-[#12141c] border border-zinc-800 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-label="AI batch report" tabIndex={-1} className="bg-[#12141c] border border-zinc-800 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col">
         {/* Header */}
         <div className="p-4 border-b border-zinc-800 flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -37,7 +39,7 @@ export default function AiBatchReportModal({
             )}
             <h3 className="text-sm font-bold text-zinc-100">AI Batch Tagging Report</h3>
           </div>
-          <button onClick={onClose} className="text-zinc-500 hover:text-zinc-300">
+          <button onClick={onClose} className="text-zinc-500 hover:text-zinc-300" aria-label="Close">
             <X className="w-4 h-4" />
           </button>
         </div>

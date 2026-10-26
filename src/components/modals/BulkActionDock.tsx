@@ -55,6 +55,7 @@ interface BulkActionDockProps {
     React.SetStateAction<"tag" | "person" | "move" | "location" | "time" | null>
   >;
   bulkInput: string;
+  cityQuery: string;
   setBulkInput: React.Dispatch<React.SetStateAction<string>>;
   citySearchResults: CitySearchResult[];
   shiftHoursInput: number;
@@ -87,6 +88,7 @@ export default function BulkActionDock({
   activeBulkPopover,
   setActiveBulkPopover,
   bulkInput,
+  cityQuery,
   setBulkInput,
   citySearchResults,
   shiftHoursInput,
@@ -216,7 +218,7 @@ export default function BulkActionDock({
             <div className="flex flex-col gap-1.5">
               <input
                 type="text"
-                value={bulkInput}
+                value={cityQuery}
                 onChange={(e) => handleSearchCities(e.target.value)}
                 onKeyDown={(e) => e.stopPropagation()}
                 placeholder="Search city (e.g. Meise, Paris, Brussels)..."
@@ -227,7 +229,7 @@ export default function BulkActionDock({
                 <div className="max-h-36 overflow-y-auto flex flex-col gap-1 mt-1">
                   {citySearchResults.map((c) => (
                     <button
-                      key={`${c.name}_${c.country}`}
+                      key={`${c.name}_${c.country}_${c.latitude}_${c.longitude}`}
                       onClick={() => handleAssignCity(c)}
                       className="text-left px-2 py-1 bg-zinc-900 hover:bg-zinc-800 rounded flex justify-between text-zinc-300"
                     >

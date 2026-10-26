@@ -145,8 +145,28 @@ pub async fn pull_ollama_model(app: AppHandle, model_name: String) -> Result<Str
         return Err(format!("Ollama pull failed with HTTP {}", res.status()));
     }
 
+    let cancel_generation = PULL_CANCEL_GENERATION.load(Ordering::Acquire);
     let mut buffer = String::new();
-    while let Ok(Some(chunk)) = res.chunk().await {
+    loop {
+        // Dropping the request makes Ollama stop the download (it resumes from the partial files next time)
+        let chunk = tokio::select! {
+            c = res.chunk() => c,
+            _ = wait_for_cancel(&PULL_CANCEL_GENERATION, &PULL_CANCEL_NOTIFY, cancel_generation) => {
+                let _ = app.emit(
+                    "ollama-pull-progress",
+                    OllamaPullProgress {
+                        model: clean_model.clone(),
+                        status: "Cancelled".to_string(),
+                        completed_mb: 0.0,
+                        total_mb: 0.0,
+                        percent: 0,
+                        done: true,
+                    },
+                );
+                return Err(PULL_CANCELLED.to_string());
+            }
+        };
+        let Ok(Some(chunk)) = chunk else { break };
         buffer.push_str(&String::from_utf8_lossy(&chunk));
         while let Some(pos) = buffer.find('\n') {
             let line = buffer[..pos].trim().to_string();
@@ -294,13 +314,29 @@ pub fn cancel_ai_analysis() {
 }
 
 async fn wait_for_ai_cancel(started_generation: u64) {
+    wait_for_cancel(&AI_CANCEL_GENERATION, &AI_CANCEL_NOTIFY, started_generation).await
+}
+
+// Resolves once `generation` moves past `started_generation` (a cancel command bumps it and notifies)
+async fn wait_for_cancel(generation: &AtomicU64, notify: &tokio::sync::Notify, started_generation: u64) {
     loop {
-        let notified = AI_CANCEL_NOTIFY.notified();
-        if AI_CANCEL_GENERATION.load(Ordering::Acquire) != started_generation {
+        let notified = notify.notified();
+        if generation.load(Ordering::Acquire) != started_generation {
             return;
         }
         notified.await;
     }
+}
+
+// Error text the UI recognises as "the user cancelled the model download"
+pub const PULL_CANCELLED: &str = "Model download cancelled";
+static PULL_CANCEL_GENERATION: AtomicU64 = AtomicU64::new(0);
+static PULL_CANCEL_NOTIFY: LazyLock<tokio::sync::Notify> = LazyLock::new(tokio::sync::Notify::new);
+
+#[tauri::command]
+pub fn cancel_ollama_pull() {
+    PULL_CANCEL_GENERATION.fetch_add(1, Ordering::AcqRel);
+    PULL_CANCEL_NOTIFY.notify_waiters();
 }
 
 // Prompt and schema tuned on 24 library photos (2026-10-25): v1 copied the caption into ocr_text on every

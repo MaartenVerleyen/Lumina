@@ -1,4 +1,4 @@
-import { RefObject } from "react";
+import { RefObject, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { Virtualizer } from "@tanstack/react-virtual";
 import { PhotoItem } from "../../types/lumina";
@@ -14,12 +14,14 @@ import {
   Trophy,
   XCircle,
   AlertTriangle,
+  ImageOff,
 } from "lucide-react";
 
 interface VirtualPhotoGridProps {
   gridContainerRef: RefObject<HTMLDivElement | null>;
   rowVirtualizer: Virtualizer<HTMLDivElement, Element>;
   gridColumns: number;
+  cardThumbWidth: number;
   cardThumbHeight: number;
   visiblePhotos: PhotoItem[];
   selectedHashes: Set<string>;
@@ -42,6 +44,7 @@ export default function VirtualPhotoGrid({
   gridContainerRef,
   rowVirtualizer,
   gridColumns,
+  cardThumbWidth,
   cardThumbHeight,
   visiblePhotos,
   selectedHashes,
@@ -58,9 +61,15 @@ export default function VirtualPhotoGrid({
   simpleMode = false,
   onPhotoContextMenu,
 }: VirtualPhotoGridProps) {
+  // Thumbnails that failed to load (file deleted or cache cleared) show a placeholder instead of a broken image
+  const [failedThumbs, setFailedThumbs] = useState<Set<string>>(() => new Set());
+
   return (
     <div ref={gridContainerRef} className="flex-1 overflow-y-auto p-4">
       <div
+        role="listbox"
+        aria-multiselectable="true"
+        aria-label="Photos"
         style={{
           height: `${rowVirtualizer.getTotalSize()}px`,
           width: "100%",
@@ -74,6 +83,7 @@ export default function VirtualPhotoGrid({
           return (
             <div
               key={virtualRow.index}
+              role="presentation"
               style={{
                 position: "absolute",
                 top: 0,
@@ -103,6 +113,10 @@ export default function VirtualPhotoGrid({
                   <div
                     key={photo.hash}
                     data-photo-hash={photo.hash}
+                    role="option"
+                    aria-selected={isSelected}
+                    aria-label={photo.name}
+                    tabIndex={isActive ? 0 : -1}
                     onClick={(e) => handlePhotoClick(globalIndex, photo.hash, e)}
                     onContextMenu={(e) => {
                       if (onPhotoContextMenu) {
@@ -150,18 +164,38 @@ export default function VirtualPhotoGrid({
                       style={{ height: `${cardThumbHeight}px` }}
                       className="relative w-full bg-zinc-950 flex items-center justify-center overflow-hidden"
                     >
-                      {photo.thumb_ready ? (
+                      {photo.thumb_ready && failedThumbs.has(photo.thumb_path) ? (
+                        <span className="flex flex-col items-center gap-1 text-[10px] text-zinc-600">
+                          <ImageOff className="w-5 h-5" />
+                          Preview unavailable
+                        </span>
+                      ) : photo.thumb_ready ? (
                         <img
                           src={convertFileSrc(photo.thumb_path)}
                           alt={photo.name}
                           decoding="async"
                           draggable={false}
+                          onError={() =>
+                            setFailedThumbs((prev) => new Set(prev).add(photo.thumb_path))
+                          }
                           style={
-                            photo.rotation
+                            photo.rotation === 90 || photo.rotation === 270
+                              ? {
+                                  // Rotated a quarter turn: lay the image out in the swapped box so it still
+                                  // fills the card after rotating
+                                  width: `${cardThumbHeight}px`,
+                                  height: `${cardThumbWidth}px`,
+                                  maxWidth: "none",
+                                  flexShrink: 0,
+                                  transform: `rotate(${photo.rotation}deg)`,
+                                }
+                              : photo.rotation
                               ? { transform: `rotate(${photo.rotation}deg)` }
                               : undefined
                           }
-                          className="w-full h-full object-cover select-none"
+                          className={`object-cover select-none ${
+                            photo.rotation === 90 || photo.rotation === 270 ? "" : "w-full h-full"
+                          }`}
                         />
                       ) : (
                         <span className="text-xs text-zinc-600 animate-pulse">Loading...</span>

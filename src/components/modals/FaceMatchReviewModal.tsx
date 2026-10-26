@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import UnknownFaceClusters from "./UnknownFaceClusters";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
+import { ask } from "@tauri-apps/plugin-dialog";
+import { useDialogFocus } from "../../hooks/useDialogFocus";
 import {
   FaceInstance,
   PersonItem,
@@ -38,6 +40,9 @@ interface FaceMatchReviewModalProps {
 
 type StatusTab = "pending" | "confirmed" | "denied";
 
+// Accepting this many faces in one click asks first (a stray "Select All" shouldn't name a crowd)
+const CONFIRM_ACCEPT_COUNT = 50;
+
 // Pass as the initial person to open the modal on "Who is this?" (groups of unnamed faces)
 export const UNKNOWN_FACES = "__unknown_faces__";
 
@@ -63,6 +68,9 @@ export default function FaceMatchReviewModal({
   const [listPerson, setListPerson] = useState<string>("");
   const loadRequestRef = useRef(0);
   const [actionError, setActionError] = useState<string>("");
+  // Loading the list itself failed (shown instead of the "nothing left to review" message)
+  const [loadFailed, setLoadFailed] = useState<boolean>(false);
+  const dialogRef = useDialogFocus<HTMLDivElement>(isOpen);
   const [strongMatchPercent, setStrongMatchPercent] = useState<number>(62);
   const [statusTab, setStatusTab] = useState<StatusTab>("pending");
   // "person": one person's suggestions / confirmed / denied faces; "unknown": groups of unnamed faces
@@ -123,6 +131,7 @@ export default function FaceMatchReviewModal({
       setActivePerson(clean);
       setIsLoading(true);
       setActionError("");
+      setLoadFailed(false);
       try {
         if (tab === "pending") {
           const res = await invoke<SimilarFaceCandidate[]>("find_similar_faces", {
@@ -161,6 +170,7 @@ export default function FaceMatchReviewModal({
         setDeniedFaces([]);
         setSelectedIds(new Set());
         setListPerson(clean);
+        setLoadFailed(true);
         setActionError(`Could not load faces for "${clean}": ${String(err)}`);
       } finally {
         if (!isStale()) setIsLoading(false);
@@ -289,6 +299,15 @@ export default function FaceMatchReviewModal({
     },
     [listPerson, isLoading, candidates, refreshPeople]
   );
+
+  function toggleSelected(faceId: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(faceId)) next.delete(faceId);
+      else next.add(faceId);
+      return next;
+    });
+  }
 
   // Puts optimistically removed candidates back after a failed backend call
   function restoreCandidates(items: SimilarFaceCandidate[]) {
@@ -477,6 +496,7 @@ export default function FaceMatchReviewModal({
       : deniedFaces;
 
   const currentSpotlight = candidates[spotlightIndex] || null;
+  const nextSpotlight = reviewMode === "spotlight" ? candidates[spotlightIndex + 1] : undefined;
   const activePersonObj = people.find(
     (p) => p.name.toLowerCase() === activePerson.toLowerCase()
   );
@@ -487,6 +507,11 @@ export default function FaceMatchReviewModal({
       className="fixed inset-0 z-[9998] bg-black/85 backdrop-blur-md flex items-center justify-center p-6 select-none animate-in fade-in"
     >
       <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Face match review"
+        tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
         className="bg-[#0e1017] border border-zinc-800 rounded-2xl w-full max-w-6xl h-[86vh] shadow-2xl flex flex-col overflow-hidden"
       >
@@ -589,6 +614,7 @@ export default function FaceMatchReviewModal({
             <button
               onClick={onClose}
               className="p-2 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-white border border-zinc-800"
+              aria-label="Close Face Review"
             >
               <X className="w-4 h-4" />
             </button>
@@ -758,7 +784,21 @@ export default function FaceMatchReviewModal({
                         <span>Deny Selected ({selectedIds.size})</span>
                       </button>
                       <button
-                        onClick={() => handleAcceptBatch(Array.from(selectedIds))}
+                        onClick={async () => {
+                          const ids = Array.from(selectedIds);
+                          if (
+                            ids.length >= CONFIRM_ACCEPT_COUNT &&
+                            !(await ask(`Confirm all ${ids.length} selected faces as "${activePerson}"?`, {
+                              title: "Accept faces",
+                              kind: "warning",
+                              okLabel: `Accept ${ids.length}`,
+                              cancelLabel: "Cancel",
+                            }))
+                          ) {
+                            return;
+                          }
+                          handleAcceptBatch(ids);
+                        }}
                         disabled={selectedIds.size === 0}
                         className="px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-semibold flex items-center gap-1.5 shadow transition"
                       >
@@ -827,6 +867,18 @@ export default function FaceMatchReviewModal({
                   Loading faces for "{activePerson}"...
                 </span>
               </div>
+            ) : loadFailed ? (
+              <div className="flex-1 flex flex-col items-center justify-center gap-2 text-center p-8">
+                <h3 className="text-sm font-bold text-red-200">Faces for "{activePerson}" could not be loaded</h3>
+                <p className="text-xs text-zinc-500 max-w-sm">The error is shown above. This is not the same as having no matches.</p>
+                <button
+                  onClick={() => loadDataForPerson(activePerson, statusTab)}
+                  className="mt-2 px-3.5 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-100 text-xs font-semibold flex items-center gap-1.5"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>Try Again</span>
+                </button>
+              </div>
             ) : activeList.length === 0 ? (
               <div className="flex-1 flex flex-col items-center justify-center gap-2 text-center p-8">
                 <div className="w-12 h-12 rounded-2xl bg-zinc-900 border border-zinc-800 flex items-center justify-center mb-1">
@@ -872,15 +924,20 @@ export default function FaceMatchReviewModal({
                     return (
                       <div
                         key={cand.face_id}
-                        onClick={() => {
-                          setSelectedIds((prev) => {
-                            const next = new Set(prev);
-                            if (next.has(cand.face_id)) next.delete(cand.face_id);
-                            else next.add(cand.face_id);
-                            return next;
-                          });
+                        role="checkbox"
+                        aria-checked={isSelected}
+                        aria-label={`${cand.photo_name}${statusTab === "pending" ? `, ${cand.similarity}%` : ""}`}
+                        tabIndex={0}
+                        onClick={() => toggleSelected(cand.face_id)}
+                        onKeyDown={(e) => {
+                          if (e.target !== e.currentTarget) return;
+                          if (e.key === " " || e.key === "Enter") {
+                            e.preventDefault();
+                            toggleSelected(cand.face_id);
+                          }
                         }}
-                        style={{ height: "250px" }}
+                        // Long lists: cards outside the viewport skip layout and paint until scrolled to
+                        style={{ height: "250px", contentVisibility: "auto", containIntrinsicSize: "auto 250px" }}
                         className={`group relative flex flex-col rounded-2xl overflow-hidden bg-[#12141d] border-2 transition cursor-pointer ${
                           isSelected
                             ? "border-emerald-500 ring-2 ring-emerald-500/30 shadow-lg"
@@ -896,6 +953,7 @@ export default function FaceMatchReviewModal({
                             src={convertFileSrc(cand.face_thumb)}
                             alt={cand.photo_name}
                             decoding="async"
+                            loading="lazy"
                             className="w-full h-full object-cover group-hover:scale-105 transition duration-200"
                           />
 
@@ -933,7 +991,7 @@ export default function FaceMatchReviewModal({
                                 if (idx >= 0) setSpotlightIndex(idx);
                                 setReviewMode("spotlight");
                               }}
-                              className="absolute top-2.5 right-2.5 px-2.5 py-1 rounded-md bg-black/80 hover:bg-indigo-600 text-zinc-200 hover:text-white text-[10px] font-semibold opacity-0 group-hover:opacity-100 transition backdrop-blur shadow"
+                              className="absolute top-2.5 right-2.5 px-2.5 py-1 rounded-md bg-black/80 hover:bg-indigo-600 text-zinc-200 hover:text-white text-[10px] font-semibold opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 transition backdrop-blur shadow"
                               title="Inspect full photo context"
                             >
                               Full Photo
@@ -1032,6 +1090,10 @@ export default function FaceMatchReviewModal({
                   {/* Left: Full Photo Context with Highlighted Face Box */}
                   <div className="flex-1 bg-zinc-950 border border-zinc-800 rounded-2xl flex items-center justify-center p-4 relative overflow-hidden">
                     <div className="relative inline-block max-w-full max-h-full">
+                      {nextSpotlight && (
+                        // Loads the next candidate's photo in the background so Y/N feels instant
+                        <img src={convertFileSrc(nextSpotlight.photo_path)} alt="" aria-hidden className="hidden" />
+                      )}
                       <img
                         src={convertFileSrc(currentSpotlight.photo_path)}
                         alt={currentSpotlight.photo_name}

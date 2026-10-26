@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect } from "react";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { diskPathOf } from "../../utils/rawPairs";
+import { useDialogFocus } from "../../hooks/useDialogFocus";
+import { useWheel } from "../../hooks/useWheel";
 import { PhotoItem } from "../../types/lumina";
 import {
   ChevronLeft,
@@ -65,6 +67,22 @@ export default function LoupeModal({
 
   const isPanningRef = useRef<boolean>(false);
   const panStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  // A drag that ends over the backdrop fires a click there: it must not close the Loupe
+  const didPanRef = useRef<boolean>(false);
+  const isVisible = isOpen && Boolean(activePhoto);
+  const dialogRef = useDialogFocus<HTMLDivElement>(isVisible);
+  useWheel(
+    dialogRef,
+    (e) => {
+      const delta = e.deltaY < 0 ? 0.35 : -0.35;
+      setLoupeZoom((z) => {
+        const next = Math.max(1, Math.min(6, +(z + delta).toFixed(2)));
+        if (next === 1) setLoupePan({ x: 0, y: 0 });
+        return next;
+      });
+    },
+    isVisible
+  );
 
   useEffect(() => {
     setLoupeZoom(1);
@@ -116,17 +134,20 @@ export default function LoupeModal({
 
   return (
     <div
-      onClick={onClose}
-      onWheel={(e) => {
-        e.preventDefault();
-        const delta = e.deltaY < 0 ? 0.35 : -0.35;
-        setLoupeZoom((z) => {
-          const next = Math.max(1, Math.min(6, +(z + delta).toFixed(2)));
-          if (next === 1) setLoupePan({ x: 0, y: 0 });
-          return next;
-        });
+      ref={dialogRef}
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Loupe: ${activePhoto.name}`}
+      tabIndex={-1}
+      onClick={() => {
+        if (didPanRef.current) {
+          didPanRef.current = false;
+          return;
+        }
+        onClose();
       }}
       onMouseDown={(e) => {
+        didPanRef.current = false;
         if (loupeZoom <= 1) return;
         isPanningRef.current = true;
         panStartRef.current = {
@@ -136,6 +157,7 @@ export default function LoupeModal({
       }}
       onMouseMove={(e) => {
         if (!isPanningRef.current) return;
+        didPanRef.current = true;
         setLoupePan({
           x: e.clientX - panStartRef.current.x,
           y: e.clientY - panStartRef.current.y,
@@ -237,6 +259,7 @@ export default function LoupeModal({
             onClick={onClose}
             className="p-2 rounded-full bg-zinc-900/90 hover:bg-zinc-800 text-zinc-300 border border-zinc-700/60"
             title="Close (Space or Esc)"
+            aria-label="Close Loupe"
           >
             <X className="w-5 h-5" />
           </button>

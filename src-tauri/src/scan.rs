@@ -128,6 +128,15 @@ pub fn compute_db_duplicate_groups(conn: &Connection, root_folder: Option<&str>)
 
 pub static SCAN_GENERATION: AtomicU64 = AtomicU64::new(0);
 
+// Error text the UI recognises as "the user cancelled the folder scan" (not a failure to report)
+pub const SCAN_CANCELLED: &str = "Folder scan cancelled";
+
+// Cancel button of the folder scan dialog: the running index pass (and its thumbnail pass) stop early
+#[tauri::command]
+pub fn cancel_folder_scan() {
+    SCAN_GENERATION.fetch_add(1, Ordering::AcqRel);
+}
+
 pub fn salt_hash_with_path(hash: &str, disk_path: &str) -> String {
     let mut hasher = blake3::Hasher::new();
     hasher.update(hash.as_bytes());
@@ -228,6 +237,9 @@ pub async fn scan_folder(
         if !root_path.exists() {
             return Err(format!("Folder does not exist: {}", root_path.display()));
         }
+        // The webview may only load files from the app's own data folder and from libraries the user opened
+        let _ = app.asset_protocol_scope().allow_directory(&root_path, true);
+        let is_cancelled = || SCAN_GENERATION.load(Ordering::Acquire) != generation;
 
         let app_dir = get_app_storage_dir(&app);
         let thumbs_dir = app_dir.join("thumbnails");
@@ -241,8 +253,8 @@ pub async fn scan_folder(
                 stage: "Loading SQLite index cache...".to_string(),
                 current_file: root_path.to_string_lossy().to_string(),
                 completed: 0,
-                total: 100,
-                percent: 2,
+                total: 0,
+                percent: 0,
                 done: false,
             },
         );
@@ -390,6 +402,7 @@ pub async fn scan_folder(
                     && name != ".triage_cache"
                     && !name.starts_with('$')
             })
+            .take_while(|_| !is_cancelled())
             .flatten()
             .filter_map(|entry| {
                 if !entry.file_type().is_file() {
@@ -425,6 +438,9 @@ pub async fn scan_folder(
         let indexed_results: Vec<(PhotoItem, String, u64, u64, bool)> = index_pool.install(|| candidate_paths
             .into_par_iter()
             .filter_map(|file_path| {
+                if is_cancelled() {
+                    return None;
+                }
                 let metadata = fs::metadata(&file_path).ok()?;
                 let size_bytes = metadata.len();
                 if size_bytes == 0 {
@@ -680,6 +696,10 @@ pub async fn scan_folder(
             })
             .collect());
 
+        // Cancelled (or superseded by a newer scan): nothing is written, the UI keeps what it showed before
+        if is_cancelled() {
+            return Err(SCAN_CANCELLED.to_string());
+        }
         let mut indexed_results = indexed_results;
         let collision_entries: Vec<(String, String, bool)> = indexed_results
             .iter()

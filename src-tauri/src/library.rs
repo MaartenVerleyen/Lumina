@@ -77,13 +77,20 @@ pub fn set_manual_location(
     } else {
         (clean_loc, latitude, longitude)
     };
+    // A typed place name without coordinates renames the place but keeps the photos' GPS position;
+    // an empty name clears both
+    let keep_coordinates = final_lat.is_none() && final_lon.is_none() && !final_loc.is_empty();
 
     if let Ok(tx) = conn.transaction() {
         for h in hashes {
-            let _ = tx.execute(
-                "UPDATE photos SET location = ?1, latitude = ?2, longitude = ?3 WHERE hash = ?4",
-                params![final_loc, final_lat, final_lon, h],
-            );
+            let _ = if keep_coordinates {
+                tx.execute("UPDATE photos SET location = ?1 WHERE hash = ?2", params![final_loc, h])
+            } else {
+                tx.execute(
+                    "UPDATE photos SET location = ?1, latitude = ?2, longitude = ?3 WHERE hash = ?4",
+                    params![final_loc, final_lat, final_lon, h],
+                )
+            };
         }
         let _ = tx.commit();
     }
@@ -411,6 +418,22 @@ pub fn remove_tag(app: AppHandle, hash: String, tag: String) -> Result<Vec<Strin
     .map_err(|e| e.to_string())?;
 
     get_tags_for_hash(&conn, &hash)
+}
+
+// Removes one tag from many photos (undo of a batch tag)
+#[tauri::command]
+pub fn remove_tag_batch(app: AppHandle, hashes: Vec<String>, tag: String) -> Result<(), String> {
+    let mut conn = open_global_db(&app)?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    {
+        let mut stmt = tx
+            .prepare("DELETE FROM photo_tags WHERE hash = ?1 AND tag = ?2")
+            .map_err(|e| e.to_string())?;
+        for h in &hashes {
+            stmt.execute(params![h, tag]).map_err(|e| e.to_string())?;
+        }
+    }
+    tx.commit().map_err(|e| e.to_string())
 }
 
 pub fn get_tags_for_hash(conn: &Connection, hash: &str) -> Result<Vec<String>, String> {

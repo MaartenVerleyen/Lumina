@@ -1,3 +1,4 @@
+import { useDialogFocus } from "../../hooks/useDialogFocus";
 import { LibraryHealthStats } from "../../types/lumina";
 import { AlertTriangle, Camera, FileCode, HardDrive, Trash2, X } from "lucide-react";
 
@@ -18,11 +19,12 @@ export default function HealthXmpModal({
   handlePruneCache,
   handleExportXmp,
 }: HealthXmpModalProps) {
+  const dialogRef = useDialogFocus<HTMLDivElement>(isOpen);
   if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-sm flex items-center justify-center p-6">
-      <div className="bg-[#12141c] border border-zinc-800 rounded-2xl w-full max-w-xl overflow-hidden shadow-2xl flex flex-col">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-label="Library health" tabIndex={-1} className="bg-[#12141c] border border-zinc-800 rounded-2xl w-full max-w-xl overflow-hidden shadow-2xl flex flex-col">
         <div className="p-5 border-b border-zinc-800 flex justify-between items-center">
           <div>
             <h2 className="text-base font-bold text-zinc-100 flex items-center gap-2">
@@ -34,7 +36,7 @@ export default function HealthXmpModal({
               sidecars.
             </p>
           </div>
-          <button onClick={onClose} className="text-zinc-500 hover:text-zinc-300">
+          <button onClick={onClose} className="text-zinc-500 hover:text-zinc-300" aria-label="Close">
             <X className="w-4 h-4" />
           </button>
         </div>
