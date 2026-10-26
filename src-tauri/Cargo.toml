@@ -36,6 +36,7 @@ reverse_geocoder = "4.1"
 # Pinned: the 2.0 API still changes between release candidates.
 ort = { version = "=2.0.0-rc.15", features = ["directml"] }
 # BERT WordPiece tokenizer for the multilingual CLIP text encoder (pure Rust: no Oniguruma / C++ deps)
+little_exif = "=0.6.23"
 tokenizers = { version = "=0.22.2", default-features = false, features = ["fancy-regex"] }
 # Face models come from InsightFace's official buffalo_l package: unzip two files, verify their SHA-256
 zip = { version = "9", default-features = false, features = ["deflate"] }

@@ -1,4 +1,4 @@
-import { memo, useMemo } from "react";
+import { memo, useMemo, useState } from "react";
 import { FolderTreeNode, PhotoItem, SmartFilter } from "../../types/lumina";
 import {
   BrainCircuit,
@@ -12,7 +12,9 @@ import {
   Layers,
   MapPin,
   Package,
+  Pencil,
   Pin,
+  Plane,
   Smartphone,
   Sparkles,
   Star,
@@ -44,7 +46,8 @@ interface LeftSidebarProps {
   folderTree: { rootCount: number; nodes: FolderTreeNode[] };
   expandedFolders: Set<string>;
   setExpandedFolders: React.Dispatch<React.SetStateAction<Set<string>>>;
-  autoEvents: [string, number][];
+  autoEvents: { id: string; label: string; count: number; kind: "event" | "trip" }[];
+  onRenameTrip?: (id: string, name: string) => Promise<void>;
   allLibraryTags: string[];
   // Optional props for Simple Mode & Empty Trash / Context Menu
   simpleMode?: boolean;
@@ -86,12 +89,16 @@ function LeftSidebar({
   expandedFolders,
   setExpandedFolders,
   autoEvents,
+  onRenameTrip,
   allLibraryTags,
   simpleMode = false,
   handleEmptyTrashToRecycleBin,
   onFolderContextMenu,
   albumsSection,
 }: LeftSidebarProps) {
+  const [renamingTrip, setRenamingTrip] = useState<string | null>(null);
+  const [tripNameInput, setTripNameInput] = useState("");
+
   function toggleFolderExpand(fullPath: string, e: React.MouseEvent) {
     e.stopPropagation();
     setExpandedFolders((prev) => {
@@ -416,22 +423,74 @@ function LeftSidebar({
             Events & Trips
           </span>
           <div className="mt-2 flex flex-col gap-0.5 text-xs max-h-36 overflow-y-auto">
-            {autoEvents.map(([ev, count]) => (
-              <button
-                key={ev}
-                onClick={() => setActiveEvent(ev === activeEvent ? "ALL" : ev)}
-                className={`flex justify-between items-center px-2.5 py-1.5 rounded-md text-left truncate border transition ${
-                  activeEvent === ev
-                    ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/30 font-medium"
-                    : "text-zinc-400 hover:bg-zinc-900/60 border-transparent"
-                }`}
-              >
-                <span className="truncate flex items-center gap-1.5">
-                  <Calendar className="w-3 h-3 shrink-0 text-emerald-400" /> {ev}
-                </span>
-                <span className="text-[11px] text-zinc-500 font-mono ml-1">{count}</span>
-              </button>
-            ))}
+            {autoEvents.map((ev) =>
+              renamingTrip === ev.id ? (
+                <form
+                  key={ev.id}
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    onRenameTrip?.(ev.id, tripNameInput);
+                    setRenamingTrip(null);
+                  }}
+                  className="px-1 py-0.5"
+                >
+                  <input
+                    autoFocus
+                    value={tripNameInput}
+                    onChange={(e) => setTripNameInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      e.stopPropagation();
+                      if (e.key === "Escape") setRenamingTrip(null);
+                    }}
+                    onBlur={() => setRenamingTrip(null)}
+                    placeholder="Name (empty = automatic)"
+                    className="w-full bg-zinc-950 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-200 select-text focus:outline-none focus:border-emerald-500"
+                  />
+                </form>
+              ) : (
+                <div
+                  key={ev.id}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => setActiveEvent(ev.id === activeEvent ? "ALL" : ev.id)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") setActiveEvent(ev.id === activeEvent ? "ALL" : ev.id);
+                  }}
+                  title={ev.kind === "trip" ? "Trip: several days away from home" : "Event"}
+                  className={`group flex justify-between items-center px-2.5 py-1.5 rounded-md text-left border cursor-pointer transition ${
+                    activeEvent === ev.id
+                      ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/30 font-medium"
+                      : "text-zinc-400 hover:bg-zinc-900/60 border-transparent"
+                  }`}
+                >
+                  <span className="truncate flex items-center gap-1.5">
+                    {ev.kind === "trip" ? (
+                      <Plane className="w-3 h-3 shrink-0 text-sky-400" />
+                    ) : (
+                      <Calendar className="w-3 h-3 shrink-0 text-emerald-400" />
+                    )}
+                    <span className="truncate">{ev.label}</span>
+                  </span>
+                  <span className="flex items-center gap-1 shrink-0">
+                    {onRenameTrip && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setRenamingTrip(ev.id);
+                          setTripNameInput("");
+                        }}
+                        className="p-0.5 rounded text-zinc-500 hover:text-zinc-200 opacity-0 group-hover:opacity-100 focus:opacity-100"
+                        aria-label={`Rename ${ev.label}`}
+                        title="Rename"
+                      >
+                        <Pencil className="w-3 h-3" />
+                      </button>
+                    )}
+                    <span className="text-[11px] text-zinc-500 font-mono ml-1">{ev.count}</span>
+                  </span>
+                </div>
+              )
+            )}
           </div>
         </div>
       )}

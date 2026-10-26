@@ -83,6 +83,8 @@ export interface PersonItem {
   name: string;
   photo_count: number;
   cover_thumb: string;
+  // Hidden people stay on their photos but leave the people bar and get no suggestions
+  hidden: boolean;
 }
 
 export interface ThumbBatchItem {
@@ -368,3 +370,16 @@ export interface SavedSearch {
 }
 
 export type BulkPopover = "tag" | "person" | "move" | "location" | "time" | "album";
+
+export interface ExportProgress {
+  completed: number;
+  total: number;
+  done: boolean;
+  cancelled: boolean;
+}
+
+export interface ExportResult {
+  exported: number;
+  failures: FileOpFailure[];
+  cancelled: boolean;
+}

@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import {
   Copy,
+  Download,
   ExternalLink,
   Eye,
   FileText,
@@ -27,6 +28,7 @@ interface PhotoContextMenuProps {
   onPickPhoto?: () => void;
   onCopyPath?: () => void;
   onFindSimilar?: () => void;
+  onExport?: () => void;
 }
 
 export function PhotoContextMenu({
@@ -39,6 +41,7 @@ export function PhotoContextMenu({
   onPickPhoto,
   onCopyPath,
   onFindSimilar,
+  onExport,
 }: PhotoContextMenuProps) {
   const ref = useRef<HTMLDivElement>(null);
 
@@ -113,6 +116,19 @@ export function PhotoContextMenu({
         >
           <FileText className="w-3.5 h-3.5 text-zinc-400" />
           <span>Copy File Path</span>
+        </button>
+      )}
+
+      {onExport && (
+        <button
+          onClick={() => {
+            onExport();
+            onClose();
+          }}
+          className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-zinc-800 text-zinc-200 transition text-left"
+        >
+          <Download className="w-3.5 h-3.5 text-emerald-400" />
+          <span>Export…</span>
         </button>
       )}
 

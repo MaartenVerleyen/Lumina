@@ -34,6 +34,7 @@ mod thumbs;
 mod face_ort;
 mod clip;
 mod albums;
+mod export;
 mod face_match;
 #[cfg(test)]
 mod tests;
@@ -161,6 +162,7 @@ pub struct PersonItem {
     pub name: String,
     pub photo_count: i64,
     pub cover_thumb: String,
+    pub hidden: bool,
 }
 
 #[derive(Serialize, Clone)]
@@ -356,6 +358,10 @@ pub fn run() {
             face_commands::add_person_to_photos,
             face_commands::remove_person_from_photo,
             face_commands::remove_person_from_photos,
+            face_commands::rename_person,
+            face_commands::set_person_hidden,
+            albums::get_trip_names,
+            albums::set_trip_name,
             face_commands::find_similar_faces,
             face_commands::get_confirmed_faces_for_person,
             face_commands::get_rejected_faces_for_person,
@@ -368,6 +374,8 @@ pub fn run() {
             face_commands::scan_library_faces_batch,
             face_commands::cancel_face_scan,
             scan::cancel_folder_scan,
+            export::export_photos,
+            export::cancel_export,
             albums::get_albums,
             albums::create_album,
             albums::rename_album,

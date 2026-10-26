@@ -12,6 +12,7 @@ import RightInspector from "./components/layout/RightInspector";
 import BottomStatusBar from "./components/layout/BottomStatusBar";
 import ToastStack from "./components/layout/ToastStack";
 import AlbumsSection from "./components/layout/AlbumsSection";
+import ExportModal from "./components/modals/ExportModal";
 import { describeTerm, removeTerm, TermKey } from "./utils/searchQuery";
 import CommandPalette, { PaletteAction } from "./components/modals/CommandPalette";
 import { usePhotoDrag, DropTarget } from "./hooks/usePhotoDrag";
@@ -361,6 +362,7 @@ export default function App() {
   // (The Loupe is deliberately not here: triaging inside the Loupe is the point of it.)
   const isBlockingModalOpen =
     isPaletteOpen ||
+    lib.exportTargets !== null ||
     lib.isCommitModalOpen ||
     lib.isHealthModalOpen ||
     lib.isSessionLogModalOpen ||
@@ -372,6 +374,7 @@ export default function App() {
 
   const closeBlockingModals = () => {
     setIsPaletteOpen(false);
+    lib.setExportTargets(null);
     lib.setIsCommitModalOpen(false);
     lib.setIsHealthModalOpen(false);
     lib.setIsSessionLogModalOpen(false);
@@ -501,6 +504,16 @@ export default function App() {
       completed: lib.semanticProgress.completed,
       total: lib.semanticProgress.total,
       onCancel: lib.handleCancelSemanticIndex,
+      cancelLabel: "Stop",
+    });
+  }
+  if (lib.exportProgress) {
+    jobs.push({
+      id: "export",
+      label: "Exporting photos",
+      completed: lib.exportProgress.completed,
+      total: lib.exportProgress.total,
+      onCancel: lib.handleCancelExport,
       cancelLabel: "Stop",
     });
   }
@@ -671,6 +684,7 @@ export default function App() {
     { id: "ai-selected", group: "AI", label: "Batch AI on selected photos", keywords: "caption tags", enabled: hasSelection && !lib.aiBatchProgress, run: () => lib.runBatchAiOnList(selected()) },
     { id: "ai-one", group: "AI", label: "AI analyze this photo", shortcut: "A", enabled: Boolean(lib.activePhoto), run: lib.handleAiAnalyzeSingle },
     { id: "ai-stop", group: "AI", label: "Stop Batch AI", enabled: Boolean(lib.aiBatchProgress), run: lib.handleStopAiBatch },
+    { id: "export", group: "Photo", label: "Export selected photos…", keywords: "jpeg share save resize", enabled: hasSelection, run: () => lib.openExport() },
     { id: "exif", group: "Photo", label: "Re-read EXIF of selection", keywords: "date camera gps refresh", enabled: hasSelection, run: lib.handleForceRescanExifSelected },
     { id: "reveal", group: "Photo", label: "Show in Explorer", enabled: Boolean(lib.activePhoto), run: () => lib.activePhoto && lib.handleRevealInFileManager(diskPathOf(lib.activePhoto)) },
     { id: "external", group: "Photo", label: "Open in default app", enabled: Boolean(lib.activePhoto), run: () => lib.activePhoto && lib.handleOpenInDefaultViewer(diskPathOf(lib.activePhoto)) },
@@ -835,13 +849,13 @@ export default function App() {
       )}
 
       {/* Top People Carousel with Pending Face Match Badges */}
-      {lib.people.length > 0 && (
+      {lib.people.some((p) => !p.hidden) && (
         <div className="px-5 py-1.5 bg-panel border-b border-zinc-800/50 flex items-center gap-2 overflow-x-auto shrink-0">
           <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider mr-1 shrink-0">
             People
           </span>
 
-          {lib.people.map((p) => {
+          {lib.people.filter((p) => !p.hidden).map((p) => {
             const isSelected = lib.selectedPerson === p.name;
             const pendingCount = lib.pendingFaceCounts[p.name] || 0;
             return (
@@ -933,6 +947,7 @@ export default function App() {
               expandedFolders={lib.expandedFolders}
               setExpandedFolders={lib.setExpandedFolders}
               autoEvents={lib.autoEvents}
+              onRenameTrip={lib.handleRenameTrip}
               allLibraryTags={lib.allLibraryTags}
               handleEmptyTrashToRecycleBin={lib.handleEmptyTrashToRecycleBin}
               onFolderContextMenu={handleFolderContextMenu}
@@ -1471,6 +1486,7 @@ export default function App() {
             albums={lib.albums}
             handleAddToAlbum={lib.handleAddToAlbum}
             handleCreateAlbum={lib.handleCreateAlbum}
+            onExport={() => lib.openExport()}
           />
         </main>
 
@@ -1622,6 +1638,9 @@ export default function App() {
         }}
         onFindSimilar={() => {
           if (contextPhoto) lib.handleFindSimilar(contextPhoto);
+        }}
+        onExport={() => {
+          if (contextPhoto) lib.openExport(contextMenuTargets(contextPhoto.hash));
         }}
       />
 
@@ -1850,6 +1869,16 @@ export default function App() {
         setPhotos={lib.setPhotos}
         refreshPeople={lib.refreshPeople}
         folder={lib.folder}
+        onRenamePerson={lib.handleRenamePerson}
+        onSetPersonHidden={lib.handleSetPersonHidden}
+      />
+
+      <ExportModal
+        isOpen={lib.exportTargets !== null}
+        count={lib.exportTargets?.length ?? 0}
+        defaultDir={lib.folder ? `${lib.folder.replace(/[\\/]+$/, "")}\\Export` : ""}
+        onClose={() => lib.setExportTargets(null)}
+        onExport={lib.runExport}
       />
 
       <LoupeModal

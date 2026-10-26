@@ -20,6 +20,7 @@ import {
   X,
   XCircle,
   BookImage,
+  Download,
 } from "lucide-react";
 
 // Number field that accepts a leading "-" while typing: the text is kept as typed and the parent
@@ -48,6 +49,7 @@ function SignedIntInput({ value, onChange }: { value: number; onChange: (n: numb
 }
 
 interface BulkActionDockProps {
+  onExport?: () => void;
   albums?: Album[];
   handleAddToAlbum?: (id: number, targetHashes?: string[]) => Promise<void>;
   handleCreateAlbum?: (name: string, addHashes?: string[]) => Promise<number | null>;
@@ -86,6 +88,7 @@ interface BulkActionDockProps {
 }
 
 export default function BulkActionDock({
+  onExport,
   albums,
   handleAddToAlbum,
   handleCreateAlbum,
@@ -504,6 +507,17 @@ export default function BulkActionDock({
           <Clock className="w-3.5 h-3.5 text-cyan-400" />
           <span>Time</span>
         </button>
+
+        {onExport && (
+          <button
+            onClick={onExport}
+            className="flex items-center gap-1 text-zinc-300 hover:text-white"
+            title="Export the selected photos as JPEGs"
+          >
+            <Download className="w-3.5 h-3.5 text-emerald-400" />
+            <span>Export</span>
+          </button>
+        )}
 
         <button
           onClick={() => handleToggleBasketSelection()}

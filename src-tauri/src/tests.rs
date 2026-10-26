@@ -819,3 +819,47 @@ fn album_names_are_unique_ignoring_case_and_members_are_not_duplicated() {
     let count: i64 = conn.query_row("SELECT COUNT(*) FROM album_photos", [], |r| r.get(0)).unwrap();
     assert_eq!(count, 1);
 }
+
+#[test]
+fn renaming_a_person_onto_an_existing_name_merges_them() {
+    let mut conn = Connection::open_in_memory().unwrap();
+    conn.execute_batch(
+        "CREATE TABLE people (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL, cover_face_thumb TEXT DEFAULT '', hidden INTEGER DEFAULT 0);
+         CREATE TABLE photo_people (hash TEXT, person_name TEXT, PRIMARY KEY (hash, person_name));
+         CREATE TABLE photo_faces (face_id TEXT PRIMARY KEY, hash TEXT, person_name TEXT);
+         CREATE TABLE face_rejections (face_id TEXT NOT NULL, person_name TEXT NOT NULL, PRIMARY KEY (face_id, person_name));
+         INSERT INTO people (name, cover_face_thumb) VALUES ('anna', 'a.jpg'), ('Anna Smith', '');
+         INSERT INTO photo_people VALUES ('h1', 'anna'), ('h2', 'anna'), ('h2', 'Anna Smith');
+         INSERT INTO photo_faces VALUES ('f1', 'h1', 'anna'), ('f2', 'h2', 'Anna Smith');
+         INSERT INTO face_rejections VALUES ('f9', 'anna');",
+    )
+    .unwrap();
+
+    face_commands::rename_person_in_db(&mut conn, "anna", "Anna Smith").unwrap();
+
+    let people: Vec<(String, String)> = conn
+        .prepare("SELECT name, cover_face_thumb FROM people")
+        .unwrap()
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+        .unwrap()
+        .flatten()
+        .collect();
+    assert_eq!(people, vec![("Anna Smith".to_string(), "a.jpg".to_string())]);
+    let tagged: i64 = conn.query_row("SELECT COUNT(*) FROM photo_people WHERE person_name = 'Anna Smith'", [], |r| r.get(0)).unwrap();
+    assert_eq!(tagged, 2);
+    let leftovers: i64 = conn
+        .query_row(
+            "SELECT (SELECT COUNT(*) FROM photo_people WHERE person_name = 'anna')
+                  + (SELECT COUNT(*) FROM photo_faces WHERE person_name = 'anna')
+                  + (SELECT COUNT(*) FROM face_rejections WHERE person_name = 'anna')",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(leftovers, 0);
+
+    // A capitalisation-only rename is a rename, not a merge
+    face_commands::rename_person_in_db(&mut conn, "Anna Smith", "ANNA SMITH").unwrap();
+    let name: String = conn.query_row("SELECT name FROM people", [], |r| r.get(0)).unwrap();
+    assert_eq!(name, "ANNA SMITH");
+}

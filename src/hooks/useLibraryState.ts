@@ -38,17 +38,20 @@ import {
   Album,
   SavedSearch,
   BulkPopover,
+  ExportProgress,
+  ExportResult,
   PhotoActionSnapshot,
   UndoHistoryEntry,
 } from "../types/lumina";
 import {
   buildFolderTree,
-  getPhotoEventName,
   computePresetTargetFolder,
 } from "../utils/photoHelpers";
 import { expandWithRawPairs, diskPathOf, RAW_OR_HEIC_NAME } from "../utils/rawPairs";
 import type { GridStyle, CardDetails } from "../components/views/VirtualPhotoGrid";
 import { parseSearchQuery, matchesTerms, MatchContext } from "../utils/searchQuery";
+import { computeTrips, tripLabel } from "../utils/trips";
+import type { ExportSettings } from "../components/modals/ExportModal";
 
 const MAX_UNDO_STEPS = 20;
 const MAX_TOASTS = 4;
@@ -924,14 +927,38 @@ export function useLibraryState() {
     }
   }, [folderTree.nodes]);
 
-  const autoEvents = useMemo(() => {
-    const counts = new Map<string, number>();
-    photos.forEach((p) => {
-      const ev = getPhotoEventName(p);
-      if (ev) counts.set(ev, (counts.get(ev) || 0) + 1);
-    });
-    return Array.from(counts.entries()).sort((a, b) => TEXT_COLLATOR.compare(b[0], a[0]));
-  }, [photos]);
+  // Events & trips found from capture time and GPS (newest first); `activeEvent` holds a trip id
+  const [tripNames, setTripNames] = useState<Record<string, string>>({});
+  useEffect(() => {
+    invoke<Record<string, string>>("get_trip_names").then(setTripNames).catch(() => {});
+  }, []);
+  const trips = useMemo(() => computeTrips(photos), [photos]);
+  const tripOfHash = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const t of trips) for (const h of t.hashes) m.set(h, t.id);
+    return m;
+  }, [trips]);
+  const autoEvents = useMemo(
+    () =>
+      trips
+        .map((t) => ({ id: t.id, label: tripLabel(t, tripNames[t.id]), count: t.hashes.length, kind: t.kind }))
+        .reverse(),
+    [trips, tripNames]
+  );
+
+  async function handleRenameTrip(id: string, name: string) {
+    try {
+      await invoke("set_trip_name", { tripId: id, name });
+      setTripNames((prev) => {
+        const next = { ...prev };
+        if (name.trim()) next[id] = name.trim();
+        else delete next[id];
+        return next;
+      });
+    } catch (err) {
+      setError(String(err));
+    }
+  }
 
   const allLibraryTags = useMemo(() => {
     const s = new Set<string>();
@@ -1063,7 +1090,7 @@ export function useLibraryState() {
           }
         }
       }
-      if (activeEvent !== "ALL" && getPhotoEventName(p) !== activeEvent) return false;
+      if (activeEvent !== "ALL" && tripOfHash.get(p.hash) !== activeEvent) return false;
       if (activeTag !== "ALL" && !p.tags.includes(activeTag)) return false;
 
       if (q && !searchTextOf(p).includes(q)) return false;
@@ -1160,6 +1187,7 @@ export function useLibraryState() {
     selectedPerson,
     activeSubfolder,
     activeEvent,
+    tripOfHash,
     activeTag,
     parsedSearch,
     albumContext,
@@ -2797,6 +2825,115 @@ export function useLibraryState() {
     setSearchQuery(saved.query);
   }
 
+  // ---------- Export ----------
+  // Photos chosen for the export dialog (null = dialog closed); RAW+JPEG pairs are not expanded here,
+  // so one shot gives one exported file
+  const [exportTargets, setExportTargets] = useState<string[] | null>(null);
+  const [exportProgress, setExportProgress] = useState<ExportProgress | null>(null);
+
+  useEffect(() => {
+    const unlisten = listen<ExportProgress>("export-progress", (event) => {
+      setExportProgress(event.payload.done ? null : event.payload);
+    });
+    return () => {
+      unlisten.then((f) => f());
+    };
+  }, []);
+
+  function openExport(targetHashes?: string[]) {
+    const hashes = targetHashes ?? Array.from(selectedHashes);
+    if (hashes.length === 0) {
+      setAutoMatchNotice("Select the photos to export first.");
+      return;
+    }
+    setExportTargets(hashes);
+  }
+
+  async function runExport(settings: ExportSettings) {
+    const hashes = exportTargets ?? [];
+    setExportTargets(null);
+    if (hashes.length === 0) return;
+    setExportProgress({ completed: 0, total: hashes.length, done: false, cancelled: false });
+    try {
+      const result = await invoke<ExportResult>("export_photos", {
+        options: {
+          hashes,
+          dest_dir: settings.destDir,
+          long_edge: settings.longEdge,
+          quality: settings.quality,
+          strip_gps: settings.stripGps,
+        },
+      });
+      for (const f of result.failures) addLog("DISK", `Could not export ${f.file}`, f.error);
+      addLog("DISK", `Exported ${result.exported} photo(s)`, settings.destDir);
+      if (result.failures.length > 0) {
+        setError(`${result.failures.length} photo(s) could not be exported. See the Session Log.`);
+      }
+      setAutoMatchNotice(
+        `${result.cancelled ? "Export stopped: " : ""}${result.exported} photo(s) exported to ${settings.destDir}`
+      );
+    } catch (err) {
+      setError(`Export failed: ${String(err)}`);
+    } finally {
+      setExportProgress(null);
+    }
+  }
+
+  async function handleCancelExport() {
+    try {
+      await invoke("cancel_export");
+    } catch {}
+  }
+
+  // ---------- People: rename / merge / hide ----------
+  async function handleRenamePerson(oldName: string, newName: string) {
+    const target = newName.trim();
+    if (!target || target === oldName) return null;
+    const merging = people.some(
+      (p) => p.name.toLowerCase() === target.toLowerCase() && p.name.toLowerCase() !== oldName.toLowerCase()
+    );
+    if (merging) {
+      const ok = await confirmAction(
+        `"${target}" already exists. Merge "${oldName}" into "${target}"?\n\nAll photos, named faces and rejections of "${oldName}" move to "${target}".`,
+        "Merge"
+      );
+      if (!ok) return null;
+    }
+    try {
+      const finalName = await invoke<string>("rename_person", { oldName, newName: target });
+      const old = oldName.toLowerCase();
+      setPhotos((prev) =>
+        prev.map((p) => {
+          const hasOld = p.people.some((n) => n.toLowerCase() === old) || p.faces.some((f) => f.person_name?.toLowerCase() === old);
+          if (!hasOld) return p;
+          return {
+            ...p,
+            people: Array.from(new Set(p.people.map((n) => (n.toLowerCase() === old ? finalName : n)))).sort(),
+            faces: p.faces.map((f) => (f.person_name?.toLowerCase() === old ? { ...f, person_name: finalName } : f)),
+          };
+        })
+      );
+      if (selectedPerson?.toLowerCase() === old) setSelectedPerson(finalName);
+      addLog("FACE", merging ? `Merged "${oldName}" into "${finalName}"` : `Renamed "${oldName}" to "${finalName}"`);
+      await refreshPeople();
+      return finalName;
+    } catch (err) {
+      setError(String(err));
+      return null;
+    }
+  }
+
+  async function handleSetPersonHidden(name: string, hidden: boolean) {
+    try {
+      await invoke("set_person_hidden", { name, hidden });
+      if (hidden && selectedPerson === name) setSelectedPerson(null);
+      addLog("FACE", `${hidden ? "Hid" : "Unhid"} "${name}"`);
+      await refreshPeople();
+    } catch (err) {
+      setError(String(err));
+    }
+  }
+
   // Latest photos for the long-running AI loop (the tag vocabulary is recomputed from the live library)
   const photosRef = useRef(photos);
   photosRef.current = photos;
@@ -3142,6 +3279,7 @@ export function useLibraryState() {
     setTagInput,
     folderTree,
     autoEvents,
+    handleRenameTrip,
     allLibraryTags,
     stagedPhotos,
     gpsPhotosCount,
@@ -3174,6 +3312,14 @@ export function useLibraryState() {
     handleSaveSearch,
     handleDeleteSavedSearch,
     runSavedSearch,
+    exportTargets,
+    setExportTargets,
+    exportProgress,
+    openExport,
+    runExport,
+    handleCancelExport,
+    handleRenamePerson,
+    handleSetPersonHidden,
     smartSearch,
     toggleSmartSearch,
     semanticResult,

@@ -18,6 +18,10 @@ pub fn ensure_album_tables(conn: &Connection) {
             PRIMARY KEY (album_id, hash)
          );
          CREATE INDEX IF NOT EXISTS idx_album_photos_hash ON album_photos(hash);
+         CREATE TABLE IF NOT EXISTS trip_names (
+            trip_id TEXT PRIMARY KEY,
+            name TEXT NOT NULL
+         );
          CREATE TABLE IF NOT EXISTS saved_searches (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL UNIQUE COLLATE NOCASE,
@@ -179,5 +183,32 @@ pub fn save_search(app: AppHandle, name: String, query: String) -> Result<i64, S
 pub fn delete_saved_search(app: AppHandle, id: i64) -> Result<(), String> {
     let conn = open_global_db(&app)?;
     conn.execute("DELETE FROM saved_searches WHERE id = ?1", params![id]).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+// Custom names for automatically found trips, keyed by the trip id the UI computes
+#[tauri::command]
+pub fn get_trip_names(app: AppHandle) -> Result<HashMap<String, String>, String> {
+    let conn = open_global_db(&app)?;
+    let mut stmt = conn.prepare("SELECT trip_id, name FROM trip_names").map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+        .map_err(|e| e.to_string())?;
+    Ok(rows.flatten().collect())
+}
+
+// An empty name goes back to the automatic one
+#[tauri::command]
+pub fn set_trip_name(app: AppHandle, trip_id: String, name: String) -> Result<(), String> {
+    let conn = open_global_db(&app)?;
+    if name.trim().is_empty() {
+        conn.execute("DELETE FROM trip_names WHERE trip_id = ?1", params![trip_id]).map_err(|e| e.to_string())?;
+    } else {
+        conn.execute(
+            "INSERT OR REPLACE INTO trip_names (trip_id, name) VALUES (?1, ?2)",
+            params![trip_id, name.trim()],
+        )
+        .map_err(|e| e.to_string())?;
+    }
     Ok(())
 }

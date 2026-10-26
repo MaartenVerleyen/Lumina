@@ -28,6 +28,8 @@ import {
 } from "lucide-react";
 
 interface FaceMatchReviewModalProps {
+  onRenamePerson?: (oldName: string, newName: string) => Promise<string | null>;
+  onSetPersonHidden?: (name: string, hidden: boolean) => Promise<void>;
   isOpen: boolean;
   initialPerson: string | null;
   onClose: () => void;
@@ -53,6 +55,8 @@ interface HistoryStep {
 }
 
 export default function FaceMatchReviewModal({
+  onRenamePerson,
+  onSetPersonHidden,
   isOpen,
   initialPerson,
   onClose,
@@ -83,6 +87,9 @@ export default function FaceMatchReviewModal({
   const [reviewMode, setReviewMode] = useState<"grid" | "spotlight">("grid");
   const [spotlightIndex, setSpotlightIndex] = useState<number>(0);
   const [historyStack, setHistoryStack] = useState<HistoryStep[]>([]);
+  // Person menu in the sidebar: which person, and whether it shows the rename / merge field
+  const [personMenu, setPersonMenu] = useState<{ name: string; mode: "menu" | "rename" | "merge" } | null>(null);
+  const [personMenuInput, setPersonMenuInput] = useState("");
 
   const syncUpdatedFacesToPhotos = useCallback(
     (updatedMap: Record<string, FaceInstance[]>) => {
@@ -646,12 +653,119 @@ export default function FaceMatchReviewModal({
               Confirmed People ({people.length})
             </span>
 
-            {people.map((p) => {
+            {[...people.filter((p) => !p.hidden), ...people.filter((p) => p.hidden)].map((p, i, list) => {
               const isSelected = view === "person" && p.name.toLowerCase() === activePerson.toLowerCase();
               const pending = pendingCounts[p.name] || 0;
+              const menuOpen = personMenu?.name === p.name;
+              const firstHidden = p.hidden && !list[i - 1]?.hidden;
+              const submitMenu = async () => {
+                if (!personMenu || !onRenamePerson) return;
+                const result = await onRenamePerson(p.name, personMenuInput);
+                setPersonMenu(null);
+                if (result && activePerson.toLowerCase() === p.name.toLowerCase()) {
+                  loadDataForPerson(result, statusTab);
+                }
+              };
               return (
+                <div key={p.name} className={`relative ${p.hidden ? "opacity-60" : ""}`}>
+                  {firstHidden && (
+                    <span className="block text-[11px] font-bold text-zinc-600 uppercase tracking-wider px-2 pt-2 pb-1">
+                      Hidden
+                    </span>
+                  )}
+                  {(onRenamePerson || onSetPersonHidden) && (
+                    <button
+                      onClick={() => {
+                        setPersonMenu(menuOpen ? null : { name: p.name, mode: "menu" });
+                        setPersonMenuInput("");
+                      }}
+                      className="absolute right-1 top-1 z-10 px-1.5 py-0.5 rounded text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 text-xs"
+                      aria-label={`Options for ${p.name}`}
+                      title="Rename, merge or hide"
+                    >
+                      ⋯
+                    </button>
+                  )}
+                  {menuOpen && personMenu && (
+                    <div className="absolute right-1 top-7 z-20 w-56 bg-raised border border-zinc-700 rounded-lg shadow-2xl p-1 text-xs">
+                      {personMenu.mode === "menu" ? (
+                        <>
+                          {onRenamePerson && (
+                            <button
+                              onClick={() => {
+                                setPersonMenu({ name: p.name, mode: "rename" });
+                                setPersonMenuInput(p.name);
+                              }}
+                              className="w-full text-left px-2 py-1.5 rounded hover:bg-zinc-800 text-zinc-200"
+                            >
+                              Rename…
+                            </button>
+                          )}
+                          {onRenamePerson && people.length > 1 && (
+                            <button
+                              onClick={() => setPersonMenu({ name: p.name, mode: "merge" })}
+                              className="w-full text-left px-2 py-1.5 rounded hover:bg-zinc-800 text-zinc-200"
+                            >
+                              Merge into…
+                            </button>
+                          )}
+                          {onSetPersonHidden && (
+                            <button
+                              onClick={() => {
+                                onSetPersonHidden(p.name, !p.hidden);
+                                setPersonMenu(null);
+                              }}
+                              className="w-full text-left px-2 py-1.5 rounded hover:bg-zinc-800 text-zinc-200"
+                            >
+                              {p.hidden ? "Show again" : "Hide (no suggestions, not in people bar)"}
+                            </button>
+                          )}
+                        </>
+                      ) : personMenu.mode === "rename" ? (
+                        <form
+                          onSubmit={(e) => {
+                            e.preventDefault();
+                            submitMenu();
+                          }}
+                          className="flex gap-1 p-1"
+                        >
+                          <input
+                            autoFocus
+                            value={personMenuInput}
+                            onChange={(e) => setPersonMenuInput(e.target.value)}
+                            className="flex-1 min-w-0 bg-zinc-950 border border-zinc-700 rounded px-2 py-1 text-zinc-200 select-text focus:outline-none focus:border-indigo-500"
+                          />
+                          <button type="submit" className="px-2 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white">
+                            OK
+                          </button>
+                        </form>
+                      ) : (
+                        <div className="flex flex-col max-h-56 overflow-y-auto">
+                          <span className="px-2 py-1 text-[11px] text-zinc-500">Merge "{p.name}" into:</span>
+                          {people
+                            .filter((o) => o.name !== p.name)
+                            .map((o) => (
+                              <button
+                                key={o.name}
+                                onClick={() => {
+                                  setPersonMenuInput(o.name);
+                                  onRenamePerson?.(p.name, o.name).then((result) => {
+                                    setPersonMenu(null);
+                                    if (result && activePerson.toLowerCase() === p.name.toLowerCase()) {
+                                      loadDataForPerson(result, statusTab);
+                                    }
+                                  });
+                                }}
+                                className="text-left px-2 py-1.5 rounded hover:bg-zinc-800 text-zinc-200 capitalize"
+                              >
+                                {o.name}
+                              </button>
+                            ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 <button
-                  key={p.name}
                   onClick={() => {
                     setView("person");
                     loadDataForPerson(p.name, statusTab);
@@ -683,11 +797,12 @@ export default function FaceMatchReviewModal({
                   </div>
 
                   {pending > 0 && (
-                    <span className="px-2 py-0.5 rounded-full bg-amber-500/20 border border-amber-400/40 text-amber-300 font-mono text-[11px] font-bold shrink-0">
+                    <span className="px-2 py-0.5 rounded-full bg-amber-500/20 border border-amber-400/40 text-amber-300 font-mono text-[11px] font-bold shrink-0 mr-5">
                       +{pending}?
                     </span>
                   )}
                 </button>
+                </div>
               );
             })}
           </aside>

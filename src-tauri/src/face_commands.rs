@@ -520,7 +520,7 @@ pub async fn get_people(app: AppHandle, root_folder: Option<String>) -> Result<V
             .prepare(
                 "SELECT p.id, p.name, COUNT(DISTINCT pp.hash) as cnt,
                         COALESCE(NULLIF(p.cover_face_thumb, ''), '') as face_crop,
-                        MIN(pp.hash) as fallback_hash
+                        MIN(pp.hash) as fallback_hash, COALESCE(p.hidden, 0)
                  FROM people p
                  JOIN photo_people pp ON p.name = pp.person_name
                  JOIN photos ph_main ON pp.hash = ph_main.hash
@@ -551,6 +551,7 @@ pub async fn get_people(app: AppHandle, root_folder: Option<String>) -> Result<V
                     name: row.get(1)?,
                     photo_count: row.get(2)?,
                     cover_thumb,
+                    hidden: row.get::<_, i32>(5)? != 0,
                 })
             })
             .map_err(|e| e.to_string())?;
@@ -682,6 +683,11 @@ pub fn compute_face_suggestions(
     let thumbs_dir = get_app_storage_dir(app).join("thumbnails");
     let previews_dir = get_app_storage_dir(app).join("previews");
 
+    let hidden: HashSet<String> = conn
+        .prepare("SELECT lower(name) FROM people WHERE COALESCE(hidden, 0) = 1")
+        .and_then(|mut s| s.query_map([], |r| r.get::<_, String>(0)).map(|rows| rows.flatten().collect()))
+        .unwrap_or_default();
+
     // Confirmed faces per person (case-insensitive; the first spelling seen is displayed)
     let mut person_names: Vec<String> = Vec::new();
     let mut person_index: HashMap<String, usize> = HashMap::new();
@@ -698,6 +704,9 @@ pub fn compute_face_suggestions(
             .map_err(|e| e.to_string())?;
         for (fid, name) in rows.flatten() {
             let key = name.trim().to_lowercase();
+            if hidden.contains(&key) {
+                continue;
+            }
             let idx = *person_index.entry(key).or_insert_with(|| {
                 person_names.push(name.trim().to_string());
                 person_ref_ids.push(Vec::new());
@@ -1338,4 +1347,97 @@ pub async fn get_unknown_face_clusters(app: AppHandle, root_folder: Option<Strin
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+// ----------------- PEOPLE: RENAME / MERGE / HIDE -----------------
+
+// Renames a person everywhere (photo tags, named faces, rejections, the people list). When another person
+// already has the new name, the two are merged into that one. Returns the final name.
+#[tauri::command]
+pub async fn rename_person(app: AppHandle, old_name: String, new_name: String) -> Result<String, String> {
+    let old = old_name.trim().to_string();
+    let new = new_name.trim().to_string();
+    if old.is_empty() || new.is_empty() {
+        return Err("The name can't be empty".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut conn = open_global_db(&app)?;
+        rename_person_in_db(&mut conn, &old, &new)?;
+        // Suggestions are keyed by name: recompute them on next use
+        if let Ok(mut cache) = PENDING_CANDIDATES_CACHE.lock() {
+            cache.clear();
+        }
+        Ok(new)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+pub fn rename_person_in_db(conn: &mut Connection, old: &str, new: &str) -> Result<(), String> {
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    // Another person (not just a different capitalisation of this one) already has the new name: merge
+    let target_exists: bool = !old.eq_ignore_ascii_case(new)
+        && tx
+            .query_row("SELECT COUNT(*) FROM people WHERE lower(name) = lower(?1)", params![new], |r| r.get::<_, i64>(0))
+            .unwrap_or(0)
+            > 0;
+
+    tx.execute(
+        "UPDATE photo_faces SET person_name = ?2 WHERE lower(person_name) = lower(?1)",
+        params![old, new],
+    )
+    .map_err(|e| e.to_string())?;
+    tx.execute(
+        "INSERT OR IGNORE INTO photo_people (hash, person_name)
+         SELECT hash, ?2 FROM photo_people WHERE lower(person_name) = lower(?1)",
+        params![old, new],
+    )
+    .map_err(|e| e.to_string())?;
+    tx.execute(
+        "DELETE FROM photo_people WHERE lower(person_name) = lower(?1) AND person_name != ?2",
+        params![old, new],
+    )
+    .map_err(|e| e.to_string())?;
+    tx.execute(
+        "INSERT OR IGNORE INTO face_rejections (face_id, person_name)
+         SELECT face_id, ?2 FROM face_rejections WHERE lower(person_name) = lower(?1)",
+        params![old, new],
+    )
+    .map_err(|e| e.to_string())?;
+    tx.execute(
+        "DELETE FROM face_rejections WHERE lower(person_name) = lower(?1) AND person_name != ?2",
+        params![old, new],
+    )
+    .map_err(|e| e.to_string())?;
+
+    if target_exists {
+        // Keep the target's cover unless it has none
+        tx.execute(
+            "UPDATE people SET cover_face_thumb = (SELECT cover_face_thumb FROM people WHERE lower(name) = lower(?1))
+             WHERE lower(name) = lower(?2) AND COALESCE(cover_face_thumb, '') = ''",
+            params![old, new],
+        )
+        .map_err(|e| e.to_string())?;
+        tx.execute("DELETE FROM people WHERE lower(name) = lower(?1)", params![old]).map_err(|e| e.to_string())?;
+    } else {
+        tx.execute("UPDATE people SET name = ?2 WHERE lower(name) = lower(?1)", params![old, new])
+            .map_err(|e| e.to_string())?;
+        tx.execute("INSERT OR IGNORE INTO people (name) VALUES (?1)", params![new]).map_err(|e| e.to_string())?;
+    }
+    tx.commit().map_err(|e| e.to_string())
+}
+
+// Hidden people stay tagged on their photos but leave the people bar and get no new suggestions
+#[tauri::command]
+pub fn set_person_hidden(app: AppHandle, name: String, hidden: bool) -> Result<(), String> {
+    let conn = open_global_db(&app)?;
+    conn.execute(
+        "UPDATE people SET hidden = ?2 WHERE lower(name) = lower(?1)",
+        params![name.trim(), hidden as i32],
+    )
+    .map_err(|e| e.to_string())?;
+    if let Ok(mut cache) = PENDING_CANDIDATES_CACHE.lock() {
+        cache.clear();
+    }
+    Ok(())
 }
