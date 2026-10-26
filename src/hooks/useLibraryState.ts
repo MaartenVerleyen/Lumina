@@ -35,6 +35,9 @@ import {
   SemanticStatus,
   SemanticProgress,
   SemanticHit,
+  Album,
+  SavedSearch,
+  BulkPopover,
   PhotoActionSnapshot,
   UndoHistoryEntry,
 } from "../types/lumina";
@@ -45,6 +48,7 @@ import {
 } from "../utils/photoHelpers";
 import { expandWithRawPairs, diskPathOf, RAW_OR_HEIC_NAME } from "../utils/rawPairs";
 import type { GridStyle, CardDetails } from "../components/views/VirtualPhotoGrid";
+import { parseSearchQuery, matchesTerms, MatchContext } from "../utils/searchQuery";
 
 const MAX_UNDO_STEPS = 20;
 const MAX_TOASTS = 4;
@@ -414,6 +418,10 @@ export function useLibraryState() {
   } | null>(null);
   const [semanticStatus, setSemanticStatus] = useState<SemanticStatus | null>(null);
   const [semanticProgress, setSemanticProgress] = useState<SemanticProgress | null>(null);
+  // Albums and smart albums (saved searches); `activeAlbumId` filters the grid to one album
+  const [albums, setAlbums] = useState<Album[]>([]);
+  const [savedSearches, setSavedSearches] = useState<SavedSearch[]>([]);
+  const [activeAlbumId, setActiveAlbumId] = useState<number | null>(null);
   const [sortBy, setSortBy] = useState<SortOption>("NAME_ASC");
 
   // Slide-Out Timeline Slicer State
@@ -476,7 +484,7 @@ export function useLibraryState() {
 
   // Bulk Dock Popover States
   const [activeBulkPopover, setActiveBulkPopover] = useState<
-    "tag" | "person" | "move" | "location" | "time" | null
+    BulkPopover | null
   >(null);
   const [bulkInput, setBulkInput] = useState<string>("");
   // City search has its own text, so typing a city never overwrites the tag/person/move input
@@ -988,14 +996,24 @@ export function useLibraryState() {
 
   // Smart results apply to the current query (or a "similar to" request); while a new query is being
   // embedded, the previous matches stay visible instead of flickering back to the full grid
+  // The search box: `key:value` terms (rating:>=4 person:anna ...) plus free text for plain or smart search
+  const parsedSearch = useMemo(() => parseSearchQuery(deferredSearchQuery), [deferredSearchQuery]);
+  const albumSets = useMemo(() => new Map(albums.map((a) => [a.id, new Set(a.hashes)])), [albums]);
+  const albumContext = useMemo<MatchContext>(() => {
+    const byName = new Map(albums.map((a) => [a.name.toLowerCase(), albumSets.get(a.id)!]));
+    return { albumHashes: (name: string) => byName.get(name.toLowerCase()) };
+  }, [albums, albumSets]);
+
   const semanticScores =
     semanticResult &&
-    (semanticResult.source.kind === "similar" || (smartSearch && deferredSearchQuery.trim() !== ""))
+    (semanticResult.source.kind === "similar" || (smartSearch && parsedSearch.text !== ""))
       ? semanticResult.scores
       : null;
 
   const visiblePhotos = useMemo(() => {
-    const q = semanticScores ? "" : deferredSearchQuery.trim().toLowerCase();
+    const q = semanticScores ? "" : parsedSearch.text.toLowerCase();
+    const terms = parsedSearch.terms;
+    const albumFilter = activeAlbumId !== null ? albumSets.get(activeAlbumId) ?? new Set<string>() : null;
     const filtered = photos.filter((p) => {
       if (smartFilter === "PICKS" && p.flag !== "pick") return false;
       if (smartFilter === "REJECTS" && p.flag !== "reject") return false;
@@ -1049,6 +1067,8 @@ export function useLibraryState() {
       if (activeTag !== "ALL" && !p.tags.includes(activeTag)) return false;
 
       if (q && !searchTextOf(p).includes(q)) return false;
+      if (terms.length > 0 && !matchesTerms(p, terms, albumContext)) return false;
+      if (albumFilter && !albumFilter.has(p.hash)) return false;
       if (semanticScores && !semanticScores.has(p.hash)) return false;
       return true;
     });
@@ -1141,7 +1161,10 @@ export function useLibraryState() {
     activeSubfolder,
     activeEvent,
     activeTag,
-    deferredSearchQuery,
+    parsedSearch,
+    albumContext,
+    albumSets,
+    activeAlbumId,
     sortBy,
     showAllBurstVersions,
     expandedBurstGroups,
@@ -1258,6 +1281,7 @@ export function useLibraryState() {
     setSelectedPerson(null);
     setSelectedPeriodRange(null);
     setSemanticResult(null);
+    setActiveAlbumId(null);
   }
 
   function toggleBurstGroupExpand(groupNum: number, e: React.MouseEvent) {
@@ -2564,7 +2588,7 @@ export function useLibraryState() {
   // Text queries: embedded after a short pause in typing; only the newest query may set the results
   const semanticSeqRef = useRef(0);
   useEffect(() => {
-    const query = searchQuery.trim();
+    const query = parseSearchQuery(searchQuery).text;
     if (!smartSearch || !query) return;
     const seq = ++semanticSeqRef.current;
     const timer = setTimeout(async () => {
@@ -2611,6 +2635,166 @@ export function useLibraryState() {
     } catch (err) {
       setError(String(err));
     }
+  }
+
+  // ---------- Albums & smart albums ----------
+  const refreshAlbums = useCallback(async () => {
+    try {
+      const [a, s] = await Promise.all([
+        invoke<Album[]>("get_albums"),
+        invoke<SavedSearch[]>("get_saved_searches"),
+      ]);
+      setAlbums(a);
+      setSavedSearches(s);
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    refreshAlbums();
+  }, [refreshAlbums]);
+
+  // Photos of each album that are in the open folder
+  const albumCounts = useMemo(() => {
+    const counts = new Map<number, number>();
+    for (const [id, set] of albumSets) {
+      let n = 0;
+      for (const h of set) if (photoByHash.has(h)) n++;
+      counts.set(id, n);
+    }
+    return counts;
+  }, [albumSets, photoByHash]);
+
+  const patchAlbumHashes = (id: number, add: string[], remove: string[]) => {
+    const removeSet = new Set(remove);
+    setAlbums((prev) =>
+      prev.map((a) => {
+        if (a.id !== id) return a;
+        const kept = a.hashes.filter((h) => !removeSet.has(h));
+        const present = new Set(kept);
+        return { ...a, hashes: [...kept, ...add.filter((h) => !present.has(h))] };
+      })
+    );
+  };
+
+  async function handleCreateAlbum(name: string, addHashes?: string[]) {
+    try {
+      const id = await invoke<number>("create_album", { name });
+      setAlbums((prev) => [...prev, { id, name: name.trim(), hashes: [] }]);
+      addLog("LIBRARY", `Created album "${name.trim()}"`);
+      if (addHashes && addHashes.length > 0) await handleAddToAlbum(id, addHashes, name.trim());
+      return id;
+    } catch (err) {
+      setError(String(err));
+      return null;
+    }
+  }
+
+  async function handleRenameAlbum(id: number, name: string) {
+    try {
+      await invoke("rename_album", { id, name });
+      setAlbums((prev) => prev.map((a) => (a.id === id ? { ...a, name: name.trim() } : a)));
+    } catch (err) {
+      setError(String(err));
+    }
+  }
+
+  async function handleDeleteAlbum(id: number) {
+    const album = albums.find((a) => a.id === id);
+    if (!album) return;
+    const ok = await confirmAction(
+      `Delete the album "${album.name}"?\n\nOnly the album goes; its ${album.hashes.length} photo(s) stay where they are.`,
+      "Delete album"
+    );
+    if (!ok) return;
+    try {
+      await invoke("delete_album", { id });
+      setAlbums((prev) => prev.filter((a) => a.id !== id));
+      if (activeAlbumId === id) setActiveAlbumId(null);
+      addLog("LIBRARY", `Deleted album "${album.name}"`);
+    } catch (err) {
+      setError(String(err));
+    }
+  }
+
+  async function handleAddToAlbum(id: number, targetHashes?: string[], albumName?: string) {
+    const hashes = resolveTargets(targetHashes);
+    const name = albumName ?? albums.find((a) => a.id === id)?.name ?? "album";
+    if (hashes.length === 0) return;
+    try {
+      const added = await invoke<string[]>("add_to_album", { id, hashes });
+      patchAlbumHashes(id, added, []);
+      if (added.length > 0) {
+        pushCustomUndo(
+          `Add ${added.length} photo(s) to album "${name}"`,
+          hashes,
+          async () => {
+            await invoke("remove_from_album", { id, hashes: added });
+            patchAlbumHashes(id, [], added);
+          },
+          async () => {
+            await invoke("add_to_album", { id, hashes: added });
+            patchAlbumHashes(id, added, []);
+          }
+        );
+      }
+      addLog("LIBRARY", `Added ${added.length} photo(s) to album "${name}"`);
+      setActiveBulkPopover(null);
+    } catch (err) {
+      setError(String(err));
+    }
+  }
+
+  async function handleRemoveFromAlbum(id: number, targetHashes?: string[]) {
+    const hashes = resolveTargets(targetHashes);
+    const name = albums.find((a) => a.id === id)?.name ?? "album";
+    if (hashes.length === 0) return;
+    try {
+      const removed = await invoke<string[]>("remove_from_album", { id, hashes });
+      patchAlbumHashes(id, [], removed);
+      if (removed.length > 0) {
+        pushCustomUndo(
+          `Remove ${removed.length} photo(s) from album "${name}"`,
+          hashes,
+          async () => {
+            await invoke("add_to_album", { id, hashes: removed });
+            patchAlbumHashes(id, removed, []);
+          },
+          async () => {
+            await invoke("remove_from_album", { id, hashes: removed });
+            patchAlbumHashes(id, [], removed);
+          }
+        );
+      }
+      addLog("LIBRARY", `Removed ${removed.length} photo(s) from album "${name}"`);
+    } catch (err) {
+      setError(String(err));
+    }
+  }
+
+  async function handleSaveSearch(name: string) {
+    try {
+      const id = await invoke<number>("save_search", { name, query: searchQuery });
+      setSavedSearches((prev) => [...prev, { id, name: name.trim(), query: searchQuery.trim() }]);
+      setAutoMatchNotice(`Saved smart album "${name.trim()}": it updates by itself as your photos change.`);
+      return true;
+    } catch (err) {
+      setError(String(err));
+      return false;
+    }
+  }
+
+  async function handleDeleteSavedSearch(id: number) {
+    try {
+      await invoke("delete_saved_search", { id });
+      setSavedSearches((prev) => prev.filter((s) => s.id !== id));
+    } catch (err) {
+      setError(String(err));
+    }
+  }
+
+  function runSavedSearch(saved: SavedSearch) {
+    setActiveAlbumId(null);
+    setSearchQuery(saved.query);
   }
 
   // Latest photos for the long-running AI loop (the tag vocabulary is recomputed from the live library)
@@ -2976,6 +3160,20 @@ export function useLibraryState() {
     handlePhotoClick,
     toggleBurstGroupExpand,
     clearAllFilters,
+    parsedSearch,
+    albums,
+    albumCounts,
+    savedSearches,
+    activeAlbumId,
+    setActiveAlbumId,
+    handleCreateAlbum,
+    handleRenameAlbum,
+    handleDeleteAlbum,
+    handleAddToAlbum,
+    handleRemoveFromAlbum,
+    handleSaveSearch,
+    handleDeleteSavedSearch,
+    runSavedSearch,
     smartSearch,
     toggleSmartSearch,
     semanticResult,

@@ -353,3 +353,18 @@ export interface SemanticHit {
   hash: string;
   score: number;
 }
+
+// Albums (hand-picked) and smart albums (saved searches)
+export interface Album {
+  id: number;
+  name: string;
+  hashes: string[];
+}
+
+export interface SavedSearch {
+  id: number;
+  name: string;
+  query: string;
+}
+
+export type BulkPopover = "tag" | "person" | "move" | "location" | "time" | "album";

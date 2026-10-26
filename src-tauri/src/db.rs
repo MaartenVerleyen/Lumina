@@ -120,6 +120,8 @@ pub fn open_global_db(app: &AppHandle) -> Result<Connection, String> {
     let _ = conn.execute("ALTER TABLE photo_faces ADD COLUMN engine TEXT DEFAULT ''", []);
     let _ = conn.execute("ALTER TABLE photo_faces ADD COLUMN embedding_blob BLOB", []);
 
+    albums::ensure_album_tables(&conn);
+
     // Smart search: one CLIP image vector per photo (little-endian f32), tagged with the model that made it
     let _ = conn.execute(
         "CREATE TABLE IF NOT EXISTS photo_clip (hash TEXT PRIMARY KEY, embedding BLOB NOT NULL, model TEXT NOT NULL)",

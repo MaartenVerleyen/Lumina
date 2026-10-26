@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { CitySearchResult, PhotoItem } from "../../types/lumina";
+import { Album, BulkPopover, CitySearchResult, PhotoItem } from "../../types/lumina";
 import {
   CheckSquare,
   Clock,
@@ -19,6 +19,7 @@ import {
   User,
   X,
   XCircle,
+  BookImage,
 } from "lucide-react";
 
 // Number field that accepts a leading "-" while typing: the text is kept as typed and the parent
@@ -47,12 +48,15 @@ function SignedIntInput({ value, onChange }: { value: number; onChange: (n: numb
 }
 
 interface BulkActionDockProps {
+  albums?: Album[];
+  handleAddToAlbum?: (id: number, targetHashes?: string[]) => Promise<void>;
+  handleCreateAlbum?: (name: string, addHashes?: string[]) => Promise<number | null>;
   selectedHashes: Set<string>;
   setSelectedHashes: React.Dispatch<React.SetStateAction<Set<string>>>;
   visiblePhotos: PhotoItem[];
-  activeBulkPopover: "tag" | "person" | "move" | "location" | "time" | null;
+  activeBulkPopover: BulkPopover | null;
   setActiveBulkPopover: React.Dispatch<
-    React.SetStateAction<"tag" | "person" | "move" | "location" | "time" | null>
+    React.SetStateAction<BulkPopover | null>
   >;
   bulkInput: string;
   cityQuery: string;
@@ -82,6 +86,9 @@ interface BulkActionDockProps {
 }
 
 export default function BulkActionDock({
+  albums,
+  handleAddToAlbum,
+  handleCreateAlbum,
   selectedHashes,
   setSelectedHashes,
   visiblePhotos,
@@ -127,6 +134,7 @@ export default function BulkActionDock({
               {activeBulkPopover === "move" && "Stage Move Selection"}
               {activeBulkPopover === "location" && "Set Manual Location (City/GPS)"}
               {activeBulkPopover === "time" && "Shift Capture Timestamps (± Hours / Min)"}
+              {activeBulkPopover === "album" && "Add Selection to an Album"}
             </span>
             <button
               onClick={() => setActiveBulkPopover(null)}
@@ -186,6 +194,47 @@ export default function BulkActionDock({
                 Assign
               </button>
             </form>
+          )}
+
+          {activeBulkPopover === "album" && albums && handleAddToAlbum && handleCreateAlbum && (
+            <div className="flex flex-col gap-1.5">
+              {albums.length > 0 && (
+                <div className="max-h-36 overflow-y-auto flex flex-col gap-1">
+                  {albums.map((a) => (
+                    <button
+                      key={a.id}
+                      onClick={() => handleAddToAlbum(a.id)}
+                      className="text-left px-2 py-1 bg-zinc-900 hover:bg-zinc-800 rounded flex justify-between text-zinc-300"
+                    >
+                      <span className="truncate">{a.name}</span>
+                      <span className="text-[11px] text-zinc-500 font-mono">{a.hashes.length}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (bulkInput.trim()) handleCreateAlbum(bulkInput, Array.from(selectedHashes));
+                  setBulkInput("");
+                  setActiveBulkPopover(null);
+                }}
+                className="flex gap-1.5"
+              >
+                <input
+                  type="text"
+                  value={bulkInput}
+                  onKeyDown={(e) => e.stopPropagation()}
+                  onChange={(e) => setBulkInput(e.target.value)}
+                  placeholder="New album name..."
+                  className="flex-1 bg-zinc-950 border border-zinc-800 rounded px-2.5 py-1 text-xs text-zinc-200 select-text focus:outline-none focus:border-indigo-500"
+                  autoFocus
+                />
+                <button type="submit" className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded font-medium">
+                  Create
+                </button>
+              </form>
+            </div>
           )}
 
           {activeBulkPopover === "move" && (
@@ -394,6 +443,20 @@ export default function BulkActionDock({
           <TagIcon className="w-3.5 h-3.5 text-indigo-400" />
           <span>Tag</span>
         </button>
+
+        {albums && (
+          <button
+            onClick={() => {
+              setActiveBulkPopover(activeBulkPopover === "album" ? null : "album");
+              setBulkInput("");
+            }}
+            className="flex items-center gap-1 text-zinc-300 hover:text-white"
+            title="Add the selected photos to an album"
+          >
+            <BookImage className="w-3.5 h-3.5 text-indigo-400" />
+            <span>Album</span>
+          </button>
+        )}
 
         {handleBatchAssignPerson && (
           <button

@@ -805,3 +805,17 @@ fn align_face_maps_landmarks_onto_the_arcface_template() {
         assert!(found, "no landmark near template point ({tx}, {ty})");
     }
 }
+
+#[test]
+fn album_names_are_unique_ignoring_case_and_members_are_not_duplicated() {
+    let conn = Connection::open_in_memory().unwrap();
+    albums::ensure_album_tables(&conn);
+    conn.execute("INSERT INTO albums (name) VALUES ('Holiday')", []).unwrap();
+    assert!(conn.execute("INSERT INTO albums (name) VALUES ('holiday')", []).is_err());
+    let id = conn.last_insert_rowid();
+    let insert = "INSERT OR IGNORE INTO album_photos (album_id, hash) VALUES (?1, ?2)";
+    assert_eq!(conn.execute(insert, params![id, "h1"]).unwrap(), 1);
+    assert_eq!(conn.execute(insert, params![id, "h1"]).unwrap(), 0);
+    let count: i64 = conn.query_row("SELECT COUNT(*) FROM album_photos", [], |r| r.get(0)).unwrap();
+    assert_eq!(count, 1);
+}

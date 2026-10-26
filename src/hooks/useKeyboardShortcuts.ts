@@ -1,5 +1,5 @@
 import { useEffect, useRef, RefObject } from "react";
-import { PhotoItem } from "../types/lumina";
+import { BulkPopover, PhotoItem } from "../types/lumina";
 
 interface UseKeyboardShortcutsParams {
   activeHash: string | null;
@@ -12,7 +12,7 @@ interface UseKeyboardShortcutsParams {
     React.SetStateAction<{ x: number; y: number; w: number; h: number } | null>
   >;
   setActiveBulkPopover: React.Dispatch<
-    React.SetStateAction<"tag" | "person" | "move" | "location" | "time" | null>
+    React.SetStateAction<BulkPopover | null>
   >;
   // A dialog (commit, health, face review, ...) is open: grid shortcuts must not act on photos behind it
   isBlockingModalOpen: boolean;

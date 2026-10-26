@@ -33,6 +33,7 @@ mod fastdecode;
 mod thumbs;
 mod face_ort;
 mod clip;
+mod albums;
 mod face_match;
 #[cfg(test)]
 mod tests;
@@ -367,6 +368,15 @@ pub fn run() {
             face_commands::scan_library_faces_batch,
             face_commands::cancel_face_scan,
             scan::cancel_folder_scan,
+            albums::get_albums,
+            albums::create_album,
+            albums::rename_album,
+            albums::delete_album,
+            albums::add_to_album,
+            albums::remove_from_album,
+            albums::get_saved_searches,
+            albums::save_search,
+            albums::delete_saved_search,
             clip::semantic_status,
             clip::start_semantic_index,
             clip::cancel_semantic_index,

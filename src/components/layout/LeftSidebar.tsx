@@ -50,6 +50,8 @@ interface LeftSidebarProps {
   simpleMode?: boolean;
   handleEmptyTrashToRecycleBin?: () => Promise<void>;
   onFolderContextMenu?: (folderRelPath: string, e: React.MouseEvent) => void;
+  // Albums & smart albums list (rendered between the quick filters and the folders)
+  albumsSection?: React.ReactNode;
 }
 
 // Quick filters that accept dropped photos: Picks flags them, Basket pins them, Rejects rejects + stages them
@@ -88,6 +90,7 @@ function LeftSidebar({
   simpleMode = false,
   handleEmptyTrashToRecycleBin,
   onFolderContextMenu,
+  albumsSection,
 }: LeftSidebarProps) {
   function toggleFolderExpand(fullPath: string, e: React.MouseEvent) {
     e.stopPropagation();
@@ -348,6 +351,8 @@ function LeftSidebar({
           </button>
         )}
       </div>
+
+      {albumsSection}
 
       {/* Hierarchical Folder Tree */}
       {photos.length > 0 && (

@@ -11,6 +11,8 @@ import LeftSidebar from "./components/layout/LeftSidebar";
 import RightInspector from "./components/layout/RightInspector";
 import BottomStatusBar from "./components/layout/BottomStatusBar";
 import ToastStack from "./components/layout/ToastStack";
+import AlbumsSection from "./components/layout/AlbumsSection";
+import { describeTerm, removeTerm, TermKey } from "./utils/searchQuery";
 import CommandPalette, { PaletteAction } from "./components/modals/CommandPalette";
 import { usePhotoDrag, DropTarget } from "./hooks/usePhotoDrag";
 import { thumbSrc } from "./utils/photoHelpers";
@@ -429,6 +431,9 @@ export default function App() {
       case "basket":
         lib.handleToggleBasketSelection(hashes, true);
         break;
+      case "album":
+        lib.handleAddToAlbum(Number(target.value), hashes);
+        break;
       default:
         return;
     }
@@ -512,6 +517,57 @@ export default function App() {
     });
   }
 
+  // ---------- Search autocomplete values ----------
+  const searchValues = useMemo(() => {
+    const cameras = new Set<string>();
+    const lenses = new Set<string>();
+    const places = new Set<string>();
+    const years = new Set<string>();
+    for (const p of lib.photos) {
+      if (p.camera_model) cameras.add(p.camera_model);
+      if (p.lens_model) lenses.add(p.lens_model);
+      if (p.location) places.add(p.location.split(",")[0].trim());
+      const y = /^(\d{4})/.exec(p.captured_at || "")?.[1];
+      if (y) years.add(y);
+    }
+    const sorted = (s: Set<string>) => Array.from(s).sort((a, b) => a.localeCompare(b));
+    return {
+      camera: sorted(cameras),
+      lens: sorted(lenses),
+      place: sorted(places),
+      date: Array.from(years).sort().reverse(),
+    };
+  }, [lib.photos]);
+
+  const getSearchSuggestions = (key: TermKey, partial: string): string[] => {
+    const fixed: Partial<Record<TermKey, string[]>> = {
+      rating: ["5", ">=4", ">=3", ">=1", "0"],
+      flag: ["pick", "reject", "none"],
+      label: ["red", "yellow", "green", "blue", "none"],
+      has: ["gps", "faces", "people", "caption", "ocr", "tags", "location"],
+      is: ["raw", "paired", "screenshot", "damaged", "staged", "basket", "pick", "reject"],
+    };
+    const values =
+      fixed[key] ??
+      (key === "person"
+        ? lib.people.map((p) => p.name)
+        : key === "tag"
+        ? lib.allLibraryTags
+        : key === "album"
+        ? lib.albums.map((a) => a.name)
+        : key === "camera" || key === "lens" || key === "place" || key === "date"
+        ? searchValues[key]
+        : []);
+    const q = partial.toLowerCase();
+    return values
+      .filter((v) => v.toLowerCase().includes(q))
+      .sort((a, b) => Number(!a.toLowerCase().startsWith(q)) - Number(!b.toLowerCase().startsWith(q)))
+      .slice(0, 8);
+  };
+
+  // Save the current search as a smart album (input in the filter bar)
+  const [saveSearchName, setSaveSearchName] = useState<string | null>(null);
+
   // ---------- Command palette actions ----------
   const hasSelection = lib.selectedHashes.size > 0;
   const hasPhotos = lib.photos.length > 0;
@@ -561,6 +617,22 @@ export default function App() {
     { id: "select-all", group: "Select", label: "Select all visible photos", keywords: "everything", enabled: lib.visiblePhotos.length > 0, run: () => lib.setSelectedHashes(new Set(lib.visiblePhotos.map((p) => p.hash))) },
     { id: "select-none", group: "Select", label: "Clear selection", enabled: hasSelection, run: () => lib.setSelectedHashes(new Set()) },
     { id: "clear-filters", group: "Select", label: "Clear all filters", keywords: "reset show everything", enabled: hasPhotos, run: lib.clearAllFilters },
+    { id: "save-search", group: "Albums", label: "Save this search as a smart album", enabled: lib.searchQuery.trim() !== "", run: () => setSaveSearchName("") },
+    { id: "album-new", group: "Albums", label: "New album from selection", enabled: hasSelection, run: () => { lib.setActiveBulkPopover("album"); lib.setBulkInput(""); } },
+    ...lib.albums.map((a) => ({
+      id: `album-add-${a.id}`,
+      group: "Albums",
+      label: `Add selection to "${a.name}"`,
+      enabled: hasSelection,
+      run: () => lib.handleAddToAlbum(a.id),
+    })),
+    ...lib.albums.map((a) => ({
+      id: `album-show-${a.id}`,
+      group: "Albums",
+      label: `Show album "${a.name}"`,
+      run: () => lib.setActiveAlbumId(a.id),
+    })),
+    { id: "album-remove", group: "Albums", label: "Remove selection from this album", enabled: hasSelection && lib.activeAlbumId !== null, run: () => lib.activeAlbumId !== null && lib.handleRemoveFromAlbum(lib.activeAlbumId) },
     { id: "search", group: "Select", label: "Search photos", shortcut: "Ctrl+K", enabled: hasPhotos, run: () => searchInputRef.current?.focus() },
     {
       id: "smart-search",
@@ -697,6 +769,7 @@ export default function App() {
         setCardDetails={lib.setCardDetails}
         smartSearch={lib.smartSearch}
         onToggleSmartSearch={lib.toggleSmartSearch}
+        getSearchSuggestions={getSearchSuggestions}
         canUndo={lib.canUndo}
         canRedo={lib.canRedo}
         handleUndo={lib.handleUndo}
@@ -863,6 +936,21 @@ export default function App() {
               allLibraryTags={lib.allLibraryTags}
               handleEmptyTrashToRecycleBin={lib.handleEmptyTrashToRecycleBin}
               onFolderContextMenu={handleFolderContextMenu}
+              albumsSection={
+                <AlbumsSection
+                  albums={lib.albums}
+                  albumCounts={lib.albumCounts}
+                  savedSearches={lib.savedSearches}
+                  activeAlbumId={lib.activeAlbumId}
+                  searchQuery={lib.searchQuery}
+                  onSelectAlbum={lib.setActiveAlbumId}
+                  onCreateAlbum={(name) => lib.handleCreateAlbum(name)}
+                  onRenameAlbum={lib.handleRenameAlbum}
+                  onDeleteAlbum={lib.handleDeleteAlbum}
+                  onRunSavedSearch={lib.runSavedSearch}
+                  onDeleteSavedSearch={lib.handleDeleteSavedSearch}
+                />
+              }
             />
 
             <div
@@ -1077,6 +1165,82 @@ export default function App() {
             </div>
           )}
 
+          {(lib.parsedSearch.terms.length > 0 || lib.activeAlbumId !== null) && (
+            <div className="bg-panel border-b border-zinc-800/60 px-4 py-1.5 flex items-center gap-1.5 flex-wrap shrink-0 text-xs">
+              {lib.activeAlbumId !== null && (
+                <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-indigo-500/15 border border-indigo-500/40 text-indigo-200">
+                  Album: {lib.albums.find((a) => a.id === lib.activeAlbumId)?.name ?? "?"}
+                  <button onClick={() => lib.setActiveAlbumId(null)} className="hover:text-white" aria-label="Leave album">
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              )}
+              {lib.parsedSearch.terms.map((t) => (
+                <span
+                  key={t.raw}
+                  className={`flex items-center gap-1 px-2 py-0.5 rounded-full border ${
+                    t.negate
+                      ? "bg-red-500/10 border-red-500/40 text-red-200"
+                      : "bg-emerald-500/10 border-emerald-500/40 text-emerald-200"
+                  }`}
+                >
+                  {describeTerm(t)}
+                  <button
+                    onClick={() => lib.setSearchQuery(removeTerm(lib.searchQuery, t))}
+                    className="hover:text-white"
+                    aria-label={`Remove ${describeTerm(t)}`}
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              ))}
+              <span className="ml-auto flex items-center gap-1.5">
+                {lib.activeAlbumId !== null && lib.selectedHashes.size > 0 && (
+                  <button
+                    onClick={() => lib.activeAlbumId !== null && lib.handleRemoveFromAlbum(lib.activeAlbumId)}
+                    className="px-2 py-0.5 rounded-lg bg-zinc-900 hover:bg-red-950/60 border border-zinc-800 text-zinc-300"
+                  >
+                    Remove {lib.selectedHashes.size} from album
+                  </button>
+                )}
+                {lib.searchQuery.trim() !== "" &&
+                  (saveSearchName === null ? (
+                    <button
+                      onClick={() => setSaveSearchName("")}
+                      className="px-2 py-0.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-amber-200 flex items-center gap-1"
+                      title="Save this search: it shows in Albums and updates by itself"
+                    >
+                      <Sparkles className="w-3 h-3" />
+                      Save as smart album
+                    </button>
+                  ) : (
+                    <form
+                      onSubmit={async (e) => {
+                        e.preventDefault();
+                        if (saveSearchName.trim() && (await lib.handleSaveSearch(saveSearchName))) setSaveSearchName(null);
+                      }}
+                      className="flex items-center gap-1"
+                    >
+                      <input
+                        autoFocus
+                        value={saveSearchName}
+                        onChange={(e) => setSaveSearchName(e.target.value)}
+                        onKeyDown={(e) => {
+                          e.stopPropagation();
+                          if (e.key === "Escape") setSaveSearchName(null);
+                        }}
+                        placeholder="Smart album name"
+                        className="bg-zinc-950 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-200 select-text focus:outline-none focus:border-amber-400"
+                      />
+                      <button type="submit" className="px-2 py-0.5 rounded bg-amber-600 hover:bg-amber-500 text-white">
+                        Save
+                      </button>
+                    </form>
+                  ))}
+              </span>
+            </div>
+          )}
+
           {lib.semanticScores && lib.semanticResult && (
             <div className="bg-indigo-950/40 border-b border-indigo-500/30 px-5 py-2 flex items-center justify-between gap-3 shrink-0 text-xs">
               <span className="flex items-center gap-2 text-indigo-100 min-w-0">
@@ -1087,7 +1251,7 @@ export default function App() {
                   ) : (
                     <>
                       Best matches for <strong>"{lib.semanticResult.source.query}"</strong>
-                      {lib.semanticResult.source.query !== lib.searchQuery.trim() && " · searching…"}
+                      {lib.semanticResult.source.query !== lib.parsedSearch.text && " · searching…"}
                     </>
                   )}{" "}
                   · {lib.visiblePhotos.length} photo{lib.visiblePhotos.length === 1 ? "" : "s"}, best first
@@ -1304,6 +1468,9 @@ export default function App() {
             handleForceRescanExifSelected={lib.handleForceRescanExifSelected}
             runBatchAiOnList={lib.runBatchAiOnList}
             handleBatchAssignPerson={lib.handleBatchAssignPerson}
+            albums={lib.albums}
+            handleAddToAlbum={lib.handleAddToAlbum}
+            handleCreateAlbum={lib.handleCreateAlbum}
           />
         </main>
 

@@ -3,6 +3,9 @@ import { ask } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import luminaMark from "../../assets/lumina-mark.svg";
 import type { GridStyle, CardDetails } from "../views/VirtualPhotoGrid";
+import { completeTerm, termBeingTyped, TermKey } from "../../utils/searchQuery";
+
+const SEARCH_HINTS = ["rating:>=4", "flag:pick", "person:", "tag:", "date:2024-06", "place:", "camera:", "has:gps", "is:raw", "album:", "-flag:reject"];
 import {
   OllamaStatus,
   FaceScanProgress,
@@ -41,6 +44,8 @@ import {
 } from "lucide-react";
 
 interface TopHeaderBarProps {
+  // Values for search autocomplete (people, tags, cameras, albums, ...)
+  getSearchSuggestions: (key: TermKey, partial: string) => string[];
   smartSearch: boolean;
   onToggleSmartSearch: () => void;
   gridStyle: GridStyle;
@@ -106,6 +111,7 @@ interface TopHeaderBarProps {
 }
 
 export default function TopHeaderBar({
+  getSearchSuggestions,
   smartSearch,
   onToggleSmartSearch,
   gridStyle,
@@ -186,6 +192,13 @@ export default function TopHeaderBar({
   }, []);
 
   const hasVisionModel = (ollamaStatus?.installed_models.length ?? 0) > 0;
+
+  // Search box: suggestions for the `key:value` term being typed, syntax hints when empty
+  const [isSearchFocused, setIsSearchFocused] = useState(false);
+  const [suggestionIndex, setSuggestionIndex] = useState(0);
+  const typing = termBeingTyped(searchQuery);
+  const suggestions = typing ? getSearchSuggestions(typing.key, typing.partial) : [];
+  const showSearchPopup = isSearchFocused && ((typing !== null && suggestions.length > 0) || searchQuery.trim() === "");
 
   const [isStartingOllama, setIsStartingOllama] = useState(false);
   // Batch AI needs a running Ollama: start it from here instead of letting every photo fail
@@ -406,8 +419,35 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
             ref={searchInputRef}
             type="text"
             value={searchQuery}
-            onKeyDown={(e) => e.stopPropagation()}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            role="combobox"
+            aria-expanded={showSearchPopup}
+            aria-autocomplete="list"
+            onFocus={() => setIsSearchFocused(true)}
+            onBlur={() => setIsSearchFocused(false)}
+            onKeyDown={(e) => {
+              // Ctrl+P (command palette) still reaches the app; other keys stay in the box
+              if (!((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "p")) e.stopPropagation();
+              if (suggestions.length > 0 && typing) {
+                if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+                  e.preventDefault();
+                  const step = e.key === "ArrowDown" ? 1 : -1;
+                  setSuggestionIndex((i) => (i + step + suggestions.length) % suggestions.length);
+                  return;
+                }
+                if (e.key === "Tab" || e.key === "Enter") {
+                  e.preventDefault();
+                  const pick = suggestions[Math.min(suggestionIndex, suggestions.length - 1)];
+                  setSearchQuery(completeTerm(searchQuery, typing.key, pick));
+                  setSuggestionIndex(0);
+                  return;
+                }
+              }
+              if (e.key === "Escape") (e.target as HTMLInputElement).blur();
+            }}
+            onChange={(e) => {
+              setSearchQuery(e.target.value);
+              setSuggestionIndex(0);
+            }}
             placeholder={
               smartSearch
                 ? "Describe the photo… (e.g. dog on the beach, verjaardagstaart)"
@@ -417,6 +457,55 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
               smartSearch ? "border-indigo-500/60 focus:border-indigo-400" : "border-zinc-800 focus:border-emerald-500/80"
             }`}
           />
+          {showSearchPopup && (
+            <div
+              // Clicking inside must not blur the input first
+              onMouseDown={(e) => e.preventDefault()}
+              role="listbox"
+              className="absolute left-0 right-0 top-full mt-1.5 bg-raised border border-zinc-700/80 rounded-xl shadow-2xl p-1.5 z-50 text-xs"
+            >
+              {typing && suggestions.length > 0 ? (
+                suggestions.map((value, i) => (
+                  <div
+                    key={value}
+                    role="option"
+                    aria-selected={i === suggestionIndex}
+                    onMouseMove={() => setSuggestionIndex(i)}
+                    onClick={() => {
+                      setSearchQuery(completeTerm(searchQuery, typing.key, value));
+                      setSuggestionIndex(0);
+                    }}
+                    className={`px-2.5 py-1.5 rounded-lg cursor-pointer flex items-center justify-between ${
+                      i === suggestionIndex ? "bg-emerald-500/15 text-emerald-100" : "text-zinc-300"
+                    }`}
+                  >
+                    <span>
+                      <span className="text-zinc-500">{typing.key}:</span>
+                      {value}
+                    </span>
+                    {i === suggestionIndex && <kbd className="text-[11px] text-zinc-500">Tab</kbd>}
+                  </div>
+                ))
+              ) : (
+                <div className="p-1.5 flex flex-col gap-1.5">
+                  <span className="text-[11px] text-zinc-500">
+                    Filter with terms (combine freely, "-" excludes), or just type words:
+                  </span>
+                  <div className="flex flex-wrap gap-1">
+                    {SEARCH_HINTS.map((hint) => (
+                      <button
+                        key={hint}
+                        onClick={() => setSearchQuery(`${searchQuery ? `${searchQuery.trimEnd()} ` : ""}${hint}`)}
+                        className="px-1.5 py-0.5 rounded bg-zinc-900 border border-zinc-800 hover:border-emerald-500/50 text-zinc-300 font-mono text-[11px]"
+                      >
+                        {hint}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
           <div className="absolute right-1.5 top-1 flex items-center gap-1">
             {searchQuery && (
               <button
