@@ -15,6 +15,7 @@ import { useExport } from "./library/useExport";
 import { useHealth } from "./library/useHealth";
 import { useImport } from "./library/useImport";
 import { useHighlights } from "./library/useHighlights";
+import { useBackup } from "./library/useBackup";
 
 export type { Toast } from "./library/shared";
 
@@ -40,6 +41,7 @@ export function useLibraryState() {
   const health = useHealth(core);
   const importer = useImport(core, filters, folder);
   const highlighter = useHighlights(core, filters, view, collections);
+  const backup = useBackup(core, folder.recentFolders);
 
   return {
     ...core,
@@ -58,6 +60,7 @@ export function useLibraryState() {
     ...health,
     ...importer,
     ...highlighter,
+    ...backup,
     canUndo: core.undo.canUndo,
     canRedo: core.undo.canRedo,
     handleUndo: core.undo.handleUndo,

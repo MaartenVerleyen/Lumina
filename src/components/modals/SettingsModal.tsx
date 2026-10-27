@@ -1,7 +1,7 @@
 import { useEffect, useState, ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
-import { ask } from "@tauri-apps/plugin-dialog";
+import { ask, open as openDialog } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   Brain,
@@ -21,6 +21,7 @@ import { UNKNOWN_FACES } from "./FaceMatchReviewModal";
 import luminaMark from "../../assets/lumina-mark.svg";
 import { useSettings, updateSettings } from "../../settings";
 import type { Updater } from "../../hooks/useUpdater";
+import { defaultBackupDir } from "../../hooks/library/useBackup";
 
 export type SettingsSection = "general" | "library" | "ai" | "faces" | "search" | "updates" | "about";
 
@@ -162,12 +163,14 @@ export default function SettingsModal({
   const [dataDir, setDataDir] = useState("");
   const [flash, setFlash] = useState<{ on: boolean; canEnable: boolean } | null>(null);
   const [aiBusy, setAiBusy] = useState<"" | "starting" | "flash">("");
+  const [backupDefault, setBackupDefault] = useState("");
 
   useEffect(() => {
     if (!isOpen) return;
     setSection(initialSection);
     getVersion().then(setVersion).catch(() => {});
     invoke<string>("get_app_data_dir").then(setDataDir).catch(() => {});
+    defaultBackupDir().then(setBackupDefault).catch(() => {});
   }, [isOpen]);
 
   useEffect(() => {
@@ -184,6 +187,10 @@ export default function SettingsModal({
   const semantic = lib.semanticStatus;
   const hasPhotos = lib.photos.length > 0;
   const pending = Object.values(lib.pendingFaceCounts).reduce((a, b) => a + b, 0);
+  const backupDir = settings.backupDir || backupDefault;
+  const lastBackup = settings.lastBackupAt
+    ? new Date(settings.lastBackupAt).toLocaleString(undefined, { day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" })
+    : "";
 
   async function startOllama() {
     setAiBusy("starting");
@@ -391,6 +398,48 @@ export default function SettingsModal({
                   </Row>
                   <Row label="Pick up changes made outside Lumina" hint="Photos added, changed or removed in Explorer or by a sync app show up by themselves.">
                     <Switch checked={settings.watchLibrary} onChange={(v) => updateSettings({ watchLibrary: v })} label="Watch the library folder" />
+                  </Row>
+                </Group>
+                <Group title="Backup and restore">
+                  <Row
+                    label="Back up the library"
+                    hint={`Ratings, flags, people, captions, albums and settings: not the photos themselves. ${lastBackup ? `Last backup: ${lastBackup}.` : "No backup yet."}`}
+                  >
+                    <Button primary disabled={lib.backupBusy !== null} onClick={() => lib.backupNow()}>
+                      {lib.backupBusy === "backup" ? "Backing up…" : "Back up now"}
+                    </Button>
+                  </Row>
+                  <Row label="Backup folder" hint={<span className="font-mono text-[11.5px] break-all">{backupDir || "…"}</span>}>
+                    {backupDir && <Button onClick={() => lib.handleRevealInFileManager(backupDir)}>Show</Button>}
+                    <Button
+                      onClick={async () => {
+                        const picked = await openDialog({ directory: true, multiple: false, defaultPath: backupDir || undefined });
+                        if (typeof picked === "string") updateSettings({ backupDir: picked });
+                      }}
+                    >
+                      Change…
+                    </Button>
+                  </Row>
+                  <Row label="Back up automatically" hint="In the background while Lumina is open. The newest 5 automatic backups are kept.">
+                    <Segmented
+                      value={settings.autoBackup}
+                      options={[
+                        { value: "off", label: "Off" },
+                        { value: "daily", label: "Daily" },
+                        { value: "weekly", label: "Weekly" },
+                      ]}
+                      onChange={(v) => updateSettings({ autoBackup: v })}
+                    />
+                  </Row>
+                  <Row label="Restore from a backup" hint="Also for moving Lumina to a new PC: you point each library folder to where the photos are now.">
+                    <Button disabled={lib.backupBusy !== null} onClick={then(lib.chooseBackupToRestore)}>
+                      Restore…
+                    </Button>
+                  </Row>
+                  <Row label="Export as a spreadsheet" hint="Ratings, flags, labels, tags, people and captions of the open library, as a CSV file.">
+                    <Button disabled={!hasPhotos || lib.backupBusy !== null} onClick={lib.exportCsv}>
+                      Export CSV…
+                    </Button>
                   </Row>
                 </Group>
                 <Group title="Maintenance">

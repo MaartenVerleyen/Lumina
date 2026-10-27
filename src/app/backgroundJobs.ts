@@ -119,5 +119,8 @@ export function backgroundJobsOf(lib: LibraryState): BackgroundJob[] {
       cancelling: lib.aiBatchProgress.stopping,
     });
   }
+  if (lib.backupBusy === "backup") {
+    jobs.push({ id: "backup", label: "Backing up the library", completed: 0, total: 0 });
+  }
   return jobs;
 }

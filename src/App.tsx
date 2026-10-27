@@ -59,6 +59,7 @@ import ShortcutsModal from "./components/modals/ShortcutsModal";
 import ImportModal from "./components/modals/ImportModal";
 import HighlightsModal from "./components/modals/HighlightsModal";
 import GalleryModal from "./components/modals/GalleryModal";
+import RestoreModal from "./components/modals/RestoreModal";
 import { scopeTitle } from "./components/layout/PhotoToolbar";
 import OnThisDay from "./components/views/OnThisDay";
 import SettingsModal, { SettingsSection } from "./components/modals/SettingsModal";
@@ -281,6 +282,7 @@ export default function App() {
     lib.importSource !== null ||
     lib.highlights !== null ||
     lib.galleryTarget !== null ||
+    lib.restoreTarget !== null ||
     welcome.isOpen ||
     lib.exportTargets !== null ||
     lib.isCommitModalOpen ||
@@ -312,6 +314,7 @@ export default function App() {
     lib.setImportSource(null);
     lib.setHighlights(null);
     lib.setGalleryTarget(null);
+    lib.setRestoreTarget(null);
     lib.setExportTargets(null);
     lib.setIsCommitModalOpen(false);
     lib.setIsHealthModalOpen(false);
@@ -1001,6 +1004,13 @@ export default function App() {
         target={lib.galleryTarget}
         onClose={() => lib.setGalleryTarget(null)}
         onCreate={lib.runGallery}
+      />
+
+      <RestoreModal
+        target={lib.restoreTarget}
+        busy={lib.backupBusy === "restore"}
+        onClose={() => lib.setRestoreTarget(null)}
+        onRestore={lib.runRestore}
       />
 
       <ImportModal

@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react";
 import type { ImportPattern } from "./types/lumina";
 import type { CheckLevel, CullingSettings } from "./utils/culling";
+import type { AutoBackup } from "./utils/backup";
 
 // Lumina's settings in one place: typed, validated, saved as one localStorage entry and readable from any
 // component with useSettings(). Window layout (pane sizes, open tab) is remembered separately (app/layout.ts).
@@ -25,6 +26,10 @@ export interface Settings {
   focusCheck: CheckLevel;
   // "On this day" strip above the grid
   onThisDay: boolean;
+  // Library backups: automatic schedule, folder ("" = Documents/Lumina Backups) and when the last one was made
+  autoBackup: AutoBackup;
+  backupDir: string;
+  lastBackupAt: number;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -40,6 +45,9 @@ export const DEFAULT_SETTINGS: Settings = {
   eyesCheck: "normal",
   focusCheck: "normal",
   onThisDay: true,
+  autoBackup: "off",
+  backupDir: "",
+  lastBackupAt: 0,
 };
 
 const SETTINGS_KEY = "lumina_settings";
@@ -51,6 +59,8 @@ const oneOf =
   (v: unknown): v is T =>
     typeof v === "string" && (allowed as string[]).includes(v);
 const isBool = (v: unknown): v is boolean => typeof v === "boolean";
+const isString = (v: unknown): v is string => typeof v === "string";
+const isTime = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v) && v >= 0;
 
 const VALIDATORS: { [K in keyof Settings]: (v: unknown) => v is Settings[K] } = {
   simpleMode: isBool,
@@ -65,6 +75,9 @@ const VALIDATORS: { [K in keyof Settings]: (v: unknown) => v is Settings[K] } = 
   eyesCheck: oneOf("off", "normal", "high"),
   focusCheck: oneOf("off", "normal", "high"),
   onThisDay: isBool,
+  autoBackup: oneOf("off", "daily", "weekly"),
+  backupDir: isString,
+  lastBackupAt: isTime,
 };
 
 // Saved settings over the defaults, field by field: an unknown or invalid value falls back to its default.

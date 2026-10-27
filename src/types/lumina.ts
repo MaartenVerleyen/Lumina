@@ -449,3 +449,39 @@ export interface ImportResult {
   cancelled: boolean;
   ejected: boolean;
 }
+
+// Library backups (see src-tauri/src/backup.rs)
+export interface BackupRoot {
+  path: string;
+  photos: number;
+  // Whether the folder exists on this PC (filled in when a backup is inspected)
+  exists: boolean;
+}
+
+export interface BackupManifest {
+  format: number;
+  app_version: string;
+  created_at: number;
+  computer: string;
+  app_dir: string;
+  roots: BackupRoot[];
+  photos: number;
+  rated: number;
+  people: number;
+  named_faces: number;
+  albums: number;
+  face_crops: number;
+}
+
+export interface BackupResult {
+  path: string;
+  bytes: number;
+  manifest: BackupManifest;
+  removed: number;
+}
+
+export interface RestoreResult {
+  settings: string | null;
+  photos: number;
+  remapped: number;
+}

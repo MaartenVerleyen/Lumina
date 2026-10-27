@@ -40,6 +40,9 @@ export function buildPaletteActions({
   const paletteActions: PaletteAction[] = [
     { id: "open-folder", group: "Library", label: "Open folder…", keywords: "library switch", run: lib.handleOpenFolder },
     { id: "import", group: "Library", label: "Import photos…", keywords: "card sd camera copy usb phone", enabled: !lib.importProgress, run: () => lib.openImport() },
+    { id: "backup", group: "Library", label: "Back up the library now", keywords: "backup save copy safety", enabled: lib.backupBusy === null, run: () => lib.backupNow() },
+    { id: "restore", group: "Library", label: "Restore from a backup…", keywords: "backup new pc computer move migrate", enabled: lib.backupBusy === null, run: lib.chooseBackupToRestore },
+    { id: "csv", group: "Library", label: "Export library as a spreadsheet (CSV)…", keywords: "csv excel ratings list", enabled: lib.photos.length > 0 && lib.backupBusy === null, run: lib.exportCsv },
     ...lib.recentFolders.slice(0, 5).map((f) => ({
       id: `recent-${f}`,
       group: "Library",

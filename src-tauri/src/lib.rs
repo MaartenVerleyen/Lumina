@@ -44,6 +44,7 @@ mod watch;
 mod face_quality;
 mod highlights;
 mod gallery;
+mod backup;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -334,6 +335,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
+            // A restore chosen in Settings is moved in before anything opens the database
+            backup::apply_pending_restore(&get_app_storage_dir(app.handle()));
             let _ = open_global_db(app.handle());
             // Warm up lazily-built resources off the UI thread, so the first scan doesn't stall on them:
             // the offline geocoder's city index (first photo with GPS) and the background thread pool
@@ -434,6 +437,11 @@ pub fn run() {
             face_quality::measure_face_quality,
             highlights::pick_highlights,
             gallery::export_gallery,
+            backup::backup_library,
+            backup::inspect_backup,
+            backup::restore_library,
+            backup::restart_app,
+            backup::export_library_csv,
             system::copy_image_to_clipboard,
             decode::ensure_high_res_preview,
             system::close_splashscreen

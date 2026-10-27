@@ -1093,3 +1093,78 @@ fn gallery_names_and_escaping() {
     assert_eq!(gallery_folder_name("Zomer in Lagos!"), "Zomer-in-Lagos");
     assert_eq!(html_escape("<b>Tom & Jerry</b>"), "&lt;b&gt;Tom &amp; Jerry&lt;/b&gt;");
 }
+
+#[test]
+fn backup_remaps_library_paths() {
+    use crate::backup::remap_path;
+    let remaps = vec![
+        (r"D:\Photos".to_string(), r"E:\Pictures\".to_string()),
+        (r"D:\Photos\Phone".to_string(), r"F:\Phone".to_string()),
+    ];
+    assert_eq!(remap_path(r"D:\Photos\2023\a.jpg", &remaps).as_deref(), Some(r"E:\Pictures\2023\a.jpg"));
+    // Case-insensitive, and the longest matching folder wins
+    assert_eq!(remap_path(r"d:\photos\Phone\b.heic", &remaps).as_deref(), Some(r"F:\Phone\b.heic"));
+    assert_eq!(remap_path(r"D:\Photos", &remaps).as_deref(), Some(r"E:\Pictures"));
+    // A sibling folder with the same start is not inside the root
+    assert_eq!(remap_path(r"D:\Photos2\c.jpg", &remaps), None);
+    assert_eq!(remap_path(r"C:\Other\d.jpg", &remaps), None);
+}
+
+#[test]
+fn backup_finds_library_roots() {
+    use crate::backup::library_roots;
+    let paths: Vec<String> = [
+        r"D:\04_Media\iPhone_Photos\a.jpg",
+        r"D:\04_Media\iPhone_Photos\2023\b.jpg",
+        r"D:\04_Media\Camera\c.jpg",
+        r"C:\Users\Maarten\Pictures\Trip\d.jpg",
+        r"E:\e.jpg",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+    let roots = library_roots(&paths, &[r"D:\04_Media\".to_string()]);
+    let got: Vec<(&str, usize)> = roots.iter().map(|r| (r.path.as_str(), r.photos)).collect();
+    // The known library folder takes its photos; the rest are cut to two levels below the drive
+    assert_eq!(got, vec![(r"D:\04_Media", 3), (r"C:\Users\Maarten", 1), (r"E:\", 1)]);
+}
+
+#[test]
+fn backup_rewrites_paths_in_the_database() {
+    use crate::backup::rewrite_paths;
+    let mut conn = Connection::open_in_memory().unwrap();
+    conn.execute_batch(
+        r"CREATE TABLE photos (hash TEXT PRIMARY KEY, current_path TEXT, staged_target TEXT);
+         CREATE TABLE photo_faces (face_id TEXT PRIMARY KEY, face_thumb TEXT);
+         CREATE TABLE people (id INTEGER PRIMARY KEY, cover_face_thumb TEXT);
+         INSERT INTO photos VALUES ('a', 'D:\Photos\a.jpg', 'D:\Photos\Sorted'), ('b', 'C:\Elsewhere\b.jpg', NULL);
+         INSERT INTO photo_faces VALUES ('f1', 'C:\Users\Old\AppData\Local\com.amazhr.lumina\faces\f1.jpg');
+         INSERT INTO people VALUES (1, 'C:\Users\Old\AppData\Local\com.amazhr.lumina\faces\f1.jpg');",
+    )
+    .unwrap();
+    let remaps = vec![
+        (r"D:\Photos".to_string(), r"E:\Photos".to_string()),
+        (r"C:\Users\Old\AppData\Local\com.amazhr.lumina".to_string(), r"C:\Users\New\AppData\Local\com.amazhr.lumina".to_string()),
+    ];
+    assert_eq!(rewrite_paths(&mut conn, &remaps).unwrap(), 1);
+    let photo: (String, String) = conn
+        .query_row("SELECT current_path, staged_target FROM photos WHERE hash = 'a'", [], |r| Ok((r.get(0)?, r.get(1)?)))
+        .unwrap();
+    assert_eq!(photo, (r"E:\Photos\a.jpg".to_string(), r"E:\Photos\Sorted".to_string()));
+    let other: String = conn.query_row("SELECT current_path FROM photos WHERE hash = 'b'", [], |r| r.get(0)).unwrap();
+    assert_eq!(other, r"C:\Elsewhere\b.jpg");
+    let face: String = conn.query_row("SELECT face_thumb FROM photo_faces", [], |r| r.get(0)).unwrap();
+    let cover: String = conn.query_row("SELECT cover_face_thumb FROM people", [], |r| r.get(0)).unwrap();
+    assert_eq!(face, r"C:\Users\New\AppData\Local\com.amazhr.lumina\faces\f1.jpg");
+    assert_eq!(cover, face);
+}
+
+#[test]
+fn backup_csv_quoting() {
+    use crate::backup::{csv_date, csv_field};
+    assert_eq!(csv_date("2024:04:12 12:05:26"), "2024-04-12 12:05:26");
+    assert_eq!(csv_date("2024-04-12 12:05:26"), "2024-04-12 12:05:26");
+    assert_eq!(csv_field("plain"), "plain");
+    assert_eq!(csv_field("beach, sunset"), "\"beach, sunset\"");
+    assert_eq!(csv_field("a \"quote\""), "\"a \"\"quote\"\"\"");
+}
