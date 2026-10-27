@@ -1,0 +1,429 @@
+import { useState, useEffect, useRef } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { open } from "@tauri-apps/plugin-dialog";
+import { PhotoItem, ThumbBatchProgress, ThumbBatchItem, ExifRefreshResult, PerfLogEvent, TrashResult, ScanProgressEvent } from "../../types/lumina";
+import { RAW_OR_HEIC_NAME } from "../../utils/rawPairs";
+import { isSameFolder, SCAN_CANCELLED } from "./shared";
+import type { LibraryCore } from "./core";
+import type { FilterState } from "./useFilterState";
+
+// The open library folder: opening, scanning, thumbnails as they arrive, rescans, _Trash, Explorer actions
+export function useFolder(core: LibraryCore, filters: FilterState) {
+  const {
+    folder,
+    setFolder,
+    folderRef,
+    photos,
+    setPhotos,
+    activeHash,
+    setActiveHash,
+    selectedHashes,
+    setSelectedHashes,
+    selectionAnchorHashRef,
+    addLog,
+    setError,
+    setAutoMatchNotice,
+    confirmAction,
+    undo,
+  } = core;
+  const { setExpandedFolders, setExpandedBurstGroups, setSelectedPeriodRange } = filters;
+  const [recentFolders, setRecentFolders] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem("lumina_recent_folders");
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [scanProgress, setScanProgress] = useState<ScanProgressEvent | null>(null);
+  const [isScanningFolder, setIsScanningFolder] = useState<boolean>(false);
+  const [progress, setProgress] = useState<{ completed: number; total: number } | null>(null);
+
+  function saveRecentFolder(path: string) {
+    try {
+      localStorage.setItem("lumina_active_folder", path);
+    } catch {}
+    setRecentFolders((prev) => {
+      const next = [path, ...prev.filter((p) => p !== path)].slice(0, 6);
+      try {
+        localStorage.setItem("lumina_recent_folders", JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  }
+
+  // Listen for Folder Scan Progress Events
+  useEffect(() => {
+    const unlisten = listen<ScanProgressEvent>("scan-progress", (event) => {
+      const prog = event.payload;
+      if (prog.done) {
+        setScanProgress(null);
+      } else {
+        setScanProgress(prog);
+      }
+    });
+    return () => {
+      unlisten.then((f) => f());
+    };
+  }, []);
+
+  // Listen for backend performance timings (scan, thumbnails, face scan, previews)
+  useEffect(() => {
+    const unlisten = listen<PerfLogEvent>("perf-log", (event) => {
+      const { label, millis, count, details } = event.payload;
+      const items = count === 1 ? "" : ` for ${count} items`;
+      addLog("PERF", `${label}: ${(millis / 1000).toFixed(2)} s${items}`, details);
+    });
+    return () => {
+      unlisten.then((f) => f());
+    };
+  }, [addLog]);
+
+  // Auto-restore active folder on mount (or if WebView2 ever reloads) so it never drops back to the welcome screen
+  const initialRestoreDoneRef = useRef<boolean>(false);
+  useEffect(() => {
+    if (!initialRestoreDoneRef.current) {
+      initialRestoreDoneRef.current = true;
+      try {
+        const savedActive = localStorage.getItem("lumina_active_folder");
+        if (savedActive && photos.length === 0) {
+          handleLoadFolderPath(savedActive);
+        }
+      } catch {}
+    }
+  }, []);
+
+  useEffect(() => {
+    folderRef.current = folder;
+    setProgress(null);
+    // Undo entries reference photos of the previous folder; replaying them here would be wrong
+    undo.clearHistory();
+  }, [folder]);
+
+  useEffect(() => {
+    const unlisten = listen<ThumbBatchProgress>("thumb-batch-ready", (event) => {
+      const { items, duplicate_groups, completed, total, folder: batchFolder } = event.payload;
+      // A batch from a folder we've since left would overwrite this folder's duplicate groups
+      if (!isSameFolder(batchFolder, folderRef.current)) return;
+      setProgress(completed < total ? { completed, total } : null);
+
+      const batchMap = new Map<string, ThumbBatchItem>();
+      for (const it of items) batchMap.set(it.hash, it);
+      const hasDupUpdate = duplicate_groups && Object.keys(duplicate_groups).length > 0;
+
+      setPhotos((prev) =>
+        prev.map((p) => {
+          const hit = batchMap.get(p.hash);
+          const nextDup = hasDupUpdate ? duplicate_groups[p.hash] ?? null : p.duplicate_group;
+
+          if (!hit) {
+            return nextDup !== p.duplicate_group ? { ...p, duplicate_group: nextDup } : p;
+          }
+
+          const mergedTags =
+            hit.auto_tags && hit.auto_tags.length > 0
+              ? Array.from(new Set([...p.tags, ...hit.auto_tags])).sort()
+              : p.tags;
+
+          const isRawOrHeic = RAW_OR_HEIC_NAME.test(p.name);
+          const displayPath =
+            isRawOrHeic && !p.path.endsWith("_preview.jpg") ? hit.thumb_path : p.path;
+
+          return {
+            ...p,
+            path: displayPath,
+            thumb_path: hit.thumb_path,
+            // The file was rewritten (e.g. upgraded to 480 px): a new revision makes the grid reload it
+            thumb_rev: p.thumb_ready && hit.thumb_edge > 0 ? (p.thumb_rev || 0) + 1 : p.thumb_rev,
+            dhash: hit.dhash,
+            sharpness: hit.sharpness,
+            width: hit.width || p.width,
+            height: hit.height || p.height,
+            tags: mergedTags,
+            thumb_ready: hit.thumb_ok,
+            damaged: hit.damaged,
+            duplicate_group: nextDup,
+          };
+        })
+      );
+    });
+    return () => {
+      unlisten.then((f) => f());
+    };
+  }, []);
+
+  // Only the most recent folder load may apply its result (a slower earlier scan must not win)
+  const folderLoadRequestRef = useRef(0);
+
+  async function handleLoadFolderPath(targetPath: string) {
+    if (!targetPath) return;
+    const requestId = ++folderLoadRequestRef.current;
+    const isSuperseded = () => requestId !== folderLoadRequestRef.current;
+    const previousFolder = folder;
+    try {
+      setFolder(targetPath);
+      setSelectedHashes(new Set());
+      setActiveHash(null);
+      setExpandedFolders(new Set());
+      setExpandedBurstGroups(new Set());
+      setSelectedPeriodRange(null);
+      setIsScanningFolder(true);
+      setScanProgress({
+        stage: "Scanning directory & EXIF headers...",
+        current_file: targetPath,
+        completed: 0,
+        total: 0,
+        percent: 0,
+        done: false,
+      });
+      const res = await invoke<PhotoItem[]>("scan_folder", {
+        folderPath: targetPath,
+        forceReprocess: false,
+      });
+      if (isSuperseded()) return;
+      // Remember the folder only once it actually opened, so a bad path is never restored on next launch
+      saveRecentFolder(targetPath);
+      setPhotos(res);
+      setIsScanningFolder(false);
+      setScanProgress(null);
+      addLog("LIBRARY", `Opened library folder (${res.length} items)`, targetPath);
+      if (res.length > 0) {
+        setActiveHash(res[0].hash);
+        setSelectedHashes(new Set([res[0].hash]));
+        selectionAnchorHashRef.current = res[0].hash;
+      }
+    } catch (err) {
+      if (isSuperseded()) return;
+      // Keep showing the previous folder's photos under the previous folder's name
+      setFolder(previousFolder);
+      setIsScanningFolder(false);
+      setScanProgress(null);
+      if (String(err).includes(SCAN_CANCELLED)) setAutoMatchNotice("Opening the folder was cancelled.");
+      else setError(String(err));
+    }
+  }
+
+  async function handleOpenFolder() {
+    try {
+      const selected = await open({ directory: true, multiple: false });
+      if (selected && typeof selected === "string") {
+        await handleLoadFolderPath(selected);
+      }
+    } catch (err) {
+      setIsScanningFolder(false);
+      setScanProgress(null);
+      setError(String(err));
+    }
+  }
+
+  async function handleEmptyTrashToRecycleBin() {
+    if (!folder) return;
+    const inTrash = photos.filter((p) => p.subfolder === "_Trash" || p.subfolder.startsWith("_Trash / ")).length;
+    if (inTrash === 0) {
+      setAutoMatchNotice("_Trash is empty: commit staged rejects first to move them there.");
+      return;
+    }
+    const ok = await confirmAction(
+      `Move the ${inTrash} photo(s) in _Trash to the Windows Recycle Bin?\n\nYou can still restore them from the Recycle Bin, but not from Lumina.`,
+      "Move to Recycle Bin"
+    );
+    if (!ok) return;
+    try {
+      const result = await invoke<TrashResult>("empty_library_trash_to_os", {
+        rootFolder: folder,
+      });
+      const count = result.recycled;
+      for (const f of result.failures) {
+        addLog("DISK", `Could not recycle ${f.file}`, f.error);
+      }
+      if (result.failures.length > 0) {
+        setError(
+          `${result.failures.length} file(s) could not be moved to the Recycle Bin and were left in place. See the Session Log.`
+        );
+      }
+      if (count > 0) {
+        const res = await invoke<PhotoItem[]>("scan_folder", {
+          folderPath: folder,
+          forceReprocess: false,
+        });
+        setPhotos(res);
+        setAutoMatchNotice(`Moved ${count} rejected photo(s) to your OS Recycle Bin.`);
+        addLog("DISK", `Moved ${count} _Trash photo(s) to OS Recycle Bin`);
+      }
+    } catch (err) {
+      setError(String(err));
+    }
+  }
+
+  async function handleRescanFolder() {
+    if (!folder || isScanningFolder) return;
+    try {
+      setIsScanningFolder(true);
+      setScanProgress({
+        stage: "Quick Rescanning folder...",
+        current_file: folder,
+        completed: 0,
+        total: 0,
+        percent: 0,
+        done: false,
+      });
+      const res = await invoke<PhotoItem[]>("scan_folder", {
+        folderPath: folder,
+        forceReprocess: false,
+      });
+      setPhotos(res);
+      addLog("LIBRARY", `Quick rescanned folder (${res.length} items)`, folder);
+      if (res.length > 0 && (!activeHash || !res.some((p) => p.hash === activeHash))) {
+        setActiveHash(res[0].hash);
+        setSelectedHashes(new Set([res[0].hash]));
+      }
+    } catch (err) {
+      if (String(err).includes(SCAN_CANCELLED)) setAutoMatchNotice("Rescan cancelled.");
+      else setError(String(err));
+    } finally {
+      setIsScanningFolder(false);
+      setScanProgress(null);
+    }
+  }
+
+  async function handleRescanAndProcessFolder() {
+    if (!folder || isScanningFolder) return;
+    const ok = await confirmAction(
+      `Rebuild thumbnails, duplicate detection and focus scores for all ${photos.length} photo(s)?\n\nThis reads every file again and can take several minutes on a large library. Ratings, tags, faces and AI results are kept.`,
+      "Reprocess"
+    );
+    if (!ok) return;
+    try {
+      setIsScanningFolder(true);
+      setScanProgress({
+        stage: "Deep Reprocessing thumbnails, dHash & focus scores...",
+        current_file: folder,
+        completed: 0,
+        total: 0,
+        percent: 0,
+        done: false,
+      });
+      const res = await invoke<PhotoItem[]>("scan_folder", {
+        folderPath: folder,
+        forceReprocess: true,
+      });
+      setPhotos(res);
+      addLog("LIBRARY", `Deep reprocessed library (${res.length} items)`, folder);
+    } catch (err) {
+      if (String(err).includes(SCAN_CANCELLED)) setAutoMatchNotice("Rescan cancelled.");
+      else setError(String(err));
+    } finally {
+      setIsScanningFolder(false);
+      setScanProgress(null);
+    }
+  }
+
+  async function handleForceRescanExifSelected() {
+    const targets =
+      selectedHashes.size > 0
+        ? Array.from(selectedHashes)
+        : activeHash
+        ? [activeHash]
+        : [];
+    if (targets.length === 0) return;
+    try {
+      const results = await invoke<ExifRefreshResult[]>("rescan_exif_batch", {
+        hashes: targets,
+      });
+      const map = new Map(results.map((r) => [r.hash, r]));
+      setPhotos((prev) =>
+        prev.map((p) => {
+          const hit = map.get(p.hash);
+          if (!hit) return p;
+          return {
+            ...p,
+            captured_at: hit.captured_at || p.captured_at,
+            camera_model: hit.camera_model || p.camera_model,
+            location: hit.location || p.location,
+            latitude: hit.latitude ?? p.latitude,
+            longitude: hit.longitude ?? p.longitude,
+            focal_length: hit.focal_length ?? p.focal_length,
+            aperture: hit.aperture ?? p.aperture,
+            shutter_speed: hit.shutter_speed ?? p.shutter_speed,
+            iso: hit.iso ?? p.iso,
+            lens_model: hit.lens_model ?? p.lens_model,
+          };
+        })
+      );
+      addLog("LIBRARY", `Refreshed EXIF headers on ${results.length} photo(s)`);
+      const first = results[0];
+      if (first) {
+        setAutoMatchNotice(
+          `EXIF refreshed (${results.length} photo${results.length === 1 ? "" : "s"}): Date=${
+            first.captured_at ? first.captured_at.split(" ")[0] : "None"
+          } • Cam=${first.camera_model || "None"} • Loc=${first.location || "None"}`
+        );
+      }
+    } catch (err) {
+      setError(String(err));
+    }
+  }
+
+  // Jobs panel: stop making thumbnails (the rest is picked up the next time the folder is opened)
+  async function handleCancelThumbnails() {
+    try {
+      await invoke("cancel_thumbnail_pass");
+      setProgress(null);
+      addLog("LIBRARY", "Stopped making thumbnails; the rest follows the next time this folder is opened");
+    } catch (err) {
+      setError(String(err));
+    }
+  }
+
+  // Native OS Context Menu Actions
+  async function handleOpenInDefaultViewer(path: string) {
+    try {
+      await invoke("open_in_default_app", { path });
+      addLog("LIBRARY", `Opened in default viewer: ${path.split(/[\\/]/).pop()}`);
+    } catch (err) {
+      setError(String(err));
+    }
+  }
+
+  async function handleRevealInFileManager(path: string) {
+    try {
+      await invoke("reveal_in_file_manager", { path });
+      addLog("LIBRARY", `Revealed in file manager: ${path}`);
+    } catch (err) {
+      setError(String(err));
+    }
+  }
+
+  async function handleCreateSubfolder(relativePath: string) {
+    if (!folder || !relativePath.trim()) return;
+    try {
+      const created = await invoke<string>("create_library_subfolder", {
+        rootFolder: folder,
+        relativePath: relativePath.trim(),
+      });
+      addLog("DISK", `Created new subfolder: ${relativePath.trim()}`, created);
+      setAutoMatchNotice(`Created folder: ${relativePath.trim()}`);
+      await handleRescanFolder();
+    } catch (err) {
+      setError(String(err));
+    }
+  }
+
+  return {
+    recentFolders,
+    scanProgress,
+    isScanningFolder,
+    progress,
+    handleLoadFolderPath,
+    handleOpenFolder,
+    handleEmptyTrashToRecycleBin,
+    handleRescanFolder,
+    handleRescanAndProcessFolder,
+    handleForceRescanExifSelected,
+    handleCancelThumbnails,
+    handleOpenInDefaultViewer,
+    handleRevealInFileManager,
+    handleCreateSubfolder,
+  };
+}

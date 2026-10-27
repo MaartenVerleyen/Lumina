@@ -1,5 +1,6 @@
 use crate::ai::parse_resilient_ai_json;
 use crate::*;
+use crate::face_scan::carry_over_rejections;
 use image::{GrayImage, Luma};
 
 // ----------------- EXIF DATE NORMALIZATION -----------------
@@ -835,7 +836,7 @@ fn renaming_a_person_onto_an_existing_name_merges_them() {
     )
     .unwrap();
 
-    face_commands::rename_person_in_db(&mut conn, "anna", "Anna Smith").unwrap();
+    people::rename_person_in_db(&mut conn, "anna", "Anna Smith").unwrap();
 
     let people: Vec<(String, String)> = conn
         .prepare("SELECT name, cover_face_thumb FROM people")
@@ -859,7 +860,7 @@ fn renaming_a_person_onto_an_existing_name_merges_them() {
     assert_eq!(leftovers, 0);
 
     // A capitalisation-only rename is a rename, not a merge
-    face_commands::rename_person_in_db(&mut conn, "Anna Smith", "ANNA SMITH").unwrap();
+    people::rename_person_in_db(&mut conn, "Anna Smith", "ANNA SMITH").unwrap();
     let name: String = conn.query_row("SELECT name FROM people", [], |r| r.get(0)).unwrap();
     assert_eq!(name, "ANNA SMITH");
 }

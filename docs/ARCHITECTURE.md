@@ -39,7 +39,10 @@ Thumbnails (480 px) and RAW/HEIC previews are cached as JPEG files next to the d
 | `thumbs.rs` | the background thumbnail pipeline (readers, then a bounded queue, decoders on `BG_POOL`, a collector that writes to the DB and sends batches to the UI) |
 | `face_ort.rs` | face engine: SCRFD `det_10g` detection with landmarks, alignment, ArcFace `w600k_r50` embeddings, on ONNX Runtime with DirectML (CPU fallback) |
 | `face_match.rs` | person profiles, exclusive assignment with a margin, confidence tiers, clustering of unknown faces |
-| `face_engine.rs`, `face_commands.rs` | embedding cache and every face/people command (scan, review, rename, merge, profile picture) |
+| `face_engine.rs` | the embedding cache used for matching |
+| `face_scan.rs` | face detection: one photo on demand and the background face scan |
+| `face_review.rs` | naming face boxes, match suggestions, accept / reject, "Who is this?" clusters |
+| `people.rs` | the people list, tagging photos with a person, rename / merge / hide, profile pictures |
 | `face_eval.rs` | manual benchmark on a labelled folder (`#[ignore]` test) |
 | `clip.rs` | smart search: CLIP ViT-B/32 image encoder, multilingual text encoder, indexing job, query |
 | `ai.rs` | Ollama: start, pull, flash-attention setting, per-photo caption/tags/OCR with a constrained JSON schema |
@@ -71,9 +74,11 @@ sequentially. Flash attention gives about 10–15% more speed and Lumina can swi
 
 | Path | Responsibility |
 | :--- | :--- |
-| `hooks/useLibraryState.ts` | all library state and actions: photos, filters, selection, undo/redo, background jobs |
+| `hooks/useLibraryState.ts` | composes the library hooks into the one `lib` object the components use |
+| `hooks/library/` | one hook per area: `core` (folder, photos, selection, notifications, undo), `useFolder`, `useFilterState`, `useLibraryView` (visible photos, counts, compare), `useTriage`, `useStaging`, `useLocation`, `usePeople`, `useAi`, `useSmartSearch`, `useCollections`, `useExport`, `useHealth`, `usePreferences` |
 | `hooks/useKeyboardShortcuts.ts` | grid shortcuts (off while a dialog is open) |
-| `App.tsx` | layout: header tabs, resizable side panes, the main view, dialogs, remembered layout |
+| `App.tsx` | layout: header tabs, resizable side panes, the main view, dialogs |
+| `app/` | App's helpers: remembered pane layout, app-level keys, window file drop, command palette actions, background jobs, search suggestions |
 | `components/layout` | header, sidebars (filters and folders, people), inspector, toolbar, status bar, menus |
 | `components/views` | justified virtualised grid, map, compare, collections, timeline |
 | `components/modals` | Loupe, Face Review, export, commit, command palette and other dialogs |

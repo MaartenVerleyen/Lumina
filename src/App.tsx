@@ -1,10 +1,8 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useLibraryState } from "./hooks/useLibraryState";
-import { useKeyboardShortcuts, isEditableTarget } from "./hooks/useKeyboardShortcuts";
-import { useDialogFocus } from "./hooks/useDialogFocus";
+import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
 import { diskPathOf } from "./utils/rawPairs";
 import TopHeaderBar from "./components/layout/TopHeaderBar";
 import LeftSidebar from "./components/layout/LeftSidebar";
@@ -16,12 +14,8 @@ import ExportModal from "./components/modals/ExportModal";
 import CollectionsView from "./components/views/CollectionsView";
 import PeopleSidebar from "./components/layout/PeopleSidebar";
 import ProfilePicturePicker from "./components/modals/ProfilePicturePicker";
-import { describePeopleExpr, peopleInExpr } from "./utils/peopleQuery";
-import { describeTerm, removeTerm, TermKey } from "./utils/searchQuery";
-import CommandPalette, { PaletteAction } from "./components/modals/CommandPalette";
+import CommandPalette from "./components/modals/CommandPalette";
 import { usePhotoDrag, DropTarget } from "./hooks/usePhotoDrag";
-import { thumbSrc } from "./utils/photoHelpers";
-import type { BackgroundJob } from "./components/layout/BottomStatusBar";
 import {
   PhotoContextMenu,
   FolderContextMenu,
@@ -37,7 +31,6 @@ import {
   monthLabel,
   verticalNeighbor,
 } from "./utils/gridLayout";
-import PhotoMap from "./components/views/PhotoMap";
 import BulkActionDock from "./components/modals/BulkActionDock";
 import CommitModal from "./components/modals/CommitModal";
 import HealthXmpModal from "./components/modals/HealthXmpModal";
@@ -48,87 +41,46 @@ import SessionLogModal from "./components/modals/SessionLogModal";
 import WelcomeTour from "./components/modals/WelcomeTour";
 import { useWelcomeTour } from "./hooks/useWelcomeTour";
 import FaceMatchReviewModal, { UNKNOWN_FACES } from "./components/modals/FaceMatchReviewModal";
-import { PhotoItem, SortOption, ViewMode } from "./types/lumina";
-import {
-  Clock,
-  Compass,
-  Crosshair,
-  FolderOpen,
-  FolderPlus,
-  HelpCircle,
-  MapPin,
-  Search,
-  Sparkles,
-  X,
-} from "lucide-react";
-
-// Layout remembered between sessions (one localStorage entry; anything missing or invalid falls back)
-interface SavedLayout {
-  tab: ViewMode;
-  zoom: number;
-  sort: SortOption;
-  leftWidth: number;
-  rightWidth: number;
-  leftCollapsed: boolean;
-  rightCollapsed: boolean;
-  collapsedSections: string[];
-}
-
-const LAYOUT_KEY = "lumina_layout";
-const DEFAULT_LAYOUT: SavedLayout = {
-  tab: "grid",
-  zoom: 0.45,
-  sort: "NAME_ASC",
-  leftWidth: 250,
-  rightWidth: 380,
-  leftCollapsed: false,
-  rightCollapsed: false,
-  collapsedSections: [],
-};
-
-function loadLayout(): SavedLayout {
-  try {
-    const raw = JSON.parse(localStorage.getItem(LAYOUT_KEY) || "{}");
-    const num = (v: unknown, min: number, max: number, fallback: number) =>
-      typeof v === "number" && v >= min && v <= max ? v : fallback;
-    return {
-      tab: ["grid", "map", "people", "collections"].includes(raw.tab) ? raw.tab : DEFAULT_LAYOUT.tab,
-      zoom: num(raw.zoom, 0, 1, DEFAULT_LAYOUT.zoom),
-      sort: typeof raw.sort === "string" && raw.sort ? raw.sort : DEFAULT_LAYOUT.sort,
-      leftWidth: num(raw.leftWidth, 160, 2000, DEFAULT_LAYOUT.leftWidth),
-      rightWidth: num(raw.rightWidth, 260, 2000, DEFAULT_LAYOUT.rightWidth),
-      leftCollapsed: raw.leftCollapsed === true,
-      rightCollapsed: raw.rightCollapsed === true,
-      collapsedSections: Array.isArray(raw.collapsedSections)
-        ? raw.collapsedSections.filter((x: unknown) => typeof x === "string")
-        : [],
-    };
-  } catch {
-    return DEFAULT_LAYOUT;
-  }
-}
+import { PhotoItem } from "./types/lumina";
+import { FolderOpen } from "lucide-react";
+import { usePaneLayout } from "./app/usePaneLayout";
+import { useWindowFileDrop } from "./app/useWindowFileDrop";
+import { useAppKeys } from "./app/useAppKeys";
+import { backgroundJobsOf } from "./app/backgroundJobs";
+import { useSearchSuggestions } from "./app/useSearchSuggestions";
+import { buildPaletteActions } from "./app/paletteActions";
+import FilterBar from "./components/layout/FilterBar";
+import ResultBanners from "./components/layout/ResultBanners";
+import DragGhost from "./components/layout/DragGhost";
+import MapPane from "./components/views/MapPane";
+import { NoLibrary, NoMatches } from "./components/views/EmptyStates";
+import NewFolderModal from "./components/modals/NewFolderModal";
+import ShortcutsModal from "./components/modals/ShortcutsModal";
 
 export default function App() {
   const lib = useLibraryState();
   const welcome = useWelcomeTour();
 
-  // 3-Pane Resizable & Collapsible State
-  // Pane sizes and collapsed parts come back as they were left (see the layout effect below)
-  const [savedLayout] = useState(loadLayout);
-  const [leftWidth, setLeftWidth] = useState<number>(savedLayout.leftWidth);
-  const [rightWidth, setRightWidth] = useState<number>(savedLayout.rightWidth);
-  const [isLeftCollapsed, setIsLeftCollapsed] = useState<boolean>(savedLayout.leftCollapsed);
-  const [isRightCollapsed, setIsRightCollapsed] = useState<boolean>(savedLayout.rightCollapsed);
-  const [collapsedSections, setCollapsedSections] = useState<string[]>(savedLayout.collapsedSections);
+  const {
+    leftWidth,
+    rightWidth,
+    isLeftCollapsed,
+    setIsLeftCollapsed,
+    isRightCollapsed,
+    setIsRightCollapsed,
+    collapsedSections,
+    setCollapsedSections,
+    draggingPaneRef,
+  } = usePaneLayout(lib);
   const [centerWidth, setCenterWidth] = useState<number>(960);
-  const draggingPaneRef = useRef<"left" | "right" | null>(null);
+
 
   const searchInputRef = useRef<HTMLInputElement>(null);
   const gridContainerRef = useRef<HTMLDivElement>(null);
   const centerMainRef = useRef<HTMLElement>(null);
 
-  // Global Drag-and-Drop State
-  const [isDraggingOverWindow, setIsDraggingOverWindow] = useState<boolean>(false);
+  const isDraggingOverWindow = useWindowFileDrop(lib.handleLoadFolderPath);
+
 
   // Context Menu State (Photos & Folders)
   const [photoMenuPos, setPhotoMenuPos] = useState<ContextMenuPosition | null>(null);
@@ -140,138 +92,9 @@ export default function App() {
   const [isNewFolderModalOpen, setIsNewFolderModalOpen] = useState<boolean>(false);
   const [newFolderInput, setNewFolderInput] = useState<string>("");
   const [isPaletteOpen, setIsPaletteOpen] = useState<boolean>(false);
-  const newFolderDialogRef = useDialogFocus<HTMLFormElement>(isNewFolderModalOpen);
-  const shortcutsDialogRef = useDialogFocus<HTMLDivElement>(lib.isShortcutsModalOpen);
 
-  useEffect(() => {
-    lib.setZoomLevel(savedLayout.zoom);
-    lib.setSortBy(savedLayout.sort);
-    lib.setViewMode(savedLayout.tab);
-  }, []);
+  const extraKeysRef = useAppKeys(lib);
 
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      const layout: SavedLayout = {
-        tab: lib.viewMode === "compare" ? "grid" : lib.viewMode,
-        zoom: lib.zoomLevel,
-        sort: lib.sortBy,
-        leftWidth,
-        rightWidth,
-        leftCollapsed: isLeftCollapsed,
-        rightCollapsed: isRightCollapsed,
-        collapsedSections,
-      };
-      try {
-        localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout));
-      } catch {}
-    }, 400);
-    return () => clearTimeout(timer);
-  }, [lib.viewMode, lib.zoomLevel, lib.sortBy, leftWidth, rightWidth, isLeftCollapsed, isRightCollapsed, collapsedSections]);
-
-  // Pane Resize Listeners
-  useEffect(() => {
-    function handleMouseMove(e: MouseEvent) {
-      if (!draggingPaneRef.current) return;
-      const maxAllowed = Math.floor(window.innerWidth * 0.78);
-      if (draggingPaneRef.current === "left") {
-        setLeftWidth(Math.max(160, Math.min(maxAllowed, e.clientX)));
-      } else if (draggingPaneRef.current === "right") {
-        setRightWidth(Math.max(260, Math.min(maxAllowed, window.innerWidth - e.clientX)));
-      }
-    }
-    function handleMouseUp() {
-      if (draggingPaneRef.current) {
-        draggingPaneRef.current = null;
-        document.body.style.cursor = "";
-      }
-    }
-    window.addEventListener("mousemove", handleMouseMove);
-    window.addEventListener("mouseup", handleMouseUp);
-    return () => {
-      window.removeEventListener("mousemove", handleMouseMove);
-      window.removeEventListener("mouseup", handleMouseUp);
-    };
-  }, []);
-
-  // Global Tauri Drag & Drop Folder/File Listener: registered once (re-registering every render leaked
-  // listeners, so one drop could start several concurrent folder loads)
-  const loadFolderRef = useRef(lib.handleLoadFolderPath);
-  loadFolderRef.current = lib.handleLoadFolderPath;
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    let disposed = false;
-    try {
-      getCurrentWebview()
-        .onDragDropEvent((event) => {
-          if (event.payload.type === "over" || event.payload.type === "enter") {
-            setIsDraggingOverWindow(true);
-          } else if (event.payload.type === "drop") {
-            setIsDraggingOverWindow(false);
-            const droppedPath = event.payload.paths?.[0];
-            if (droppedPath) {
-              loadFolderRef.current(droppedPath);
-            }
-          } else {
-            setIsDraggingOverWindow(false);
-          }
-        })
-        .then((fn) => {
-          // If the component unmounted before registration finished, unregister immediately
-          if (disposed) fn();
-          else unlisten = fn;
-        })
-        .catch(() => {});
-    } catch {}
-    return () => {
-      disposed = true;
-      if (unlisten) unlisten();
-    };
-  }, []);
-
-  // Global Undo/Redo (`Ctrl+Z` / `Ctrl+Y`), Shortcuts (`?`), and Session Log (`Ctrl+L`) Listener.
-  // Registered once; reads the latest handlers through a ref.
-  const extraKeysRef = useRef({ lib, isBlockingModalOpen: false, isDialogOpen: false, togglePalette: () => {} });
-  useEffect(() => {
-    function handleExtraKeys(e: KeyboardEvent) {
-      const key = e.key.toLowerCase();
-      const mod = e.ctrlKey || e.metaKey;
-      // Ctrl+P opens the command palette (and never the WebView's print dialog), even from a text field
-      if (mod && key === "p" && !e.shiftKey && !e.altKey) {
-        e.preventDefault();
-        extraKeysRef.current.togglePalette();
-        return;
-      }
-      // Ctrl+1…4: Photos, Map, People, Collections (not while a dialog is open)
-      if (mod && !e.shiftKey && !e.altKey && ["1", "2", "3", "4"].includes(e.key)) {
-        if (extraKeysRef.current.isDialogOpen) return;
-        e.preventDefault();
-        const tabs = ["grid", "map", "people", "collections"] as const;
-        extraKeysRef.current.lib.setViewMode(tabs[Number(e.key) - 1]);
-        return;
-      }
-      if (isEditableTarget(e.target)) return;
-      const { lib: l, isBlockingModalOpen: blocked } = extraKeysRef.current;
-
-      if (mod && key === "z" && !e.shiftKey) {
-        // Undo/redo would change photos behind an open dialog (Face Review has its own Ctrl+Z)
-        if (blocked) return;
-        e.preventDefault();
-        l.handleUndo();
-      } else if (mod && (key === "y" || (e.shiftKey && key === "z"))) {
-        if (blocked) return;
-        e.preventDefault();
-        l.handleRedo();
-      } else if (e.key === "?" || (e.shiftKey && e.key === "/")) {
-        e.preventDefault();
-        l.setIsShortcutsModalOpen((prev) => !prev);
-      } else if (key === "l" && mod) {
-        e.preventDefault();
-        l.setIsSessionLogModalOpen((prev) => !prev);
-      }
-    }
-    window.addEventListener("keydown", handleExtraKeys);
-    return () => window.removeEventListener("keydown", handleExtraKeys);
-  }, []);
 
   // Block native browser right-click menu everywhere except inside text inputs,
   // while opening custom context menus strictly on Photo cards & Folder tree items!
@@ -480,18 +303,6 @@ export default function App() {
       lib.people.find((p) => (lib.pendingFaceCounts[p.name] || 0) > 0)?.name || UNKNOWN_FACES
     );
 
-  // Batch AI speed and remaining time, from the photos finished so far
-  const aiBatchRate = (() => {
-    const prog = lib.aiBatchProgress;
-    if (!prog || prog.current < 2) return null;
-    const minutes = (Date.now() - prog.startedAt) / 60000;
-    if (minutes <= 0) return null;
-    const perMinute = prog.current / minutes;
-    const remainingMin = (prog.total - prog.current) / perMinute;
-    const etaLabel =
-      remainingMin < 1 ? `${Math.max(1, Math.round(remainingMin * 60))} s` : `${Math.round(remainingMin)} min`;
-    return { perMinute, etaLabel };
-  })();
 
   // The palette opens over the app, but not on top of another dialog
   const togglePalette = () => {
@@ -533,259 +344,26 @@ export default function App() {
   const { drag, onCardPointerDown } = usePhotoDrag(hashesForDrag, handleDropPhotos);
   const dragPhoto = drag ? lib.visiblePhotos.find((p) => p.hash === drag.thumbHash) : undefined;
 
-  // ---------- Background jobs (status bar panel) ----------
-  const jobs: BackgroundJob[] = [];
-  if (lib.ollamaPullProgress) {
-    jobs.push({
-      id: "model-pull",
-      label: `Downloading ${lib.ollamaPullProgress.model}`,
-      detail: `${lib.ollamaPullProgress.completed_mb} / ${lib.ollamaPullProgress.total_mb} MB`,
-      completed: lib.ollamaPullProgress.percent,
-      total: 100,
-      onCancel: lib.handleCancelOperation,
-    });
-  } else if (lib.isScanningFolder || lib.scanProgress) {
-    jobs.push({
-      id: "folder-scan",
-      label: lib.scanProgress?.stage || "Scanning folder",
-      detail: lib.scanProgress?.current_file,
-      completed: lib.scanProgress?.completed ?? 0,
-      total: lib.scanProgress?.total ?? 0,
-      onCancel: lib.handleCancelOperation,
-    });
-  }
-  if (lib.progress) {
-    jobs.push({
-      id: "thumbnails",
-      label: "Making thumbnails",
-      completed: lib.progress.completed,
-      total: lib.progress.total,
-      onCancel: lib.handleCancelThumbnails,
-      cancelLabel: "Stop",
-    });
-  }
-  if (lib.faceModelDownload) {
-    jobs.push({
-      id: "face-models",
-      label: "Downloading face models (once)",
-      detail: `${lib.faceModelDownload.downloaded_mb} / ${lib.faceModelDownload.total_mb} MB`,
-      completed: lib.faceModelDownload.percent,
-      total: 100,
-    });
-  } else if (lib.faceScanProgress) {
-    jobs.push({
-      id: "face-scan",
-      label: "Face scan",
-      detail: `${lib.faceScanProgress.faces_found} faces found`,
-      completed: lib.faceScanProgress.completed,
-      total: lib.faceScanProgress.total,
-      onCancel: lib.handleCancelFaceScan,
-      cancelLabel: "Stop",
-    });
-  }
-  if (lib.semanticProgress) {
-    const downloading = lib.semanticProgress.stage === "download";
-    jobs.push({
-      id: "semantic",
-      label: downloading ? "Downloading smart search models (once)" : "Indexing for smart search",
-      detail: downloading ? `${lib.semanticProgress.completed} / ${lib.semanticProgress.total} MB` : undefined,
-      completed: lib.semanticProgress.completed,
-      total: lib.semanticProgress.total,
-      onCancel: lib.handleCancelSemanticIndex,
-      cancelLabel: "Stop",
-    });
-  }
-  if (lib.exportProgress) {
-    jobs.push({
-      id: "export",
-      label: "Exporting photos",
-      completed: lib.exportProgress.completed,
-      total: lib.exportProgress.total,
-      onCancel: lib.handleCancelExport,
-      cancelLabel: "Stop",
-    });
-  }
-  if (lib.aiBatchProgress) {
-    jobs.push({
-      id: "ai-batch",
-      label: "Batch AI",
-      detail: aiBatchRate ? `${aiBatchRate.perMinute.toFixed(1)} photos/min` : lib.aiBatchProgress.currentFile,
-      completed: lib.aiBatchProgress.current,
-      total: lib.aiBatchProgress.total,
-      onCancel: lib.handleStopAiBatch,
-      cancelLabel: "Stop",
-      cancelling: lib.aiBatchProgress.stopping,
-    });
-  }
+  const jobs = backgroundJobsOf(lib);
 
-  // ---------- Search autocomplete values ----------
-  const searchValues = useMemo(() => {
-    const cameras = new Set<string>();
-    const lenses = new Set<string>();
-    const places = new Set<string>();
-    const years = new Set<string>();
-    for (const p of lib.photos) {
-      if (p.camera_model) cameras.add(p.camera_model);
-      if (p.lens_model) lenses.add(p.lens_model);
-      if (p.location) places.add(p.location.split(",")[0].trim());
-      const y = /^(\d{4})/.exec(p.captured_at || "")?.[1];
-      if (y) years.add(y);
-    }
-    const sorted = (s: Set<string>) => Array.from(s).sort((a, b) => a.localeCompare(b));
-    return {
-      camera: sorted(cameras),
-      lens: sorted(lenses),
-      place: sorted(places),
-      date: Array.from(years).sort().reverse(),
-    };
-  }, [lib.photos]);
+  const getSearchSuggestions = useSearchSuggestions(lib);
 
-  const getSearchSuggestions = (key: TermKey, partial: string): string[] => {
-    const fixed: Partial<Record<TermKey, string[]>> = {
-      rating: ["5", ">=4", ">=3", ">=1", "0"],
-      flag: ["pick", "reject", "none"],
-      label: ["red", "yellow", "green", "blue", "none"],
-      has: ["gps", "faces", "people", "caption", "ocr", "tags", "location"],
-      is: ["raw", "paired", "screenshot", "damaged", "staged", "basket", "pick", "reject"],
-    };
-    const values =
-      fixed[key] ??
-      (key === "person"
-        ? lib.people.map((p) => p.name)
-        : key === "tag"
-        ? lib.allLibraryTags
-        : key === "album"
-        ? lib.albums.map((a) => a.name)
-        : key === "camera" || key === "lens" || key === "place" || key === "date"
-        ? searchValues[key]
-        : []);
-    const q = partial.toLowerCase();
-    return values
-      .filter((v) => v.toLowerCase().includes(q))
-      .sort((a, b) => Number(!a.toLowerCase().startsWith(q)) - Number(!b.toLowerCase().startsWith(q)))
-      .slice(0, 8);
-  };
 
   // Save the current search as a smart album (input in the filter bar)
   const [saveSearchName, setSaveSearchName] = useState<string | null>(null);
 
-  // ---------- Command palette actions ----------
-  const hasSelection = lib.selectedHashes.size > 0;
-  const hasPhotos = lib.photos.length > 0;
-  const selected = () => lib.visiblePhotos.filter((p) => lib.selectedHashes.has(p.hash));
-  const paletteActions: PaletteAction[] = [
-    { id: "open-folder", group: "Library", label: "Open folder…", keywords: "library switch", run: lib.handleOpenFolder },
-    ...lib.recentFolders.slice(0, 5).map((f) => ({
-      id: `recent-${f}`,
-      group: "Library",
-      label: `Open recent: ${f.split(/[\\/]/).pop()}`,
-      keywords: f,
-      run: () => lib.handleLoadFolderPath(f),
-    })),
-    { id: "rescan", group: "Library", label: "Quick rescan folder", enabled: hasPhotos, run: lib.handleRescanFolder },
-    { id: "deep", group: "Library", label: "Deep reprocess thumbnails", enabled: hasPhotos, run: lib.handleRescanAndProcessFolder },
-    { id: "health", group: "Library", label: "Library health & XMP export", keywords: "cache sidecar lightroom", enabled: hasPhotos, run: lib.handleOpenHealthDashboard },
-    { id: "xmp-all", group: "Library", label: "Export XMP sidecars (all photos)", keywords: "lightroom", enabled: hasPhotos, run: () => lib.handleExportXmp(false) },
-    { id: "xmp-sel", group: "Library", label: "Export XMP sidecars (selection)", keywords: "lightroom", enabled: hasSelection, run: () => lib.handleExportXmp(true) },
-    { id: "commit", group: "Organize", label: "Review & commit staged moves", keywords: "disk move apply", enabled: lib.stagedPhotos.length > 0, run: () => lib.setIsCommitModalOpen(true) },
-    { id: "dismiss", group: "Organize", label: "Dismiss all staged moves", enabled: lib.stagedPhotos.length > 0, run: lib.handleDismissAllStaged },
-    { id: "auto-stage", group: "Organize", label: "Auto-stage visible photos by rule", keywords: "organize sort folders", enabled: hasPhotos, run: lib.handleAutoOrganizeByPreset },
-    { id: "keep-sharpest", group: "Organize", label: "Keep sharpest in every burst, stage rest for _Trash", keywords: "duplicates", enabled: lib.totalBurstGroups > 0, run: lib.handleKeepSharpestInAllGroups },
-    { id: "empty-trash", group: "Organize", label: "Empty _Trash to Recycle Bin", keywords: "delete", enabled: hasPhotos, run: lib.handleEmptyTrashToRecycleBin },
-    { id: "pick", group: "Triage", label: "Flag as pick", shortcut: "P", enabled: hasSelection, run: () => lib.handleSetFlag("pick") },
-    { id: "reject", group: "Triage", label: "Reject & stage for _Trash", shortcut: "X", enabled: hasSelection, run: () => lib.handleRejectToTrash() },
-    { id: "unflag", group: "Triage", label: "Remove flag", shortcut: "U", enabled: hasSelection, run: () => lib.handleSetFlag(null) },
-    ...[0, 1, 2, 3, 4, 5].map((r) => ({
-      id: `rate-${r}`,
-      group: "Triage",
-      label: r === 0 ? "Clear rating" : `Rate ${r} star${r === 1 ? "" : "s"}`,
-      shortcut: String(r),
-      enabled: hasSelection,
-      run: () => lib.handleBatchRate(r),
-    })),
-    ...(["red", "yellow", "green", "blue"] as const).map((c, i) => ({
-      id: `label-${c}`,
-      group: "Triage",
-      label: `Color label ${c}`,
-      shortcut: String(6 + i),
-      enabled: hasSelection,
-      run: () => lib.handleSetColorLabel(c),
-    })),
-    { id: "label-clear", group: "Triage", label: "Clear color label", enabled: hasSelection, run: () => lib.handleSetColorLabel(null) },
-    { id: "rotate-left", group: "Triage", label: "Rotate left", shortcut: "[", enabled: hasSelection, run: () => lib.handleRotateSelection(-90) },
-    { id: "rotate-right", group: "Triage", label: "Rotate right", shortcut: "]", enabled: hasSelection, run: () => lib.handleRotateSelection(90) },
-    { id: "basket", group: "Triage", label: "Pin / unpin in Basket", shortcut: "B", enabled: hasSelection, run: () => lib.handleToggleBasketSelection() },
-    { id: "select-all", group: "Select", label: "Select all visible photos", keywords: "everything", enabled: lib.visiblePhotos.length > 0, run: () => lib.setSelectedHashes(new Set(lib.visiblePhotos.map((p) => p.hash))) },
-    { id: "select-none", group: "Select", label: "Clear selection", enabled: hasSelection, run: () => lib.setSelectedHashes(new Set()) },
-    { id: "clear-filters", group: "Select", label: "Clear all filters", keywords: "reset show everything", enabled: hasPhotos, run: lib.clearAllFilters },
-    { id: "save-search", group: "Albums", label: "Save this search as a smart album", enabled: lib.searchQuery.trim() !== "", run: () => setSaveSearchName("") },
-    { id: "album-new", group: "Albums", label: "New album from selection", enabled: hasSelection, run: () => { lib.setActiveBulkPopover("album"); lib.setBulkInput(""); } },
-    ...lib.albums.map((a) => ({
-      id: `album-add-${a.id}`,
-      group: "Albums",
-      label: `Add selection to "${a.name}"`,
-      enabled: hasSelection,
-      run: () => lib.handleAddToAlbum(a.id),
-    })),
-    ...lib.albums.map((a) => ({
-      id: `album-show-${a.id}`,
-      group: "Albums",
-      label: `Show album "${a.name}"`,
-      run: () => lib.setActiveAlbumId(a.id),
-    })),
-    { id: "album-remove", group: "Albums", label: "Remove selection from this album", enabled: hasSelection && lib.activeAlbumId !== null, run: () => lib.activeAlbumId !== null && lib.handleRemoveFromAlbum(lib.activeAlbumId) },
-    { id: "search", group: "Select", label: "Search photos", shortcut: "Ctrl+K", enabled: hasPhotos, run: () => searchInputRef.current?.focus() },
-    {
-      id: "smart-search",
-      group: "Select",
-      label: lib.smartSearch ? "Turn smart search off" : "Smart search (describe the photo)",
-      keywords: "clip semantic ai find",
-      enabled: hasPhotos,
-      run: async () => {
-        await lib.toggleSmartSearch();
-        searchInputRef.current?.focus();
-      },
-    },
-    { id: "similar", group: "Select", label: "Find photos similar to this one", keywords: "smart clip like", enabled: Boolean(lib.activePhoto), run: () => lib.activePhoto && lib.handleFindSimilar(lib.activePhoto) },
-    { id: "index", group: "Select", label: "Index this folder for smart search", enabled: hasPhotos && Boolean(lib.semanticStatus?.models_ready) && !lib.semanticProgress, run: () => lib.startSemanticIndex() },
-    { id: "loupe", group: "View", label: "Open in Loupe", shortcut: "Space", enabled: Boolean(lib.activePhoto), run: () => lib.setIsLoupeOpen(true) },
-    { id: "tab-photos", group: "Go to", label: "Photos", shortcut: "Ctrl+1", run: () => lib.setViewMode("grid") },
-    { id: "tab-map", group: "Go to", label: "Map", shortcut: "Ctrl+2", run: () => lib.setViewMode("map") },
-    { id: "tab-people", group: "Go to", label: "People", shortcut: "Ctrl+3", run: () => lib.setViewMode("people") },
-    { id: "tab-collections", group: "Go to", label: "Collections (albums, trips)", shortcut: "Ctrl+4", run: () => lib.setViewMode("collections") },
-    { id: "view-grid", group: "View", label: "Grid view", shortcut: "G", run: () => lib.setViewMode("grid") },
-    { id: "view-compare", group: "View", label: "Compare view", shortcut: "C", enabled: hasPhotos, run: () => lib.setViewMode("compare") },
-    { id: "view-map", group: "View", label: "Map view", shortcut: "M", enabled: hasPhotos, run: () => lib.setViewMode("map") },
-    { id: "timeline", group: "View", label: "Show / hide date timeline", enabled: hasPhotos, run: () => lib.setIsTimelineOpen((o) => !o) },
-    { id: "bursts", group: "View", label: lib.showAllBurstVersions ? "Collapse burst stacks" : "Expand all burst stacks", enabled: lib.totalBurstGroups > 0, run: () => lib.setShowAllBurstVersions((v) => !v) },
-    { id: "grid-justified", group: "View", label: "Grid style: justified", enabled: lib.gridStyle !== "justified", run: () => lib.setGridStyle("justified") },
-    { id: "grid-square", group: "View", label: "Grid style: square", enabled: lib.gridStyle !== "square", run: () => lib.setGridStyle("square") },
-    { id: "details-hover", group: "View", label: "Card details: on hover", enabled: lib.cardDetails !== "hover", run: () => lib.setCardDetails("hover") },
-    { id: "details-always", group: "View", label: "Card details: always", enabled: lib.cardDetails !== "always", run: () => lib.setCardDetails("always") },
-    { id: "zoom-in", group: "View", label: "Larger thumbnails", run: () => lib.setZoomLevel((z) => Math.min(1, z + 0.15)) },
-    { id: "zoom-out", group: "View", label: "Smaller thumbnails", run: () => lib.setZoomLevel((z) => Math.max(0, z - 0.15)) },
-    { id: "left-pane", group: "View", label: isLeftCollapsed ? "Show left sidebar" : "Hide left sidebar", run: () => setIsLeftCollapsed((v) => !v) },
-    { id: "right-pane", group: "View", label: isRightCollapsed ? "Show inspector" : "Hide inspector", run: () => setIsRightCollapsed((v) => !v) },
-    { id: "mode", group: "View", label: lib.simpleMode ? "Switch to Pro mode" : "Switch to Simple mode", run: lib.toggleSimpleMode },
-    { id: "scan-faces", group: "Faces", label: "Scan faces in this folder", enabled: hasPhotos && !lib.faceScanProgress, run: lib.handleBatchScanFacesOnnx },
-    { id: "stop-faces", group: "Faces", label: "Stop face scan", enabled: Boolean(lib.faceScanProgress), run: lib.handleCancelFaceScan },
-    { id: "review-faces", group: "Faces", label: "Review face matches", keywords: "people suggestions", enabled: hasPhotos, run: openFaceReview },
-    { id: "who", group: "Faces", label: "Who is this? (name unknown faces)", keywords: "people clusters", enabled: hasPhotos, run: () => lib.setFaceReviewPerson(UNKNOWN_FACES) },
-    { id: "detect-one", group: "Faces", label: "Detect faces in this photo", enabled: Boolean(lib.activePhoto), run: lib.handleDetectFacesSingleOnnx },
-    { id: "ai-visible", group: "AI", label: "Batch AI on visible photos", keywords: "caption tags", enabled: hasPhotos && !lib.aiBatchProgress, run: () => lib.runBatchAiOnList(lib.visiblePhotos) },
-    { id: "ai-selected", group: "AI", label: "Batch AI on selected photos", keywords: "caption tags", enabled: hasSelection && !lib.aiBatchProgress, run: () => lib.runBatchAiOnList(selected()) },
-    { id: "ai-one", group: "AI", label: "AI analyze this photo", shortcut: "A", enabled: Boolean(lib.activePhoto), run: lib.handleAiAnalyzeSingle },
-    { id: "ai-stop", group: "AI", label: "Stop Batch AI", enabled: Boolean(lib.aiBatchProgress), run: lib.handleStopAiBatch },
-    { id: "export", group: "Photo", label: "Export selected photos…", keywords: "jpeg share save resize", enabled: hasSelection, run: () => lib.openExport() },
-    { id: "exif", group: "Photo", label: "Re-read EXIF of selection", keywords: "date camera gps refresh", enabled: hasSelection, run: lib.handleForceRescanExifSelected },
-    { id: "reveal", group: "Photo", label: "Show in Explorer", enabled: Boolean(lib.activePhoto), run: () => lib.activePhoto && lib.handleRevealInFileManager(diskPathOf(lib.activePhoto)) },
-    { id: "external", group: "Photo", label: "Open in default app", enabled: Boolean(lib.activePhoto), run: () => lib.activePhoto && lib.handleOpenInDefaultViewer(diskPathOf(lib.activePhoto)) },
-    { id: "undo", group: "Edit", label: "Undo", shortcut: "Ctrl+Z", enabled: lib.canUndo, run: lib.handleUndo },
-    { id: "redo", group: "Edit", label: "Redo", shortcut: "Ctrl+Y", enabled: lib.canRedo, run: lib.handleRedo },
-    { id: "log", group: "Help", label: "Session log", shortcut: "Ctrl+L", run: () => lib.setIsSessionLogModalOpen(true) },
-    { id: "shortcuts", group: "Help", label: "Keyboard shortcuts", shortcut: "?", run: () => lib.setIsShortcutsModalOpen(true) },
-    { id: "welcome", group: "Help", label: "Welcome tour", keywords: "help intro what's new guide", run: welcome.open },
-  ];
+  const paletteActions = buildPaletteActions({
+    lib,
+    searchInputRef,
+    setSaveSearchName,
+    openFaceReview,
+    openWelcomeTour: welcome.open,
+    isLeftCollapsed,
+    setIsLeftCollapsed,
+    isRightCollapsed,
+    setIsRightCollapsed,
+  });
+
 
   useKeyboardShortcuts({
     activeHash: lib.activeHash,
@@ -992,195 +570,12 @@ export default function App() {
 
           {lib.photos.length > 0 && <PhotoToolbar lib={lib} />}
 
-          {(lib.parsedSearch.terms.length > 0 ||
-            lib.activeAlbumId !== null ||
-            lib.activeEvent !== "ALL" ||
-            lib.peopleFilter !== null ||
-            lib.activeTag !== "ALL") && (
-            <div className="bg-panel border-b border-zinc-800/60 px-4 py-1.5 flex items-center gap-1.5 flex-wrap shrink-0 text-xs">
-              {lib.activeEvent !== "ALL" && (
-                <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-sky-500/15 border border-sky-500/40 text-sky-200">
-                  {lib.autoEvents.find((ev) => ev.id === lib.activeEvent)?.label ?? "Trip"}
-                  <button onClick={() => lib.setActiveEvent("ALL")} className="hover:text-white" aria-label="Leave trip">
-                    <X className="w-3 h-3" />
-                  </button>
-                </span>
-              )}
-              {lib.peopleFilter !== null && (
-                <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/40 text-emerald-200">
-                  {peopleInExpr(lib.peopleFilter).length > 1 ? "People" : "Person"}: {describePeopleExpr(lib.peopleFilter)}
-                  <button onClick={() => lib.setPeopleFilter(null)} className="hover:text-white" aria-label="Show everyone">
-                    <X className="w-3 h-3" />
-                  </button>
-                </span>
-              )}
-              {lib.activeTag !== "ALL" && (
-                <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-indigo-500/15 border border-indigo-500/40 text-indigo-200">
-                  Tag: #{lib.activeTag}
-                  <button onClick={() => lib.setActiveTag("ALL")} className="hover:text-white" aria-label="Clear tag">
-                    <X className="w-3 h-3" />
-                  </button>
-                </span>
-              )}
-              {lib.activeAlbumId !== null && (
-                <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-indigo-500/15 border border-indigo-500/40 text-indigo-200">
-                  Album: {lib.albums.find((a) => a.id === lib.activeAlbumId)?.name ?? "?"}
-                  <button onClick={() => lib.setActiveAlbumId(null)} className="hover:text-white" aria-label="Leave album">
-                    <X className="w-3 h-3" />
-                  </button>
-                </span>
-              )}
-              {lib.parsedSearch.terms.map((t) => (
-                <span
-                  key={t.raw}
-                  className={`flex items-center gap-1 px-2 py-0.5 rounded-full border ${
-                    t.negate
-                      ? "bg-red-500/10 border-red-500/40 text-red-200"
-                      : "bg-emerald-500/10 border-emerald-500/40 text-emerald-200"
-                  }`}
-                >
-                  {describeTerm(t)}
-                  <button
-                    onClick={() => lib.setSearchQuery(removeTerm(lib.searchQuery, t))}
-                    className="hover:text-white"
-                    aria-label={`Remove ${describeTerm(t)}`}
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
-                </span>
-              ))}
-              <span className="ml-auto flex items-center gap-1.5">
-                {lib.activeAlbumId !== null && lib.selectedHashes.size > 0 && (
-                  <button
-                    onClick={() => lib.activeAlbumId !== null && lib.handleRemoveFromAlbum(lib.activeAlbumId)}
-                    className="px-2 py-0.5 rounded-lg bg-zinc-900 hover:bg-red-950/60 border border-zinc-800 text-zinc-300"
-                  >
-                    Remove {lib.selectedHashes.size} from album
-                  </button>
-                )}
-                {lib.searchQuery.trim() !== "" &&
-                  (saveSearchName === null ? (
-                    <button
-                      onClick={() => setSaveSearchName("")}
-                      className="px-2 py-0.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-amber-200 flex items-center gap-1"
-                      title="Save this search: it shows in Albums and updates by itself"
-                    >
-                      <Sparkles className="w-3 h-3" />
-                      Save as smart album
-                    </button>
-                  ) : (
-                    <form
-                      onSubmit={async (e) => {
-                        e.preventDefault();
-                        if (saveSearchName.trim() && (await lib.handleSaveSearch(saveSearchName))) setSaveSearchName(null);
-                      }}
-                      className="flex items-center gap-1"
-                    >
-                      <input
-                        autoFocus
-                        value={saveSearchName}
-                        onChange={(e) => setSaveSearchName(e.target.value)}
-                        onKeyDown={(e) => {
-                          e.stopPropagation();
-                          if (e.key === "Escape") setSaveSearchName(null);
-                        }}
-                        placeholder="Smart album name"
-                        className="bg-zinc-950 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-200 select-text focus:outline-none focus:border-amber-400"
-                      />
-                      <button type="submit" className="px-2 py-0.5 rounded bg-amber-600 hover:bg-amber-500 text-white">
-                        Save
-                      </button>
-                    </form>
-                  ))}
-              </span>
-            </div>
-          )}
+          <FilterBar lib={lib} saveSearchName={saveSearchName} setSaveSearchName={setSaveSearchName} />
 
-          {lib.semanticScores && lib.semanticResult && (
-            <div className="bg-indigo-950/40 border-b border-indigo-500/30 px-5 py-2 flex items-center justify-between gap-3 shrink-0 text-xs">
-              <span className="flex items-center gap-2 text-indigo-100 min-w-0">
-                <Sparkles className="w-4 h-4 text-indigo-300 shrink-0" />
-                <span className="truncate">
-                  {lib.semanticResult.source.kind === "similar" ? (
-                    <>Photos similar to <strong>{lib.semanticResult.source.name}</strong></>
-                  ) : (
-                    <>
-                      Best matches for <strong>"{lib.semanticResult.source.query}"</strong>
-                      {lib.semanticResult.source.query !== lib.parsedSearch.text && " · searching…"}
-                    </>
-                  )}{" "}
-                  · {lib.visiblePhotos.length} photo{lib.visiblePhotos.length === 1 ? "" : "s"}, best first
-                </span>
-                {lib.semanticStatus && lib.semanticStatus.indexed < lib.semanticStatus.total && (
-                  <span className="text-indigo-300/80 shrink-0">
-                    ({lib.semanticStatus.indexed} of {lib.semanticStatus.total} photos indexed so far)
-                  </span>
-                )}
-              </span>
-              <button
-                onClick={lib.clearSemanticResult}
-                className="px-2.5 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-zinc-200 shrink-0"
-              >
-                Show all photos
-              </button>
-            </div>
-          )}
-
-          {(lib.smartFilter === "DUPLICATES" || lib.showAllBurstVersions) &&
-            lib.duplicatePhotosCount > 0 && (
-              <div className="bg-amber-950/30 border-b border-amber-500/30 px-5 py-2 flex items-center justify-between shrink-0">
-                <span className="text-xs text-amber-200">
-                  Comparing <strong>{lib.totalBurstGroups}</strong> Burst Groups (
-                  {lib.duplicatePhotosCount} items):
-                </span>
-                <button
-                  onClick={lib.handleKeepSharpestInAllGroups}
-                  className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold shadow transition"
-                >
-                  Keep Sharpest & Stage Rest for _Trash
-                </button>
-              </div>
-            )}
+          <ResultBanners lib={lib} />
 
           {lib.viewMode === "map" ? (
-            <div className="flex-1 flex flex-col overflow-hidden relative">
-              <div className="bg-zinc-900/95 border-b border-zinc-800 px-4 py-2 flex items-center justify-between text-xs z-10">
-                <div className="flex items-center gap-2">
-                  {lib.isPickingMapLocation ? (
-                    <Crosshair className="w-4 h-4 text-emerald-400 animate-pulse" />
-                  ) : (
-                    <Compass className="w-4 h-4 text-emerald-400" />
-                  )}
-                  <span className="text-zinc-300">
-                    {lib.isPickingMapLocation
-                      ? `Click anywhere on the map to assign GPS coordinates to ${lib.selectedHashes.size} selected photo(s)...`
-                      : `Showing ${lib.gpsPhotosCount} geotagged photos on map.`}
-                  </span>
-                </div>
-                <button
-                  onClick={() => lib.setIsPickingMapLocation((p) => !p)}
-                  disabled={lib.selectedHashes.size === 0}
-                  className={`px-3 py-1 rounded-lg font-semibold transition flex items-center gap-1.5 ${
-                    lib.isPickingMapLocation
-                      ? "bg-emerald-600 text-white shadow"
-                      : "bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700"
-                  }`}
-                >
-                  <MapPin className="w-3.5 h-3.5" />
-                  <span>
-                    {lib.isPickingMapLocation
-                      ? "Cancel Map Pick"
-                      : `Click Map to Set GPS (${lib.selectedHashes.size})`}
-                  </span>
-                </button>
-              </div>
-              <PhotoMap
-                photos={lib.visiblePhotos}
-                onSelectPhoto={(h) => lib.setActiveHash(h)}
-                isPickingLocation={lib.isPickingMapLocation}
-                onMapPickCoordinates={lib.handleMapPickCoordinates}
-              />
-            </div>
+            <MapPane lib={lib} />
           ) : lib.viewMode === "compare" ? (
             <CompareView
               comparePhotos={lib.comparePhotos}
@@ -1198,75 +593,9 @@ export default function App() {
               compareCandidateCount={lib.compareCandidateCount}
             />
           ) : lib.photos.length === 0 ? (
-            <div
-              ref={gridContainerRef}
-              className="flex-1 overflow-y-auto p-6 flex items-center justify-center"
-            >
-              <div className="max-w-xl w-full rounded-2xl border-2 border-dashed border-zinc-800 bg-panel/90 hover:border-emerald-500/40 p-8 flex flex-col items-center text-center transition">
-                <div className="w-14 h-14 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center mb-4">
-                  <FolderOpen className="w-7 h-7 text-emerald-400" />
-                </div>
-                <h2 className="text-lg font-bold text-zinc-100">
-                  Welcome to Lumina Photo Studio
-                </h2>
-                <p className="text-xs text-zinc-400 mt-1 max-w-md leading-relaxed">
-                  Drag and drop any photo folder onto this window, or click below to open your
-                  collection. Supports JPEG, PNG, WebP, HEIC, and Camera RAW (.CR2, .CR3, .NEF,
-                  .ARW, .DNG).
-                </p>
-
-                <button
-                  onClick={lib.handleOpenFolder}
-                  className="mt-5 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold shadow-lg transition flex items-center gap-2 cursor-pointer"
-                >
-                  <FolderOpen className="w-4 h-4" />
-                  <span>Choose Photo Folder...</span>
-                </button>
-
-                {lib.recentFolders.length > 0 && (
-                  <div className="w-full mt-6 pt-5 border-t border-zinc-800/80 flex flex-col gap-2 text-left">
-                    <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider flex items-center gap-1.5">
-                      <Clock className="w-3 h-3 text-emerald-400" />
-                      Recent Photo Libraries
-                    </span>
-                    <div className="flex flex-col gap-1.5">
-                      {lib.recentFolders.map((rf) => (
-                        <button
-                          key={rf}
-                          onClick={() => lib.handleLoadFolderPath(rf)}
-                          className="w-full px-3 py-2 rounded-lg bg-zinc-900/80 hover:bg-zinc-800 border border-zinc-800 text-xs text-zinc-300 hover:text-white flex items-center justify-between transition truncate"
-                        >
-                          <span className="truncate font-mono text-[11px]">{rf}</span>
-                          <span className="text-[11px] text-emerald-400 font-semibold ml-2 shrink-0">
-                            Open →
-                          </span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
+            <NoLibrary lib={lib} gridContainerRef={gridContainerRef} />
           ) : lib.visiblePhotos.length === 0 ? (
-            <div
-              ref={gridContainerRef}
-              className="flex-1 overflow-y-auto p-6 flex items-center justify-center"
-            >
-              <div className="max-w-sm text-center flex flex-col items-center gap-2 text-xs text-zinc-400">
-                <Search className="w-8 h-8 text-zinc-600" />
-                <span className="text-sm font-bold text-zinc-200">No photos match these filters</span>
-                <span>
-                  {lib.photos.length} photo(s) are in this library, but the current search, filter, folder, person or
-                  date range hides all of them.
-                </span>
-                <button
-                  onClick={lib.clearAllFilters}
-                  className="mt-2 px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold"
-                >
-                  Clear all filters
-                </button>
-              </div>
-            </div>
+            <NoMatches lib={lib} gridContainerRef={gridContainerRef} />
           ) : (
             <VirtualPhotoGrid
               gridContainerRef={gridContainerRef}
@@ -1413,25 +742,8 @@ export default function App() {
 
       <CommandPalette isOpen={isPaletteOpen} onClose={() => setIsPaletteOpen(false)} actions={paletteActions} />
 
-      {/* Drag ghost: follows the pointer while photos are dragged onto a folder, person or quick filter */}
-      {drag && (
-        <div
-          style={{ left: drag.x + 14, top: drag.y + 14 }}
-          className="fixed z-[99995] pointer-events-none flex items-center gap-2 px-2 py-1.5 rounded-xl bg-raised/95 border border-emerald-500/50 shadow-2xl text-xs text-zinc-100"
-        >
-          {dragPhoto?.thumb_ready && (
-            <img src={thumbSrc(dragPhoto)} alt="" className="w-10 h-10 rounded-md object-cover" />
-          )}
-          <div className="flex flex-col">
-            <span className="font-semibold">
-              {drag.count} photo{drag.count === 1 ? "" : "s"}
-            </span>
-            <span className={drag.target ? "text-emerald-300" : "text-zinc-400"}>
-              {drag.target ? drag.target.label : "Drop on a folder, person, Picks, Basket or Rejects"}
-            </span>
-          </div>
-        </div>
-      )}
+      <DragGhost drag={drag} dragPhoto={dragPhoto} />
+
 
       {/* Right-Click Photo Context Menu */}
       <PhotoContextMenu
@@ -1525,67 +837,14 @@ export default function App() {
         }}
       />
 
-      {/* Create New Subfolder Dialog */}
-      {isNewFolderModalOpen && (
-        <div
-          onClick={() => setIsNewFolderModalOpen(false)}
-          className="fixed inset-0 z-[9995] bg-black/80 backdrop-blur-sm flex items-center justify-center p-6 select-none"
-        >
-          <form
-            ref={newFolderDialogRef}
-            role="dialog"
-            aria-modal="true"
-            aria-label="Create new subfolder"
-            onClick={(e) => e.stopPropagation()}
-            onSubmit={async (e) => {
-              e.preventDefault();
-              if (!newFolderInput.trim()) return;
-              await lib.handleCreateSubfolder(newFolderInput.trim());
-              setIsNewFolderModalOpen(false);
-              setNewFolderInput("");
-            }}
-            className="bg-raised border border-zinc-800 rounded-2xl w-full max-w-md p-5 shadow-2xl flex flex-col gap-3 text-xs"
-          >
-            <div className="flex items-center justify-between">
-              <span className="font-bold text-sm text-zinc-100 flex items-center gap-2">
-                <FolderPlus className="w-4 h-4 text-emerald-400" />
-                Create New Subfolder
-              </span>
-              <button
-                type="button"
-                onClick={() => setIsNewFolderModalOpen(false)}
-                className="text-zinc-500 hover:text-white"
-                aria-label="Close"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <input
-              type="text"
-              value={newFolderInput}
-              onChange={(e) => setNewFolderInput(e.target.value)}
-              placeholder="e.g. 2026/Selects or Favorites"
-              className="bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-zinc-200 font-mono text-xs focus:outline-none focus:border-emerald-500"
-              autoFocus
-            />
-            <div className="flex justify-end gap-2 pt-1">
-              <button
-                type="button"
-                onClick={() => setIsNewFolderModalOpen(false)}
-                className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-lg"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-semibold"
-              >
-                Create Folder
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
+      <NewFolderModal
+        isNewFolderModalOpen={isNewFolderModalOpen}
+        setIsNewFolderModalOpen={setIsNewFolderModalOpen}
+        newFolderInput={newFolderInput}
+        setNewFolderInput={setNewFolderInput}
+        onCreate={lib.handleCreateSubfolder}
+      />
+
 
       {/* Live Operation Progress Modal (Folder Scan, Reprocess & Ollama Model Pull) */}
       <OperationProgressModal
@@ -1649,66 +908,8 @@ export default function App() {
         onOpenFolder={lib.handleOpenFolder}
       />
 
-      {/* Keyboard Shortcuts Cheat Sheet Modal */}
-      {lib.isShortcutsModalOpen && (
-        <div
-          onClick={() => lib.setIsShortcutsModalOpen(false)}
-          className="fixed inset-0 z-[9995] bg-black/80 backdrop-blur-sm flex items-center justify-center p-6 select-none"
-        >
-          <div
-            ref={shortcutsDialogRef}
-            role="dialog"
-            aria-modal="true"
-            aria-label="Keyboard shortcuts"
-            tabIndex={-1}
-            onClick={(e) => e.stopPropagation()}
-            className="bg-raised border border-zinc-800 rounded-2xl w-full max-w-lg p-5 shadow-2xl flex flex-col gap-3 text-xs"
-          >
-            <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
-              <span className="text-sm font-bold text-zinc-100 flex items-center gap-2">
-                <HelpCircle className="w-4 h-4 text-emerald-400" />
-                Lumina Keyboard Shortcuts
-              </span>
-              <button
-                onClick={() => lib.setIsShortcutsModalOpen(false)}
-                className="text-zinc-500 hover:text-white"
-                aria-label="Close"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <div className="grid grid-cols-2 gap-2 text-[11px]">
-              {[
-                ["Space", "Open / Close Fullscreen Loupe"],
-                ["P / X / U", "Pick / Reject (_Trash) / Unflag"],
-                ["1 – 5 / 0", "Set Star Rating / Clear Rating"],
-                ["6 / 7 / 8 / 9", "Red / Yellow / Green / Blue Label"],
-                ["[ / ]", "Rotate Left / Right 90°"],
-                ["B", "Toggle Pinboard Basket"],
-                ["A", "Run AI Vision on Active Photo"],
-                ["C / G / M", "Compare / Grid / Map View"],
-                ["Ctrl + 1 – 4", "Photos / Map / People / Collections"],
-                ["Ctrl + Z / Y", "Undo / Redo Last Action"],
-                ["Ctrl + K", "Search"],
-                ["Ctrl + P", "Command Palette (every action)"],
-                ["Ctrl + L", "Open Session Activity Log"],
-                ["?", "Show This Cheat Sheet"],
-                ["Esc", "Close Dialog / Loupe"],
-              ].map(([key, desc]) => (
-                <div
-                  key={key}
-                  className="p-2 rounded-lg bg-zinc-900/70 border border-zinc-800/80 flex items-center justify-between gap-2"
-                >
-                  <span className="text-zinc-400">{desc}</span>
-                  <kbd className="px-1.5 py-0.5 bg-zinc-950 border border-zinc-700 rounded text-emerald-300 font-mono text-[11px] shrink-0">
-                    {key}
-                  </kbd>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
+      <ShortcutsModal lib={lib} />
+
 
       <CommitModal
         isOpen={lib.isCommitModalOpen}

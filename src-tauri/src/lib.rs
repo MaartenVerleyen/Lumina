@@ -24,7 +24,9 @@ mod exif_meta;
 mod decode;
 mod library;
 mod files;
-mod face_commands;
+mod face_scan;
+mod face_review;
+mod people;
 mod ai;
 mod system;
 mod perf;
@@ -49,7 +51,7 @@ use scan::*;
 use exif_meta::*;
 use decode::*;
 use library::*;
-use face_commands::*;
+use face_review::*;
 use perf::*;
 use storage::*;
 use fastdecode::*;
@@ -355,26 +357,26 @@ pub fn run() {
             files::export_xmp_sidecars,
             files::get_library_health_stats,
             files::prune_orphaned_cache,
-            face_commands::get_people,
-            face_commands::add_person_to_photos,
-            face_commands::remove_person_from_photo,
-            face_commands::remove_person_from_photos,
-            face_commands::rename_person,
-            face_commands::set_person_hidden,
-            face_commands::set_person_cover,
+            people::get_people,
+            people::add_person_to_photos,
+            people::remove_person_from_photo,
+            people::remove_person_from_photos,
+            people::rename_person,
+            people::set_person_hidden,
+            people::set_person_cover,
             albums::get_trip_names,
             albums::set_trip_name,
-            face_commands::find_similar_faces,
-            face_commands::get_confirmed_faces_for_person,
-            face_commands::get_rejected_faces_for_person,
-            face_commands::assign_faces_to_person_batch,
-            face_commands::unassign_faces_batch,
-            face_commands::reject_face_candidates_batch,
-            face_commands::unreject_face_candidates_batch,
-            face_commands::get_pending_face_match_counts,
-            face_commands::detect_faces_in_photo,
-            face_commands::scan_library_faces_batch,
-            face_commands::cancel_face_scan,
+            face_review::find_similar_faces,
+            face_review::get_confirmed_faces_for_person,
+            face_review::get_rejected_faces_for_person,
+            face_review::assign_faces_to_person_batch,
+            face_review::unassign_faces_batch,
+            face_review::reject_face_candidates_batch,
+            face_review::unreject_face_candidates_batch,
+            face_review::get_pending_face_match_counts,
+            face_scan::detect_faces_in_photo,
+            face_scan::scan_library_faces_batch,
+            face_scan::cancel_face_scan,
             scan::cancel_folder_scan,
             export::export_photos,
             export::cancel_export,
@@ -394,11 +396,11 @@ pub fn run() {
             clip::find_similar_photos,
             scan::cancel_thumbnail_pass,
             ai::cancel_ollama_pull,
-            face_commands::get_outdated_face_photos,
-            face_commands::get_unknown_face_clusters,
+            face_scan::get_outdated_face_photos,
+            face_review::get_unknown_face_clusters,
             face_engine::get_face_match_config,
-            face_commands::assign_face_region_and_automatch,
-            face_commands::remove_face_box,
+            face_review::assign_face_region_and_automatch,
+            face_review::remove_face_box,
             ai::ai_analyze_photo,
             ai::prepare_ai_image,
             ai::cancel_ai_analysis,
