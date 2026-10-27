@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { ask } from "@tauri-apps/plugin-dialog";
+import { confirmDialog } from "../../confirm";
 import { PhotoItem, OllamaStatus, AiAnalysisResult, AiPerf, OllamaPullProgress, AiFailureItem, AiBatchReport } from "../../types/lumina";
 import { diskPathOf } from "../../utils/rawPairs";
 import { AI_CANCELLED, PULL_CANCELLED, summarizeAiPerf, topLibraryTags } from "./shared";
@@ -194,7 +194,7 @@ export function useAi(core: LibraryCore) {
       const analyzed = requested.filter((p) => p.ai_caption);
       if (analyzed.length > 0) {
         const fresh = requested.length - analyzed.length;
-        const redo = await ask(
+        const redo = await confirmDialog(
           fresh > 0
             ? `${analyzed.length} of these ${requested.length} photos already have AI results. Analyse those again as well? Their caption, text and tags will be replaced.\n\nChoose "Only new photos" to analyse just the ${fresh} photo(s) without results.`
             : `All ${requested.length} photo(s) already have AI results. Analyse them again? Their caption, text and tags will be replaced.`,

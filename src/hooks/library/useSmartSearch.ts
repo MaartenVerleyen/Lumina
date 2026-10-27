@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { ask } from "@tauri-apps/plugin-dialog";
+import { confirmDialog } from "../../confirm";
 import { PhotoItem, SemanticStatus, SemanticProgress, SemanticHit } from "../../types/lumina";
 import { SEMANTIC_CANCELLED } from "./shared";
 import type { LibraryCore } from "./core";
@@ -88,7 +88,7 @@ export function useSmartSearch(core: LibraryCore, filters: FilterState, thumbnai
     }
     const status = await refreshSemanticStatus(folder);
     if (status && !status.models_ready) {
-      const ok = await ask(
+      const ok = await confirmDialog(
         "Smart search finds photos by describing them, in Dutch, English and about 50 other languages (\"hond op het strand\", \"birthday cake\").\n\nIt needs a one-time download of about 470 MB of AI models, then indexes this library on your graphics card (about 1 minute per 5,000 photos). Everything stays on this computer.",
         { title: "Smart search", kind: "info", okLabel: "Download and index", cancelLabel: "Not now" }
       );

@@ -453,7 +453,8 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
     if (merging) {
       const ok = await confirmAction(
         `"${target}" already exists. Merge "${oldName}" into "${target}"?\n\nAll photos, named faces and rejections of "${oldName}" move to "${target}".`,
-        "Merge"
+        "Merge",
+        { title: "Merge people" }
       );
       if (!ok) return null;
     }

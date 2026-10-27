@@ -98,7 +98,8 @@ export function useStaging(core: LibraryCore, filters: FilterState, view: Librar
         `Stage ${ops.length} visible photo(s) into folders with this rule?` +
           (restaged > 0 ? `\n\n${restaged} of them are already staged elsewhere and will get the new target.` : "") +
           "\n\nNothing moves on disk until you Commit. You can undo this with Ctrl+Z.",
-        "Stage photos"
+        "Stage photos",
+        { title: "Stage photos", kind: "info" }
       );
       if (!ok) return;
       const before = captureSnapshots(photos, Array.from(updates.keys()));

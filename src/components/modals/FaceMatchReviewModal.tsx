@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import UnknownFaceClusters from "./UnknownFaceClusters";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
-import { ask } from "@tauri-apps/plugin-dialog";
+import { confirmDialog, isConfirmOpen } from "../../confirm";
 import { useDialogFocus } from "../../hooks/useDialogFocus";
 import {
   FaceInstance,
@@ -440,6 +440,8 @@ export default function FaceMatchReviewModal({
   useEffect(() => {
     if (!isOpen) return;
     function onKeyDown(e: KeyboardEvent) {
+      // Listens in the capture phase, so it must stand aside for a confirmation on top of it
+      if (isConfirmOpen()) return;
       const target = e.target as HTMLElement | null;
       if (view === "unknown" && e.key !== "Escape") return;
       if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA") && e.key !== "Escape") return;
@@ -917,7 +919,7 @@ export default function FaceMatchReviewModal({
                           const ids = Array.from(selectedIds);
                           if (
                             ids.length >= CONFIRM_ACCEPT_COUNT &&
-                            !(await ask(`Confirm all ${ids.length} selected faces as "${activePerson}"?`, {
+                            !(await confirmDialog(`Confirm all ${ids.length} selected faces as "${activePerson}"?`, {
                               title: "Accept faces",
                               kind: "warning",
                               okLabel: `Accept ${ids.length}`,

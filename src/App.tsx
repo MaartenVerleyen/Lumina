@@ -66,6 +66,8 @@ import SettingsModal, { SettingsSection } from "./components/modals/SettingsModa
 import UpdateBanner from "./components/layout/UpdateBanner";
 import { useUpdater } from "./hooks/useUpdater";
 import { useSettings } from "./settings";
+import ConfirmDialog from "./components/modals/ConfirmDialog";
+import { useConfirmRequest } from "./confirm";
 
 export default function App() {
   const lib = useLibraryState();
@@ -276,7 +278,9 @@ export default function App() {
 
   // Dialogs that sit on top of the grid: while one is open, grid shortcuts must not touch photos behind it.
   // (The Loupe is deliberately not here: triaging inside the Loupe is the point of it.)
+  const confirmRequest = useConfirmRequest();
   const isDialogOpen =
+    confirmRequest !== null ||
     isPaletteOpen ||
     isSettingsOpen ||
     lib.importSource !== null ||
@@ -1005,6 +1009,8 @@ export default function App() {
         onClose={() => lib.setGalleryTarget(null)}
         onCreate={lib.runGallery}
       />
+
+      <ConfirmDialog />
 
       <RestoreModal
         target={lib.restoreTarget}

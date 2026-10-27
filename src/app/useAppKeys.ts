@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { isEditableTarget } from "../hooks/useKeyboardShortcuts";
+import { isConfirmOpen } from "../confirm";
 import type { LibraryState } from "../hooks/useLibraryState";
 
 // App-level keys that work everywhere: Ctrl+P palette, Ctrl+, settings, Ctrl+1…4 tabs, Ctrl+Z / Ctrl+Y, ? and Ctrl+L.
@@ -10,6 +11,8 @@ export function useAppKeys(lib: LibraryState) {
   const extraKeysRef = useRef({ lib, isBlockingModalOpen: false, isDialogOpen: false, togglePalette: () => {}, openSettings: () => {} });
   useEffect(() => {
     function handleExtraKeys(e: KeyboardEvent) {
+      // A confirmation on screen keeps every key to itself
+      if (isConfirmOpen()) return;
       const key = e.key.toLowerCase();
       const mod = e.ctrlKey || e.metaKey;
       // Ctrl+P opens the command palette (and never the WebView's print dialog), even from a text field

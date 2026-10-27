@@ -129,7 +129,8 @@ export function useCollections(core: LibraryCore, filters: FilterState) {
     if (!album) return;
     const ok = await confirmAction(
       `Delete the album "${album.name}"?\n\nOnly the album goes; its ${album.hashes.length} photo(s) stay where they are.`,
-      "Delete album"
+      "Delete album",
+      { title: "Delete album", kind: "danger" }
     );
     if (!ok) return;
     try {

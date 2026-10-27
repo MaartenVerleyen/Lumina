@@ -233,7 +233,8 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
     }
     const ok = await confirmAction(
       `Move the ${inTrash} photo(s) in _Trash to the Windows Recycle Bin?\n\nYou can still restore them from the Recycle Bin, but not from Lumina.`,
-      "Move to Recycle Bin"
+      "Move to Recycle Bin",
+      { title: "Empty _Trash", kind: "danger" }
     );
     if (!ok) return;
     try {
@@ -298,7 +299,8 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
     if (!folder || isScanningFolder) return;
     const ok = await confirmAction(
       `Rebuild thumbnails, duplicate detection and focus scores for all ${photos.length} photo(s)?\n\nThis reads every file again and can take several minutes on a large library. Ratings, tags, faces and AI results are kept.`,
-      "Reprocess"
+      "Reprocess",
+      { title: "Rebuild thumbnails" }
     );
     if (!ok) return;
     try {

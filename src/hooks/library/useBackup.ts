@@ -110,7 +110,8 @@ export function useBackup(core: LibraryCore, recentFolders: string[]) {
     if (!restoreTarget || busyRef.current) return;
     const ok = await confirmAction(
       "Lumina restarts with the library from this backup. Your current library is kept as a safety copy in Lumina's data folder.",
-      "Restore and restart"
+      "Restore and restart",
+      { title: "Restore this backup?" }
     );
     if (!ok) return;
     busyRef.current = true;

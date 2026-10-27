@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { ask } from "@tauri-apps/plugin-dialog";
+import { confirmDialog, type ConfirmKind } from "../../confirm";
 import { PhotoItem, SessionLogEntry, BulkPopover, PhotoActionSnapshot, ViewMode } from "../../types/lumina";
 import { expandWithRawPairs } from "../../utils/rawPairs";
 import { MAX_TOASTS, Toast } from "./shared";
@@ -160,9 +160,9 @@ export function useLibraryCore() {
     });
   }
 
-  // Native confirmation for bulk, destructive or slow actions
-  function confirmAction(message: string, okLabel: string) {
-    return ask(message, { title: "Lumina", kind: "warning", okLabel, cancelLabel: "Cancel" });
+  // Confirmation for bulk, destructive or slow actions ("danger" turns the button red)
+  function confirmAction(message: string, okLabel: string, options: { title?: string; kind?: ConfirmKind } = {}) {
+    return confirmDialog(message, { title: options.title, kind: options.kind ?? "warning", okLabel });
   }
 
   return {

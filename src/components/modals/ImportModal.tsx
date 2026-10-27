@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { ask, open } from "@tauri-apps/plugin-dialog";
+import { open } from "@tauri-apps/plugin-dialog";
+import { confirmDialog } from "../../confirm";
 import { FolderInput, FolderOpen, HardDrive, Loader2, RefreshCw, MemoryStick, X } from "lucide-react";
 import { useDialogFocus } from "../../hooks/useDialogFocus";
 import { ImportOptions, ImportPattern, ImportPreview, ImportSource } from "../../types/lumina";
@@ -107,9 +108,9 @@ export default function ImportModal({ isOpen, initialSource, defaultDest, onClos
   async function start() {
     if (!source || !dest || toCopy === 0) return;
     if (deleteAfter) {
-      const ok = await ask(
+      const ok = await confirmDialog(
         `After each photo is copied and checked, Lumina deletes it from ${drive ? `the card (${drive.label})` : source}.\n\nPhotos that were skipped or could not be copied stay where they are.`,
-        { title: "Import and delete", kind: "warning", okLabel: "Import and delete", cancelLabel: "Cancel" }
+        { title: "Import and delete from the card?", kind: "danger", okLabel: "Import and delete", cancelLabel: "Cancel" }
       );
       if (!ok) return;
     }

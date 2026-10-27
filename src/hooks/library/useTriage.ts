@@ -336,7 +336,8 @@ export function useTriage(core: LibraryCore, view: LibraryView) {
       if (toTrash.length === 0) return;
       const ok = await confirmAction(
         `Keep the best photo of each of the ${totalBurstGroups} burst groups (open eyes and a sharp face first, then the sharpest) and stage the other ${toTrash.length} photo(s) for _Trash?\n\nNothing is deleted until you Commit. You can undo this with Ctrl+Z.`,
-        "Stage for _Trash"
+        "Stage for _Trash",
+        { title: "Keep the best of each burst" }
       );
       if (!ok) return;
       const trashHashes = new Set(toTrash.map((p) => p.hash));

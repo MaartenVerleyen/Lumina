@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, RefObject } from "react";
-import { ask } from "@tauri-apps/plugin-dialog";
+import { confirmDialog } from "../../confirm";
 import { invoke } from "@tauri-apps/api/core";
 import luminaMark from "../../assets/lumina-mark.svg";
 import type { GridStyle, CardDetails } from "../views/VirtualPhotoGrid";
@@ -188,7 +188,7 @@ export default function TopHeaderBar({
     flashAttention !== null && flashAttention.canEnable && !["1", "true"].includes((flashAttention.value || "").toLowerCase());
 
   async function enableFlashAttention() {
-    const ok = await ask(
+    const ok = await confirmDialog(
       "Ollama runs about 10–15% faster with flash attention, with the same results.\n\nLumina saves OLLAMA_FLASH_ATTENTION=1 in your Windows user settings and restarts Ollama. Anything else using Ollama pauses for a few seconds.",
       { title: "Faster AI tagging", kind: "info", okLabel: "Turn on and restart Ollama", cancelLabel: "Not now" }
     );
@@ -261,7 +261,7 @@ export default function TopHeaderBar({
   }
 
   async function triggerModelPull(model = "qwen3-vl:8b") {
-    const ok = await ask(
+    const ok = await confirmDialog(
       `Batch AI needs a vision model. Download ${model} now?
 
 It is about 6 GB and is stored by Ollama. You can cancel the download at any time.`,

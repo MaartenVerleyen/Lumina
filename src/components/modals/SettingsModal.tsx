@@ -1,7 +1,8 @@
 import { useEffect, useState, ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
-import { ask, open as openDialog } from "@tauri-apps/plugin-dialog";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { confirmDialog } from "../../confirm";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   Brain,
@@ -212,7 +213,7 @@ export default function SettingsModal({
   }
 
   async function enableFlash() {
-    const ok = await ask(
+    const ok = await confirmDialog(
       "Ollama runs about 10–15% faster with flash attention, with the same results.\n\nLumina saves OLLAMA_FLASH_ATTENTION=1 in your Windows user settings and restarts Ollama. Anything else using Ollama pauses for a few seconds.",
       { title: "Faster captions", kind: "info", okLabel: "Turn on and restart Ollama", cancelLabel: "Not now" }
     );

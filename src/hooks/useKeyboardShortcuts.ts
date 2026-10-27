@@ -1,5 +1,6 @@
 import { useEffect, useRef, RefObject } from "react";
 import { BulkPopover, PhotoItem, ViewMode } from "../types/lumina";
+import { isConfirmOpen } from "../confirm";
 
 interface UseKeyboardShortcutsParams {
   activeHash: string | null;
@@ -57,6 +58,7 @@ export function useKeyboardShortcuts(params: UseKeyboardShortcutsParams) {
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
+      if (isConfirmOpen()) return;
       const p = latest.current;
       const key = e.key.toLowerCase();
 
