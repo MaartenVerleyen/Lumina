@@ -10,6 +10,7 @@ interface PaletteContext {
   setSaveSearchName: (name: string | null) => void;
   openFaceReview: () => void;
   openWelcomeTour: () => void;
+  openSettings: () => void;
   isLeftCollapsed: boolean;
   setIsLeftCollapsed: React.Dispatch<React.SetStateAction<boolean>>;
   isRightCollapsed: boolean;
@@ -23,6 +24,7 @@ export function buildPaletteActions({
   setSaveSearchName,
   openFaceReview,
   openWelcomeTour,
+  openSettings,
   isLeftCollapsed,
   setIsLeftCollapsed,
   isRightCollapsed,
@@ -142,6 +144,7 @@ export function buildPaletteActions({
     { id: "redo", group: "Edit", label: "Redo", shortcut: "Ctrl+Y", enabled: lib.canRedo, run: lib.handleRedo },
     { id: "log", group: "Help", label: "Session log", shortcut: "Ctrl+L", run: () => lib.setIsSessionLogModalOpen(true) },
     { id: "shortcuts", group: "Help", label: "Keyboard shortcuts", shortcut: "?", run: () => lib.setIsShortcutsModalOpen(true) },
+    { id: "settings", group: "Help", label: "Settings", shortcut: "Ctrl+,", keywords: "preferences options", run: openSettings },
     { id: "welcome", group: "Help", label: "Welcome tour", keywords: "help intro what's new guide", run: openWelcomeTour },
   ];
   return paletteActions;

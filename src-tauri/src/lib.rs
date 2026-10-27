@@ -415,6 +415,7 @@ pub fn run() {
             system::open_in_default_app,
             system::reveal_in_file_manager,
             system::create_library_subfolder,
+            system::get_app_data_dir,
             system::copy_image_to_clipboard,
             decode::ensure_high_res_preview,
             system::close_splashscreen

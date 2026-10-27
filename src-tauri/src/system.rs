@@ -140,3 +140,9 @@ pub fn close_splashscreen(app: AppHandle) -> Result<(), String> {
     }
     Ok(())
 }
+
+// Where Lumina keeps its database, thumbnails and downloaded models (shown in Settings → About)
+#[tauri::command]
+pub fn get_app_data_dir(app: AppHandle) -> String {
+    get_app_storage_dir(&app).to_string_lossy().into_owned()
+}

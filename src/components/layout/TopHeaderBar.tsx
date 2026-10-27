@@ -39,6 +39,7 @@ import {
   Redo2,
   HelpCircle,
   Download,
+  Settings,
   Sliders,
   FileText,
   Library,
@@ -103,6 +104,7 @@ interface TopHeaderBarProps {
   handleRedo?: () => Promise<void>;
   setIsShortcutsModalOpen?: React.Dispatch<React.SetStateAction<boolean>>;
   onOpenWelcomeTour?: () => void;
+  onOpenSettings?: () => void;
   setIsSessionLogModalOpen?: React.Dispatch<React.SetStateAction<boolean>>;
   sessionLogsCount?: number;
   handlePullDefaultAiModel?: (modelName?: string) => Promise<void>;
@@ -160,6 +162,7 @@ export default function TopHeaderBar({
   handleRedo,
   setIsShortcutsModalOpen,
   onOpenWelcomeTour,
+  onOpenSettings,
   setIsSessionLogModalOpen,
   sessionLogsCount = 0,
   handlePullDefaultAiModel,
@@ -985,6 +988,24 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                   </span>
                   <kbd className="px-1.5 py-0.2 bg-zinc-950 border border-zinc-700 rounded text-[11px] font-mono text-zinc-400">
                     ?
+                  </kbd>
+                </button>
+              )}
+
+              {onOpenSettings && (
+                <button
+                  onClick={() => {
+                    setIsToolsMenuOpen(false);
+                    onOpenSettings();
+                  }}
+                  className="w-full flex items-center justify-between px-2.5 py-2 rounded-lg hover:bg-zinc-800 text-zinc-200 transition text-left"
+                >
+                  <span className="flex items-center gap-2.5">
+                    <Settings className="w-4 h-4 text-zinc-300 shrink-0" />
+                    <span>Settings</span>
+                  </span>
+                  <kbd className="px-1.5 py-0.2 bg-zinc-950 border border-zinc-700 rounded text-[11px] font-mono text-zinc-400">
+                    Ctrl+,
                   </kbd>
                 </button>
               )}

@@ -18,8 +18,8 @@ import {
   ImageOff,
 } from "lucide-react";
 
-export type GridStyle = "justified" | "square";
-export type CardDetails = "always" | "hover";
+export type { GridStyle, CardDetails } from "../../settings";
+import type { GridStyle, CardDetails } from "../../settings";
 
 // Footer below the image in the square style (the justified style shows the name on hover instead)
 export const SQUARE_FOOTER_HEIGHT = 32;

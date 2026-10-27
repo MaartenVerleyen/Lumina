@@ -57,22 +57,6 @@ export function topLibraryTags(list: PhotoItem[], max = 40): string[] {
 // Windows paths: compare case-insensitively and ignore a trailing separator
 export type LocationValue = { location: string; latitude: number | null; longitude: number | null };
 
-// localStorage can throw (private mode, blocked storage): settings then just aren't remembered
-export function readSetting<T extends string>(key: string, fallback: T, allowed: T[]): T {
-  try {
-    const value = localStorage.getItem(key) as T | null;
-    return value && allowed.includes(value) ? value : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-export function writeSetting(key: string, value: string) {
-  try {
-    localStorage.setItem(key, value);
-  } catch {}
-}
-
 export function isSameFolder(a: string, b: string): boolean {
   const norm = (p: string) => p.replace(/[\\/]+$/, "").toLowerCase();
   return norm(a) === norm(b);

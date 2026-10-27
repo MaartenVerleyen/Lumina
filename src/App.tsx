@@ -56,6 +56,7 @@ import MapPane from "./components/views/MapPane";
 import { NoLibrary, NoMatches } from "./components/views/EmptyStates";
 import NewFolderModal from "./components/modals/NewFolderModal";
 import ShortcutsModal from "./components/modals/ShortcutsModal";
+import SettingsModal from "./components/modals/SettingsModal";
 
 export default function App() {
   const lib = useLibraryState();
@@ -92,6 +93,7 @@ export default function App() {
   const [isNewFolderModalOpen, setIsNewFolderModalOpen] = useState<boolean>(false);
   const [newFolderInput, setNewFolderInput] = useState<string>("");
   const [isPaletteOpen, setIsPaletteOpen] = useState<boolean>(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
 
   const extraKeysRef = useAppKeys(lib);
 
@@ -264,6 +266,7 @@ export default function App() {
   // (The Loupe is deliberately not here: triaging inside the Loupe is the point of it.)
   const isDialogOpen =
     isPaletteOpen ||
+    isSettingsOpen ||
     welcome.isOpen ||
     lib.exportTargets !== null ||
     lib.isCommitModalOpen ||
@@ -281,6 +284,7 @@ export default function App() {
 
   const closeBlockingModals = () => {
     setIsPaletteOpen(false);
+    setIsSettingsOpen(false);
     lib.setExportTargets(null);
     lib.setIsCommitModalOpen(false);
     lib.setIsHealthModalOpen(false);
@@ -309,7 +313,8 @@ export default function App() {
     if (isPaletteOpen) setIsPaletteOpen(false);
     else if (!isDialogOpen) setIsPaletteOpen(true);
   };
-  extraKeysRef.current = { lib, isBlockingModalOpen, isDialogOpen, togglePalette };
+  const openSettings = () => setIsSettingsOpen(true);
+  extraKeysRef.current = { lib, isBlockingModalOpen, isDialogOpen, togglePalette, openSettings };
 
   // ---------- Drag photos onto folders, people and quick filters ----------
   const hashesForDrag = (hash: string): string[] => {
@@ -358,6 +363,7 @@ export default function App() {
     setSaveSearchName,
     openFaceReview,
     openWelcomeTour: welcome.open,
+    openSettings,
     isLeftCollapsed,
     setIsLeftCollapsed,
     isRightCollapsed,
@@ -459,6 +465,7 @@ export default function App() {
         handleRedo={lib.handleRedo}
         setIsShortcutsModalOpen={lib.setIsShortcutsModalOpen}
         onOpenWelcomeTour={welcome.open}
+        onOpenSettings={openSettings}
         setIsSessionLogModalOpen={lib.setIsSessionLogModalOpen}
         sessionLogsCount={lib.sessionLogs.length}
         handlePullDefaultAiModel={lib.handlePullDefaultAiModel}
@@ -909,6 +916,13 @@ export default function App() {
       />
 
       <ShortcutsModal lib={lib} />
+
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        lib={lib}
+        onOpenWelcomeTour={welcome.open}
+      />
 
 
       <CommitModal
