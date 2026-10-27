@@ -45,6 +45,8 @@ import LoupeModal from "./components/modals/LoupeModal";
 import OperationProgressModal from "./components/modals/OperationProgressModal";
 import AiBatchReportModal from "./components/modals/AiBatchReportModal";
 import SessionLogModal from "./components/modals/SessionLogModal";
+import WelcomeTour from "./components/modals/WelcomeTour";
+import { useWelcomeTour } from "./hooks/useWelcomeTour";
 import FaceMatchReviewModal, { UNKNOWN_FACES } from "./components/modals/FaceMatchReviewModal";
 import { PhotoItem, SortOption, ViewMode } from "./types/lumina";
 import {
@@ -108,6 +110,7 @@ function loadLayout(): SavedLayout {
 
 export default function App() {
   const lib = useLibraryState();
+  const welcome = useWelcomeTour();
 
   // 3-Pane Resizable & Collapsible State
   // Pane sizes and collapsed parts come back as they were left (see the layout effect below)
@@ -438,6 +441,7 @@ export default function App() {
   // (The Loupe is deliberately not here: triaging inside the Loupe is the point of it.)
   const isDialogOpen =
     isPaletteOpen ||
+    welcome.isOpen ||
     lib.exportTargets !== null ||
     lib.isCommitModalOpen ||
     lib.isHealthModalOpen ||
@@ -780,6 +784,7 @@ export default function App() {
     { id: "redo", group: "Edit", label: "Redo", shortcut: "Ctrl+Y", enabled: lib.canRedo, run: lib.handleRedo },
     { id: "log", group: "Help", label: "Session log", shortcut: "Ctrl+L", run: () => lib.setIsSessionLogModalOpen(true) },
     { id: "shortcuts", group: "Help", label: "Keyboard shortcuts", shortcut: "?", run: () => lib.setIsShortcutsModalOpen(true) },
+    { id: "welcome", group: "Help", label: "Welcome tour", keywords: "help intro what's new guide", run: welcome.open },
   ];
 
   useKeyboardShortcuts({
@@ -875,6 +880,7 @@ export default function App() {
         handleUndo={lib.handleUndo}
         handleRedo={lib.handleRedo}
         setIsShortcutsModalOpen={lib.setIsShortcutsModalOpen}
+        onOpenWelcomeTour={welcome.open}
         setIsSessionLogModalOpen={lib.setIsSessionLogModalOpen}
         sessionLogsCount={lib.sessionLogs.length}
         handlePullDefaultAiModel={lib.handlePullDefaultAiModel}
@@ -1630,6 +1636,17 @@ export default function App() {
         onClose={() => lib.setIsSessionLogModalOpen(false)}
         logs={lib.sessionLogs}
         onClearLogs={lib.clearSessionLogs}
+      />
+
+      {/* First-run / after-update welcome tour */}
+      <WelcomeTour
+        isOpen={welcome.isOpen}
+        version={welcome.version}
+        notes={welcome.notes}
+        hidden={welcome.hidden}
+        hasFolder={Boolean(lib.folder)}
+        onClose={welcome.close}
+        onOpenFolder={lib.handleOpenFolder}
       />
 
       {/* Keyboard Shortcuts Cheat Sheet Modal */}

@@ -102,6 +102,7 @@ interface TopHeaderBarProps {
   handleUndo?: () => Promise<void>;
   handleRedo?: () => Promise<void>;
   setIsShortcutsModalOpen?: React.Dispatch<React.SetStateAction<boolean>>;
+  onOpenWelcomeTour?: () => void;
   setIsSessionLogModalOpen?: React.Dispatch<React.SetStateAction<boolean>>;
   sessionLogsCount?: number;
   handlePullDefaultAiModel?: (modelName?: string) => Promise<void>;
@@ -158,6 +159,7 @@ export default function TopHeaderBar({
   handleUndo,
   handleRedo,
   setIsShortcutsModalOpen,
+  onOpenWelcomeTour,
   setIsSessionLogModalOpen,
   sessionLogsCount = 0,
   handlePullDefaultAiModel,
@@ -984,6 +986,19 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                   <kbd className="px-1.5 py-0.2 bg-zinc-950 border border-zinc-700 rounded text-[11px] font-mono text-zinc-400">
                     ?
                   </kbd>
+                </button>
+              )}
+
+              {onOpenWelcomeTour && (
+                <button
+                  onClick={() => {
+                    setIsToolsMenuOpen(false);
+                    onOpenWelcomeTour();
+                  }}
+                  className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg hover:bg-zinc-800 text-zinc-200 transition text-left"
+                >
+                  <Sparkles className="w-4 h-4 text-indigo-300 shrink-0" />
+                  <span>Welcome Tour</span>
                 </button>
               )}
             </div>
