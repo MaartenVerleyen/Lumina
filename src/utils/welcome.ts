@@ -14,6 +14,20 @@ export interface ReleaseNotes {
 // Newest first. Add an entry for every release that should greet updating users with "What's new".
 export const RELEASE_NOTES: ReleaseNotes[] = [
   {
+    version: "4.0.0",
+    items: [
+      { title: "Import photos", text: "From a memory card, USB drive or folder into dated folders, skipping photos you already have. Lumina offers it when a camera card is connected." },
+      { title: "Closed eyes and soft focus", text: "Photos where someone blinks or the face is out of focus are marked, with quick filters. Keep best now prefers open eyes and sharp faces." },
+      { title: "Highlights", text: "The best 10, 20 or 50 photos of any trip, album or folder, and a Best of for every year in Collections." },
+      { title: "On this day", text: "Photos taken on today's date in earlier years, in a strip above the grid." },
+      { title: "Search in plain words", text: "Type \"lily and emma in antwerpen\" or \"kerst vorig jaar\": Lumina picks out the people, dates and places." },
+      { title: "Share as a web page", text: "Turn a selection, album or trip into a web gallery to open or upload anywhere, without location data." },
+      { title: "Backup and restore", text: "Back up your ratings, people, captions and albums, automatically if you like, and restore them on a new PC." },
+      { title: "One Settings page", text: "Every option in one place, with Ctrl+, from anywhere." },
+      { title: "Automatic updates", text: "Lumina checks for new versions and installs them with one click." },
+    ],
+  },
+  {
     version: "3.6.0",
     items: [
       { title: "Tabs", text: "Photos, Map, People and Collections each have their own tab. Ctrl+1 to 4 switches between them." },
