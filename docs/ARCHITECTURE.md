@@ -24,7 +24,18 @@ the first and last 64 KB). Identical copies get a path-salted hash, so each copy
 | `photo_clip` | one smart-search image vector per photo |
 | `albums`, `album_photos`, `saved_searches`, `trip_names` | collections |
 
-Thumbnails (480 px) and RAW/HEIC previews are cached as JPEG files next to the database.
+Thumbnails (480 px) and RAW/HEIC previews are cached as JPEG files next to the database, with face crops in
+`faces/`. Thumbnails and previews rebuild when missing; face crops don't, so backups include them.
+
+**Backups** (`backup.rs`) are zip files: `manifest.json` (format, version, library folders, counts), a
+`VACUUM INTO` copy of the database, the frontend's settings and the face crops. A restore never swaps the
+database under the running app. It unpacks the database next to the live one, checks it, rewrites every
+stored path (`photos.current_path`, `staged_target`, face crop paths) through the chosen folder remaps in
+one transaction and leaves it as `library.db.restore`. At the next start, before anything opens the
+database, the current one is copied to `library-before-restore-<time>.db` and the restored one moves in.
+
+**Settings** live in the frontend (`src/settings.ts`): one typed, validated `lumina_settings` entry in
+localStorage, read anywhere with `useSettings()`.
 
 ## Backend modules (`src-tauri/src`)
 
@@ -47,6 +58,11 @@ Thumbnails (480 px) and RAW/HEIC previews are cached as JPEG files next to the d
 | `clip.rs` | smart search: CLIP ViT-B/32 image encoder, multilingual text encoder, indexing job, query |
 | `ai.rs` | Ollama: start, pull, flash-attention setting, per-photo caption/tags/OCR with a constrained JSON schema |
 | `albums.rs`, `export.rs`, `files.rs`, `library.rs` | albums and smart albums; export; staged moves, commit, trash, XMP sidecars; offline place search |
+| `face_quality.rs` | closed eyes (CLIP zero-shot on the aligned face) and face sharpness, measured in the face scan and backfilled for older faces |
+| `highlights.rs` | highlights: a score per photo and a diverse pick (no two from one burst, spread in time and look) |
+| `import.rs`, `watch.rs` | importing from cards, drives and folders (dated folders, duplicate check, verified copies, card detection); watching the open library for outside changes |
+| `gallery.rs` | the shareable web page: resized photos without metadata and one self-contained `index.html` from `gallery_template.html` |
+| `backup.rs` | backups, restore with path remapping, CSV export |
 | `perf.rs`, `system.rs` | timing entries for the Session Log; system information |
 
 Model files (face and CLIP) are downloaded on first use to a `.part` file, checked against a pinned SHA-256
@@ -75,14 +91,15 @@ sequentially. Flash attention gives about 10–15% more speed and Lumina can swi
 | Path | Responsibility |
 | :--- | :--- |
 | `hooks/useLibraryState.ts` | composes the library hooks into the one `lib` object the components use |
-| `hooks/library/` | one hook per area: `core` (folder, photos, selection, notifications, undo), `useFolder`, `useFilterState`, `useLibraryView` (visible photos, counts, compare), `useTriage`, `useStaging`, `useLocation`, `usePeople`, `useAi`, `useSmartSearch`, `useCollections`, `useExport`, `useHealth`, `usePreferences` |
+| `hooks/library/` | one hook per area: `core` (folder, photos, selection, notifications, undo), `useFolder`, `useFilterState`, `useLibraryView` (visible photos, counts, compare), `useTriage`, `useStaging`, `useLocation`, `usePeople`, `useAi`, `useSmartSearch`, `useNaturalSearch`, `useCollections`, `useHighlights`, `useImport`, `useExport` (also web galleries), `useBackup`, `useHealth`, `usePreferences` |
+| `hooks/useUpdater.ts` | the daily update check and install through `tauri-plugin-updater` (see `docs/RELEASING.md`) |
 | `hooks/useKeyboardShortcuts.ts` | grid shortcuts (off while a dialog is open) |
 | `App.tsx` | layout: header tabs, resizable side panes, the main view, dialogs |
 | `app/` | App's helpers: remembered pane layout, app-level keys, window file drop, command palette actions, background jobs, search suggestions |
 | `components/layout` | header, sidebars (filters and folders, people), inspector, toolbar, status bar, menus |
 | `components/views` | justified virtualised grid, map, compare, collections, timeline |
 | `components/modals` | Loupe, Face Review, export, commit, command palette and other dialogs |
-| `utils` | pure, tested logic: search syntax, people queries, grid layout, trips, RAW pairs, command search |
+| `utils` | pure, tested logic: search syntax, natural-language queries, people queries, grid layout, trips, RAW pairs, culling checks, highlights, backup path remapping, command search |
 
 Grid and filter logic lives in `visiblePhotos` (one memo for every filter). The grid is virtualised with
 TanStack Virtual over precomputed justified rows.

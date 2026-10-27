@@ -58,6 +58,9 @@ uploaded.
   Put `-` in front of a filter to exclude it (`-flag:reject`). Save any search as a smart album that keeps
   itself up to date.
 - **Text in photos (OCR)** is indexed: search for a booking reference, a street sign or a recipe ingredient.
+- **Plain sentences**, in English or Dutch: “lily and emma in antwerpen”, “summer 2024”, “kerst vorig jaar”,
+  “emma playing in the park”. Lumina picks out people, dates and places, shows what it understood as chips
+  you can remove, and uses smart search for the rest.
 
 ![Searching for a booking reference finds the screenshot it appears in](docs/screenshots/text-search.jpg)
 
@@ -72,13 +75,19 @@ uploaded.
 - **Trips and events** are found automatically from dates and locations (“Lagos · 14–20 Jul 2025”) and can
   be renamed.
 - **Albums** that span library folders, and **smart albums** built from a saved search.
+- **Highlights** of any trip, album, folder or selection: the best 10, 20 or 50 photos, chosen on your
+  ratings and picks, open eyes, sharp faces, how good a photo looks, and variety (never two from the same
+  burst). **Best of** each year is one click in Collections.
+- **On this day:** a strip above the grid with the best photos taken on today's date in earlier years.
 
 ### Culling
 
 ![Compare view with two near-identical shots and their focus scores](docs/screenshots/compare.jpg)
 
 - **Bursts and near-duplicates** are stacked together. Compare them side by side with synchronised zoom
-  and a focus score under each one, then keep the sharpest.
+  and a focus score under each one, then keep the best: open eyes first, then the sharpest faces.
+- **Closed eyes and soft focus** are flagged on the photo, with quick filters and `is:blinking` /
+  `is:blurry`. The sensitivity can be set (or switched off) in Settings.
 - **Pick / reject / rate / colour label** from the keyboard, with optional auto-advance to the next photo.
 - **Full-screen view** with a filmstrip, and a **timeline** to filter by year, month, week or day.
 - Rejected photos go to a `_Trash` folder first. Moves and renames are staged and only applied when you
@@ -88,12 +97,27 @@ uploaded.
 
 ![Right-click menu with Add to Album, and the action bar for the selection](docs/screenshots/albums.jpg)
 
+- **Import** from a memory card, USB drive or folder into dated folders, skipping photos you already have.
+  Lumina offers it when a camera card is connected, copies safely (verified before it counts) and keeps
+  RAW+JPEG pairs and sidecars together. Photos added or removed outside Lumina show up by themselves.
 - **Right-click** a selection to add it to an album, or create a new album on the spot.
 - **Auto-stage** photos into folders by year, month, city or person.
 - **Export** for sharing at full size, 2048 px or 1080 px, with the GPS location removed if you want. Your
   originals are never changed.
-- **XMP sidecars** for ratings, flags and labels, without overwriting sidecars written by other apps.
+- **Share as a web page:** a folder with one self-contained page (grid, full-screen view, swiping on phones)
+  to open locally or upload to any web host. Photos are saved at 2048 px without metadata; captions,
+  names and a map are only included when you ask for them.
+- **XMP sidecars** for ratings, flags and labels, without overwriting sidecars written by other apps, and a
+  **CSV** of ratings, flags, tags, people and captions for spreadsheets.
 - **Command palette** (<kbd>Ctrl</kbd>+<kbd>P</kbd>) to find any action by name.
+
+### Your library
+
+- **Settings** in one place (<kbd>Ctrl</kbd>+<kbd>,</kbd>).
+- **Backups** of everything you added (ratings, people, captions, albums, settings) to one
+  `.luminabackup` file, by hand or automatically every day or week. **Restore** it on the same PC or a new
+  one: point each library folder to where the photos are now and everything follows them.
+- **Updates** are checked once a day and installed with one click from GitHub Releases.
 
 ### Formats
 
@@ -133,8 +157,9 @@ cd src-tauri
 cargo test --lib          # backend unit tests
 ```
 
-A release build is made with `npm run tauri build`. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how
-the app is put together and [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+A release build is made with `npm run tauri build`; [docs/RELEASING.md](docs/RELEASING.md) covers versions,
+update signing, code signing and publishing a release. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for
+how the app is put together and [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ## Keyboard shortcuts
 
