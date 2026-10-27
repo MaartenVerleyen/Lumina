@@ -433,7 +433,6 @@ export function useLibraryState() {
 
   // Slide-Out Timeline Slicer State
   const [isTimelineOpen, setIsTimelineOpen] = useState<boolean>(false);
-  const [timelineBuckets, setTimelineBuckets] = useState<TimelineBucket[]>([]);
   const [selectedPeriodRange, setSelectedPeriodRange] = useState<[string, string] | null>(null);
   const [dragAnchorDay, setDragAnchorDay] = useState<string | null>(null);
 
@@ -755,21 +754,24 @@ export function useLibraryState() {
     } catch {}
   }
 
-  async function refreshTimeline(currentFolder = folder) {
-    try {
-      const b = await invoke<TimelineBucket[]>("get_timeline_distribution", {
-        rootFolder: currentFolder || null,
-      });
-      setTimelineBuckets(b);
-    } catch {}
-  }
+  // Photos per day for the timeline, counted from the loaded photos so it always matches the grid
+  // (the database can still hold rows for files that were deleted outside Lumina)
+  const timelineBuckets = useMemo<TimelineBucket[]>(() => {
+    const counts = new Map<string, number>();
+    for (const p of photos) {
+      const day = (p.captured_at || "").slice(0, 10).replace(/:/g, "-");
+      if (day.length === 10) counts.set(day, (counts.get(day) || 0) + 1);
+    }
+    return Array.from(counts, ([period, count]) => ({ period, count })).sort((a, b) =>
+      a.period < b.period ? -1 : a.period > b.period ? 1 : 0
+    );
+  }, [photos]);
 
   // Debounced: opening a folder changes `folder` and then `photos.length`, which used to run the
   // (expensive) face-match count twice back to back
   useEffect(() => {
     const timer = setTimeout(() => {
       refreshPeople(folder);
-      refreshTimeline(folder);
     }, 400);
     return () => clearTimeout(timer);
   }, [photos.length, folder]);
@@ -1547,7 +1549,6 @@ export function useLibraryState() {
           };
         })
       );
-      refreshTimeline();
       addLog("LIBRARY", `Refreshed EXIF headers on ${results.length} photo(s)`);
       const first = results[0];
       if (first) {
@@ -2388,7 +2389,6 @@ export function useLibraryState() {
       setPhotos((prev) =>
         prev.map((p) => (map.has(p.hash) ? { ...p, captured_at: map.get(p.hash)! } : p))
       );
-      refreshTimeline();
     };
     try {
       const hashes = Array.from(selectedHashes);

@@ -863,3 +863,38 @@ fn renaming_a_person_onto_an_existing_name_merges_them() {
     let name: String = conn.query_row("SELECT name FROM people", [], |r| r.get(0)).unwrap();
     assert_eq!(name, "ANNA SMITH");
 }
+
+#[test]
+fn an_edited_file_keeps_its_tags_people_faces_and_albums() {
+    let conn = Connection::open_in_memory().unwrap();
+    conn.execute_batch(
+        "CREATE TABLE photos (hash TEXT PRIMARY KEY, current_path TEXT);
+         CREATE TABLE photo_tags (hash TEXT, tag TEXT, PRIMARY KEY (hash, tag));
+         CREATE TABLE photo_people (hash TEXT, person_name TEXT, PRIMARY KEY (hash, person_name));
+         CREATE TABLE photo_faces (face_id TEXT PRIMARY KEY, hash TEXT, person_name TEXT);
+         CREATE TABLE album_photos (album_id INTEGER, hash TEXT, PRIMARY KEY (album_id, hash));
+         CREATE TABLE photo_clip (hash TEXT PRIMARY KEY, embedding BLOB, model TEXT);
+         INSERT INTO photos VALUES ('old', '/lib/a.jpg'), ('new', '/lib/a.jpg'), ('other', '/lib/b.jpg');
+         INSERT INTO photo_tags VALUES ('old', 'beach'), ('old', 'sunset'), ('new', 'sunset');
+         INSERT INTO photo_people VALUES ('old', 'Anna');
+         INSERT INTO photo_faces VALUES ('f1', 'old', 'Anna');
+         INSERT INTO album_photos VALUES (1, 'old');
+         INSERT INTO photo_clip VALUES ('old', x'00', 'clip');",
+    )
+    .unwrap();
+
+    assert_eq!(scan::paths_claimed_twice(&conn, "/lib/%"), vec!["/lib/a.jpg".to_string()]);
+    scan::retire_replaced_row(&conn, "old", "new").unwrap();
+
+    let count = |sql: &str| -> i64 { conn.query_row(sql, [], |r| r.get(0)).unwrap() };
+    assert_eq!(count("SELECT COUNT(*) FROM photos WHERE current_path = '/lib/a.jpg'"), 1);
+    assert_eq!(count("SELECT COUNT(*) FROM photo_tags WHERE hash = 'new'"), 2);
+    assert_eq!(count("SELECT COUNT(*) FROM photo_people WHERE hash = 'new'"), 1);
+    assert_eq!(count("SELECT COUNT(*) FROM photo_faces WHERE hash = 'new'"), 1);
+    assert_eq!(count("SELECT COUNT(*) FROM album_photos WHERE hash = 'new'"), 1);
+    assert_eq!(
+        count("SELECT (SELECT COUNT(*) FROM photo_tags WHERE hash = 'old') + (SELECT COUNT(*) FROM photo_clip)"),
+        0
+    );
+    assert!(scan::paths_claimed_twice(&conn, "/lib/%").is_empty());
+}

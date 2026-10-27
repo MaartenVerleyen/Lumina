@@ -189,6 +189,34 @@ pub fn resolve_hash_collisions(conn: &Connection, entries: &[(String, String, bo
     salted
 }
 
+// A file edited in place (new size, so a new content hash) gets a new row while its old row still claims the
+// same path. Moves the old row's tags, people, faces and album entries to the new row and deletes the old one,
+// so nothing is lost and the photo isn't counted twice (timeline, people counts).
+pub fn retire_replaced_row(conn: &Connection, old: &str, new: &str) -> rusqlite::Result<()> {
+    for table in ["photo_tags", "photo_people", "album_photos"] {
+        conn.execute(&format!("UPDATE OR IGNORE {table} SET hash = ?2 WHERE hash = ?1"), params![old, new])?;
+        conn.execute(&format!("DELETE FROM {table} WHERE hash = ?1"), params![old])?;
+    }
+    conn.execute("UPDATE photo_faces SET hash = ?2 WHERE hash = ?1", params![old, new])?;
+    // The image changed: its smart-search vector is recomputed for the new row
+    conn.execute("DELETE FROM photo_clip WHERE hash = ?1", params![old])?;
+    conn.execute("DELETE FROM photos WHERE hash = ?1", params![old])?;
+    Ok(())
+}
+
+// Paths in the folder that more than one row claims
+pub fn paths_claimed_twice(conn: &Connection, folder_prefix: &str) -> Vec<String> {
+    let Ok(mut stmt) = conn.prepare(
+        "SELECT current_path FROM photos WHERE current_path LIKE ?1 ESCAPE '!'
+         GROUP BY current_path HAVING COUNT(*) > 1",
+    ) else {
+        return Vec::new();
+    };
+    stmt.query_map(params![folder_prefix], |r| r.get::<_, String>(0))
+        .map(|rows| rows.flatten().collect())
+        .unwrap_or_default()
+}
+
 #[derive(Clone)]
 pub struct CachedRow {
     pub size: u64,
@@ -784,6 +812,70 @@ pub async fn scan_folder(
             }
         }
 
+        // Rows left behind by files edited in place: fold them into the row this scan uses for that path
+        let claimed_twice = paths_claimed_twice(&conn, &folder_prefix);
+        if !claimed_twice.is_empty() {
+            let mut moved: Vec<(usize, String)> = Vec::new();
+            {
+                let by_path: HashMap<&str, usize> = indexed_results
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (_, disk_path, _, _, _))| (disk_path.as_str(), i))
+                    .collect();
+                let in_use: HashSet<&str> = indexed_results.iter().map(|(p, _, _, _, _)| p.hash.as_str()).collect();
+                if let Ok(tx) = conn.transaction() {
+                    let mut ok = true;
+                    for path in &claimed_twice {
+                        let Some(&i) = by_path.get(path.as_str()) else { continue };
+                        let new_hash = indexed_results[i].0.hash.as_str();
+                        let old_hashes: Vec<String> = tx
+                            .prepare("SELECT hash FROM photos WHERE current_path = ?1 AND hash != ?2")
+                            .and_then(|mut s| {
+                                s.query_map(params![path, new_hash], |r| r.get::<_, String>(0))
+                                    .map(|rows| rows.flatten().collect())
+                            })
+                            .unwrap_or_default();
+                        for old in old_hashes {
+                            if in_use.contains(old.as_str()) {
+                                continue;
+                            }
+                            if retire_replaced_row(&tx, &old, new_hash).is_err() {
+                                ok = false;
+                                break;
+                            }
+                            moved.push((i, old));
+                        }
+                    }
+                    if ok {
+                        let _ = tx.commit();
+                    } else {
+                        moved.clear();
+                    }
+                }
+            }
+            // The photos sent to the UI get what was just moved onto them
+            for (i, old) in moved {
+                let p = &mut indexed_results[i].0;
+                for t in tags_map.get(&old).into_iter().flatten() {
+                    if !p.tags.contains(t) {
+                        p.tags.push(t.clone());
+                    }
+                }
+                p.tags.sort();
+                for n in people_map.get(&old).into_iter().flatten() {
+                    if !p.people.contains(n) {
+                        p.people.push(n.clone());
+                    }
+                }
+                p.people.sort();
+                for f in faces_map.get(&old).into_iter().flatten() {
+                    let mut f = f.clone();
+                    f.hash = p.hash.clone();
+                    p.faces.push(f);
+                }
+            }
+        }
+
         let db_ms = elapsed_ms(db_started);
 
         let mut photos: Vec<PhotoItem> = indexed_results
@@ -956,38 +1048,6 @@ pub async fn rescan_exif_batch(app: AppHandle, hashes: Vec<String>) -> Result<Ve
         }
 
         Ok(results)
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
-
-// ----------------- DATE TIMELINE AGGREGATION -----------------
-
-#[tauri::command]
-pub async fn get_timeline_distribution(app: AppHandle, root_folder: Option<String>) -> Result<Vec<TimelineBucket>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let conn = open_global_db(&app)?;
-        let prefix = make_folder_prefix(root_folder.as_deref());
-        let mut stmt = conn
-            .prepare(
-                "SELECT substr(replace(captured_at, ':', '-'), 1, 10) as period, count(*)
-                 FROM photos
-                 WHERE captured_at IS NOT NULL AND length(captured_at) >= 10 AND current_path LIKE ?1 ESCAPE '!'
-                 GROUP BY period
-                 ORDER BY period ASC",
-            )
-            .map_err(|e| e.to_string())?;
-
-        let rows = stmt
-            .query_map(params![prefix], |r| {
-                Ok(TimelineBucket {
-                    period: r.get(0)?,
-                    count: r.get(1)?,
-                })
-            })
-            .map_err(|e| e.to_string())?;
-
-        Ok(rows.flatten().collect())
     })
     .await
     .map_err(|e| e.to_string())?

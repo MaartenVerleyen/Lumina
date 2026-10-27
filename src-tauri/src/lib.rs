@@ -214,12 +214,6 @@ pub struct ExifRefreshResult {
 }
 
 #[derive(Serialize, Clone)]
-pub struct TimelineBucket {
-    pub period: String, // "YYYY-MM" or "YYYY"
-    pub count: usize,
-}
-
-#[derive(Serialize, Clone)]
 pub struct CitySearchResult {
     pub name: String,
     pub country: String,
@@ -341,7 +335,6 @@ pub fn run() {
             library::set_photo_rotation,
             library::set_photos_rotation_exact,
             scan::rescan_exif_batch,
-            scan::get_timeline_distribution,
             library::search_cities_offline,
             library::set_manual_location,
             library::stage_photo_move,
