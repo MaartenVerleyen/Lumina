@@ -495,8 +495,8 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
             }}
             placeholder={
               smartSearch
-                ? "Describe the photo… (e.g. dog on the beach, verjaardagstaart)"
-                : "Search people, tags, OCR text, places... (Ctrl+K)"
+                ? "Describe it: emma with the dog at the beach, kerst 2023… (Ctrl+K)"
+                : "Search: anna at the beach in 2024, place, text… (Ctrl+K)"
             }
             className={`w-full bg-zinc-900/90 border hover:border-zinc-700 rounded-full pl-9 pr-24 py-1.5 text-xs text-zinc-200 select-text focus:outline-none transition placeholder-zinc-500 ${
               smartSearch ? "border-indigo-500/60 focus:border-indigo-400" : "border-zinc-800 focus:border-emerald-500/80"

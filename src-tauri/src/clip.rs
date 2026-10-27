@@ -553,8 +553,11 @@ fn cutoff_for(sorted_scores: &[f32]) -> f32 {
     (median + SPREAD_FRACTION * (top - median)).max(ABSOLUTE_FLOOR)
 }
 const MAX_HITS: usize = 1000;
+// Text queries return this many scores uncut: the app applies the cut-off among the photos its other filters
+// keep ("emma at the park" ranks Emma's photos against each other, not against the whole library)
+const MAX_SCORED: usize = 20_000;
 
-fn rank(query: &[f32], exclude: Option<&str>) -> Vec<SemanticHit> {
+fn rank(query: &[f32], exclude: Option<&str>, cut: bool) -> Vec<SemanticHit> {
     let Ok(cache) = CLIP_CACHE.lock() else { return Vec::new() };
     let mut hits: Vec<SemanticHit> = cache
         .iter()
@@ -562,6 +565,10 @@ fn rank(query: &[f32], exclude: Option<&str>) -> Vec<SemanticHit> {
         .map(|(h, v)| SemanticHit { hash: h.clone(), score: face_match::dot(query, v) })
         .collect();
     hits.sort_by(|a, b| b.score.total_cmp(&a.score));
+    if !cut {
+        hits.truncate(MAX_SCORED);
+        return hits;
+    }
     let scores: Vec<f32> = hits.iter().map(|h| h.score).collect();
     let cutoff = cutoff_for(&scores);
     hits.retain(|h| h.score >= cutoff);
@@ -577,7 +584,7 @@ pub async fn semantic_search(app: AppHandle, query: String) -> Result<Vec<Semant
             ensure_clip_cache(&conn);
         }
         let q = models.embed_text(query.trim())?;
-        Ok(rank(&q, None))
+        Ok(rank(&q, None, false))
     })
     .await
     .map_err(|e| e.to_string())?
@@ -593,7 +600,7 @@ pub async fn find_similar_photos(app: AppHandle, hash: String) -> Result<Vec<Sem
         let Some(query) = query else {
             return Err("This photo isn't indexed for smart search yet.".to_string());
         };
-        let mut hits = rank(&query, None);
+        let mut hits = rank(&query, None, true);
         // The photo itself first (score 1.0), so the result reads "this photo and the ones like it"
         hits.sort_by(|a, b| (b.hash == hash).cmp(&(a.hash == hash)).then(b.score.total_cmp(&a.score)));
         Ok(hits)

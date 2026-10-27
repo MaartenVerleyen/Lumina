@@ -3,7 +3,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { PhotoItem, SemanticStatus, SemanticProgress, SemanticHit } from "../../types/lumina";
-import { parseSearchQuery } from "../../utils/searchQuery";
 import { SEMANTIC_CANCELLED } from "./shared";
 import type { LibraryCore } from "./core";
 import type { FilterState } from "./useFilterState";
@@ -11,7 +10,7 @@ import type { FilterState } from "./useFilterState";
 // Smart search (CLIP): indexing, text queries and "find similar"
 export function useSmartSearch(core: LibraryCore, filters: FilterState, thumbnailsBusy: boolean) {
   const { folder, folderRef, photos, addLog, setError, setAutoMatchNotice, setViewMode } = core;
-  const { searchQuery, setSearchQuery, parsedSearch } = filters;
+  const { setSearchQuery, parsedSearch } = filters;
   const hasPhotos = photos.length > 0;
   // Smart search: the search box describes the photo ("dog on the beach") and CLIP ranks the library.
   // `semanticHits` holds the ranked matches with what they were for (a text query or "similar to" a photo).
@@ -103,7 +102,8 @@ export function useSmartSearch(core: LibraryCore, filters: FilterState, thumbnai
   // Text queries: embedded after a short pause in typing; only the newest query may set the results
   const semanticSeqRef = useRef(0);
   useEffect(() => {
-    const query = parseSearchQuery(searchQuery).text;
+    // The words left once names, dates and places are understood ("at the beach")
+    const query = parsedSearch.text;
     if (!smartSearch || !query) return;
     const seq = ++semanticSeqRef.current;
     const timer = setTimeout(async () => {
@@ -119,7 +119,7 @@ export function useSmartSearch(core: LibraryCore, filters: FilterState, thumbnai
       }
     }, 300);
     return () => clearTimeout(timer);
-  }, [searchQuery, smartSearch]);
+  }, [parsedSearch.text, smartSearch]);
 
   async function handleFindSimilar(photo: PhotoItem) {
     try {

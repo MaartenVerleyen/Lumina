@@ -7,6 +7,7 @@ import { matchesTerms } from "../../utils/searchQuery";
 import { matchesPeopleExpr } from "../../utils/peopleQuery";
 import { NAME_COLLATOR, TEXT_COLLATOR, compareStrings, searchTextOf } from "./shared";
 import { cullScore, hasClosedEyes, isSoftFocus } from "../../utils/culling";
+import { semanticCutoff, SEMANTIC_MAX_HITS } from "../../utils/semanticCutoff";
 import { cullingOf, useSettings } from "../../settings";
 import type { Collections } from "./useCollections";
 import type { SmartSearch } from "./useSmartSearch";
@@ -50,7 +51,9 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
   const settings = useSettings();
   const culling = useMemo(() => cullingOf(settings), [settings.eyesCheck, settings.focusCheck]);
   const matchContext = useMemo(() => ({ ...albumContext, culling }), [albumContext, culling]);
-  const { semanticScores, setSemanticResult } = smart;
+  const { semanticScores, setSemanticResult, semanticResult } = smart;
+  // "Find similar" is already cut library-wide; text queries are cut here
+  const semanticCut = semanticResult?.source.kind === "text";
   const [isLoupeOpen, setIsLoupeOpen] = useState<boolean>(false);
   // Synchronized Compare Mode State
   const [compareZoom, setCompareZoom] = useState<number>(1);
@@ -213,9 +216,15 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
       return true;
     });
 
-    // Smart search: best match first, every photo shown (no burst stacking)
+    // Smart search: best match first, every photo shown (no burst stacking). Text queries come back uncut:
+    // the "good enough" line is drawn among the photos the other filters kept
     if (semanticScores) {
-      return filtered.sort((a, b) => (semanticScores.get(b.hash) ?? 0) - (semanticScores.get(a.hash) ?? 0));
+      const ranked = filtered.sort((a, b) => (semanticScores.get(b.hash) ?? 0) - (semanticScores.get(a.hash) ?? 0));
+      if (semanticCut) {
+        const line = semanticCutoff(ranked.map((p) => semanticScores.get(p.hash) ?? 0));
+        return ranked.filter((p) => (semanticScores.get(p.hash) ?? 0) >= line).slice(0, SEMANTIC_MAX_HITS);
+      }
+      return ranked;
     }
 
     // `filtered` is already a fresh array: sort it in place
@@ -313,6 +322,7 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
     expandedBurstGroups,
     viewMode,
     semanticScores,
+    semanticCut,
   ]);
 
   // Photos that qualify for Compare before the 4-photo cap (Compare shows "+N more")

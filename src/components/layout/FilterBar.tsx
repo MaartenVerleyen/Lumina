@@ -1,6 +1,7 @@
 import { Sparkles, X } from "lucide-react";
 import { describePeopleExpr, peopleInExpr } from "../../utils/peopleQuery";
 import { describeTerm, removeTerm } from "../../utils/searchQuery";
+import { removeUnderstood } from "../../utils/naturalQuery";
 import type { LibraryState } from "../../hooks/useLibraryState";
 
 // The chips under the toolbar for every active filter (last import, trip, person, tag, album, search terms), each with ✕
@@ -65,15 +66,18 @@ export default function FilterBar({
           {lib.parsedSearch.terms.map((t) => (
             <span
               key={t.raw}
+              title={t.label ? "Understood from your words" : undefined}
               className={`flex items-center gap-1 px-2 py-0.5 rounded-full border ${
-                t.negate
+                t.label
+                  ? "bg-indigo-500/10 border-indigo-500/40 text-indigo-200"
+                  : t.negate
                   ? "bg-red-500/10 border-red-500/40 text-red-200"
                   : "bg-emerald-500/10 border-emerald-500/40 text-emerald-200"
               }`}
             >
               {describeTerm(t)}
               <button
-                onClick={() => lib.setSearchQuery(removeTerm(lib.searchQuery, t))}
+                onClick={() => lib.setSearchQuery(t.label ? removeUnderstood(lib.searchQuery, t.raw) : removeTerm(lib.searchQuery, t))}
                 className="hover:text-white"
                 aria-label={`Remove ${describeTerm(t)}`}
               >

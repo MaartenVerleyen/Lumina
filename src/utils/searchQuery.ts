@@ -18,6 +18,8 @@ export interface SearchTerm {
   raw: string;
   // Still being typed (last in the query, no space after it): person/tag values match as a prefix
   partial?: boolean;
+  // Understood from plain words ("summer 2024"): shown as typed instead of key: value
+  label?: string;
 }
 
 export interface ParsedQuery {
@@ -59,6 +61,7 @@ const KEY_LABEL: Record<TermKey, string> = {
 };
 
 export function describeTerm(t: SearchTerm): string {
+  if (t.label) return t.label;
   return `${t.negate ? "Not " : ""}${KEY_LABEL[t.key]}: ${OP_LABEL[t.op]}${t.value}`;
 }
 
@@ -115,6 +118,17 @@ function dayOf(capturedAt: string): string {
 function matchDate(day: string, op: TermOp, value: string): boolean {
   if (!day) return false;
   const v = value.replace(/[/:]/g, "-");
+  // Any year: "*-06" (June), "*-12-24..*-12-26" (Christmas), "*-12-01..*-02-28" (winter, wraps)
+  if (v.startsWith("*-")) {
+    const md = day.slice(5);
+    if (v.includes("..")) {
+      const [from, to] = v.split("..").map((x) => x.slice(2));
+      const after = md.slice(0, from.length) >= from;
+      const before = md.slice(0, to.length) <= to;
+      return from <= to ? after && before : after || before;
+    }
+    return md.slice(0, v.length - 2) === v.slice(2);
+  }
   if (v.includes("..")) {
     const [from, to] = v.split("..");
     return (!from || day.slice(0, from.length) >= from) && (!to || day.slice(0, to.length) <= to);

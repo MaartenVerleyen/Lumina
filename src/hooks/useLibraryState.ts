@@ -1,6 +1,7 @@
 import { useLibraryCore } from "./library/core";
 import { usePreferences } from "./library/usePreferences";
 import { useFilterState } from "./library/useFilterState";
+import { useNaturalSearch } from "./library/useNaturalSearch";
 import { useFolder } from "./library/useFolder";
 import { useCollections } from "./library/useCollections";
 import { useSmartSearch } from "./library/useSmartSearch";
@@ -23,7 +24,9 @@ export type { Toast } from "./library/shared";
 export function useLibraryState() {
   const core = useLibraryCore();
   const preferences = usePreferences(core);
-  const filters = useFilterState();
+  const typedFilters = useFilterState();
+  // What the search box means, plain words included, for everything that filters or searches
+  const filters = { ...typedFilters, ...useNaturalSearch(core, typedFilters) };
   const folder = useFolder(core, filters);
   const collections = useCollections(core, filters);
   const smart = useSmartSearch(core, filters, folder.progress !== null);
