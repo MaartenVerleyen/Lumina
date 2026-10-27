@@ -14,6 +14,9 @@ import ToastStack from "./components/layout/ToastStack";
 import PhotoToolbar from "./components/layout/PhotoToolbar";
 import ExportModal from "./components/modals/ExportModal";
 import CollectionsView from "./components/views/CollectionsView";
+import PeopleSidebar from "./components/layout/PeopleSidebar";
+import ProfilePicturePicker from "./components/modals/ProfilePicturePicker";
+import { describePeople } from "./utils/peopleQuery";
 import { describeTerm, removeTerm, TermKey } from "./utils/searchQuery";
 import CommandPalette, { PaletteAction } from "./components/modals/CommandPalette";
 import { usePhotoDrag, DropTarget } from "./hooks/usePhotoDrag";
@@ -427,6 +430,9 @@ export default function App() {
     return [hash];
   }
 
+  // People tab: the person whose profile picture is being chosen
+  const [coverPickerPerson, setCoverPickerPerson] = useState<string | null>(null);
+
   // Dialogs that sit on top of the grid: while one is open, grid shortcuts must not touch photos behind it.
   // (The Loupe is deliberately not here: triaging inside the Loupe is the point of it.)
   const isDialogOpen =
@@ -438,9 +444,11 @@ export default function App() {
     lib.isShortcutsModalOpen ||
     Boolean(lib.aiBatchReport) ||
     isNewFolderModalOpen ||
+    Boolean(lib.faceReviewPerson) ||
+    coverPickerPerson !== null ||
     Boolean(lib.isScanningFolder || lib.scanProgress || lib.ollamaPullProgress);
-  // People and Collections show no photo grid: grid shortcuts (P, X, 1-5 ...) must not act on a hidden selection
-  const isPhotoTab = lib.viewMode === "grid" || lib.viewMode === "compare" || lib.viewMode === "map";
+  // Collections shows no photo grid: grid shortcuts (P, X, 1-5 ...) must not act on a hidden selection
+  const isPhotoTab = lib.viewMode !== "collections";
   const isBlockingModalOpen = isDialogOpen || !isPhotoTab;
 
   const closeBlockingModals = () => {
@@ -877,14 +885,37 @@ export default function App() {
       <div className="flex flex-1 overflow-hidden relative">
         {!isLeftCollapsed && isPhotoTab && (
           <>
+            {lib.viewMode === "people" ? (
+              <PeopleSidebar
+                width={leftWidth}
+                people={lib.people}
+                pendingCounts={lib.pendingFaceCounts}
+                totalPhotos={lib.photos.length}
+                selected={lib.selectedPeople}
+                match={lib.peopleMatch}
+                onChange={(names, match) => {
+                  lib.setSelectedPeople(names);
+                  lib.setPeopleMatch(match);
+                }}
+                onReview={(name) => lib.setFaceReviewPerson(name)}
+                onWhoIsThis={() => lib.setFaceReviewPerson(UNKNOWN_FACES)}
+                onChooseCover={setCoverPickerPerson}
+                onRename={lib.handleRenamePerson}
+                onSetHidden={lib.handleSetPersonHidden}
+                collapsedSections={collapsedSections}
+                onToggleSection={(id) =>
+                  setCollapsedSections((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
+                }
+              />
+            ) : (
             <LeftSidebar
               leftWidth={leftWidth}
               photos={lib.photos}
               simpleMode={lib.simpleMode}
               smartFilter={lib.smartFilter}
               setSmartFilter={lib.setSmartFilter}
-              selectedPerson={lib.selectedPerson}
-              setSelectedPerson={lib.setSelectedPerson}
+              hasPeopleFilter={lib.selectedPeople.length > 0}
+              clearPeopleFilter={() => lib.setSelectedPeople([])}
               activeSubfolder={lib.activeSubfolder}
               setActiveSubfolder={lib.setActiveSubfolder}
               activeEvent={lib.activeEvent}
@@ -908,6 +939,7 @@ export default function App() {
                 setCollapsedSections((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
               }
             />
+            )}
 
             <div
               onMouseDown={() => {
@@ -925,22 +957,7 @@ export default function App() {
           ref={centerMainRef}
           className="flex-1 bg-surface flex flex-col overflow-hidden relative min-w-[260px]"
         >
-          {lib.viewMode === "people" ? (
-            <FaceMatchReviewModal
-              embedded
-              isOpen
-              initialPerson={lib.faceReviewPerson}
-              onClose={() => lib.setViewMode("grid")}
-              people={lib.people}
-              pendingCounts={lib.pendingFaceCounts}
-              setPhotos={lib.setPhotos}
-              refreshPeople={lib.refreshPeople}
-              folder={lib.folder}
-              onRenamePerson={lib.handleRenamePerson}
-              onSetPersonHidden={lib.handleSetPersonHidden}
-              onShowPhotos={(person) => openInPhotos(() => lib.setSelectedPerson(person))}
-            />
-          ) : lib.viewMode === "collections" ? (
+          {lib.viewMode === "collections" ? (
             <CollectionsView
               albums={lib.albums}
               albumCounts={lib.albumCounts}
@@ -975,7 +992,7 @@ export default function App() {
           {(lib.parsedSearch.terms.length > 0 ||
             lib.activeAlbumId !== null ||
             lib.activeEvent !== "ALL" ||
-            lib.selectedPerson !== null ||
+            lib.selectedPeople.length > 0 ||
             lib.activeTag !== "ALL") && (
             <div className="bg-panel border-b border-zinc-800/60 px-4 py-1.5 flex items-center gap-1.5 flex-wrap shrink-0 text-xs">
               {lib.activeEvent !== "ALL" && (
@@ -986,10 +1003,10 @@ export default function App() {
                   </button>
                 </span>
               )}
-              {lib.selectedPerson !== null && (
+              {lib.selectedPeople.length > 0 && (
                 <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/40 text-emerald-200 capitalize">
-                  Person: {lib.selectedPerson}
-                  <button onClick={() => lib.setSelectedPerson(null)} className="hover:text-white" aria-label="Show everyone">
+                  {lib.selectedPeople.length > 1 ? "People" : "Person"}: {describePeople(lib.selectedPeople, lib.peopleMatch)}
+                  <button onClick={() => lib.setSelectedPeople([])} className="hover:text-white" aria-label="Show everyone">
                     <X className="w-3 h-3" />
                   </button>
                 </span>
@@ -1697,6 +1714,31 @@ export default function App() {
         isExportingXmp={lib.isExportingXmp}
         handlePruneCache={lib.handlePruneCache}
         handleExportXmp={lib.handleExportXmp}
+      />
+
+      <FaceMatchReviewModal
+        isOpen={Boolean(lib.faceReviewPerson)}
+        initialPerson={lib.faceReviewPerson}
+        onClose={() => lib.setFaceReviewPerson(null)}
+        people={lib.people}
+        pendingCounts={lib.pendingFaceCounts}
+        setPhotos={lib.setPhotos}
+        refreshPeople={lib.refreshPeople}
+        folder={lib.folder}
+        onRenamePerson={lib.handleRenamePerson}
+        onSetPersonHidden={lib.handleSetPersonHidden}
+        onShowPhotos={(person) => {
+          lib.setFaceReviewPerson(null);
+          lib.setSelectedPeople([person]);
+          if (lib.viewMode === "collections") lib.setViewMode("people");
+        }}
+      />
+
+      <ProfilePicturePicker
+        person={coverPickerPerson}
+        currentCover={lib.people.find((p) => p.name === coverPickerPerson)?.cover_thumb ?? ""}
+        onPick={(faceId) => (coverPickerPerson ? lib.handleSetPersonCover(coverPickerPerson, faceId) : Promise.resolve())}
+        onClose={() => setCoverPickerPerson(null)}
       />
 
       <ExportModal

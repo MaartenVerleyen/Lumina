@@ -198,7 +198,7 @@ export default function BottomStatusBar({
           </button>
         )}
 
-        {viewMode === "grid" && (
+        {(viewMode === "grid" || viewMode === "people") && (
           <div className="flex items-center gap-2">
             <button
               onClick={() => setZoomLevel((z) => Math.max(0, z - 0.15))}

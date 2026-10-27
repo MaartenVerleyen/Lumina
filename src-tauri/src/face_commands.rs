@@ -1441,3 +1441,25 @@ pub fn set_person_hidden(app: AppHandle, name: String, hidden: bool) -> Result<(
     }
     Ok(())
 }
+
+// Profile picture: one of the person's named faces becomes their avatar in the People list
+#[tauri::command]
+pub fn set_person_cover(app: AppHandle, name: String, face_id: String) -> Result<(), String> {
+    let conn = open_global_db(&app)?;
+    let thumb: String = conn
+        .query_row(
+            "SELECT face_thumb FROM photo_faces WHERE face_id = ?1 AND lower(person_name) = lower(?2)",
+            params![face_id, name.trim()],
+            |r| r.get(0),
+        )
+        .map_err(|_| "That face is not (or no longer) named after this person".to_string())?;
+    if thumb.is_empty() || !Path::new(&thumb).exists() {
+        return Err("This face has no saved crop; pick another one".into());
+    }
+    conn.execute(
+        "UPDATE people SET cover_face_thumb = ?1 WHERE lower(name) = lower(?2)",
+        params![thumb, name.trim()],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}

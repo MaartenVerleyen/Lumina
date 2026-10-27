@@ -360,6 +360,7 @@ pub fn run() {
             face_commands::remove_person_from_photos,
             face_commands::rename_person,
             face_commands::set_person_hidden,
+            face_commands::set_person_cover,
             albums::get_trip_names,
             albums::set_trip_name,
             face_commands::find_similar_faces,

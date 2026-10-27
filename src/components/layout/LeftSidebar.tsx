@@ -24,8 +24,8 @@ interface LeftSidebarProps {
   photos: PhotoItem[];
   smartFilter: SmartFilter;
   setSmartFilter: React.Dispatch<React.SetStateAction<SmartFilter>>;
-  selectedPerson: string | null;
-  setSelectedPerson: React.Dispatch<React.SetStateAction<string | null>>;
+  hasPeopleFilter: boolean;
+  clearPeopleFilter: () => void;
   activeSubfolder: string;
   setActiveSubfolder: React.Dispatch<React.SetStateAction<string>>;
   activeEvent: string;
@@ -63,8 +63,8 @@ function LeftSidebar({
   photos,
   smartFilter,
   setSmartFilter,
-  selectedPerson,
-  setSelectedPerson,
+  hasPeopleFilter,
+  clearPeopleFilter,
   activeSubfolder,
   setActiveSubfolder,
   activeEvent,
@@ -321,7 +321,7 @@ function LeftSidebar({
           {filterItems.map((item) => {
             const isSelected =
               smartFilter === item.id &&
-              !selectedPerson &&
+              !hasPeopleFilter &&
               activeSubfolder === "ALL" &&
               activeEvent === "ALL";
             return (
@@ -330,7 +330,7 @@ function LeftSidebar({
                 {...(DROP_FILTERS[item.id] ?? {})}
                 onClick={() => {
                   setSmartFilter(item.id as SmartFilter);
-                  setSelectedPerson(null);
+                  clearPeopleFilter();
                   setActiveSubfolder("ALL");
                   setActiveEvent("ALL");
                   setActiveTag("ALL");

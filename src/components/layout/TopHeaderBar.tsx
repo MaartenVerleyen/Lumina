@@ -467,8 +467,8 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
             onChange={(e) => {
               setSearchQuery(e.target.value);
               setSuggestionIndex(0);
-              // Results show in Photos: searching from People or Collections goes there
-              if (viewMode === "people" || viewMode === "collections") setViewMode("grid");
+              // Results show in the photo grid: searching from Collections goes to Photos
+              if (viewMode === "collections") setViewMode("grid");
             }}
             placeholder={
               smartSearch

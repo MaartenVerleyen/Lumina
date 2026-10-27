@@ -1,6 +1,6 @@
 // Search box syntax: `rating:>=4 person:anna tag:beach date:2024-06 -flag:reject "summer party"`.
 // Recognised `key:value` terms filter the photos; everything else is free text (plain or smart search).
-// A leading "-" negates a term. Values with spaces go in quotes: camera:"EOS R6".
+// A leading "-" negates a term. Values with spaces go in quotes: camera:"EOS R6". person:anna|bob = either.
 
 export const TERM_KEYS = [
   "rating", "flag", "label", "person", "tag", "camera", "lens", "place", "date", "has", "is", "album", "name",
@@ -135,8 +135,11 @@ function matchOne(p: MatchablePhoto, t: SearchTerm, ctx: MatchContext): boolean 
       return v === "none" ? !p.flag : p.flag === v || (v === "picked" && p.flag === "pick") || (v === "rejected" && p.flag === "reject");
     case "label":
       return v === "none" ? !p.color_label : (p.color_label || "") === v;
-    case "person":
-      return p.people.some((n) => n.toLowerCase() === v);
+    case "person": {
+      // person:anna|bob = either of them (several person: terms = all of them)
+      const wanted = v.split("|").filter(Boolean);
+      return p.people.some((n) => wanted.includes(n.toLowerCase()));
+    }
     case "tag":
       return p.tags.some((n) => n.toLowerCase() === v);
     case "camera":

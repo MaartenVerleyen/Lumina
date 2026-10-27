@@ -52,6 +52,7 @@ import { expandWithRawPairs, diskPathOf, RAW_OR_HEIC_NAME } from "../utils/rawPa
 import type { GridStyle, CardDetails } from "../components/views/VirtualPhotoGrid";
 import { parseSearchQuery, matchesTerms, MatchContext } from "../utils/searchQuery";
 import { computeTrips, tripLabel } from "../utils/trips";
+import { matchesPeople, PeopleMatch } from "../utils/peopleQuery";
 import type { ExportSettings } from "../components/modals/ExportModal";
 
 const MAX_UNDO_STEPS = 20;
@@ -403,10 +404,13 @@ export function useLibraryState() {
   const [isShortcutsModalOpen, setIsShortcutsModalOpen] = useState<boolean>(false);
   const [ollamaPullProgress, setOllamaPullProgress] = useState<OllamaPullProgress | null>(null);
   const [people, setPeople] = useState<PersonItem[]>([]);
-  const [selectedPerson, setSelectedPerson] = useState<string | null>(null);
+  // People filter: photos with all (or any) of these people. Set from the People tab or a person chip.
+  const [selectedPeople, setSelectedPeople] = useState<string[]>([]);
+  const [peopleMatch, setPeopleMatch] = useState<PeopleMatch>("all");
+  const setSelectedPerson = useCallback((name: string | null) => setSelectedPeople(name ? [name] : []), []);
   const [pendingFaceCounts, setPendingFaceCounts] = useState<Record<string, number>>({});
-  // The person the People tab should show first (asking for one also switches to that tab)
-  const [faceReviewPerson, setFaceReviewPersonState] = useState<string | null>(null);
+  // Face Review dialog: the person it is open for (or UNKNOWN_FACES for "Who is this?"), null when closed
+  const [faceReviewPerson, setFaceReviewPerson] = useState<string | null>(null);
 
   const [smartFilter, setSmartFilter] = useState<SmartFilter>("ALL");
   const [orientationFilter, setOrientationFilter] = useState<OrientationFilter>("ALL");
@@ -454,10 +458,6 @@ export function useLibraryState() {
   // Zoom & View State
   const [zoomLevel, setZoomLevel] = useState<number>(0.45);
   const [viewMode, setViewMode] = useState<ViewMode>("grid");
-  const setFaceReviewPerson = useCallback((person: string | null) => {
-    setFaceReviewPersonState(person);
-    if (person) setViewMode("people");
-  }, []);
   const [selectedHashes, setSelectedHashes] = useState<Set<string>>(new Set());
   const [activeHash, setActiveHash] = useState<string | null>(null);
   // Shift-click / Shift+arrow range anchor (a photo hash, resolved to an index at use time)
@@ -1083,7 +1083,7 @@ export function useLibraryState() {
         }
       }
 
-      if (selectedPerson && !p.people.includes(selectedPerson)) return false;
+      if (selectedPeople.length > 0 && !matchesPeople(p.people, selectedPeople, peopleMatch)) return false;
       if (activeSubfolder !== "ALL") {
         if (activeSubfolder === "Root") {
           if (p.subfolder !== "Root") return false;
@@ -1190,7 +1190,8 @@ export function useLibraryState() {
     smartFilter,
     orientationFilter,
     selectedPeriodRange,
-    selectedPerson,
+    selectedPeople,
+    peopleMatch,
     activeSubfolder,
     activeEvent,
     tripOfHash,
@@ -1312,7 +1313,7 @@ export function useLibraryState() {
     setActiveEvent("ALL");
     setActiveTag("ALL");
     setSearchQuery("");
-    setSelectedPerson(null);
+    setSelectedPeople([]);
     setSelectedPeriodRange(null);
     setSemanticResult(null);
     setActiveAlbumId(null);
@@ -2919,7 +2920,10 @@ export function useLibraryState() {
           };
         })
       );
-      if (selectedPerson?.toLowerCase() === old) setSelectedPerson(finalName);
+      setSelectedPeople((prev) => {
+        const next = prev.map((n) => (n.toLowerCase() === old ? finalName : n));
+        return Array.from(new Set(next));
+      });
       addLog("FACE", merging ? `Merged "${oldName}" into "${finalName}"` : `Renamed "${oldName}" to "${finalName}"`);
       await refreshPeople();
       return finalName;
@@ -2932,9 +2936,19 @@ export function useLibraryState() {
   async function handleSetPersonHidden(name: string, hidden: boolean) {
     try {
       await invoke("set_person_hidden", { name, hidden });
-      if (hidden && selectedPerson === name) setSelectedPerson(null);
+      if (hidden) setSelectedPeople((prev) => prev.filter((n) => n !== name));
       addLog("FACE", `${hidden ? "Hid" : "Unhid"} "${name}"`);
       await refreshPeople();
+    } catch (err) {
+      setError(String(err));
+    }
+  }
+
+  async function handleSetPersonCover(name: string, faceId: string) {
+    try {
+      await invoke("set_person_cover", { name, faceId });
+      addLog("FACE", `New profile picture for "${name}"`);
+      await refreshPeople(undefined, true);
     } catch (err) {
       setError(String(err));
     }
@@ -3170,7 +3184,10 @@ export function useLibraryState() {
     photos,
     setPhotos,
     people,
-    selectedPerson,
+    selectedPeople,
+    setSelectedPeople,
+    peopleMatch,
+    setPeopleMatch,
     setSelectedPerson,
     pendingFaceCounts,
     faceReviewPerson,
@@ -3328,6 +3345,7 @@ export function useLibraryState() {
     handleCancelExport,
     handleRenamePerson,
     handleSetPersonHidden,
+    handleSetPersonCover,
     smartSearch,
     toggleSmartSearch,
     semanticResult,
