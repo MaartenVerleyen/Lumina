@@ -1,93 +1,165 @@
 <div align="center">
-  <img src="src/assets/lumina-mark.svg" width="64" alt="Lumina Logo" />
-  <h1>Lumina v3.0</h1>
-  <p><strong>High-Performance Local Photo Triage & AI Culling Desktop Studio</strong></p>
+  <img src="src/assets/lumina-mark.svg" width="64" alt="Lumina logo" />
+  <h1>Lumina</h1>
+  <p><strong>Sort, find and cull a lifetime of photos on your own PC.</strong></p>
   <p>
-    <img src="https://img.shields.io/badge/Tauri-v2-blue?style=flat-square" alt="Tauri v2" />
-    <img src="https://img.shields.io/badge/React-18+-cyan?style=flat-square" alt="React" />
-    <img src="https://img.shields.io/badge/Rust-Backend-orange?style=flat-square" alt="Rust" />
-    <img src="https://img.shields.io/badge/SQLite-Local_WAL-green?style=flat-square" alt="SQLite" />
-    <img src="https://img.shields.io/badge/AI-Ollama_%2F_Qwen3--VL-purple?style=flat-square" alt="Ollama AI" />
+    <img src="https://img.shields.io/badge/Windows-desktop-0078D4?style=flat-square" alt="Windows desktop" />
+    <img src="https://img.shields.io/badge/Tauri-v2-24C8DB?style=flat-square" alt="Tauri v2" />
+    <img src="https://img.shields.io/badge/Rust-backend-B7410E?style=flat-square" alt="Rust" />
+    <img src="https://img.shields.io/badge/React-19-61DAFB?style=flat-square" alt="React 19" />
+    <img src="https://img.shields.io/badge/AI-runs_locally-6E56CF?style=flat-square" alt="AI runs locally" />
   </p>
 </div>
 
----
+![The Photos tab: a justified grid grouped by month, with named faces, place, camera settings, AI caption and tags in the inspector](docs/screenshots/photos.jpg)
 
-**Lumina** is a lightning-fast, privacy-first desktop photo triage and culling studio designed for photographers managing massive local archives ($6,000+$ photos). Built with native Rust performance, SQLite caching, local Ollama Vision AI, and an ONNX neural face recognition pipeline, Lumina provides a frictionless Lightroom-style darkroom experience entirely on your local machine.
+Lumina is a Windows desktop app for working through a large photo library. It recognises the people in your
+photos, writes a caption and tags for each one, lets you search by describing a photo, puts your trips on a
+map and helps you keep the sharpest shot of every burst.
 
----
+Face recognition, captions, smart search and place names all run on your own computer. Your photos are never
+uploaded.
 
-## ✨ Key Features
+## Features
 
-### 🚀 Professional-Grade Triage & Culling
-* **Lightning-Fast Virtualized Grid:** Seamlessly render and scroll tens of thousands of raw/JPEG photos with zero frame drops using TanStack Virtual.
-* **Pro Culling Flags & Auto-Advance:** Instant Pick (`P`), Reject (`X`), and Unflag (`U`) shortcuts with an **Auto-Advance** toggle that jumps to the next photo automatically.
-* **Color Labels (`6`–`9`):** Quick color coding (Red, Yellow, Green, Blue) with corner ribbons.
-* **Non-Destructive Rotation (`[` and `]`):** Lossless rotation persistence stored directly in SQLite without altering raw physical files.
-* **Side-by-Side Synchronized Compare Mode (`C`):** Multi-pane comparison (2–4 photos) with synchronized zoom (up to 600%) and pan across identical pixel coordinates to inspect sharpness.
+### People
 
-### 🧠 Local AI Vision & OCR ($Qwen3-VL$)
-* **Instant JSON Vision Parsing:** Integrates with local Ollama (`qwen3-vl:8b`) using assistant prefilling to bypass thinking tokens for instantaneous object tagging, scene setting, and captions.
-* **Text & Document Recognition (OCR):** Automatically extracts and indexes text from signs, labels, documents, and screenshots.
-* **Screenshot & Burst Clustering:** Native Rust 64-bit gradient hashing ($dHash$) automatically clusters bursts and screenshots in $< 2\text{ ms}$.
+![The People tab with a combined search: (Emma or Lucas) and Noah](docs/screenshots/people.jpg)
 
-### 👤 ONNX Neural Face Recognition ($UltraFace$)
-* **Pure-Rust ONNX Runtime (`tract-onnx`):** Zero external DLL dependencies on Windows. Automatically provisions the lightweight UltraFace neural detector in the background (~8ms per image).
-* **Biometric Auto-Matching:** Computes 384-D illumination-invariant facial descriptors. Name a face once, and Lumina automatically matches and tags them across your entire library.
+- **Face recognition** with InsightFace models (SCRFD detector, ArcFace embeddings), on the GPU through
+  DirectML or on the CPU.
+- **Name a face once** and Lumina suggests the same person in your other photos. Accept a whole row of
+  suggestions at once, or go through them one by one with <kbd>Y</kbd> / <kbd>N</kbd>.
+- **“Who is this?”** groups faces you haven't named yet, so you can name a whole group in one go.
+- **Combine people** in the People tab: `anna and bob`, `anna or bob`, `(emma or lucas) and noah`,
+  `anna and not bob`.
+- Rename, merge or hide people, and choose each person's profile picture, from a right-click menu.
 
-### 📅 Interactive Timeline Slicer & Map
-* **Excel/Lightroom-Style Timeline Slicer:** Slide-out drawer with a daily histogram frequency chart. Click and drag across days or scrub handles to filter time ranges instantly.
-* **Offline Map Geotagging:** Interactive Leaflet map supporting offline city search and 1-click map GPS pinning.
+![Face Review with likely and possible matches for one person](docs/screenshots/face-review.jpg)
 
----
+### Search
 
-## 🛠️ Tech Stack
+![Smart search for “dog playing outside”, best matches first](docs/screenshots/smart-search.jpg)
 
-* **Frontend:** React, TypeScript, Tailwind CSS v4, Lucide Icons, TanStack Virtual, Leaflet.
-* **Backend:** Rust, Tauri v2, `rusqlite` (WAL mode), `rayon` (multi-threaded parallel pipelines), `tract-onnx`.
-* **AI & Vision:** Ollama (`qwen3-vl:8b`), `kamadak-exif`, `image`.
+- **Smart search:** describe the photo (“dog playing outside”, “verjaardagstaart”) and Lumina ranks your
+  library by how well each picture matches. It understands about 50 languages, using a multilingual CLIP
+  model.
+- **Find similar** photos from any photo's right-click menu.
+- **Filters** in the search box, with suggestions as you type and chips you can remove:
 
----
+  | Filter | Example |
+  | :--- | :--- |
+  | Rating, flag, label | `rating:>=4` · `flag:pick` · `label:red` |
+  | People and tags | `person:anna` · `person:anna\|bob` · `tag:beach` |
+  | Place, camera, lens, file name | `place:lagos` · `camera:"EOS R6"` · `lens:24-70` · `name:IMG_12` |
+  | Dates | `date:2024` · `date:2024-06` · `date:2024-06-01..2024-06-30` · `date:<2020` |
+  | Properties | `has:gps` · `has:faces` · `has:ocr` · `is:raw` · `is:screenshot` · `album:"Holiday"` |
 
-## ⚙️ Installation & Development
+  Put `-` in front of a filter to exclude it (`-flag:reject`). Save any search as a smart album that keeps
+  itself up to date.
+- **Text in photos (OCR)** is indexed: search for a booking reference, a street sign or a recipe ingredient.
 
-### Prerequisites
-1. **Node.js** (v18+) and **npm**.
-2. **Rust Toolchain** (install via [rustup.rs](https://rustup.rs/)).
-3. **Ollama** installed locally with `qwen3-vl:8b` pulled:
-   ```bash
-   ollama pull qwen3-vl:8b
-   ```
+![Searching for a booking reference finds the screenshot it appears in](docs/screenshots/text-search.jpg)
 
-### Running Locally
+### Places, trips and collections
+
+| | |
+| :---: | :---: |
+| ![Map with photo clusters over Europe](docs/screenshots/map.jpg) | ![Collections: albums, smart albums and trips](docs/screenshots/collections.jpg) |
+
+- **Map** of every geotagged photo, with clusters. Click the map to set a location on photos without GPS.
+- **Place names** come from an offline database: no lookups are sent anywhere.
+- **Trips and events** are found automatically from dates and locations (“Lagos · 14–20 Jul 2025”) and can
+  be renamed.
+- **Albums** that span library folders, and **smart albums** built from a saved search.
+
+### Culling
+
+![Compare view with two near-identical shots and their focus scores](docs/screenshots/compare.jpg)
+
+- **Bursts and near-duplicates** are stacked together. Compare them side by side with synchronised zoom
+  and a focus score under each one, then keep the sharpest.
+- **Pick / reject / rate / colour label** from the keyboard, with optional auto-advance to the next photo.
+- **Full-screen view** with a filmstrip, and a **timeline** to filter by year, month, week or day.
+- Rejected photos go to a `_Trash` folder first. Moves and renames are staged and only applied when you
+  commit them. Almost everything can be undone with <kbd>Ctrl</kbd>+<kbd>Z</kbd>.
+
+### Organise and share
+
+![Right-click menu with Add to Album, and the action bar for the selection](docs/screenshots/albums.jpg)
+
+- **Right-click** a selection to add it to an album, or create a new album on the spot.
+- **Auto-stage** photos into folders by year, month, city or person.
+- **Export** for sharing at full size, 2048 px or 1080 px, with the GPS location removed if you want. Your
+  originals are never changed.
+- **XMP sidecars** for ratings, flags and labels, without overwriting sidecars written by other apps.
+- **Command palette** (<kbd>Ctrl</kbd>+<kbd>P</kbd>) to find any action by name.
+
+### Formats
+
+JPEG, PNG, HEIC/HEIF and RAW (CR2, CR3, NEF, ARW, DNG, ORF, RW2, PEF, RAF). RAW files show their embedded
+preview; a RAW file and its JPEG are treated as a pair.
+
+## Requirements
+
+- **Windows 10 or 11.** HEIC support uses the Windows imaging codecs (install *HEIF Image Extensions* from
+  the Microsoft Store if HEIC files don't show).
+- **[Ollama](https://ollama.com)** for captions, tags and OCR, with a vision model. Lumina can start Ollama
+  and download the default model (`qwen3-vl:8b`) for you. It also offers to switch on Ollama's flash
+  attention, which is about 10–15% faster.
+- **A GPU is recommended**, not required. On an RTX 5070 Ti, Lumina captions about 50 photos a minute and
+  answers a smart search in about 3 ms.
+- The face models and the smart-search models (about 500 MB) download automatically the first time you use
+  those features. Downloads are checked against pinned SHA-256 hashes.
+
+## Development
+
+Prerequisites: Node.js 18+, the Rust toolchain ([rustup.rs](https://rustup.rs)) and the
+[Tauri v2 prerequisites](https://v2.tauri.app/start/prerequisites/) for Windows.
+
 ```bash
-# Clone the repository
-git clone https://github.com/your-username/lumina.git
-cd lumina
-
-# Install frontend dependencies
+git clone https://github.com/MaartenVerleyen/Lumina.git
+cd Lumina
 npm install
-
-# Run the Tauri development server
 npm run tauri dev
 ```
 
----
+Checks:
 
-## ⌨️ Pro Keyboard Shortcuts
+```bash
+npx tsc --noEmit          # type-check the frontend
+npm test                  # frontend unit tests (search syntax, people queries, layout, trips, ...)
+cd src-tauri
+cargo test --lib          # backend unit tests
+```
+
+A release build is made with `npm run tauri build`. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how
+the app is put together and [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+## Keyboard shortcuts
 
 | Shortcut | Action |
 | :--- | :--- |
-| **`Space`** | Open / Close Fullscreen Loupe HUD |
-| **`Arrow Keys`** | Navigate grid or flip through fullscreen photos (`Shift + Arrow` to multi-select) |
-| **`P`** | Set Pick Flag (`🚩`) & Auto-Advance |
-| **`X`** | Set Reject Flag (`❌`), Stage for `_Trash`, & Auto-Advance |
-| **`U`** | Clear Flag |
-| **`1` – `5`** | Set Star Rating & Auto-Advance |
-| **`0`** | Clear Star Rating |
-| **`6` – `9`** | Color Labels (Red, Yellow, Green, Blue) |
-| **`[` / `]`** | Rotate 90° Counter-Clockwise / Clockwise |
-| **`C`** | Toggle Synchronized Side-by-Side Compare Mode |
-| **`B`** | Toggle Pinboard Basket Selection |
-| **`A`** | Run AI Vision Analysis on Active Photo |
-| **`Ctrl + K`** | Focus Global Search Bar |
+| <kbd>Space</kbd> | Full-screen view (Loupe) |
+| <kbd>P</kbd> / <kbd>X</kbd> / <kbd>U</kbd> | Pick / reject to `_Trash` / unflag |
+| <kbd>1</kbd>–<kbd>5</kbd> / <kbd>0</kbd> | Star rating / clear rating |
+| <kbd>6</kbd>–<kbd>9</kbd> | Red / yellow / green / blue label |
+| <kbd>[</kbd> / <kbd>]</kbd> | Rotate left / right |
+| <kbd>C</kbd> / <kbd>G</kbd> / <kbd>M</kbd> | Compare / grid / map |
+| <kbd>A</kbd> | Caption and tag the photo with AI |
+| <kbd>B</kbd> | Add to or remove from the pinboard |
+| <kbd>Ctrl</kbd>+<kbd>1</kbd>–<kbd>4</kbd> | Photos / Map / People / Collections |
+| <kbd>Ctrl</kbd>+<kbd>K</kbd> | Search |
+| <kbd>Ctrl</kbd>+<kbd>P</kbd> | Command palette |
+| <kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Y</kbd> | Undo / redo |
+| <kbd>Ctrl</kbd>+<kbd>L</kbd> | Session log |
+| <kbd>?</kbd> | All shortcuts |
+
+## Licences and credits
+
+- The face models are InsightFace's `buffalo_l` models, which are licensed for **non-commercial research
+  use only**. Check their licence before distributing Lumina commercially.
+- Smart search uses CLIP ViT-B/32 (MIT) and `clip-ViT-B-32-multilingual-v1` (Apache-2.0).
+- The screenshots show a demo library of public-domain (CC0) stock photos from
+  [StockSnap](https://stocksnap.io), found through [Openverse](https://openverse.org). The names, dates and
+  locations in it are made up.

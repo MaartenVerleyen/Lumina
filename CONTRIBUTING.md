@@ -1,21 +1,32 @@
 # Contributing to Lumina
 
-Thank you for your interest in contributing to Lumina! We welcome bug reports, feature requests, and pull requests.
+Bug reports, ideas and pull requests are welcome.
 
-## Development Workflow
+## Workflow
 
-1. Fork the repository and create your feature branch from `main`:
+1. Create a branch from `main`:
    ```bash
-   git checkout -b feature/amazing-feature
+   git checkout -b fix/short-description
    ```
-2. Make your changes in Rust (`src-tauri/src/lib.rs`) or React (`src/`).
-3. Test locally using Tauri dev mode:
+2. Run the app with `npm run tauri dev`. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) explains where things
+   live.
+3. Before opening a pull request, run the checks:
    ```bash
-   npm run tauri dev
+   npx tsc --noEmit
+   npm test
+   cd src-tauri && cargo test --lib
    ```
-4. Ensure all database migrations or new Tauri commands are fully tested against local datasets.
-5. Push to your fork and open a Pull Request.
+4. Describe what changed and how you tested it. Screenshots help for interface changes.
 
-## Code Standards
-* **Rust:** Adhere to standard `rustfmt` formatting. Ensure all heavy operations are offloaded to `spawn_blocking` or Rayon pools.
-* **React:** Maintain the Obsidian darkroom theme (`#070a11`, `#0c0d14`, `#10121a`, zinc/indigo accents) and keep virtualized components performant.
+## Guidelines
+
+- **Keep the interface responsive.** Disk, image and model work goes in `async` commands with
+  `spawn_blocking`, or on `BG_POOL`. Long jobs send progress events and can be cancelled.
+- **Never lose user data.** Database changes are migrations that keep existing rows. File operations are
+  staged and undoable where possible, and never overwrite files Lumina didn't write.
+- **Put logic in pure, tested functions.** Frontend logic goes in `src/utils` with a test in `tests/`;
+  backend logic gets a test in `src-tauri/src/tests.rs`.
+- **Use the design tokens** (`surface`, `panel`, `card`, `raised` and the emerald/indigo accents in
+  `src/App.css`) instead of hard-coded colours. Keep text at 11 px or larger.
+- **Every action needs a keyboard path,** either a shortcut or an entry in the command palette.
+- Rust follows `rustfmt`. TypeScript runs with `noUnusedLocals`, so remove anything you stop using.

@@ -1,29 +1,89 @@
-# Lumina Architecture & Technical Design
+# Lumina architecture
 
-Lumina is engineered as a high-performance desktop application where heavy computation (image decoding, EXIF parsing, dHash calculation, blur-score variance, ONNX neural inference) runs strictly in native Rust background threads via **Rayon**, communicating asynchronously with a responsive React UI via Tauri v2 events and commands.
+Lumina is a Tauri v2 app: a React 19 + TypeScript interface in a WebView2 window, and a Rust backend that does
+all file, image, database and model work. The two talk through Tauri commands (`invoke`) and events.
 
----
+The ground rule is that the interface never waits on heavy work. Commands that touch the disk or run a
+model are `async` and move the work to `spawn_blocking` or to the shared background pool `BG_POOL`, a rayon
+pool of one thread fewer than the CPU has, running at below-normal priority. Long jobs report progress
+through events and can be cancelled.
 
-## 1. Zero-UI-Freeze Background Pipeline
+## Data
+
+One SQLite database (`library.db`, WAL mode) in the app's local data folder holds every library you open.
+Queries for an open library are scoped by folder path. A photo is identified by a content hash (size plus
+the first and last 64 KB). Identical copies get a path-salted hash, so each copy stays its own photo.
+
+| Table | Holds |
+| :--- | :--- |
+| `photos` | path, EXIF (date, camera, lens, GPS), rating, flag, label, rotation, AI caption, OCR text, dHash, sharpness, staged move |
+| `photo_tags`, `photo_people` | tags and people per photo |
+| `photo_faces` | face boxes, crops, embeddings (little-endian f32 blobs) tagged with the engine that made them, names |
+| `face_rejections` | "this face is not that person" decisions, used as negative examples |
+| `people` | names, profile picture, hidden flag |
+| `photo_clip` | one smart-search image vector per photo |
+| `albums`, `album_photos`, `saved_searches`, `trip_names` | collections |
+
+Thumbnails (480 px) and RAW/HEIC previews are cached as JPEG files next to the database.
+
+## Backend modules (`src-tauri/src`)
+
+| Module | Responsibility |
+| :--- | :--- |
+| `lib.rs` | shared types, app setup, command registration |
+| `db.rs` | opening the database, schema and migrations, folder scoping |
+| `scan.rs` | walking a folder, hashing, EXIF, duplicate and burst grouping; folds rows left by files edited in place into the current row |
+| `storage.rs` | drive-aware I/O: few readers in folder order on a hard drive, full parallelism on an SSD |
+| `imaging.rs`, `exif_meta.rs` | content hash, dHash, sharpness, screenshot detection; EXIF parsing |
+| `decode.rs`, `fastdecode.rs` | RAW embedded previews, orientation, scaled JPEG decoding, in-process WIC for HEIC |
+| `thumbs.rs` | the background thumbnail pipeline (readers, then a bounded queue, decoders on `BG_POOL`, a collector that writes to the DB and sends batches to the UI) |
+| `face_ort.rs` | face engine: SCRFD `det_10g` detection with landmarks, alignment, ArcFace `w600k_r50` embeddings, on ONNX Runtime with DirectML (CPU fallback) |
+| `face_match.rs` | person profiles, exclusive assignment with a margin, confidence tiers, clustering of unknown faces |
+| `face_engine.rs`, `face_commands.rs` | embedding cache and every face/people command (scan, review, rename, merge, profile picture) |
+| `face_eval.rs` | manual benchmark on a labelled folder (`#[ignore]` test) |
+| `clip.rs` | smart search: CLIP ViT-B/32 image encoder, multilingual text encoder, indexing job, query |
+| `ai.rs` | Ollama: start, pull, flash-attention setting, per-photo caption/tags/OCR with a constrained JSON schema |
+| `albums.rs`, `export.rs`, `files.rs`, `library.rs` | albums and smart albums; export; staged moves, commit, trash, XMP sidecars; offline place search |
+| `perf.rs`, `system.rs` | timing entries for the Session Log; system information |
+
+Model files (face and CLIP) are downloaded on first use to a `.part` file, checked against a pinned SHA-256
+and only then renamed into place.
+
+### Scanning
 
 ```
-[Disk WalkDir] ──► [Rayon Par-Bridge] ──► [360px Thumbnail & dHash] ──► [Batched SQLite WAL] ──► [Tauri Emit 'thumb-batch-ready'] ──► [React Virtualized Grid]
+walk folder ─► head read (hash + dimensions + EXIF in one read) ─► DB upsert ─► photos to the UI
+                                                                      │
+                                     background: thumbnails ─► thumb-batch-ready events (patched into the grid)
 ```
 
-* **Batched IPC Events:** To prevent flooding the React event loop with 6,000 individual state updates when scanning a large folder, Rust processes photos in chunks of 24 and emits a single batched event (`ThumbBatchProgress`), updating the virtualized canvas in $O(1)$ batch memory.
-* **SQLite WAL Mode:** SQLite is configured with `PRAGMA journal_mode = WAL;` and a `5000ms busy_timeout`, allowing concurrent multi-threaded writes from background thumbnail workers and reader queries from the UI without `Database is locked` errors.
+Each scan bumps `SCAN_GENERATION`. Workers check it, so opening another folder stops the previous scan's
+background work, and events from an old scan are ignored.
 
----
+### AI captions
 
-## 2. AI Vision Pipeline ($Qwen3-VL$)
+`ai_analyze_photo` sends an 896 px JPEG to Ollama's `/api/chat` with a JSON schema that limits the length of
+the caption, tags and OCR text. Lumina reuses the loaded model's context size where possible, because
+changing it reloads the model. Ollama processes one request at a time for `qwen3-vl`, so the batch runs
+sequentially. Flash attention gives about 10–15% more speed and Lumina can switch it on.
 
-* **Assistant Prefill Pattern:** Hybrid reasoning vision models like `qwen3-vl:8b` tend to spend hundreds of tokens generating internal `<think>` reasoning blocks. Lumina bypasses this latency by prefilling the assistant turn (`{"caption": "`) in Ollama's `/api/chat` endpoint, forcing the model to begin generating JSON on token #1.
-* **Fault-Tolerant JSON Repair:** `parse_resilient_ai_json` strips markdown code fences, recovers truncated JSON strings if token limits cut off the trailing brace, and extracts tags and OCR text reliably.
+## Frontend (`src`)
 
----
+| Path | Responsibility |
+| :--- | :--- |
+| `hooks/useLibraryState.ts` | all library state and actions: photos, filters, selection, undo/redo, background jobs |
+| `hooks/useKeyboardShortcuts.ts` | grid shortcuts (off while a dialog is open) |
+| `App.tsx` | layout: header tabs, resizable side panes, the main view, dialogs, remembered layout |
+| `components/layout` | header, sidebars (filters and folders, people), inspector, toolbar, status bar, menus |
+| `components/views` | justified virtualised grid, map, compare, collections, timeline |
+| `components/modals` | Loupe, Face Review, export, commit, command palette and other dialogs |
+| `utils` | pure, tested logic: search syntax, people queries, grid layout, trips, RAW pairs, command search |
 
-## 3. ONNX Neural Face Pipeline ($UltraFace$)
+Grid and filter logic lives in `visiblePhotos` (one memo for every filter). The grid is virtualised with
+TanStack Virtual over precomputed justified rows.
 
-* **Pure-Rust ONNX Runtime:** Uses `tract-onnx` to execute the **UltraFace-RFB-320** ONNX model directly inside Rust memory.
-* **Spatial Anchor Decoding:** Decodes 4,420 multi-scale prior anchors across feature maps in ~10ms.
-* **384-D Biometric Embedding:** Bypasses basic color histograms by computing a 384-D illumination-invariant descriptor combining Lab chrominance, facial landmark gradients, and center-symmetric LBP texture, achieving $>99\%$ cross-photo face matching precision at a $\ge 0.86$ cosine similarity threshold.
+## Tests
+
+- `npm test`: Node's test runner on `tests/*.test.ts` for the pure utilities.
+- `cargo test --lib`: backend unit tests in `src-tauri/src/tests.rs`. Tests marked `#[ignore]` are manual
+  benchmarks and diagnostics that need real files or models.
