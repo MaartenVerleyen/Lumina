@@ -8,6 +8,7 @@ import {
   FolderOpen,
   Info,
   LayoutGrid,
+  RefreshCw,
   ScanFace,
   Search,
   Settings as SettingsIcon,
@@ -18,8 +19,10 @@ import type { LibraryState } from "../../hooks/useLibraryState";
 import { OllamaStatus } from "../../types/lumina";
 import { UNKNOWN_FACES } from "./FaceMatchReviewModal";
 import luminaMark from "../../assets/lumina-mark.svg";
+import { useSettings, updateSettings } from "../../settings";
+import type { Updater } from "../../hooks/useUpdater";
 
-export type SettingsSection = "general" | "library" | "ai" | "faces" | "search" | "about";
+export type SettingsSection = "general" | "library" | "ai" | "faces" | "search" | "updates" | "about";
 
 const SECTIONS: { id: SettingsSection; label: string; icon: typeof Info }[] = [
   { id: "general", label: "General", icon: LayoutGrid },
@@ -27,6 +30,7 @@ const SECTIONS: { id: SettingsSection; label: string; icon: typeof Info }[] = [
   { id: "ai", label: "AI captions", icon: Brain },
   { id: "faces", label: "Faces", icon: ScanFace },
   { id: "search", label: "Smart search", icon: Search },
+  { id: "updates", label: "Updates", icon: RefreshCw },
   { id: "about", label: "About", icon: Info },
 ];
 
@@ -139,10 +143,19 @@ interface SettingsModalProps {
   onClose: () => void;
   lib: LibraryState;
   onOpenWelcomeTour: () => void;
+  updater: Updater;
 }
 
 // One place for every setting and maintenance action, grouped by area (Ctrl+, or the Simple / Studio menu)
-export default function SettingsModal({ isOpen, initialSection = "general", onClose, lib, onOpenWelcomeTour }: SettingsModalProps) {
+export default function SettingsModal({
+  isOpen,
+  initialSection = "general",
+  onClose,
+  lib,
+  onOpenWelcomeTour,
+  updater,
+}: SettingsModalProps) {
+  const settings = useSettings();
   const dialogRef = useDialogFocus<HTMLDivElement>(isOpen);
   const [section, setSection] = useState<SettingsSection>(initialSection);
   const [version, setVersion] = useState("");
@@ -454,6 +467,49 @@ export default function SettingsModal({ isOpen, initialSection = "general", onCl
                         onClick={() => lib.startSemanticIndex()}
                       >
                         Index now
+                      </Button>
+                    )}
+                  </Row>
+                </Group>
+              </>
+            )}
+
+            {section === "updates" && (
+              <>
+                <Group title="Updates">
+                  <Row label="Check for updates automatically" hint="Once a day, a little after Lumina starts. Nothing is installed without your OK.">
+                    <Switch
+                      checked={settings.checkForUpdates}
+                      onChange={(v) => updateSettings({ checkForUpdates: v })}
+                      label="Check for updates automatically"
+                    />
+                  </Row>
+                  <Row
+                    label={`Lumina ${version}`}
+                    hint={
+                      updater.state.kind === "checking"
+                        ? "Checking…"
+                        : updater.state.kind === "latest"
+                        ? "You have the latest version."
+                        : updater.state.kind === "available"
+                        ? `Lumina ${updater.state.update.version} is available.`
+                        : updater.state.kind === "downloading" || updater.state.kind === "installing"
+                        ? `Updating to ${updater.state.update.version}…`
+                        : updater.state.kind === "error"
+                        ? `Could not check for updates: ${updater.state.message}`
+                        : "Updates come from the Lumina releases on GitHub."
+                    }
+                  >
+                    {updater.state.kind === "available" ? (
+                      <Button primary onClick={updater.install}>
+                        Update now
+                      </Button>
+                    ) : (
+                      <Button
+                        disabled={["checking", "downloading", "installing"].includes(updater.state.kind)}
+                        onClick={updater.checkNow}
+                      >
+                        Check now
                       </Button>
                     )}
                   </Row>

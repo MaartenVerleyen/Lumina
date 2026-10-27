@@ -11,7 +11,7 @@
   "app": {
     "windows": [
       {
-        "title": "Lumina \u2014 AI Photo Triage",
+        "title": "Lumina — AI Photo Triage",
         "label": "main",
         "width": 1440,
         "height": 900,
@@ -82,6 +82,28 @@
         "sidebarImage": "icons/nsis-sidebar.bmp",
         "installMode": "currentUser",
         "compression": "lzma"
+      },
+      "signCommand": {
+        "cmd": "powershell",
+        "args": [
+          "-NoProfile",
+          "-ExecutionPolicy",
+          "Bypass",
+          "-File",
+          "../scripts/sign.ps1",
+          "%1"
+        ]
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEEzRTA0NDNGRDVDODFGRTYKUldUbUg4alZQMFRnbytkLy9GQzd6QXlKdkZvTGZobGJzbnU1NUsrbitLT2hJaDZMRTVNeWtzUDAK",
+      "endpoints": [
+        "https://github.com/MaartenVerleyen/Lumina/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
       }
     }
   }

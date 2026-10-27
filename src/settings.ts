@@ -11,6 +11,7 @@ export interface Settings {
   gridStyle: GridStyle;
   cardDetails: CardDetails;
   autoAdvance: boolean;
+  checkForUpdates: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -18,6 +19,7 @@ export const DEFAULT_SETTINGS: Settings = {
   gridStyle: "justified",
   cardDetails: "hover",
   autoAdvance: true,
+  checkForUpdates: true,
 };
 
 const SETTINGS_KEY = "lumina_settings";
@@ -35,6 +37,7 @@ const VALIDATORS: { [K in keyof Settings]: (v: unknown) => v is Settings[K] } = 
   gridStyle: oneOf("justified", "square"),
   cardDetails: oneOf("hover", "always"),
   autoAdvance: isBool,
+  checkForUpdates: isBool,
 };
 
 // Saved settings over the defaults, field by field: an unknown or invalid value falls back to its default.

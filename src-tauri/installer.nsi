@@ -4,6 +4,8 @@ ManifestDPIAware true
 ; Lumina's NSIS installer. Normally run silently by Lumina Setup (installer/), which shows the guided screens:
 ;   Lumina_x.y.z_x64-setup.exe /S /D=C:\path\to\Lumina [/NODESKTOP]
 ; It also works on its own as a plain installer. Installs for the current user (no administrator prompt).
+; Lumina's updater runs it with /P /R /UPDATE: progress only (no pages), keep the install folder and the
+; user's shortcut choice, and start Lumina again when done.
 
 !include "MUI2.nsh"
 !include "x64.nsh"
@@ -82,9 +84,16 @@ OutFile "${OUTFILE}"
 !define MUI_FINISHPAGE_RUN "$INSTDIR\${MAINBINARYNAME}.exe"
 !define MUI_FINISHPAGE_RUN_TEXT "Open ${PRODUCTNAME}"
 
+Var PassiveMode
+Var UpdateMode
+Var Relaunch
+
+!define MUI_PAGE_CUSTOMFUNCTION_PRE SkipWhenUpdating
 !insertmacro MUI_PAGE_WELCOME
+!define MUI_PAGE_CUSTOMFUNCTION_PRE SkipWhenUpdating
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
+!define MUI_PAGE_CUSTOMFUNCTION_PRE SkipWhenPassive
 !insertmacro MUI_PAGE_FINISH
 
 !insertmacro MUI_UNPAGE_CONFIRM
@@ -160,6 +169,42 @@ FunctionEnd
 
 Function .onInit
   !insertmacro SetContext
+  ; Updater flags: /P passive (progress only), /UPDATE (an update of an existing install), /R (start Lumina after)
+  ${GetParameters} $0
+  ClearErrors
+  ${GetOptions} $0 "/P" $1
+  ${IfNot} ${Errors}
+    StrCpy $PassiveMode 1
+  ${EndIf}
+  ClearErrors
+  ${GetOptions} $0 "/UPDATE" $1
+  ${IfNot} ${Errors}
+    StrCpy $UpdateMode 1
+  ${EndIf}
+  ClearErrors
+  ${GetOptions} $0 "/R" $1
+  ${IfNot} ${Errors}
+    StrCpy $Relaunch 1
+  ${EndIf}
+FunctionEnd
+
+Function SkipWhenUpdating
+  ${If} $PassiveMode == 1
+  ${OrIf} $UpdateMode == 1
+    Abort
+  ${EndIf}
+FunctionEnd
+
+Function SkipWhenPassive
+  ${If} $PassiveMode == 1
+    Abort
+  ${EndIf}
+FunctionEnd
+
+Function .onInstSuccess
+  ${If} $Relaunch == 1
+    Exec '"$INSTDIR\${MAINBINARYNAME}.exe"'
+  ${EndIf}
 FunctionEnd
 
 Function un.onInit
@@ -167,6 +212,9 @@ Function un.onInit
 FunctionEnd
 
 Section "Install" SEC01
+  ${If} $PassiveMode == 1
+    SetAutoClose true
+  ${EndIf}
   Call CloseLumina
   Call EnsureWebView2
 
@@ -183,12 +231,16 @@ Section "Install" SEC01
 
   WriteUninstaller "$INSTDIR\uninstall.exe"
 
-  ; Desktop shortcut unless the setup was asked not to make one (/NODESKTOP)
+  ; Desktop shortcut unless the setup was asked not to make one (/NODESKTOP); an update keeps the user's
+  ; choice (it refreshes an existing shortcut but never brings back one that was deleted)
   ${GetParameters} $0
   ClearErrors
   ${GetOptions} $0 "/NODESKTOP" $1
   ${If} ${Errors}
-    CreateShortCut "$DESKTOP\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
+    ${If} $UpdateMode != 1
+    ${OrIf} ${FileExists} "$DESKTOP\${PRODUCTNAME}.lnk"
+      CreateShortCut "$DESKTOP\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
+    ${EndIf}
   ${EndIf}
   CreateShortCut "$SMPROGRAMS\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
 

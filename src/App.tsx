@@ -56,11 +56,15 @@ import MapPane from "./components/views/MapPane";
 import { NoLibrary, NoMatches } from "./components/views/EmptyStates";
 import NewFolderModal from "./components/modals/NewFolderModal";
 import ShortcutsModal from "./components/modals/ShortcutsModal";
-import SettingsModal from "./components/modals/SettingsModal";
+import SettingsModal, { SettingsSection } from "./components/modals/SettingsModal";
+import UpdateBanner from "./components/layout/UpdateBanner";
+import { useUpdater } from "./hooks/useUpdater";
+import { useSettings } from "./settings";
 
 export default function App() {
   const lib = useLibraryState();
   const welcome = useWelcomeTour();
+  const updater = useUpdater(useSettings().checkForUpdates);
 
   const {
     leftWidth,
@@ -94,6 +98,7 @@ export default function App() {
   const [newFolderInput, setNewFolderInput] = useState<string>("");
   const [isPaletteOpen, setIsPaletteOpen] = useState<boolean>(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>("general");
 
   const extraKeysRef = useAppKeys(lib);
 
@@ -313,7 +318,10 @@ export default function App() {
     if (isPaletteOpen) setIsPaletteOpen(false);
     else if (!isDialogOpen) setIsPaletteOpen(true);
   };
-  const openSettings = () => setIsSettingsOpen(true);
+  const openSettings = (section: SettingsSection = "general") => {
+    setSettingsSection(section);
+    setIsSettingsOpen(true);
+  };
   extraKeysRef.current = { lib, isBlockingModalOpen, isDialogOpen, togglePalette, openSettings };
 
   // ---------- Drag photos onto folders, people and quick filters ----------
@@ -364,6 +372,7 @@ export default function App() {
     openFaceReview,
     openWelcomeTour: welcome.open,
     openSettings,
+    checkForUpdates: updater.checkNow,
     isLeftCollapsed,
     setIsLeftCollapsed,
     isRightCollapsed,
@@ -465,7 +474,7 @@ export default function App() {
         handleRedo={lib.handleRedo}
         setIsShortcutsModalOpen={lib.setIsShortcutsModalOpen}
         onOpenWelcomeTour={welcome.open}
-        onOpenSettings={openSettings}
+        onOpenSettings={() => openSettings()}
         setIsSessionLogModalOpen={lib.setIsSessionLogModalOpen}
         sessionLogsCount={lib.sessionLogs.length}
         handlePullDefaultAiModel={lib.handlePullDefaultAiModel}
@@ -919,10 +928,14 @@ export default function App() {
 
       <SettingsModal
         isOpen={isSettingsOpen}
+        initialSection={settingsSection}
         onClose={() => setIsSettingsOpen(false)}
         lib={lib}
         onOpenWelcomeTour={welcome.open}
+        updater={updater}
       />
+
+      {!welcome.isOpen && <UpdateBanner updater={updater} />}
 
 
       <CommitModal

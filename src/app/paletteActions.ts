@@ -1,5 +1,6 @@
 import type { RefObject } from "react";
 import type { PaletteAction } from "../components/modals/CommandPalette";
+import type { SettingsSection } from "../components/modals/SettingsModal";
 import { UNKNOWN_FACES } from "../components/modals/FaceMatchReviewModal";
 import { diskPathOf } from "../utils/rawPairs";
 import type { LibraryState } from "../hooks/useLibraryState";
@@ -10,7 +11,8 @@ interface PaletteContext {
   setSaveSearchName: (name: string | null) => void;
   openFaceReview: () => void;
   openWelcomeTour: () => void;
-  openSettings: () => void;
+  openSettings: (section?: SettingsSection) => void;
+  checkForUpdates: () => void;
   isLeftCollapsed: boolean;
   setIsLeftCollapsed: React.Dispatch<React.SetStateAction<boolean>>;
   isRightCollapsed: boolean;
@@ -25,6 +27,7 @@ export function buildPaletteActions({
   openFaceReview,
   openWelcomeTour,
   openSettings,
+  checkForUpdates,
   isLeftCollapsed,
   setIsLeftCollapsed,
   isRightCollapsed,
@@ -144,7 +147,8 @@ export function buildPaletteActions({
     { id: "redo", group: "Edit", label: "Redo", shortcut: "Ctrl+Y", enabled: lib.canRedo, run: lib.handleRedo },
     { id: "log", group: "Help", label: "Session log", shortcut: "Ctrl+L", run: () => lib.setIsSessionLogModalOpen(true) },
     { id: "shortcuts", group: "Help", label: "Keyboard shortcuts", shortcut: "?", run: () => lib.setIsShortcutsModalOpen(true) },
-    { id: "settings", group: "Help", label: "Settings", shortcut: "Ctrl+,", keywords: "preferences options", run: openSettings },
+    { id: "settings", group: "Help", label: "Settings", shortcut: "Ctrl+,", keywords: "preferences options", run: () => openSettings() },
+    { id: "updates", group: "Help", label: "Check for updates", keywords: "new version upgrade", run: () => { openSettings("updates"); checkForUpdates(); } },
     { id: "welcome", group: "Help", label: "Welcome tour", keywords: "help intro what's new guide", run: openWelcomeTour },
   ];
   return paletteActions;
