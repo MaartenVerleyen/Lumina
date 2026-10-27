@@ -1047,3 +1047,40 @@ fn eye_calibration() {
         report("face sharpness", s, b);
     }
 }
+
+#[test]
+fn highlights_prefer_quality_and_variety() {
+    use crate::highlights::{select_highlights, HighlightCandidate};
+    let c = |hash: &str, base: f64, group: Option<i64>, minute: f64| HighlightCandidate {
+        hash: hash.into(),
+        base,
+        group,
+        time: Some(minute * 60.0),
+    };
+    let candidates = vec![
+        c("burst_best", 5.0, Some(1), 0.0),
+        c("burst_second", 4.9, Some(1), 0.1), // the same burst: never both
+        c("same_minute", 4.8, None, 1.0),     // a minute later: repeats the moment
+        c("later", 3.0, None, 120.0),
+        c("much_later", 2.5, None, 300.0),
+        c("poor", -3.0, None, 600.0),
+    ];
+    let no_vectors: HashMap<String, Vec<f32>> = HashMap::new();
+    let none: HashMap<String, f64> = HashMap::new();
+    let picks = select_highlights(&candidates, &no_vectors, &none, 3);
+    assert_eq!(picks, vec!["burst_best", "later", "much_later"], "chronological, varied, best first");
+
+    // Near-identical looks (CLIP) count as repeats too, even far apart in time
+    let mut vectors = HashMap::new();
+    vectors.insert("later".to_string(), vec![1.0f32, 0.0]);
+    vectors.insert("much_later".to_string(), vec![1.0f32, 0.0]);
+    vectors.insert("poor".to_string(), vec![0.0f32, 1.0]);
+    vectors.insert("burst_best".to_string(), vec![0.6f32, 0.8]);
+    let picks = select_highlights(&candidates, &vectors, &none, 3);
+    assert!(picks.contains(&"burst_best".to_string()) && picks.contains(&"later".to_string()));
+    assert!(!picks.contains(&"much_later".to_string()), "a look-alike of an earlier pick drops out");
+
+    // Asking for more than there is returns everything once, without two from one burst
+    let all = select_highlights(&candidates, &no_vectors, &none, 50);
+    assert_eq!(all.len(), 5);
+}

@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { BookImage, Calendar, Check, MoreHorizontal, Plane, Plus, Search, Sparkles } from "lucide-react";
+import { BookImage, Calendar, Check, MoreHorizontal, Plane, Plus, Search, Sparkles, Trophy } from "lucide-react";
 import { Album, PhotoItem, SavedSearch } from "../../types/lumina";
 import { Trip } from "../../utils/trips";
 import { thumbSrc } from "../../utils/photoHelpers";
@@ -27,6 +27,7 @@ interface CollectionsViewProps {
   onDeleteAlbum: (id: number) => Promise<void>;
   onDeleteSavedSearch: (id: number) => Promise<void>;
   onRenameTrip: (id: string, name: string) => Promise<void>;
+  onHighlights: (title: string, hashes: string[], count?: number) => void;
 }
 
 // Up to four thumbnails of photos in the open folder, as a 2x2 (or single) cover
@@ -153,6 +154,7 @@ export default function CollectionsView({
   onDeleteAlbum,
   onDeleteSavedSearch,
   onRenameTrip,
+  onHighlights,
 }: CollectionsViewProps) {
   const [filter, setFilter] = useState("");
   const [newAlbumName, setNewAlbumName] = useState<string | null>(null);
@@ -183,6 +185,21 @@ export default function CollectionsView({
   };
 
   const visibleAlbums = albums.filter((a) => matches(a.name));
+  // Best of each year in the open folder, newest first (best-rated photos as the cover)
+  const years = useMemo(() => {
+    const byYear = new Map<number, PhotoItem[]>();
+    for (const p of photoByHash.values()) {
+      const y = Number((p.captured_at || "").slice(0, 4));
+      if (y >= 1971) byYear.set(y, [...(byYear.get(y) ?? []), p]);
+    }
+    return Array.from(byYear, ([year, list]) => ({
+      year,
+      hashes: list.map((p) => p.hash),
+      cover: [...list].sort((a, b) => b.rating - a.rating || b.sharpness - a.sharpness).map((p) => p.hash),
+    }))
+      .filter((y) => y.hashes.length >= 5 && matches(`best of ${y.year}`))
+      .sort((a, b) => b.year - a.year);
+  }, [photoByHash, q]);
   const visibleSmart = savedSearches.filter((s) => matches(s.name) || matches(s.query));
 
   return (
@@ -214,6 +231,7 @@ export default function CollectionsView({
               cover={<Cover hashes={a.hashes} photoByHash={photoByHash} icon={<BookImage className="w-8 h-8" />} />}
               onOpen={() => onOpenAlbum(a.id)}
               menu={[
+                { label: "Highlights", run: () => onHighlights(a.name, a.hashes.filter((h) => photoByHash.has(h))) },
                 { label: "Rename", run: () => setRenaming({ kind: "album", id: String(a.id), value: a.name }) },
                 { label: "Delete album", danger: true, run: () => onDeleteAlbum(a.id) },
               ]}
@@ -291,6 +309,25 @@ export default function CollectionsView({
         </section>
       )}
 
+      {years.length > 0 && (
+        <section className="flex flex-col gap-3">
+          <h2 className="text-xs font-bold text-zinc-400 uppercase tracking-wider flex items-center gap-2">
+            <Trophy className="w-4 h-4 text-amber-300" /> Best of
+          </h2>
+          <div className={sectionGrid}>
+            {years.map((y) => (
+              <Card
+                key={y.year}
+                title={`Best of ${y.year}`}
+                subtitle={`Highlights from ${y.hashes.length} photos`}
+                cover={<Cover hashes={y.cover} photoByHash={photoByHash} icon={<Trophy className="w-8 h-8" />} />}
+                onOpen={() => onHighlights(`Best of ${y.year}`, y.hashes, 25)}
+              />
+            ))}
+          </div>
+        </section>
+      )}
+
       <section className="flex flex-col gap-3">
         <h2 className="text-xs font-bold text-zinc-400 uppercase tracking-wider flex items-center gap-2">
           <Plane className="w-4 h-4 text-sky-400" /> Trips & events ({tripEntries.length})
@@ -315,7 +352,10 @@ export default function CollectionsView({
                     />
                   }
                   onOpen={() => onOpenTrip(e.id)}
-                  menu={[{ label: "Rename", run: () => setRenaming({ kind: "trip", id: e.id, value: "" }) }]}
+                  menu={[
+                    { label: "Highlights", run: () => onHighlights(e.label, tripsById.get(e.id)?.hashes ?? []) },
+                    { label: "Rename", run: () => setRenaming({ kind: "trip", id: e.id, value: "" }) },
+                  ]}
                   renaming={renaming?.kind === "trip" && renaming.id === e.id}
                   renameValue={renaming?.value}
                   onRenameChange={(v) => setRenaming((r) => (r ? { ...r, value: v } : r))}

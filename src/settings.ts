@@ -23,6 +23,8 @@ export interface Settings {
   // Culling warnings: closed eyes and a soft main face
   eyesCheck: CheckLevel;
   focusCheck: CheckLevel;
+  // "On this day" strip above the grid
+  onThisDay: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -37,6 +39,7 @@ export const DEFAULT_SETTINGS: Settings = {
   watchLibrary: true,
   eyesCheck: "normal",
   focusCheck: "normal",
+  onThisDay: true,
 };
 
 const SETTINGS_KEY = "lumina_settings";
@@ -61,6 +64,7 @@ const VALIDATORS: { [K in keyof Settings]: (v: unknown) => v is Settings[K] } = 
   watchLibrary: isBool,
   eyesCheck: oneOf("off", "normal", "high"),
   focusCheck: oneOf("off", "normal", "high"),
+  onThisDay: isBool,
 };
 
 // Saved settings over the defaults, field by field: an unknown or invalid value falls back to its default.

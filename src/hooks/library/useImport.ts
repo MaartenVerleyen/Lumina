@@ -16,7 +16,7 @@ const norm = (p: string) => p.replace(/\//g, "\\").toLowerCase();
 // selected and filtered ("Just imported"). A connected camera card raises a toast that opens the dialog.
 export function useImport(core: LibraryCore, filters: FilterState, folderHook: ReturnType<typeof useFolder>) {
   const { folder, notify, addLog, setError, setSelectedHashes, setActiveHash, setViewMode } = core;
-  const { setImportedHashes } = filters;
+  const { setHashFilter } = filters;
   const { silentRescan, watchQuietUntilRef, handleLoadFolderPath } = folderHook;
   // The dialog: open with a source chosen in advance ("" = let the user pick), null when closed
   const [importSource, setImportSource] = useState<string | null>(null);
@@ -79,7 +79,7 @@ export function useImport(core: LibraryCore, filters: FilterState, folderHook: R
           const wanted = new Set(result.new_paths.map(norm));
           const hashes = (photos ?? []).filter((p) => wanted.has(norm(diskPathOf(p)))).map((p) => p.hash);
           if (hashes.length > 0) {
-            setImportedHashes(new Set(hashes));
+            setHashFilter({ label: "Just imported", hashes: new Set(hashes) });
             setSelectedHashes(new Set(hashes));
             setActiveHash(hashes[0]);
             setViewMode("grid");

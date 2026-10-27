@@ -347,6 +347,11 @@ export default function SettingsModal({
                     </Button>
                   </Row>
                 </Group>
+                <Group title="Photos tab">
+                  <Row label="On this day" hint="Photos taken on today's date in earlier years, above the grid.">
+                    <Switch checked={settings.onThisDay} onChange={(v) => updateSettings({ onThisDay: v })} label="On this day" />
+                  </Row>
+                </Group>
                 <Group title="Help">
                   <Row label="Welcome tour" hint="The short introduction from the first start.">
                     <Button onClick={then(onOpenWelcomeTour)}>Show tour</Button>

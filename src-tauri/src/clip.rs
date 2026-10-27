@@ -527,6 +527,13 @@ async fn run_semantic_index(app: AppHandle, root_folder: String) -> Result<usize
 
 // ----------------- SEARCH -----------------
 
+// The smart search vectors of these photos (those that are indexed)
+pub fn clip_vectors(conn: &Connection, hashes: &[String]) -> HashMap<String, Vec<f32>> {
+    ensure_clip_cache(conn);
+    let Ok(cache) = CLIP_CACHE.lock() else { return HashMap::new() };
+    hashes.iter().filter_map(|h| cache.get(h).map(|v| (h.clone(), v.clone()))).collect()
+}
+
 #[derive(Serialize)]
 pub struct SemanticHit {
     pub hash: String,

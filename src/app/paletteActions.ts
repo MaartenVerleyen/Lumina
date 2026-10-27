@@ -3,6 +3,7 @@ import type { PaletteAction } from "../components/modals/CommandPalette";
 import type { SettingsSection } from "../components/modals/SettingsModal";
 import { UNKNOWN_FACES } from "../components/modals/FaceMatchReviewModal";
 import { diskPathOf } from "../utils/rawPairs";
+import { scopeTitle } from "../components/layout/PhotoToolbar";
 import type { LibraryState } from "../hooks/useLibraryState";
 
 interface PaletteContext {
@@ -55,6 +56,7 @@ export function buildPaletteActions({
     { id: "dismiss", group: "Organize", label: "Dismiss all staged moves", enabled: lib.stagedPhotos.length > 0, run: lib.handleDismissAllStaged },
     { id: "auto-stage", group: "Organize", label: "Auto-stage visible photos by rule", keywords: "organize sort folders", enabled: hasPhotos, run: lib.handleAutoOrganizeByPreset },
     { id: "keep-sharpest", group: "Organize", label: "Keep the best of every burst, stage rest for _Trash", keywords: "duplicates sharpest eyes", enabled: lib.totalBurstGroups > 0, run: lib.handleKeepSharpestInAllGroups },
+    { id: "highlights", group: "Select", label: "Highlights of what is shown", keywords: "best of favourites top", enabled: lib.visiblePhotos.length > 1, run: () => lib.openHighlights(scopeTitle(lib), lib.visiblePhotos) },
     { id: "eyes-closed", group: "Select", label: "Show photos with closed eyes", keywords: "blink blinking culling", enabled: lib.eyesClosedCount > 0, run: () => lib.setSmartFilter("EYES_CLOSED") },
     { id: "soft-focus", group: "Select", label: "Show out-of-focus photos", keywords: "blurry soft sharp culling", enabled: lib.softFocusCount > 0, run: () => lib.setSmartFilter("SOFT_FOCUS") },
     { id: "empty-trash", group: "Organize", label: "Empty _Trash to Recycle Bin", keywords: "delete", enabled: hasPhotos, run: lib.handleEmptyTrashToRecycleBin },

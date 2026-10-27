@@ -42,6 +42,7 @@ mod prepare;
 mod import;
 mod watch;
 mod face_quality;
+mod highlights;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -430,6 +431,7 @@ pub fn run() {
             import::cancel_import,
             watch::watch_library,
             face_quality::measure_face_quality,
+            highlights::pick_highlights,
             system::copy_image_to_clipboard,
             decode::ensure_high_res_preview,
             system::close_splashscreen

@@ -14,8 +14,8 @@ export function useFilterState() {
   const [activeTag, setActiveTag] = useState<string>("ALL");
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [activeAlbumId, setActiveAlbumId] = useState<number | null>(null);
-  // The photos of the last import ("Just imported" chip), null when not filtering on it
-  const [importedHashes, setImportedHashes] = useState<Set<string> | null>(null);
+  // A named set of photos ("Just imported", "Highlights · Paris"), shown as a chip; null when not filtering on it
+  const [hashFilter, setHashFilter] = useState<{ label: string; hashes: Set<string> } | null>(null);
   const [sortBy, setSortBy] = useState<SortOption>("NAME_ASC");
 
   // Slide-Out Timeline Slicer State
@@ -50,8 +50,8 @@ export function useFilterState() {
     setSearchQuery,
     activeAlbumId,
     setActiveAlbumId,
-    importedHashes,
-    setImportedHashes,
+    hashFilter,
+    setHashFilter,
     sortBy,
     setSortBy,
     isTimelineOpen,

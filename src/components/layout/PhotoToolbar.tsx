@@ -75,7 +75,17 @@ const sectionLabel = "px-2 pt-1.5 pb-1 text-[11px] font-bold text-zinc-500 upper
 const itemClass = (selected: boolean) =>
   `w-full flex items-center justify-between px-2 py-1.5 rounded-lg text-left ${selected ? "bg-emerald-500/15 text-emerald-200" : "text-zinc-300 hover:bg-zinc-800"}`;
 
-// The bar above the photo grid: Timeline, bursts, Compare and two menus (View, Organize)
+// A name for what the grid shows, for titles like "Highlights · Paris"
+export function scopeTitle(lib: LibraryState): string {
+  if (lib.hashFilter) return lib.hashFilter.label;
+  if (lib.activeAlbumId !== null) return lib.albums.find((a) => a.id === lib.activeAlbumId)?.name ?? "Album";
+  if (lib.activeEvent !== "ALL") return lib.autoEvents.find((e) => e.id === lib.activeEvent)?.label ?? "Trip";
+  if (lib.activeSubfolder !== "ALL") return lib.activeSubfolder.split(" / ").pop() || lib.activeSubfolder;
+  if (lib.searchQuery.trim()) return `"${lib.searchQuery.trim()}"`;
+  return lib.folder.split(/[\\/]/).filter(Boolean).pop() || "All photos";
+}
+
+// The bar above the photo grid: Timeline, bursts, Compare, Highlights and two menus (View, Organize)
 export default function PhotoToolbar({ lib }: { lib: LibraryState }) {
   const viewChanged = lib.orientationFilter !== "ALL" || !lib.autoAdvance;
   return (
@@ -130,6 +140,16 @@ export default function PhotoToolbar({ lib }: { lib: LibraryState }) {
         >
           <Columns className="w-3.5 h-3.5" />
           <span>{lib.viewMode === "compare" ? "Exit Compare" : "Compare"}</span>
+        </button>
+
+        <button
+          onClick={() => lib.openHighlights(scopeTitle(lib), lib.visiblePhotos)}
+          disabled={lib.visiblePhotos.length < 2}
+          className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium border transition bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border-zinc-800 disabled:opacity-40"
+          title="The best photos of what is shown: sharp, eyes open, your favourites, and varied"
+        >
+          <Trophy className="w-3.5 h-3.5 text-amber-400" />
+          <span>Highlights</span>
         </button>
 
         {lib.activeSubfolder !== "ALL" && (

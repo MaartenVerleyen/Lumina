@@ -20,12 +20,12 @@ export default function FilterBar({
         lib.activeEvent !== "ALL" ||
         lib.peopleFilter !== null ||
         lib.activeTag !== "ALL" ||
-        lib.importedHashes !== null) && (
+        lib.hashFilter !== null) && (
         <div className="bg-panel border-b border-zinc-800/60 px-4 py-1.5 flex items-center gap-1.5 flex-wrap shrink-0 text-xs">
-          {lib.importedHashes !== null && (
+          {lib.hashFilter !== null && (
             <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/40 text-emerald-200">
-              Just imported ({lib.importedHashes.size})
-              <button onClick={() => lib.setImportedHashes(null)} className="hover:text-white" aria-label="Show all photos">
+              {lib.hashFilter.label} ({lib.hashFilter.hashes.size})
+              <button onClick={() => lib.setHashFilter(null)} className="hover:text-white" aria-label="Show all photos">
                 <X className="w-3 h-3" />
               </button>
             </span>

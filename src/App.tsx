@@ -57,6 +57,8 @@ import { NoLibrary, NoMatches } from "./components/views/EmptyStates";
 import NewFolderModal from "./components/modals/NewFolderModal";
 import ShortcutsModal from "./components/modals/ShortcutsModal";
 import ImportModal from "./components/modals/ImportModal";
+import HighlightsModal from "./components/modals/HighlightsModal";
+import OnThisDay from "./components/views/OnThisDay";
 import SettingsModal, { SettingsSection } from "./components/modals/SettingsModal";
 import UpdateBanner from "./components/layout/UpdateBanner";
 import { useUpdater } from "./hooks/useUpdater";
@@ -65,7 +67,8 @@ import { useSettings } from "./settings";
 export default function App() {
   const lib = useLibraryState();
   const welcome = useWelcomeTour();
-  const updater = useUpdater(useSettings().checkForUpdates);
+  const settings = useSettings();
+  const updater = useUpdater(settings.checkForUpdates);
 
   const {
     leftWidth,
@@ -274,6 +277,7 @@ export default function App() {
     isPaletteOpen ||
     isSettingsOpen ||
     lib.importSource !== null ||
+    lib.highlights !== null ||
     welcome.isOpen ||
     lib.exportTargets !== null ||
     lib.isCommitModalOpen ||
@@ -286,6 +290,16 @@ export default function App() {
     coverPickerPerson !== null ||
     Boolean(lib.isScanningFolder || lib.scanProgress || lib.ollamaPullProgress);
   // Collections shows no photo grid: grid shortcuts (P, X, 1-5 ...) must not act on a hidden selection
+  const anyFilterActive =
+    lib.smartFilter !== "ALL" ||
+    lib.searchQuery.trim() !== "" ||
+    lib.activeSubfolder !== "ALL" ||
+    lib.activeEvent !== "ALL" ||
+    lib.activeTag !== "ALL" ||
+    lib.activeAlbumId !== null ||
+    lib.peopleFilter !== null ||
+    lib.hashFilter !== null ||
+    lib.selectedPeriodRange !== null;
   const isPhotoTab = lib.viewMode !== "collections";
   const isBlockingModalOpen = isDialogOpen || !isPhotoTab;
 
@@ -293,6 +307,7 @@ export default function App() {
     setIsPaletteOpen(false);
     setIsSettingsOpen(false);
     lib.setImportSource(null);
+    lib.setHighlights(null);
     lib.setExportTargets(null);
     lib.setIsCommitModalOpen(false);
     lib.setIsHealthModalOpen(false);
@@ -576,6 +591,13 @@ export default function App() {
               onDeleteAlbum={lib.handleDeleteAlbum}
               onDeleteSavedSearch={lib.handleDeleteSavedSearch}
               onRenameTrip={lib.handleRenameTrip}
+              onHighlights={(title, hashes, count) =>
+                lib.openHighlights(
+                  title,
+                  hashes.map((h) => lib.photoByHash.get(h)).filter((p): p is PhotoItem => Boolean(p)),
+                  count
+                )
+              }
             />
           ) : (
           <>
@@ -595,6 +617,18 @@ export default function App() {
           <FilterBar lib={lib} saveSearchName={saveSearchName} setSaveSearchName={setSaveSearchName} />
 
           <ResultBanners lib={lib} />
+          {settings.onThisDay && lib.viewMode === "grid" && !anyFilterActive && (
+            <OnThisDay
+              photos={lib.photos}
+              culling={lib.culling}
+              onOpenDay={(date, hashes) => {
+                lib.setHashFilter({
+                  label: `On this day · ${new Date(`${date}T12:00:00`).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}`,
+                  hashes: new Set(hashes),
+                });
+              }}
+            />
+          )}
 
           {lib.viewMode === "map" ? (
             <MapPane lib={lib} />
@@ -933,6 +967,21 @@ export default function App() {
       />
 
       <ShortcutsModal lib={lib} />
+
+      <HighlightsModal
+        highlights={lib.highlights}
+        photoByHash={lib.photoByHash}
+        onClose={() => lib.setHighlights(null)}
+        onCount={lib.setHighlightsCount}
+        onShowInGrid={lib.showHighlightsInGrid}
+        onSaveAsAlbum={lib.saveHighlightsAsAlbum}
+        onOpenPhoto={(hash) => {
+          lib.showHighlightsInGrid();
+          lib.setActiveHash(hash);
+          lib.setSelectedHashes(new Set([hash]));
+          lib.setIsLoupeOpen(true);
+        }}
+      />
 
       <ImportModal
         isOpen={lib.importSource !== null}
