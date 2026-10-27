@@ -231,14 +231,15 @@ pub fn clip_models_present(dir: &Path) -> bool {
 
 static CLIP_VERIFIED: AtomicBool = AtomicBool::new(false);
 
-// Downloads the missing model files (about 490 MB in total), each to .part, checked against its SHA-256,
-// then renamed into place
-async fn ensure_clip_models(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = clip_models_dir(app);
-    if CLIP_VERIFIED.load(Ordering::Acquire) {
-        return Ok(dir);
-    }
-    let check_dir = dir.clone();
+// Downloads the missing model files in `dir` (about 490 MB in total), each to .part, checked against its
+// SHA-256, then renamed into place. `cancelled` is polled between chunks. Used by the app and by
+// `--prepare-models` (Lumina Setup).
+pub async fn ensure_clip_models_in(
+    dir: &Path,
+    progress: face_ort::DownloadProgress<'_>,
+    cancelled: &(dyn Fn() -> bool + Send + Sync),
+) -> Result<(), String> {
+    let check_dir = dir.to_path_buf();
     let missing: Vec<usize> = tauri::async_runtime::spawn_blocking(move || {
         (0..CLIP_FILES.len())
             .filter(|&i| !face_ort::sha256_hex(&check_dir.join(CLIP_FILES[i].0)).is_some_and(|h| h == CLIP_FILES[i].2))
@@ -255,7 +256,6 @@ async fn ensure_clip_models(app: &AppHandle) -> Result<PathBuf, String> {
             .map_err(|e| e.to_string())?;
         let total_bytes: u64 = missing.iter().map(|&i| CLIP_FILES[i].3).sum();
         let mut done_bytes = 0u64;
-        let cancel_generation = SEMANTIC_CANCEL.load(Ordering::Acquire);
         for &i in &missing {
             let (name, url, sha, _) = CLIP_FILES[i];
             let part = dir.join(format!("{name}.part"));
@@ -264,30 +264,15 @@ async fn ensure_clip_models(app: &AppHandle) -> Result<PathBuf, String> {
                 return Err(format!("Could not download {name}: HTTP {}", res.status()));
             }
             let mut file = File::create(&part).map_err(|e| e.to_string())?;
-            let mut last_mb = u64::MAX;
             while let Some(chunk) = res.chunk().await.map_err(|e| format!("Download of {name} interrupted: {e}"))? {
-                if SEMANTIC_CANCEL.load(Ordering::Acquire) != cancel_generation {
+                if cancelled() {
                     drop(file);
                     let _ = fs::remove_file(&part);
-                    emit_semantic(app, SemanticProgress { stage: "download".into(), done: true, cancelled: true, ..Default::default() });
                     return Err(SEMANTIC_CANCELLED.into());
                 }
                 std::io::Write::write_all(&mut file, &chunk).map_err(|e| e.to_string())?;
                 done_bytes += chunk.len() as u64;
-                let mb = done_bytes / 1_048_576;
-                if mb != last_mb {
-                    last_mb = mb;
-                    emit_semantic(
-                        app,
-                        SemanticProgress {
-                            stage: "download".into(),
-                            completed: mb as usize,
-                            total: (total_bytes / 1_048_576) as usize,
-                            message: "Downloading the smart search models (once)".into(),
-                            ..Default::default()
-                        },
-                    );
-                }
+                progress(done_bytes, total_bytes);
             }
             drop(file);
             let (part_check, sha_owned) = (part.clone(), sha.to_string());
@@ -300,6 +285,38 @@ async fn ensure_clip_models(app: &AppHandle) -> Result<PathBuf, String> {
             }
             fs::rename(&part, dir.join(name)).map_err(|e| e.to_string())?;
         }
+    }
+    Ok(())
+}
+
+async fn ensure_clip_models(app: &AppHandle) -> Result<PathBuf, String> {
+    let dir = clip_models_dir(app);
+    if CLIP_VERIFIED.load(Ordering::Acquire) {
+        return Ok(dir);
+    }
+    let cancel_generation = SEMANTIC_CANCEL.load(Ordering::Acquire);
+    let last_mb = AtomicU64::new(u64::MAX);
+    let emit_progress = |done: u64, total: u64| {
+        let mb = done / 1_048_576;
+        if last_mb.swap(mb, Ordering::Relaxed) != mb {
+            emit_semantic(
+                app,
+                SemanticProgress {
+                    stage: "download".into(),
+                    completed: mb as usize,
+                    total: (total / 1_048_576) as usize,
+                    message: "Downloading the smart search models (once)".into(),
+                    ..Default::default()
+                },
+            );
+        }
+    };
+    let is_cancelled = || SEMANTIC_CANCEL.load(Ordering::Acquire) != cancel_generation;
+    if let Err(e) = ensure_clip_models_in(&dir, &emit_progress, &is_cancelled).await {
+        if e == SEMANTIC_CANCELLED {
+            emit_semantic(app, SemanticProgress { stage: "download".into(), done: true, cancelled: true, ..Default::default() });
+        }
+        return Err(e);
     }
     CLIP_VERIFIED.store(true, Ordering::Release);
     Ok(dir)

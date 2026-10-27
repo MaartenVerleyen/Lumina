@@ -297,31 +297,70 @@ fn model_file_ok(path: &Path, sha256: &str) -> bool {
 
 static FACE_MODELS_V2_VERIFIED: AtomicBool = AtomicBool::new(false);
 
-// Makes sure det_10g.onnx and w600k_r50.onnx exist and match the official checksums, downloading
+// Progress of a model download: (bytes so far, total bytes)
+pub type DownloadProgress<'a> = &'a (dyn Fn(u64, u64) + Send + Sync);
+
+// Makes sure det_10g.onnx and w600k_r50.onnx in `dir` exist and match the official checksums, downloading
 // InsightFace's buffalo_l package once if needed (288 MB; only the two models are kept).
-pub async fn ensure_face_models_v2(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = get_models_dir(app);
-    if FACE_MODELS_V2_VERIFIED.load(Ordering::Acquire) {
-        return Ok(dir);
-    }
+// Returns whether a download was needed. Used by the app and by `--prepare-models` (Lumina Setup).
+pub async fn ensure_face_models_in(dir: &Path, progress: DownloadProgress<'_>) -> Result<bool, String> {
     let (det, emb) = (dir.join(DETECTOR_FILE), dir.join(EMBEDDER_FILE));
-    let check_dir = dir.clone();
+    let check_dir = dir.to_path_buf();
     let present = tauri::async_runtime::spawn_blocking(move || {
         model_file_ok(&check_dir.join(DETECTOR_FILE), DETECTOR_SHA256) && model_file_ok(&check_dir.join(EMBEDDER_FILE), EMBEDDER_SHA256)
     })
     .await
     .unwrap_or(false);
-    if !present {
-        download_buffalo_l(app, &dir).await?;
-        if !(model_file_ok(&det, DETECTOR_SHA256) && model_file_ok(&emb, EMBEDDER_SHA256)) {
-            return Err("The downloaded face models failed their checksum. Please try again.".into());
-        }
+    if present {
+        return Ok(false);
     }
+    download_buffalo_l(dir, progress).await?;
+    if !(model_file_ok(&det, DETECTOR_SHA256) && model_file_ok(&emb, EMBEDDER_SHA256)) {
+        return Err("The downloaded face models failed their checksum. Please try again.".into());
+    }
+    Ok(true)
+}
+
+pub async fn ensure_face_models_v2(app: &AppHandle) -> Result<PathBuf, String> {
+    let dir = get_models_dir(app);
+    if FACE_MODELS_V2_VERIFIED.load(Ordering::Acquire) {
+        return Ok(dir);
+    }
+    let last_percent = AtomicUsize::new(usize::MAX);
+    let emit_progress = |done: u64, total: u64| {
+        let percent = (done * 100 / total.max(1)) as usize;
+        if last_percent.swap(percent, Ordering::Relaxed) != percent {
+            let _ = app.emit(
+                "face-model-download",
+                FaceModelDownloadProgress {
+                    downloaded_mb: (done as f64 / 1_048_576.0 * 10.0).round() / 10.0,
+                    total_mb: (total as f64 / 1_048_576.0 * 10.0).round() / 10.0,
+                    percent: percent.min(99),
+                    stage: "Downloading face recognition models".into(),
+                    done: false,
+                },
+            );
+        }
+    };
+    let result = ensure_face_models_in(&dir, &emit_progress).await;
+    if result != Ok(false) {
+        let _ = app.emit(
+            "face-model-download",
+            FaceModelDownloadProgress {
+                downloaded_mb: 0.0,
+                total_mb: 0.0,
+                percent: 100,
+                stage: if result.is_ok() { "Face models ready".into() } else { "Face model download failed".into() },
+                done: true,
+            },
+        );
+    }
+    result?;
     FACE_MODELS_V2_VERIFIED.store(true, Ordering::Release);
     Ok(dir)
 }
 
-async fn download_buffalo_l(app: &AppHandle, dir: &Path) -> Result<(), String> {
+async fn download_buffalo_l(dir: &Path, progress: DownloadProgress<'_>) -> Result<(), String> {
     let zip_part = dir.join("buffalo_l.zip.part");
     // No overall timeout: 288 MB can take minutes; only connecting and stalls are bounded
     let client = reqwest::Client::builder()
@@ -337,27 +376,13 @@ async fn download_buffalo_l(app: &AppHandle, dir: &Path) -> Result<(), String> {
     if !res.status().is_success() {
         return Err(format!("Could not download the face models: HTTP {}", res.status()));
     }
-    let total = res.content_length().unwrap_or(288_621_354) as f64;
+    let total = res.content_length().unwrap_or(288_621_354);
     let mut file = File::create(&zip_part).map_err(|e| e.to_string())?;
-    let mut downloaded = 0f64;
-    let mut last_percent = usize::MAX;
+    let mut downloaded = 0u64;
     while let Some(chunk) = res.chunk().await.map_err(|e| format!("Face model download interrupted: {e}"))? {
         std::io::Write::write_all(&mut file, &chunk).map_err(|e| e.to_string())?;
-        downloaded += chunk.len() as f64;
-        let percent = ((downloaded / total) * 100.0) as usize;
-        if percent != last_percent {
-            last_percent = percent;
-            let _ = app.emit(
-                "face-model-download",
-                FaceModelDownloadProgress {
-                    downloaded_mb: (downloaded / 1_048_576.0 * 10.0).round() / 10.0,
-                    total_mb: (total / 1_048_576.0 * 10.0).round() / 10.0,
-                    percent: percent.min(99),
-                    stage: "Downloading face recognition models".into(),
-                    done: false,
-                },
-            );
-        }
+        downloaded += chunk.len() as u64;
+        progress(downloaded, total);
     }
     drop(file);
 
@@ -387,17 +412,6 @@ async fn download_buffalo_l(app: &AppHandle, dir: &Path) -> Result<(), String> {
     })
     .await
     .map_err(|e| e.to_string())?;
-
-    let _ = app.emit(
-        "face-model-download",
-        FaceModelDownloadProgress {
-            downloaded_mb: 0.0,
-            total_mb: 0.0,
-            percent: 100,
-            stage: if extracted.is_ok() { "Face models ready".into() } else { "Face model download failed".into() },
-            done: true,
-        },
-    );
     extracted
 }
 

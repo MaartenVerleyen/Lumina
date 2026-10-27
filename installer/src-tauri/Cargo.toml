@@ -1,0 +1,32 @@
+[package]
+name = "lumina-setup"
+version = "3.6.0"
+description = "Guided installer for Lumina: the app, Ollama and the AI models"
+authors = ["Maarten"]
+edition = "2024"
+
+[lib]
+name = "lumina_setup_lib"
+crate-type = ["rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", features = ["json"] }
+tokio = { version = "1", features = ["sync", "time", "process", "io-util", "macros"] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+
+# A small, single-file Setup.exe
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

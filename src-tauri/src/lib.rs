@@ -36,6 +36,7 @@ mod clip;
 mod albums;
 mod export;
 mod face_match;
+mod prepare;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -311,6 +312,13 @@ pub struct OllamaPullProgress {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Lumina Setup downloads the models through the app itself, without a window (see prepare.rs)
+    let args: Vec<String> = std::env::args().collect();
+    if let Some(i) = args.iter().position(|a| a == "--prepare-models") {
+        let steps = args.get(i + 1).map(String::as_str).unwrap_or("faces,clip");
+        std::process::exit(prepare::run(steps));
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())

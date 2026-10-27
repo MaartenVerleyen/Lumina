@@ -898,3 +898,9 @@ fn an_edited_file_keeps_its_tags_people_faces_and_albums() {
     );
     assert!(scan::paths_claimed_twice(&conn, "/lib/%").is_empty());
 }
+
+#[test]
+fn prepare_models_uses_the_configured_app_identifier() {
+    let conf: serde_json::Value = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+    assert_eq!(conf["identifier"].as_str(), Some(prepare::APP_IDENTIFIER));
+}
