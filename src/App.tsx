@@ -16,7 +16,7 @@ import ExportModal from "./components/modals/ExportModal";
 import CollectionsView from "./components/views/CollectionsView";
 import PeopleSidebar from "./components/layout/PeopleSidebar";
 import ProfilePicturePicker from "./components/modals/ProfilePicturePicker";
-import { describePeople } from "./utils/peopleQuery";
+import { describePeopleExpr, peopleInExpr } from "./utils/peopleQuery";
 import { describeTerm, removeTerm, TermKey } from "./utils/searchQuery";
 import CommandPalette, { PaletteAction } from "./components/modals/CommandPalette";
 import { usePhotoDrag, DropTarget } from "./hooks/usePhotoDrag";
@@ -891,12 +891,8 @@ export default function App() {
                 people={lib.people}
                 pendingCounts={lib.pendingFaceCounts}
                 totalPhotos={lib.photos.length}
-                selected={lib.selectedPeople}
-                match={lib.peopleMatch}
-                onChange={(names, match) => {
-                  lib.setSelectedPeople(names);
-                  lib.setPeopleMatch(match);
-                }}
+                filter={lib.peopleFilter}
+                onChange={lib.setPeopleFilter}
                 onReview={(name) => lib.setFaceReviewPerson(name)}
                 onWhoIsThis={() => lib.setFaceReviewPerson(UNKNOWN_FACES)}
                 onChooseCover={setCoverPickerPerson}
@@ -914,8 +910,8 @@ export default function App() {
               simpleMode={lib.simpleMode}
               smartFilter={lib.smartFilter}
               setSmartFilter={lib.setSmartFilter}
-              hasPeopleFilter={lib.selectedPeople.length > 0}
-              clearPeopleFilter={() => lib.setSelectedPeople([])}
+              hasPeopleFilter={lib.peopleFilter !== null}
+              clearPeopleFilter={() => lib.setPeopleFilter(null)}
               activeSubfolder={lib.activeSubfolder}
               setActiveSubfolder={lib.setActiveSubfolder}
               activeEvent={lib.activeEvent}
@@ -992,7 +988,7 @@ export default function App() {
           {(lib.parsedSearch.terms.length > 0 ||
             lib.activeAlbumId !== null ||
             lib.activeEvent !== "ALL" ||
-            lib.selectedPeople.length > 0 ||
+            lib.peopleFilter !== null ||
             lib.activeTag !== "ALL") && (
             <div className="bg-panel border-b border-zinc-800/60 px-4 py-1.5 flex items-center gap-1.5 flex-wrap shrink-0 text-xs">
               {lib.activeEvent !== "ALL" && (
@@ -1003,10 +999,10 @@ export default function App() {
                   </button>
                 </span>
               )}
-              {lib.selectedPeople.length > 0 && (
+              {lib.peopleFilter !== null && (
                 <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/40 text-emerald-200 capitalize">
-                  {lib.selectedPeople.length > 1 ? "People" : "Person"}: {describePeople(lib.selectedPeople, lib.peopleMatch)}
-                  <button onClick={() => lib.setSelectedPeople([])} className="hover:text-white" aria-label="Show everyone">
+                  {peopleInExpr(lib.peopleFilter).length > 1 ? "People" : "Person"}: {describePeopleExpr(lib.peopleFilter)}
+                  <button onClick={() => lib.setPeopleFilter(null)} className="hover:text-white" aria-label="Show everyone">
                     <X className="w-3 h-3" />
                   </button>
                 </span>
@@ -1729,7 +1725,7 @@ export default function App() {
         onSetPersonHidden={lib.handleSetPersonHidden}
         onShowPhotos={(person) => {
           lib.setFaceReviewPerson(null);
-          lib.setSelectedPeople([person]);
+          lib.setPeopleFilter({ person });
           if (lib.viewMode === "collections") lib.setViewMode("people");
         }}
       />

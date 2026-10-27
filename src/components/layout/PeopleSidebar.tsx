@@ -2,7 +2,17 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { ChevronDown, ChevronRight, Search, User, Users, X } from "lucide-react";
 import { PersonItem } from "../../types/lumina";
-import { describePeople, parsePeopleQuery, PeopleMatch } from "../../utils/peopleQuery";
+import {
+  combinePeople,
+  describePeopleExpr,
+  flatPeople,
+  parsePeopleExpr,
+  PeopleExpr,
+  peopleExprFromList,
+  peopleInExpr,
+  PeopleMatch,
+  removeFromExpr,
+} from "../../utils/peopleQuery";
 
 interface PeopleSidebarProps {
   width: number;
@@ -10,10 +20,9 @@ interface PeopleSidebarProps {
   pendingCounts: Record<string, number>;
   // Photos in the library (the "Everyone" row)
   totalPhotos: number;
-  // The people filter on the photos
-  selected: string[];
-  match: PeopleMatch;
-  onChange: (names: string[], match: PeopleMatch) => void;
+  // The people filter on the photos (null = everyone)
+  filter: PeopleExpr | null;
+  onChange: (filter: PeopleExpr | null) => void;
   // Open Face Review for one person's suggested matches, or for "Who is this?"
   onReview: (name: string) => void;
   onWhoIsThis: () => void;
@@ -27,15 +36,14 @@ interface PeopleSidebarProps {
 
 type MenuState = { name: string; x: number; y: number; mode: "menu" | "rename" | "merge" };
 
-// The People tab's left pane: search (combine people with and / or), everyone with their photo count,
+// The People tab's left pane: search (combine people with and / or / not and brackets), everyone with their photo count,
 // a pill for suggested matches and a menu per person (right-click or ⋯)
 export default function PeopleSidebar({
   width,
   people,
   pendingCounts,
   totalPhotos,
-  selected,
-  match,
+  filter,
   onChange,
   onReview,
   onWhoIsThis,
@@ -52,46 +60,57 @@ export default function PeopleSidebar({
   const inputRef = useRef<HTMLInputElement>(null);
 
   const names = useMemo(() => people.map((p) => p.name), [people]);
-  const parsed = useMemo(() => parsePeopleQuery(query, names), [query, names]);
-  const isSelected = (name: string) => selected.some((n) => n.toLowerCase() === name.toLowerCase());
+  const parsed = useMemo(() => parsePeopleExpr(query, names), [query, names]);
+  // A plain list ("Anna and Bob") shows as chips; a nested query as one chip
+  const flat = flatPeople(filter);
+  const selected = flat?.names ?? [];
+  const match: PeopleMatch = flat?.match ?? "all";
+  const named = peopleInExpr(filter).map((n) => n.toLowerCase());
+  const isSelected = (name: string) => named.includes(name.toLowerCase());
 
-  // The list follows the part being typed ("anna and be" lists the people matching "be")
-  const typing = /(\s(and|or|en|of)|[&|+,])\s*$/i.test(query) ? "" : parsed.parts[parsed.parts.length - 1]?.text ?? "";
+  // The list follows the name being typed ("(anna or bob) and el" lists the people matching "el")
   const listed = useMemo(() => {
-    const t = typing.toLowerCase();
+    const t = parsed.typing.toLowerCase();
     return t ? people.filter((p) => p.name.toLowerCase().includes(t)) : people;
-  }, [people, typing]);
+  }, [people, parsed.typing]);
   const visible = listed.filter((p) => !p.hidden);
   const hidden = listed.filter((p) => p.hidden);
 
-  // What Enter does with the current text
-  const multi = parsed.parts.length > 1;
-  const unresolved = parsed.parts.filter((p) => !p.person).map((p) => p.text);
-  const enterTarget = multi ? null : parsed.parts[0]?.person ?? visible[0]?.name ?? hidden[0]?.name ?? null;
+  // What Enter does: one name adds that person (the first one listed when the name is ambiguous),
+  // a query with and / or / not / brackets replaces the filter
+  const hasOperators = /[()&|+,!]|(^|\s)-|\b(and|or|en|of|not|niet)\b/i.test(query);
+  const enterTarget = hasOperators
+    ? null
+    : parsed.expr && "person" in parsed.expr
+    ? parsed.expr.person
+    : visible[0]?.name ?? hidden[0]?.name ?? null;
   let hint = "";
+  let hintIsError = false;
   if (query.trim()) {
-    if (multi) {
-      hint = unresolved.length
-        ? `No single person matches "${unresolved[0]}"`
-        : `Enter: photos with ${describePeople(parsed.parts.map((p) => p.person!), parsed.mode ?? "all")}`;
-    } else if (enterTarget) {
-      hint = selected.length > 0 && !isSelected(enterTarget) ? `Enter: add ${enterTarget}` : `Enter: show ${enterTarget}`;
+    if (enterTarget) {
+      hint = flat && selected.length > 0 && !isSelected(enterTarget) ? `Enter: add ${enterTarget}` : `Enter: show ${enterTarget}`;
+    } else if (parsed.expr) {
+      hint = `Enter: photos with ${describePeopleExpr(parsed.expr)}`;
     } else {
-      hint = "No one with that name";
+      hint = parsed.error ?? "No one with that name";
+      hintIsError = !parsed.incomplete;
     }
   }
 
-  const toggle = (name: string) =>
-    onChange(isSelected(name) ? selected.filter((n) => n.toLowerCase() !== name.toLowerCase()) : [...selected, name], match);
+  const setList = (list: string[], m: PeopleMatch) => onChange(peopleExprFromList(list, m));
+  const toggle = (name: string) => {
+    if (isSelected(name)) onChange(removeFromExpr(filter, name));
+    else if (flat) setList([...selected, name], match);
+    else onChange(combinePeople("all", [filter!, { person: name }]));
+  };
 
   function submitQuery() {
-    if (multi) {
-      if (unresolved.length) return;
-      const found = Array.from(new Set(parsed.parts.map((p) => p.person!)));
-      onChange(found, parsed.mode ?? "all");
+    if (enterTarget) {
+      if (flat && !isSelected(enterTarget)) setList([...selected, enterTarget], match);
+      else if (!flat) onChange({ person: enterTarget });
       setQuery("");
-    } else if (enterTarget) {
-      if (!isSelected(enterTarget)) onChange([...selected, enterTarget], match);
+    } else if (parsed.expr) {
+      onChange(parsed.expr);
       setQuery("");
     }
   }
@@ -153,13 +172,13 @@ export default function PeopleSidebar({
           onChange={() => toggle(p.name)}
           aria-label={`Combine ${p.name} with the other selected people`}
           title="Add to / remove from the selection (combine people)"
-          className={`accent-emerald-500 shrink-0 ${on || selected.length > 0 ? "" : "opacity-0 group-hover:opacity-100 focus:opacity-100"}`}
+          className={`accent-emerald-500 shrink-0 ${on || filter ? "" : "opacity-0 group-hover:opacity-100 focus:opacity-100"}`}
         />
         <button
           onClick={(e) => {
             // Ctrl/Cmd+click combines, a plain click shows just this person (again: everyone)
             if (e.ctrlKey || e.metaKey) toggle(p.name);
-            else onChange(on && selected.length === 1 ? [] : [p.name], match);
+            else onChange(on && flat && selected.length === 1 ? null : { person: p.name });
           }}
           className="flex-1 min-w-0 flex items-center gap-2.5 text-left"
           title="Click: show their photos · Ctrl+click: combine with others"
@@ -216,7 +235,7 @@ export default function PeopleSidebar({
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    onChange(selected, match === "all" ? "any" : "all");
+                    setList(selected, match === "all" ? "any" : "all");
                   }}
                   className="px-1 rounded text-[11px] font-bold uppercase text-amber-300 hover:bg-zinc-800"
                   title="Switch between and (photos with all of them) and or (with any of them)"
@@ -239,6 +258,31 @@ export default function PeopleSidebar({
               </span>
             </span>
           ))}
+          {filter && !flat && (
+            <span className="flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/40 text-emerald-200 text-[11px] capitalize max-w-full">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setQuery(describePeopleExpr(filter));
+                  inputRef.current?.focus();
+                }}
+                className="text-left truncate hover:text-white"
+                title="Edit this query"
+              >
+                {describePeopleExpr(filter)}
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onChange(null);
+                }}
+                className="hover:text-white shrink-0"
+                aria-label="Show everyone"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </span>
+          )}
           <input
             ref={inputRef}
             value={query}
@@ -251,21 +295,24 @@ export default function PeopleSidebar({
                 if (query) setQuery("");
                 else (e.target as HTMLInputElement).blur();
               } else if (e.key === "Backspace" && !query && selected.length > 0) {
-                onChange(selected.slice(0, -1), match);
+                setList(selected.slice(0, -1), match);
               }
             }}
-            placeholder={selected.length ? "Add someone…" : "Search people (anna and bob, anna or bob)"}
+            placeholder={filter ? "Add someone…" : "Search people: (anna or bob) and ella"}
             aria-label="Search people"
             className="flex-1 min-w-[80px] bg-transparent text-xs text-zinc-200 placeholder:text-zinc-600 focus:outline-none select-text"
           />
         </div>
-        {hint && <p className={`text-[11px] px-1 ${unresolved.length && multi ? "text-red-300" : "text-zinc-500"}`}>{hint}</p>}
+        {hint && <p className={`text-[11px] px-1 ${hintIsError ? "text-red-300" : "text-zinc-500"}`}>{hint}</p>}
+        {!query && !filter && (
+          <p className="text-[11px] px-1 text-zinc-600">Combine with and, or, not and brackets</p>
+        )}
         {selected.length > 1 && (
           <div className="flex bg-zinc-950 border border-zinc-800 rounded-lg p-0.5 text-[11px]">
             {(["all", "any"] as const).map((m) => (
               <button
                 key={m}
-                onClick={() => onChange(selected, m)}
+                onClick={() => setList(selected, m)}
                 className={`flex-1 px-2 py-1 rounded-md font-medium ${
                   match === m ? "bg-emerald-500/20 text-emerald-200" : "text-zinc-400 hover:text-zinc-200"
                 }`}
@@ -279,9 +326,9 @@ export default function PeopleSidebar({
 
       <div className="flex-1 overflow-y-auto p-2 flex flex-col gap-0.5">
         <button
-          onClick={() => onChange([], match)}
+          onClick={() => onChange(null)}
           className={`flex items-center gap-2.5 px-2 py-1.5 rounded-xl border text-left ${
-            selected.length === 0 ? "bg-emerald-500/15 border-emerald-500/40" : "border-transparent hover:bg-zinc-900"
+            !filter ? "bg-emerald-500/15 border-emerald-500/40" : "border-transparent hover:bg-zinc-900"
           }`}
         >
           <div className="w-9 h-9 rounded-full bg-zinc-800 flex items-center justify-center shrink-0">
@@ -346,7 +393,7 @@ export default function PeopleSidebar({
               <button
                 className={menuItem}
                 onClick={() => {
-                  onChange([menuPerson.name], match);
+                  onChange({ person: menuPerson.name });
                   setMenu(null);
                 }}
               >
