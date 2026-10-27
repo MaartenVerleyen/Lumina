@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import type { ImportPattern } from "./types/lumina";
 
 // Lumina's settings in one place: typed, validated, saved as one localStorage entry and readable from any
 // component with useSettings(). Window layout (pane sizes, open tab) is remembered separately (app/layout.ts).
@@ -12,6 +13,12 @@ export interface Settings {
   cardDetails: CardDetails;
   autoAdvance: boolean;
   checkForUpdates: boolean;
+  // Import: folder layout, offer to import when a camera card is connected, skip photos already in the library
+  importPattern: ImportPattern;
+  offerImportOnCard: boolean;
+  importSkipDuplicates: boolean;
+  // Rescan quietly when photos in the open library change outside Lumina
+  watchLibrary: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -20,6 +27,10 @@ export const DEFAULT_SETTINGS: Settings = {
   cardDetails: "hover",
   autoAdvance: true,
   checkForUpdates: true,
+  importPattern: "year-month",
+  offerImportOnCard: true,
+  importSkipDuplicates: true,
+  watchLibrary: true,
 };
 
 const SETTINGS_KEY = "lumina_settings";
@@ -38,6 +49,10 @@ const VALIDATORS: { [K in keyof Settings]: (v: unknown) => v is Settings[K] } = 
   cardDetails: oneOf("hover", "always"),
   autoAdvance: isBool,
   checkForUpdates: isBool,
+  importPattern: oneOf("year-month", "year-month-day", "flat"),
+  offerImportOnCard: isBool,
+  importSkipDuplicates: isBool,
+  watchLibrary: isBool,
 };
 
 // Saved settings over the defaults, field by field: an unknown or invalid value falls back to its default.

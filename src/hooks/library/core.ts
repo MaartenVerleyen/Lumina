@@ -67,12 +67,13 @@ export function useLibraryCore() {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
   const notify = useCallback(
-    (message: string, kind: Toast["kind"] = "info") => {
+    (message: string, kind: Toast["kind"] = "info", action?: Toast["action"]) => {
       if (!message) return;
       const id = ++toastSeqRef.current;
       // The same message again (e.g. a repeated failure) replaces the old toast instead of stacking
-      setToasts((prev) => [...prev.filter((t) => t.message !== message), { id, kind, message }].slice(-MAX_TOASTS));
-      const ttl = kind === "error" ? 12000 : Math.min(9000, 3500 + message.length * 25);
+      setToasts((prev) => [...prev.filter((t) => t.message !== message), { id, kind, message, action }].slice(-MAX_TOASTS));
+      // Toasts with a button stay long enough to use it
+      const ttl = kind === "error" ? 12000 : action ? 20000 : Math.min(9000, 3500 + message.length * 25);
       window.setTimeout(() => dismissToast(id), ttl);
     },
     [dismissToast]

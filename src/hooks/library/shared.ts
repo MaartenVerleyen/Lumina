@@ -9,6 +9,8 @@ export interface Toast {
   id: number;
   kind: "info" | "error";
   message: string;
+  // A button on the toast ("Import photos…")
+  action?: { label: string; run: () => void };
 }
 
 // One collator for all sorting: String.localeCompare(..., options) builds a new collator on every call,

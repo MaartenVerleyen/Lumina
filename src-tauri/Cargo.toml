@@ -47,6 +47,7 @@ tokio = { version = "1", features = ["sync", "macros", "time"] }
 # DCT-domain downscaled JPEG decoding (1/2, 1/4, 1/8) for thumbnails, previews and face/AI input
 jpeg-decoder = { version = "0.3", default-features = false }
 tauri-plugin-updater = "2"
+notify-debouncer-mini = "0.7.0"
 
 # Same version Tauri already uses (no second copy to compile): drive type detection, in-process WIC, thread priority
 [target.'cfg(windows)'.dependencies]

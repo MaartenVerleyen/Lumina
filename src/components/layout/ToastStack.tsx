@@ -50,7 +50,20 @@ export default function ToastStack({ toasts, onDismiss, onOpenSessionLog }: Toas
           >
             <div className="flex items-start gap-2 min-w-0">
               <Sparkles className="w-4 h-4 text-emerald-400 shrink-0 mt-px" />
-              <span className="break-words">{t.message}</span>
+              <div className="min-w-0">
+                <span className="break-words">{t.message}</span>
+                {t.action && (
+                  <button
+                    onClick={() => {
+                      onDismiss(t.id);
+                      t.action!.run();
+                    }}
+                    className="block mt-1.5 px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold"
+                  >
+                    {t.action.label}
+                  </button>
+                )}
+              </div>
             </div>
             <button
               onClick={() => onDismiss(t.id)}

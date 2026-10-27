@@ -386,3 +386,53 @@ export interface ExportResult {
 
 // Top-level tabs: Photos ("grid", or "compare" inside Photos) · Map · People · Collections
 export type ViewMode = "grid" | "map" | "compare" | "people" | "collections";
+
+// Import (src-tauri/src/import.rs)
+export interface ImportSource {
+  path: string;
+  label: string;
+  has_dcim: boolean;
+}
+
+export type ImportPattern = "year-month" | "year-month-day" | "flat";
+
+export interface ImportOptions {
+  source: string;
+  dest_root: string;
+  pattern: ImportPattern;
+  skip_duplicates: boolean;
+  delete_after: boolean;
+  eject_after: boolean;
+}
+
+export interface ImportPreview {
+  photos: number;
+  videos: number;
+  new_count: number;
+  duplicates: number;
+  new_bytes: number;
+  first_date: string | null;
+  last_date: string | null;
+  folders: string[];
+}
+
+export interface ImportProgress {
+  stage: string;
+  completed: number;
+  total: number;
+  copied: number;
+  skipped: number;
+  failed: number;
+  current: string;
+  done: boolean;
+}
+
+export interface ImportResult {
+  copied: number;
+  skipped: number;
+  deleted: number;
+  failures: { file: string; error: string }[];
+  new_paths: string[];
+  cancelled: boolean;
+  ejected: boolean;
+}

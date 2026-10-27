@@ -905,3 +905,68 @@ fn prepare_models_uses_the_configured_app_identifier() {
     let conf: serde_json::Value = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
     assert_eq!(conf["identifier"].as_str(), Some(prepare::APP_IDENTIFIER));
 }
+
+#[test]
+fn import_dates_folders_and_names() {
+    use crate::import::*;
+    assert_eq!(day_of("2024:06:15 18:30:00").as_deref(), Some("2024-06-15"));
+    assert_eq!(day_of("2024-06-15").as_deref(), Some("2024-06-15"));
+    assert_eq!(day_of("0000:00:00 00:00:00"), None);
+    assert_eq!(day_of(""), None);
+    assert_eq!(day_from_unix(0), "1970-01-01");
+    assert_eq!(day_from_unix(1_718_476_200), "2024-06-15");
+    assert_eq!(day_from_unix(951_782_400), "2000-02-29");
+
+    let p = |pattern: &str, day: Option<&str>| date_folder(pattern, day).to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/");
+    assert_eq!(p("year-month", Some("2024-06-15")), "2024/2024-06");
+    assert_eq!(p("year-month-day", Some("2024-06-15")), "2024/2024-06-15");
+    assert_eq!(p("flat", Some("2024-06-15")), "");
+    assert_eq!(p("year-month", None), "Unknown date");
+
+    assert_eq!(with_suffix("IMG_1.CR3", "_2"), "IMG_1_2.CR3");
+    assert_eq!(with_suffix("README", "_2"), "README_2");
+    // The pair moves to _3 together when either name is taken under _2
+    let taken = ["IMG_1.CR3", "IMG_1_2.JPG"];
+    let names = vec!["IMG_1.CR3".to_string(), "IMG_1.JPG".to_string()];
+    let suffix = free_suffix(Path::new(""), &names, |path| taken.iter().any(|t| Path::new(t) == path));
+    assert_eq!(suffix, "_3");
+
+    assert_eq!(file_kind(Path::new("a/IMG_1.CR3")), Some(FileKind::Photo));
+    assert_eq!(file_kind(Path::new("a/clip.MOV")), Some(FileKind::Video));
+    assert_eq!(file_kind(Path::new("a/IMG_1.xmp")), Some(FileKind::Sidecar));
+    assert_eq!(file_kind(Path::new("a/notes.txt")), None);
+    assert!(crate::watch::is_library_photo(Path::new("C:/Photos/a.heic")));
+    assert!(!crate::watch::is_library_photo(Path::new("C:/Photos/a.jpg.part")));
+}
+
+#[test]
+fn import_groups_pairs_and_finds_duplicates() {
+    let card = std::env::temp_dir().join("lumina_import_tests").join("DCIM");
+    let _ = fs::remove_dir_all(card.parent().unwrap());
+    fs::create_dir_all(card.join("100CANON")).unwrap();
+    fs::create_dir_all(card.join("101CANON")).unwrap();
+    let write = |rel: &str, bytes: &[u8]| fs::write(card.join(rel), bytes).unwrap();
+    write("100CANON/IMG_1.CR3", b"raw one");
+    write("100CANON/IMG_1.JPG", b"jpeg one");
+    write("100CANON/IMG_1.xmp", b"<x/>");
+    write("100CANON/IMG_2.JPG", b"jpeg two");
+    write("101CANON/IMG_2.JPG", b"jpeg two"); // the same photo twice on the card
+    write("100CANON/orphan.xmp", b"<x/>"); // a sidecar without a photo stays behind
+
+    let conn = Connection::open_in_memory().unwrap();
+    conn.execute("CREATE TABLE photos (hash TEXT PRIMARY KEY, current_path TEXT)", []).unwrap();
+    let groups = crate::import::plan_summary(&conn, card.parent().unwrap());
+    let names: Vec<Vec<&str>> = groups.iter().map(|(_, files)| files.iter().map(|(n, _)| n.as_str()).collect()).collect();
+    assert_eq!(names, vec![vec!["IMG_1.CR3", "IMG_1.JPG", "IMG_1.xmp"], vec!["IMG_2.JPG"], vec!["IMG_2.JPG"]]);
+    assert!(groups.iter().all(|(day, _)| day.is_some()), "file dates stand in when there is no EXIF date");
+    assert!(!groups[1].1[0].1 && groups[2].1[0].1, "the second copy is a duplicate");
+
+    // A photo already in the library (and still on disk) is a duplicate too
+    let (hash, _) = hash_and_read_head(&card.join("100CANON/IMG_1.JPG"), 8).unwrap();
+    let in_library = card.join("100CANON/IMG_1.JPG").to_string_lossy().into_owned();
+    conn.execute("INSERT INTO photos VALUES (?1, ?2)", params![hash, in_library]).unwrap();
+    let groups = crate::import::plan_summary(&conn, card.parent().unwrap());
+    assert!(groups[0].1[1].1, "IMG_1.JPG is already in the library");
+    assert!(!groups[0].1[0].1, "its RAW is not");
+    let _ = fs::remove_dir_all(card.parent().unwrap());
+}

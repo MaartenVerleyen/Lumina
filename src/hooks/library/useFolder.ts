@@ -5,6 +5,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { PhotoItem, ThumbBatchProgress, ThumbBatchItem, ExifRefreshResult, PerfLogEvent, TrashResult, ScanProgressEvent } from "../../types/lumina";
 import { RAW_OR_HEIC_NAME } from "../../utils/rawPairs";
 import { isSameFolder, SCAN_CANCELLED } from "./shared";
+import { useSettings } from "../../settings";
 import type { LibraryCore } from "./core";
 import type { FilterState } from "./useFilterState";
 
@@ -39,6 +40,11 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
   const [scanProgress, setScanProgress] = useState<ScanProgressEvent | null>(null);
   const [isScanningFolder, setIsScanningFolder] = useState<boolean>(false);
   const [progress, setProgress] = useState<{ completed: number; total: number } | null>(null);
+  // A quiet rescan (files changed outside Lumina, or after an import) shows no progress dialog
+  const silentScanRef = useRef(false);
+  // Changes Lumina makes itself (an import) don't need the watcher's rescan: it waits until this time
+  const watchQuietUntilRef = useRef(0);
+  const { watchLibrary } = useSettings();
 
   function saveRecentFolder(path: string) {
     try {
@@ -57,6 +63,7 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
   useEffect(() => {
     const unlisten = listen<ScanProgressEvent>("scan-progress", (event) => {
       const prog = event.payload;
+      if (silentScanRef.current) return;
       if (prog.done) {
         setScanProgress(null);
       } else {
@@ -410,7 +417,47 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
     }
   }
 
+  // Rescans without the progress dialog and keeps the selection; returns the photos, or null when it couldn't
+  async function silentRescan(): Promise<PhotoItem[] | null> {
+    const target = folderRef.current;
+    if (!target || isScanningFolder || silentScanRef.current) return null;
+    silentScanRef.current = true;
+    try {
+      const res = await invoke<PhotoItem[]>("scan_folder", { folderPath: target, forceReprocess: false });
+      if (!isSameFolder(target, folderRef.current)) return null;
+      setPhotos(res);
+      return res;
+    } catch {
+      return null;
+    } finally {
+      silentScanRef.current = false;
+    }
+  }
+
+  // Watch the open library for photos added, changed or removed outside Lumina (Settings → Library)
+  useEffect(() => {
+    invoke("watch_library", { root: watchLibrary && folder ? folder : null }).catch((err) =>
+      addLog("LIBRARY", "Could not watch the library folder for changes", String(err))
+    );
+  }, [folder, watchLibrary]);
+
+  const silentRescanRef = useRef(silentRescan);
+  silentRescanRef.current = silentRescan;
+  useEffect(() => {
+    const unlisten = listen<string>("library-files-changed", (event) => {
+      if (!isSameFolder(event.payload, folderRef.current) || Date.now() < watchQuietUntilRef.current) return;
+      silentRescanRef.current().then((res) => {
+        if (res) addLog("LIBRARY", `Picked up changes made outside Lumina (${res.length} items)`);
+      });
+    });
+    return () => {
+      unlisten.then((f) => f());
+    };
+  }, [addLog]);
+
   return {
+    silentRescan,
+    watchQuietUntilRef,
     recentFolders,
     scanProgress,
     isScanningFolder,

@@ -33,6 +33,8 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
     parsedSearch,
     activeAlbumId,
     setActiveAlbumId,
+    importedHashes,
+    setImportedHashes,
     sortBy,
     showAllBurstVersions,
     setShowAllBurstVersions,
@@ -188,6 +190,7 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
       if (q && !searchTextOf(p).includes(q)) return false;
       if (terms.length > 0 && !matchesTerms(p, terms, albumContext)) return false;
       if (albumFilter && !albumFilter.has(p.hash)) return false;
+      if (importedHashes && !importedHashes.has(p.hash)) return false;
       if (semanticScores && !semanticScores.has(p.hash)) return false;
       return true;
     });
@@ -285,6 +288,7 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
     albumContext,
     albumSets,
     activeAlbumId,
+    importedHashes,
     sortBy,
     showAllBurstVersions,
     expandedBurstGroups,
@@ -380,6 +384,7 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
     setSelectedPeriodRange(null);
     setSemanticResult(null);
     setActiveAlbumId(null);
+    setImportedHashes(null);
   }
 
   function toggleBurstGroupExpand(groupNum: number, e: React.MouseEvent) {

@@ -12,6 +12,7 @@ import { usePeople } from "./library/usePeople";
 import { useAi } from "./library/useAi";
 import { useExport } from "./library/useExport";
 import { useHealth } from "./library/useHealth";
+import { useImport } from "./library/useImport";
 
 export type { Toast } from "./library/shared";
 
@@ -33,6 +34,7 @@ export function useLibraryState() {
   const ai = useAi(core);
   const exporter = useExport(core);
   const health = useHealth(core);
+  const importer = useImport(core, filters, folder);
 
   return {
     ...core,
@@ -49,6 +51,7 @@ export function useLibraryState() {
     ...ai,
     ...exporter,
     ...health,
+    ...importer,
     canUndo: core.undo.canUndo,
     canRedo: core.undo.canRedo,
     handleUndo: core.undo.handleUndo,

@@ -3,7 +3,7 @@ import { describePeopleExpr, peopleInExpr } from "../../utils/peopleQuery";
 import { describeTerm, removeTerm } from "../../utils/searchQuery";
 import type { LibraryState } from "../../hooks/useLibraryState";
 
-// The chips under the toolbar for every active filter (trip, person, tag, album, search terms), each with ✕
+// The chips under the toolbar for every active filter (last import, trip, person, tag, album, search terms), each with ✕
 export default function FilterBar({
   lib,
   saveSearchName,
@@ -19,8 +19,17 @@ export default function FilterBar({
         lib.activeAlbumId !== null ||
         lib.activeEvent !== "ALL" ||
         lib.peopleFilter !== null ||
-        lib.activeTag !== "ALL") && (
+        lib.activeTag !== "ALL" ||
+        lib.importedHashes !== null) && (
         <div className="bg-panel border-b border-zinc-800/60 px-4 py-1.5 flex items-center gap-1.5 flex-wrap shrink-0 text-xs">
+          {lib.importedHashes !== null && (
+            <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/40 text-emerald-200">
+              Just imported ({lib.importedHashes.size})
+              <button onClick={() => lib.setImportedHashes(null)} className="hover:text-white" aria-label="Show all photos">
+                <X className="w-3 h-3" />
+              </button>
+            </span>
+          )}
           {lib.activeEvent !== "ALL" && (
             <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-sky-500/15 border border-sky-500/40 text-sky-200">
               {lib.autoEvents.find((ev) => ev.id === lib.activeEvent)?.label ?? "Trip"}

@@ -144,6 +144,12 @@ pub fn cancel_thumbnail_pass() {
     SCAN_GENERATION.fetch_add(1, Ordering::AcqRel);
 }
 
+// Every file type Lumina shows (lower-case extensions); also what Import copies as photos
+pub const PHOTO_EXTENSIONS: &[&str] = &[
+    "jpg", "jpeg", "png", "webp", "bmp", "gif", "tiff", "cr2", "cr3", "nef", "arw", "dng", "orf", "rw2", "heic",
+    "heif", "pef", "raf",
+];
+
 pub fn salt_hash_with_path(hash: &str, disk_path: &str) -> String {
     let mut hasher = blake3::Hasher::new();
     hasher.update(hash.as_bytes());
@@ -447,12 +453,7 @@ pub async fn scan_folder(
                 }
                 let p = entry.into_path();
                 let ext = p.extension()?.to_str()?.to_lowercase();
-                if [
-                    "jpg", "jpeg", "png", "webp", "bmp", "gif", "tiff", "cr2", "cr3", "nef",
-                    "arw", "dng", "orf", "rw2", "heic", "heif", "pef", "raf",
-                ]
-                .contains(&ext.as_str())
-                {
+                if PHOTO_EXTENSIONS.contains(&ext.as_str()) {
                     Some(p)
                 } else {
                     None

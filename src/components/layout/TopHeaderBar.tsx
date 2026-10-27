@@ -14,6 +14,7 @@ import {
   ViewMode,
 } from "../../types/lumina";
 import {
+  FolderInput,
   FolderOpen,
   MapPin,
   LayoutGrid,
@@ -88,6 +89,7 @@ interface TopHeaderBarProps {
   } | null;
   handleStopAiBatch: () => Promise<void>;
   handleOpenFolder: () => Promise<void>;
+  onOpenImport?: () => void;
   handleRescanFolder: () => Promise<void>;
   handleRescanAndProcessFolder: () => Promise<void>;
   handleOpenHealthDashboard: () => Promise<void>;
@@ -146,6 +148,7 @@ export default function TopHeaderBar({
   aiBatchProgress,
   handleStopAiBatch,
   handleOpenFolder,
+  onOpenImport,
   handleRescanFolder,
   handleRescanAndProcessFolder,
   handleOpenHealthDashboard,
@@ -342,6 +345,21 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                   </div>
                 </div>
               </button>
+              {onOpenImport && (
+                <button
+                  onClick={() => {
+                    setIsLibraryMenuOpen(false);
+                    onOpenImport();
+                  }}
+                  className="w-full flex items-start gap-2.5 p-2 rounded-lg hover:bg-zinc-800/80 text-left transition"
+                >
+                  <FolderInput className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                  <div>
+                    <div className="font-medium text-zinc-200">Import Photos...</div>
+                    <div className="text-[11px] text-zinc-500">From a memory card, drive or folder</div>
+                  </div>
+                </button>
+              )}
               <div className="h-[1px] bg-zinc-800/80 my-1" />
               <button
                 onClick={() => {

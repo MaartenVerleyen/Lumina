@@ -38,6 +38,7 @@ export function buildPaletteActions({
   const selected = () => lib.visiblePhotos.filter((p) => lib.selectedHashes.has(p.hash));
   const paletteActions: PaletteAction[] = [
     { id: "open-folder", group: "Library", label: "Open folder…", keywords: "library switch", run: lib.handleOpenFolder },
+    { id: "import", group: "Library", label: "Import photos…", keywords: "card sd camera copy usb phone", enabled: !lib.importProgress, run: () => lib.openImport() },
     ...lib.recentFolders.slice(0, 5).map((f) => ({
       id: `recent-${f}`,
       group: "Library",

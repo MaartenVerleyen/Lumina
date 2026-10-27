@@ -77,6 +77,18 @@ export function backgroundJobsOf(lib: LibraryState): BackgroundJob[] {
       cancelLabel: "Stop",
     });
   }
+  if (lib.importProgress) {
+    const reading = lib.importProgress.stage === "Reading";
+    jobs.push({
+      id: "import",
+      label: reading ? "Reading the card" : "Importing photos",
+      detail: reading ? `${lib.importProgress.completed} files` : lib.importProgress.current,
+      completed: lib.importProgress.completed,
+      total: lib.importProgress.total,
+      onCancel: lib.handleCancelImport,
+      cancelLabel: "Stop",
+    });
+  }
   if (lib.exportProgress) {
     jobs.push({
       id: "export",

@@ -341,6 +341,23 @@ export default function SettingsModal({
                     <Row label="Photos" hint={`${lib.photos.length.toLocaleString()} photos · ${lib.stagedPhotos.length} staged change(s)`} />
                   )}
                 </Group>
+                <Group title="Import and changes">
+                  <Row label="Import photos" hint="From a memory card, USB drive or folder, sorted into dated folders.">
+                    <Button primary disabled={Boolean(lib.importProgress)} onClick={then(() => lib.openImport())}>
+                      Import…
+                    </Button>
+                  </Row>
+                  <Row label="Offer to import when a camera card is connected" hint="Cards and drives with a DCIM folder.">
+                    <Switch
+                      checked={settings.offerImportOnCard}
+                      onChange={(v) => updateSettings({ offerImportOnCard: v })}
+                      label="Offer to import"
+                    />
+                  </Row>
+                  <Row label="Pick up changes made outside Lumina" hint="Photos added, changed or removed in Explorer or by a sync app show up by themselves.">
+                    <Switch checked={settings.watchLibrary} onChange={(v) => updateSettings({ watchLibrary: v })} label="Watch the library folder" />
+                  </Row>
+                </Group>
                 <Group title="Maintenance">
                   <Row label="Quick rescan" hint="Picks up photos added, changed or removed outside Lumina.">
                     <Button disabled={!hasPhotos || lib.isScanningFolder} onClick={then(lib.handleRescanFolder)}>

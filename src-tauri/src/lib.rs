@@ -39,6 +39,8 @@ mod albums;
 mod export;
 mod face_match;
 mod prepare;
+mod import;
+mod watch;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -333,6 +335,7 @@ pub fn run() {
                 LazyLock::force(&GEOCODER);
                 LazyLock::force(&BG_POOL);
             });
+            import::start_drive_watch(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -417,6 +420,11 @@ pub fn run() {
             system::reveal_in_file_manager,
             system::create_library_subfolder,
             system::get_app_data_dir,
+            import::list_import_sources,
+            import::preview_import,
+            import::start_import,
+            import::cancel_import,
+            watch::watch_library,
             system::copy_image_to_clipboard,
             decode::ensure_high_res_preview,
             system::close_splashscreen

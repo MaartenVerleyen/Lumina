@@ -56,6 +56,7 @@ import MapPane from "./components/views/MapPane";
 import { NoLibrary, NoMatches } from "./components/views/EmptyStates";
 import NewFolderModal from "./components/modals/NewFolderModal";
 import ShortcutsModal from "./components/modals/ShortcutsModal";
+import ImportModal from "./components/modals/ImportModal";
 import SettingsModal, { SettingsSection } from "./components/modals/SettingsModal";
 import UpdateBanner from "./components/layout/UpdateBanner";
 import { useUpdater } from "./hooks/useUpdater";
@@ -272,6 +273,7 @@ export default function App() {
   const isDialogOpen =
     isPaletteOpen ||
     isSettingsOpen ||
+    lib.importSource !== null ||
     welcome.isOpen ||
     lib.exportTargets !== null ||
     lib.isCommitModalOpen ||
@@ -290,6 +292,7 @@ export default function App() {
   const closeBlockingModals = () => {
     setIsPaletteOpen(false);
     setIsSettingsOpen(false);
+    lib.setImportSource(null);
     lib.setExportTargets(null);
     lib.setIsCommitModalOpen(false);
     lib.setIsHealthModalOpen(false);
@@ -451,6 +454,7 @@ export default function App() {
         aiBatchProgress={lib.aiBatchProgress}
         handleStopAiBatch={lib.handleStopAiBatch}
         handleOpenFolder={lib.handleOpenFolder}
+        onOpenImport={() => lib.openImport()}
         handleRescanFolder={lib.handleRescanFolder}
         handleRescanAndProcessFolder={lib.handleRescanAndProcessFolder}
         handleOpenHealthDashboard={lib.handleOpenHealthDashboard}
@@ -925,6 +929,14 @@ export default function App() {
       />
 
       <ShortcutsModal lib={lib} />
+
+      <ImportModal
+        isOpen={lib.importSource !== null}
+        initialSource={lib.importSource ?? ""}
+        defaultDest={lib.defaultImportDest}
+        onClose={() => lib.setImportSource(null)}
+        onImport={lib.runImport}
+      />
 
       <SettingsModal
         isOpen={isSettingsOpen}

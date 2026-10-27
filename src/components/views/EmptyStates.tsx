@@ -1,5 +1,5 @@
 import type { RefObject } from "react";
-import { Clock, FolderOpen, Search } from "lucide-react";
+import { Clock, FolderInput, FolderOpen, Search } from "lucide-react";
 import type { LibraryState } from "../../hooks/useLibraryState";
 
 type GridRef = RefObject<HTMLDivElement | null>;
@@ -24,13 +24,22 @@ export function NoLibrary({ lib, gridContainerRef }: { lib: LibraryState; gridCo
           .ARW, .DNG).
         </p>
 
-        <button
-          onClick={lib.handleOpenFolder}
-          className="mt-5 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold shadow-lg transition flex items-center gap-2 cursor-pointer"
-        >
-          <FolderOpen className="w-4 h-4" />
-          <span>Choose Photo Folder...</span>
-        </button>
+        <div className="mt-5 flex items-center gap-2">
+          <button
+            onClick={lib.handleOpenFolder}
+            className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold shadow-lg transition flex items-center gap-2 cursor-pointer"
+          >
+            <FolderOpen className="w-4 h-4" />
+            <span>Choose Photo Folder...</span>
+          </button>
+          <button
+            onClick={() => lib.openImport()}
+            className="px-4 py-2.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-zinc-200 rounded-xl text-xs font-semibold transition flex items-center gap-2 cursor-pointer"
+          >
+            <FolderInput className="w-4 h-4 text-emerald-400" />
+            <span>Import from a card...</span>
+          </button>
+        </div>
 
         {lib.recentFolders.length > 0 && (
           <div className="w-full mt-6 pt-5 border-t border-zinc-800/80 flex flex-col gap-2 text-left">
