@@ -58,7 +58,7 @@ test("each term kind matches", () => {
   assert.ok(!match("rating:5"));
   assert.ok(match("flag:pick label:red"));
   assert.ok(match("person:anna tag:beach"));
-  assert.ok(!match("person:ann"));
+  assert.ok(!match("person:ann ")); // a finished name matches exactly
   assert.ok(match("camera:r6 lens:24-105 place:knokke name:0001"));
   assert.ok(match("has:gps has:faces has:caption is:raw is:paired is:basket"));
   assert.ok(!match("has:ocr"));
@@ -100,4 +100,12 @@ test("autocomplete finds and completes the term being typed", () => {
   assert.equal(termBeingTyped("sunset"), null);
   assert.equal(completeTerm("sunset person:an", "person", "Anna Smith"), 'sunset person:"Anna Smith" ');
   assert.equal(completeTerm("-tag:be", "tag", "beach"), "-tag:beach ");
+});
+
+test("the term still being typed matches person and tag by prefix", () => {
+  assert.ok(matchesTerms(photo, parseSearchQuery("tag:sun").terms));
+  assert.ok(!matchesTerms(photo, parseSearchQuery("tag:sun ").terms));
+  assert.ok(matchesTerms(photo, parseSearchQuery("tag:sunset ").terms));
+  assert.ok(matchesTerms(photo, parseSearchQuery("rating:>=4 person:an").terms));
+  assert.ok(!matchesTerms(photo, parseSearchQuery("person:an rating:>=4").terms));
 });

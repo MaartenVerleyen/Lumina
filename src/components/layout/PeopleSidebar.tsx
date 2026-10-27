@@ -188,7 +188,7 @@ export default function PeopleSidebar({
             <span className={`block text-xs font-semibold capitalize truncate ${on ? "text-emerald-100" : "text-zinc-200"}`}>
               {p.name}
             </span>
-            <span className="block text-[11px] text-zinc-500">
+            <span className="block text-[11px] text-zinc-500 whitespace-nowrap">
               {p.photo_count} photo{p.photo_count === 1 ? "" : "s"}
             </span>
           </span>

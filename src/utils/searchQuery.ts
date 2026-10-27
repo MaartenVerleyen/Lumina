@@ -15,6 +15,8 @@ export interface SearchTerm {
   negate: boolean;
   // The term as typed, so it can be removed from the query again
   raw: string;
+  // Still being typed (last in the query, no space after it): person/tag values match as a prefix
+  partial?: boolean;
 }
 
 export interface ParsedQuery {
@@ -33,7 +35,8 @@ export function parseSearchQuery(query: string): ParsedQuery {
     if (key && (TERM_KEYS as readonly string[]).includes(key)) {
       const value = (quoted ?? bare ?? "").trim();
       // "person:" while still typing: not a filter yet
-      if (value) terms.push({ key, op: (op as TermOp) || "=", value, negate: minus === "-", raw });
+      const partial = quoted === undefined && (m.index ?? 0) + raw.length === query.length;
+      if (value) terms.push({ key, op: (op as TermOp) || "=", value, negate: minus === "-", raw, ...(partial ? { partial } : {}) });
       continue;
     }
     text.push(raw.startsWith('"') ? raw.replace(/"/g, "") : raw);
@@ -138,10 +141,10 @@ function matchOne(p: MatchablePhoto, t: SearchTerm, ctx: MatchContext): boolean 
     case "person": {
       // person:anna|bob = either of them (several person: terms = all of them)
       const wanted = v.split("|").filter(Boolean);
-      return p.people.some((n) => wanted.includes(n.toLowerCase()));
+      return p.people.some((n) => wanted.some((w) => (t.partial ? n.toLowerCase().startsWith(w) : n.toLowerCase() === w)));
     }
     case "tag":
-      return p.tags.some((n) => n.toLowerCase() === v);
+      return p.tags.some((n) => (t.partial ? n.toLowerCase().startsWith(v) : n.toLowerCase() === v));
     case "camera":
       return has(p.camera_model);
     case "lens":

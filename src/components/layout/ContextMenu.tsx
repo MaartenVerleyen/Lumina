@@ -178,7 +178,11 @@ export function PhotoContextMenu({
                   autoFocus
                   value={newAlbum}
                   onChange={(e) => setNewAlbum(e.target.value)}
-                  onKeyDown={(e) => e.stopPropagation()}
+                  onKeyDown={(e) => {
+                    // Typing a name must not trigger grid shortcuts; Escape still closes the menu
+                    if (e.key === "Escape") onClose();
+                    else e.stopPropagation();
+                  }}
                   placeholder="New album…"
                   className="flex-1 min-w-0 bg-zinc-950 border border-zinc-700 rounded px-2 py-1 text-[11px] text-zinc-200 select-text focus:outline-none focus:border-indigo-500"
                 />

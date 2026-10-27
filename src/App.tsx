@@ -330,9 +330,10 @@ export default function App() {
     return () => ro.disconnect();
   }, [lib.viewMode, lib.photos.length, isLeftCollapsed, isRightCollapsed]);
 
-  // Grid layout: rows (and month headers when sorted by date) computed up front for the virtualizer
+  // Grid layout: rows (and month headers when sorted by date) computed up front for the virtualizer.
+  // Smart search ranks by relevance, so its results get no month headers.
   const isDateSorted =
-    (lib.sortBy === "DATE_DESC" || lib.sortBy === "DATE_ASC") && lib.smartFilter !== "DUPLICATES";
+    (lib.sortBy === "DATE_DESC" || lib.sortBy === "DATE_ASC") && lib.smartFilter !== "DUPLICATES" && !lib.semanticScores;
   const gridGap = lib.gridStyle === "justified" ? 8 : 14;
   const layout = useMemo(() => {
     const width = Math.max(320, centerWidth);
@@ -1000,7 +1001,7 @@ export default function App() {
                 </span>
               )}
               {lib.peopleFilter !== null && (
-                <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/40 text-emerald-200 capitalize">
+                <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/40 text-emerald-200">
                   {peopleInExpr(lib.peopleFilter).length > 1 ? "People" : "Person"}: {describePeopleExpr(lib.peopleFilter)}
                   <button onClick={() => lib.setPeopleFilter(null)} className="hover:text-white" aria-label="Show everyone">
                     <X className="w-3 h-3" />

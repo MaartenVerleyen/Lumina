@@ -126,7 +126,7 @@ export default function BulkActionDock({
   if (selectedHashes.size <= 1) return null;
 
   return (
-    <div className="absolute bottom-5 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2 z-50 animate-in fade-in slide-in-from-bottom-2">
+    <div className="absolute bottom-5 left-1/2 -translate-x-1/2 w-max max-w-[calc(100%-2rem)] flex flex-col items-center gap-2 z-50 animate-in fade-in slide-in-from-bottom-2">
       {/* Dynamic Inline Bulk Popover */}
       {activeBulkPopover && (
         <div className="bg-card border border-zinc-700 p-3 rounded-xl shadow-2xl flex flex-col gap-2 w-80 text-xs">
@@ -333,7 +333,7 @@ export default function BulkActionDock({
       )}
 
       {/* Main Dock */}
-      <div className="bg-raised/95 border border-zinc-700/60 shadow-2xl backdrop-blur-xl px-4 py-2 rounded-2xl flex items-center gap-2.5 text-xs">
+      <div className="bg-raised/95 border border-zinc-700/60 shadow-2xl backdrop-blur-xl px-4 py-2 rounded-2xl flex flex-wrap justify-center items-center gap-x-2.5 gap-y-1.5 text-xs">
         <div className="flex items-center gap-1.5 font-semibold text-zinc-200 border-r border-zinc-700 pr-2.5">
           <CheckSquare className="w-4 h-4 text-emerald-400" />
           <span>{selectedHashes.size} Selected</span>
