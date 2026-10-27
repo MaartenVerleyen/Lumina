@@ -43,6 +43,11 @@ pub fn cancel_export() {
     EXPORT_CANCEL.fetch_add(1, Ordering::AcqRel);
 }
 
+// Changes when Stop is pressed: a running export (or web gallery) compares it with the value it started with
+pub fn export_cancel_generation() -> u64 {
+    EXPORT_CANCEL.load(Ordering::Acquire)
+}
+
 struct ExportSource {
     disk_path: String,
     name: String,

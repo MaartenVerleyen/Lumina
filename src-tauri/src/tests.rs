@@ -1084,3 +1084,12 @@ fn highlights_prefer_quality_and_variety() {
     let all = select_highlights(&candidates, &no_vectors, &none, 50);
     assert_eq!(all.len(), 5);
 }
+
+#[test]
+fn gallery_names_and_escaping() {
+    use crate::gallery::{gallery_folder_name, html_escape};
+    assert_eq!(gallery_folder_name("Paris · June 2024"), "Paris-June-2024");
+    assert_eq!(gallery_folder_name("  ///  "), "Gallery");
+    assert_eq!(gallery_folder_name("Zomer in Lagos!"), "Zomer-in-Lagos");
+    assert_eq!(html_escape("<b>Tom & Jerry</b>"), "&lt;b&gt;Tom &amp; Jerry&lt;/b&gt;");
+}

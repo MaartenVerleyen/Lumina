@@ -1,4 +1,4 @@
-import { BookImage, Grid3x3, Loader2, Trophy, X } from "lucide-react";
+import { BookImage, Globe, Grid3x3, Loader2, Trophy, X } from "lucide-react";
 import { useDialogFocus } from "../../hooks/useDialogFocus";
 import type { HighlightsState } from "../../hooks/library/useHighlights";
 import type { PhotoItem } from "../../types/lumina";
@@ -13,6 +13,7 @@ interface HighlightsModalProps {
   onCount: (count: number) => void;
   onShowInGrid: () => void;
   onSaveAsAlbum: () => void;
+  onShareGallery: () => void;
   onOpenPhoto: (hash: string) => void;
 }
 
@@ -24,6 +25,7 @@ export default function HighlightsModal({
   onCount,
   onShowInGrid,
   onSaveAsAlbum,
+  onShareGallery,
   onOpenPhoto,
 }: HighlightsModalProps) {
   const dialogRef = useDialogFocus<HTMLDivElement>(highlights !== null);
@@ -115,6 +117,13 @@ export default function HighlightsModal({
         <div className="flex items-center justify-between gap-3 px-6 py-3.5 border-t border-zinc-800 text-[12px]">
           <span className="text-zinc-500">{picks.length > 0 && `${picks.length} photos, oldest first`}</span>
           <div className="flex items-center gap-2">
+            <button
+              onClick={onShareGallery}
+              disabled={picks.length === 0}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-zinc-200 disabled:opacity-40"
+            >
+              <Globe className="w-3.5 h-3.5 text-emerald-400" /> Share as web page
+            </button>
             <button
               onClick={onSaveAsAlbum}
               disabled={picks.length === 0}

@@ -4,6 +4,7 @@ import {
   ChevronRight,
   Copy,
   Download,
+  Globe,
   ExternalLink,
   Eye,
   FileText,
@@ -31,6 +32,7 @@ interface PhotoContextMenuProps {
   onCopyPath?: () => void;
   onFindSimilar?: () => void;
   onExport?: () => void;
+  onShareGallery?: () => void;
   // "Add to album ▸": existing albums, or a new one named on the spot
   albums?: { id: number; name: string }[];
   onAddToAlbum?: (albumId: number) => void;
@@ -50,6 +52,7 @@ export function PhotoContextMenu({
   onCopyPath,
   onFindSimilar,
   onExport,
+  onShareGallery,
   albums,
   onAddToAlbum,
   onCreateAlbum,
@@ -218,6 +221,19 @@ export function PhotoContextMenu({
         >
           <Download className="w-3.5 h-3.5 text-emerald-400" />
           <span>Export…</span>
+        </button>
+      )}
+
+      {onShareGallery && (
+        <button
+          onClick={() => {
+            onShareGallery();
+            onClose();
+          }}
+          className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-zinc-800 text-zinc-200 transition text-left"
+        >
+          <Globe className="w-3.5 h-3.5 text-emerald-400" />
+          <span>Share as Web Gallery…</span>
         </button>
       )}
 

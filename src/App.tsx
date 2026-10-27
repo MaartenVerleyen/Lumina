@@ -58,6 +58,8 @@ import NewFolderModal from "./components/modals/NewFolderModal";
 import ShortcutsModal from "./components/modals/ShortcutsModal";
 import ImportModal from "./components/modals/ImportModal";
 import HighlightsModal from "./components/modals/HighlightsModal";
+import GalleryModal from "./components/modals/GalleryModal";
+import { scopeTitle } from "./components/layout/PhotoToolbar";
 import OnThisDay from "./components/views/OnThisDay";
 import SettingsModal, { SettingsSection } from "./components/modals/SettingsModal";
 import UpdateBanner from "./components/layout/UpdateBanner";
@@ -278,6 +280,7 @@ export default function App() {
     isSettingsOpen ||
     lib.importSource !== null ||
     lib.highlights !== null ||
+    lib.galleryTarget !== null ||
     welcome.isOpen ||
     lib.exportTargets !== null ||
     lib.isCommitModalOpen ||
@@ -308,6 +311,7 @@ export default function App() {
     setIsSettingsOpen(false);
     lib.setImportSource(null);
     lib.setHighlights(null);
+    lib.setGalleryTarget(null);
     lib.setExportTargets(null);
     lib.setIsCommitModalOpen(false);
     lib.setIsHealthModalOpen(false);
@@ -591,6 +595,7 @@ export default function App() {
               onDeleteAlbum={lib.handleDeleteAlbum}
               onDeleteSavedSearch={lib.handleDeleteSavedSearch}
               onRenameTrip={lib.handleRenameTrip}
+              onShareGallery={(title, hashes) => lib.openGallery(title, hashes)}
               onHighlights={(title, hashes, count) =>
                 lib.openHighlights(
                   title,
@@ -854,6 +859,9 @@ export default function App() {
         onExport={() => {
           if (contextPhoto) lib.openExport(contextMenuTargets(contextPhoto.hash));
         }}
+        onShareGallery={() => {
+          if (contextPhoto) lib.openGallery(scopeTitle(lib), contextMenuTargets(contextPhoto.hash));
+        }}
         albums={lib.albums}
         onAddToAlbum={(albumId) => {
           if (contextPhoto) lib.handleAddToAlbum(albumId, contextMenuTargets(contextPhoto.hash));
@@ -975,12 +983,24 @@ export default function App() {
         onCount={lib.setHighlightsCount}
         onShowInGrid={lib.showHighlightsInGrid}
         onSaveAsAlbum={lib.saveHighlightsAsAlbum}
+        onShareGallery={() => {
+          if (!lib.highlights?.hashes) return;
+          const { title, hashes } = lib.highlights;
+          lib.setHighlights(null);
+          lib.openGallery(title, hashes);
+        }}
         onOpenPhoto={(hash) => {
           lib.showHighlightsInGrid();
           lib.setActiveHash(hash);
           lib.setSelectedHashes(new Set([hash]));
           lib.setIsLoupeOpen(true);
         }}
+      />
+
+      <GalleryModal
+        target={lib.galleryTarget}
+        onClose={() => lib.setGalleryTarget(null)}
+        onCreate={lib.runGallery}
       />
 
       <ImportModal

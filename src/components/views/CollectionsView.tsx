@@ -28,6 +28,7 @@ interface CollectionsViewProps {
   onDeleteSavedSearch: (id: number) => Promise<void>;
   onRenameTrip: (id: string, name: string) => Promise<void>;
   onHighlights: (title: string, hashes: string[], count?: number) => void;
+  onShareGallery: (title: string, hashes: string[]) => void;
 }
 
 // Up to four thumbnails of photos in the open folder, as a 2x2 (or single) cover
@@ -155,6 +156,7 @@ export default function CollectionsView({
   onDeleteSavedSearch,
   onRenameTrip,
   onHighlights,
+  onShareGallery,
 }: CollectionsViewProps) {
   const [filter, setFilter] = useState("");
   const [newAlbumName, setNewAlbumName] = useState<string | null>(null);
@@ -232,6 +234,7 @@ export default function CollectionsView({
               onOpen={() => onOpenAlbum(a.id)}
               menu={[
                 { label: "Highlights", run: () => onHighlights(a.name, a.hashes.filter((h) => photoByHash.has(h))) },
+                { label: "Share as web gallery", run: () => onShareGallery(a.name, a.hashes.filter((h) => photoByHash.has(h))) },
                 { label: "Rename", run: () => setRenaming({ kind: "album", id: String(a.id), value: a.name }) },
                 { label: "Delete album", danger: true, run: () => onDeleteAlbum(a.id) },
               ]}
@@ -354,6 +357,7 @@ export default function CollectionsView({
                   onOpen={() => onOpenTrip(e.id)}
                   menu={[
                     { label: "Highlights", run: () => onHighlights(e.label, tripsById.get(e.id)?.hashes ?? []) },
+                    { label: "Share as web gallery", run: () => onShareGallery(e.label, tripsById.get(e.id)?.hashes ?? []) },
                     { label: "Rename", run: () => setRenaming({ kind: "trip", id: e.id, value: "" }) },
                   ]}
                   renaming={renaming?.kind === "trip" && renaming.id === e.id}
