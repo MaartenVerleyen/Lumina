@@ -405,7 +405,8 @@ pub async fn scan_folder(
         let mut faces_map: HashMap<String, Vec<FaceInstance>> = HashMap::new();
         {
             if let Ok(mut stmt) = conn.prepare(
-                "SELECT pf.face_id, pf.hash, pf.bbox_x, pf.bbox_y, pf.bbox_w, pf.bbox_h, pf.person_name, pf.face_thumb, pf.confidence
+                "SELECT pf.face_id, pf.hash, pf.bbox_x, pf.bbox_y, pf.bbox_w, pf.bbox_h, pf.person_name, pf.face_thumb, pf.confidence,
+                        pf.eyes_open, pf.face_sharpness
                  FROM photo_faces pf
                  JOIN photos p ON pf.hash = p.hash
                  WHERE p.current_path LIKE ?1 ESCAPE '!'
@@ -422,6 +423,8 @@ pub async fn scan_folder(
                         person_name: row.get(6)?,
                         face_thumb: row.get(7)?,
                         confidence: row.get(8)?,
+                        eyes_open: row.get(9)?,
+                        face_sharpness: row.get(10)?,
                     })
                 }) {
                     for f in rows.flatten() {

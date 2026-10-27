@@ -43,6 +43,7 @@ pub async fn detect_faces_in_photo(
                     face.detection.score as f64,
                     None,
                     "scrfd",
+                    face.quality,
                 );
             }
             if !old_rejected.is_empty() {
@@ -293,6 +294,8 @@ fn run_face_scan(app_clone: &AppHandle, hashes: Vec<String>, models: Arc<FaceMod
                                     person_name: None,
                                     face_thumb: face_thumb_path.to_string_lossy().to_string(),
                                     confidence: face.detection.score as f64,
+                                    eyes_open: face.quality.eyes_open.map(f64::from),
+                                    face_sharpness: face.quality.sharpness.map(f64::from),
                                 },
                                 embedding: face.embedding,
                             });
@@ -342,8 +345,8 @@ fn run_face_scan(app_clone: &AppHandle, hashes: Vec<String>, models: Arc<FaceMod
                                 };
 
                                 let _ = tx.execute(
-                                    "INSERT INTO photo_faces (face_id, hash, bbox_x, bbox_y, bbox_w, bbox_h, person_name, face_thumb, embedding, embedding_blob, engine, confidence, source)
-                                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, '[]', ?9, ?11, ?10, 'scrfd')
+                                    "INSERT INTO photo_faces (face_id, hash, bbox_x, bbox_y, bbox_w, bbox_h, person_name, face_thumb, embedding, embedding_blob, engine, confidence, source, eyes_open, face_sharpness)
+                                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, '[]', ?9, ?11, ?10, 'scrfd', ?12, ?13)
                                     ON CONFLICT(face_id) DO UPDATE SET
                                         bbox_x = excluded.bbox_x,
                                         bbox_y = excluded.bbox_y,
@@ -355,7 +358,9 @@ fn run_face_scan(app_clone: &AppHandle, hashes: Vec<String>, models: Arc<FaceMod
                                         embedding_blob = excluded.embedding_blob,
                                         engine = excluded.engine,
                                         confidence = excluded.confidence,
-                                        source = 'scrfd'",
+                                        source = 'scrfd',
+                                        eyes_open = excluded.eyes_open,
+                                        face_sharpness = excluded.face_sharpness",
                                     params![
                                         target_face_id,
                                         f.hash,
@@ -367,7 +372,9 @@ fn run_face_scan(app_clone: &AppHandle, hashes: Vec<String>, models: Arc<FaceMod
                                         target_thumb_str,
                                         embedding_to_blob(&item.embedding),
                                         f.confidence,
-                                        FACE_ENGINE_V2
+                                        FACE_ENGINE_V2,
+                                        f.eyes_open,
+                                        f.face_sharpness
                                     ],
                                 );
                                 if let Some(ref matched_name) = target_person {

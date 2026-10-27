@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { PersonItem, FaceScanProgress, FaceMatchEvent, FaceInstance, FaceModelDownloadProgress } from "../../types/lumina";
+import { PersonItem, FaceScanProgress, FaceMatchEvent, FaceInstance, FaceModelDownloadProgress, FaceQualityProgress } from "../../types/lumina";
 import { diskPathOf } from "../../utils/rawPairs";
 import { removeFromExpr, renameInExpr } from "../../utils/peopleQuery";
 import type { LibraryCore } from "./core";
@@ -250,7 +250,7 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
   faceScanProgressRef.current = faceScanProgress;
   const hasPhotos = photos.length > 0;
   const faceUpgradeCheckedRef = useRef<Set<string>>(new Set());
-    useEffect(() => {
+  useEffect(() => {
     if (!folder || !hasPhotos || faceUpgradeCheckedRef.current.has(folder)) return;
     const timer = setTimeout(async () => {
       if (faceScanProgressRef.current) return;
@@ -265,6 +265,40 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
         }
       } catch {}
     }, 1500);
+    return () => clearTimeout(timer);
+  }, [folder, hasPhotos]);
+
+  // Eyes and focus: faces found before Lumina measured them are measured in the background, once per opened
+  // folder (also picks up closed eyes once the smart search models that judge them are installed)
+  const [faceQualityProgress, setFaceQualityProgress] = useState<{ completed: number; total: number } | null>(null);
+  useEffect(() => {
+    const unlisten = listen<FaceQualityProgress>("face-quality-progress", (event) => {
+      const { batch, done, completed, total } = event.payload;
+      setPhotos((prev) => prev.map((p) => (p.hash in batch ? { ...p, faces: batch[p.hash] } : p)));
+      setFaceQualityProgress(done ? null : { completed, total });
+      if (done) addLog("FACE", `Checked eyes and focus in ${total} photo(s)`);
+    });
+    return () => {
+      unlisten.then((f) => f());
+    };
+  }, [addLog]);
+
+  async function measureFaceQuality(root = folder) {
+    if (!root) return;
+    try {
+      const total = await invoke<number>("measure_face_quality", { rootFolder: root });
+      if (total > 0) setFaceQualityProgress({ completed: 0, total });
+    } catch {}
+  }
+
+  const qualityCheckedRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!folder || !hasPhotos || qualityCheckedRef.current.has(folder)) return;
+    const timer = setTimeout(() => {
+      if (faceScanProgressRef.current) return;
+      qualityCheckedRef.current.add(folder);
+      measureFaceQuality(folder);
+    }, 4000);
     return () => clearTimeout(timer);
   }, [folder, hasPhotos]);
 
@@ -474,6 +508,8 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
     faceReviewPerson,
     setFaceReviewPerson,
     faceScanProgress,
+    faceQualityProgress,
+    measureFaceQuality,
     isDetectingSingleFace,
     faceModelDownload,
     selectedFaceId,

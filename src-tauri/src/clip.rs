@@ -154,7 +154,6 @@ impl ClipModels {
         Ok(v)
     }
 
-    #[cfg(test)]
     pub fn embed_image(&self, img: &DynamicImage) -> Result<Vec<f32>, String> {
         self.embed_image_input(&clip_image_input(img))
     }
@@ -338,6 +337,19 @@ async fn clip_models(app: &AppHandle) -> Result<Arc<ClipModels>, String> {
         return Ok(slot.get_or_insert(loaded).clone());
     }
     Ok(loaded)
+}
+
+// The smart search models when they are installed, without downloading them (the face scan uses them to
+// spot closed eyes, but never triggers the 470 MB download itself)
+pub fn clip_models_if_present(dir: &Path) -> Option<Arc<ClipModels>> {
+    if let Some(m) = CLIP_MODELS.lock().ok().and_then(|g| g.clone()) {
+        return Some(m);
+    }
+    if !clip_models_present(dir) {
+        return None;
+    }
+    let loaded = Arc::new(ClipModels::load(dir).ok()?);
+    CLIP_MODELS.lock().ok().map(|mut slot| slot.get_or_insert(loaded.clone()).clone()).or(Some(loaded))
 }
 
 // ----------------- INDEX -----------------

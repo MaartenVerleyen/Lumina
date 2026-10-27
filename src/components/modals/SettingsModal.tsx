@@ -316,6 +316,36 @@ export default function SettingsModal({
                   <Row label="Move to the next photo after a choice" hint="After P, X or a star rating the next photo is selected.">
                     <Switch checked={lib.autoAdvance} onChange={lib.setAutoAdvance} label="Auto-advance" />
                   </Row>
+                  <Row
+                    label="Warn about closed eyes"
+                    hint="Marks photos where someone blinks. Uses the smart search models; High also catches half-closed eyes, with a few more false alarms."
+                  >
+                    <Segmented
+                      value={settings.eyesCheck}
+                      options={[
+                        { value: "off", label: "Off" },
+                        { value: "normal", label: "Normal" },
+                        { value: "high", label: "High" },
+                      ]}
+                      onChange={(v) => updateSettings({ eyesCheck: v })}
+                    />
+                  </Row>
+                  <Row label="Warn about soft focus" hint="Marks photos whose main face is not sharp, even when the background is. High also catches slight softness.">
+                    <Segmented
+                      value={settings.focusCheck}
+                      options={[
+                        { value: "off", label: "Off" },
+                        { value: "normal", label: "Normal" },
+                        { value: "high", label: "High" },
+                      ]}
+                      onChange={(v) => updateSettings({ focusCheck: v })}
+                    />
+                  </Row>
+                  <Row label="Check this library now" hint="Measures eyes and focus for faces found earlier. New face scans do it by themselves.">
+                    <Button disabled={!hasPhotos || Boolean(lib.faceQualityProgress)} onClick={() => lib.measureFaceQuality()}>
+                      {lib.faceQualityProgress ? "Checking…" : "Check"}
+                    </Button>
+                  </Row>
                 </Group>
                 <Group title="Help">
                   <Row label="Welcome tour" hint="The short introduction from the first start.">
@@ -559,7 +589,7 @@ export default function SettingsModal({
                     label="Face models"
                     hint="InsightFace buffalo_l (SCRFD, ArcFace): free for non-commercial use only."
                   />
-                  <Row label="Smart search models" hint="CLIP ViT-B/32 and its multilingual text encoder: MIT and Apache 2.0." />
+                  <Row label="Smart search models" hint="CLIP ViT-B/32 and its multilingual text encoder: MIT and Apache 2.0. Also used to spot closed eyes." />
                   <Row label="Captions" hint="Ollama (MIT) with the model you choose; qwen3-vl is Apache 2.0." />
                   <Row label="Place names" hint="GeoNames data, CC BY 4.0. Map tiles © OpenStreetMap contributors." />
                 </Group>

@@ -189,7 +189,7 @@ pub fn sync_photo_people_from_faces(conn: &Connection, hash: &str, previous_face
 
 pub fn get_faces_for_hash(conn: &Connection, hash: &str) -> Vec<FaceInstance> {
     let mut stmt = match conn.prepare(
-        "SELECT face_id, hash, bbox_x, bbox_y, bbox_w, bbox_h, person_name, face_thumb, confidence
+        "SELECT face_id, hash, bbox_x, bbox_y, bbox_w, bbox_h, person_name, face_thumb, confidence, eyes_open, face_sharpness
          FROM photo_faces WHERE hash = ?1 ORDER BY bbox_x ASC",
     ) {
         Ok(s) => s,
@@ -207,6 +207,8 @@ pub fn get_faces_for_hash(conn: &Connection, hash: &str) -> Vec<FaceInstance> {
             person_name: row.get(6)?,
             face_thumb: row.get(7)?,
             confidence: row.get(8)?,
+            eyes_open: row.get(9)?,
+            face_sharpness: row.get(10)?,
         })
     }) {
         Ok(r) => r,

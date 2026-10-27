@@ -3,6 +3,7 @@ import { Virtualizer } from "@tanstack/react-virtual";
 import { PhotoItem } from "../../types/lumina";
 import { GridLayout, LayoutRow } from "../../utils/gridLayout";
 import { thumbSrc } from "../../utils/photoHelpers";
+import { hasClosedEyes, isSoftFocus, type CullingSettings } from "../../utils/culling";
 import {
   Crosshair,
   Flag,
@@ -16,6 +17,8 @@ import {
   XCircle,
   AlertTriangle,
   ImageOff,
+  EyeOff,
+  Focus,
 } from "lucide-react";
 
 export type { GridStyle, CardDetails } from "../../settings";
@@ -36,6 +39,7 @@ interface VirtualPhotoGridProps {
   analyzingHashes: Set<string>;
   burstGroupCounts: Map<number, number>;
   sharpestInGroup: Map<number, { hash: string; sharpness: number }>;
+  culling: CullingSettings;
   showAllBurstVersions: boolean;
   expandedBurstGroups: Set<number>;
   handlePhotoClick: (index: number, hash: string, e: React.MouseEvent) => void;
@@ -72,6 +76,7 @@ export default function VirtualPhotoGrid({
   analyzingHashes,
   burstGroupCounts,
   sharpestInGroup,
+  culling,
   showAllBurstVersions,
   expandedBurstGroups,
   handlePhotoClick,
@@ -165,6 +170,8 @@ export default function VirtualPhotoGrid({
                     burstCount={grp ? burstGroupCounts.get(grp) || 1 : 1}
                     isBurstExpanded={grp ? showAllBurstVersions || expandedBurstGroups.has(grp) : false}
                     isSharpestPick={Boolean(grp && sharpestInGroup.get(grp)?.hash === photo.hash)}
+                    eyesClosed={hasClosedEyes(photo, culling)}
+                    softFocus={isSoftFocus(photo, culling)}
                     thumbFailed={failedThumbs.has(photo.thumb_path)}
                     simpleMode={simpleMode}
                     handlePhotoClick={handlePhotoClick}
@@ -199,6 +206,8 @@ interface PhotoCardProps {
   burstCount: number;
   isBurstExpanded: boolean;
   isSharpestPick: boolean;
+  eyesClosed: boolean;
+  softFocus: boolean;
   thumbFailed: boolean;
   simpleMode: boolean;
   handlePhotoClick: (index: number, hash: string, e: React.MouseEvent) => void;
@@ -224,6 +233,8 @@ const PhotoCard = memo(function PhotoCard({
   burstCount,
   isBurstExpanded,
   isSharpestPick,
+  eyesClosed,
+  softFocus,
   thumbFailed,
   simpleMode,
   handlePhotoClick,
@@ -388,6 +399,23 @@ const PhotoCard = memo(function PhotoCard({
               title={`Linked RAW+JPEG Pair: ${photo.pair_raw_path}`}
             >
               RAW+J
+            </span>
+          )}
+
+          {eyesClosed && (
+            <span
+              className="p-1 rounded bg-rose-950/90 border border-rose-400/60 text-rose-300 backdrop-blur shadow"
+              title="Eyes closed: someone in this photo seems to blink"
+            >
+              <EyeOff className="w-3 h-3" />
+            </span>
+          )}
+          {softFocus && (
+            <span
+              className="p-1 rounded bg-orange-950/90 border border-orange-400/60 text-orange-300 backdrop-blur shadow"
+              title="Soft focus: the main face is not sharp"
+            >
+              <Focus className="w-3 h-3" />
             </span>
           )}
 

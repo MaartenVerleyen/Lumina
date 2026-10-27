@@ -65,6 +65,14 @@ export function backgroundJobsOf(lib: LibraryState): BackgroundJob[] {
       cancelLabel: "Stop",
     });
   }
+  if (lib.faceQualityProgress) {
+    jobs.push({
+      id: "face-quality",
+      label: "Checking eyes and focus",
+      completed: lib.faceQualityProgress.completed,
+      total: lib.faceQualityProgress.total,
+    });
+  }
   if (lib.semanticProgress) {
     const downloading = lib.semanticProgress.stage === "download";
     jobs.push({

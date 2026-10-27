@@ -229,7 +229,7 @@ export default function PhotoToolbar({ lib }: { lib: LibraryState }) {
                   className="w-full flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200"
                 >
                   <Trophy className="w-3.5 h-3.5 text-amber-400" />
-                  Keep sharpest of each burst
+                  Keep the best of each burst
                 </button>
               )}
             </>

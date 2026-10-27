@@ -119,6 +119,9 @@ pub fn open_global_db(app: &AppHandle) -> Result<Connection, String> {
     // and the embedding itself as little-endian f32 bytes
     let _ = conn.execute("ALTER TABLE photo_faces ADD COLUMN engine TEXT DEFAULT ''", []);
     let _ = conn.execute("ALTER TABLE photo_faces ADD COLUMN embedding_blob BLOB", []);
+    // Culling: eye opening and focus per face (NULL until measured)
+    let _ = conn.execute("ALTER TABLE photo_faces ADD COLUMN eyes_open REAL", []);
+    let _ = conn.execute("ALTER TABLE photo_faces ADD COLUMN face_sharpness REAL", []);
 
     albums::ensure_album_tables(&conn);
     // Hidden people: kept on their photos, left out of the people bar and of suggestions

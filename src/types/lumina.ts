@@ -8,6 +8,17 @@ export interface FaceInstance {
   person_name?: string | null;
   face_thumb: string;
   confidence: number;
+  // Eyes-open score (below about -0.013 the eyes look shut) and focus on the face; null until measured
+  eyes_open?: number | null;
+  face_sharpness?: number | null;
+}
+
+// Eyes and focus measured for faces found earlier (src-tauri/src/face_quality.rs)
+export interface FaceQualityProgress {
+  completed: number;
+  total: number;
+  done: boolean;
+  batch: Record<string, FaceInstance[]>;
 }
 
 export interface FaceMatchEvent {
@@ -258,7 +269,9 @@ export type SmartFilter =
   | "DUPLICATES"
   | "HAS_OCR"
   | "HAS_GPS"
-  | "STAGED";
+  | "STAGED"
+  | "EYES_CLOSED"
+  | "SOFT_FOCUS";
 
 export type OrientationFilter = "ALL" | "LANDSCAPE" | "PORTRAIT" | "SQUARE";
 

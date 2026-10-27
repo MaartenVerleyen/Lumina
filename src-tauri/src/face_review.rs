@@ -27,7 +27,7 @@ pub async fn assign_face_region_and_automatch(
         // The landmarks for alignment come from running the detector inside the box
         let bbox = (bbox_x, bbox_y, bbox_w, bbox_h);
         let embedding = models.embed_region(&img, bbox)?;
-        let _saved_face = record_face_v2(&app, &conn, &hash, &img, bbox, embedding, 1.0, Some(clean_name.clone()), "user")
+        let _saved_face = record_face_v2(&app, &conn, &hash, &img, bbox, embedding, 1.0, Some(clean_name.clone()), "user", FaceQuality::default())
             .ok_or("Failed to save the face")?;
 
         // Emit completion event without silently mutating other photos behind the user's back;

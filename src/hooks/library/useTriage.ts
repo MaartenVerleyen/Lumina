@@ -335,7 +335,7 @@ export function useTriage(core: LibraryCore, view: LibraryView) {
       );
       if (toTrash.length === 0) return;
       const ok = await confirmAction(
-        `Keep the sharpest photo of each of the ${totalBurstGroups} burst groups and stage the other ${toTrash.length} photo(s) for _Trash?\n\nNothing is deleted until you Commit. You can undo this with Ctrl+Z.`,
+        `Keep the best photo of each of the ${totalBurstGroups} burst groups (open eyes and a sharp face first, then the sharpest) and stage the other ${toTrash.length} photo(s) for _Trash?\n\nNothing is deleted until you Commit. You can undo this with Ctrl+Z.`,
         "Stage for _Trash"
       );
       if (!ok) return;
@@ -344,7 +344,7 @@ export function useTriage(core: LibraryCore, view: LibraryView) {
       const ops = toTrash.map((p) => ({ hash: p.hash, target_subfolder: "_Trash" }));
       await invoke("stage_photos_move", { ops });
       pushSnapshotUndo(
-        `Keep sharpest: stage ${toTrash.length} photo(s) for _Trash`,
+        `Keep best: stage ${toTrash.length} photo(s) for _Trash`,
         before,
         before.map((s) => ({ ...s, staged_target: "_Trash" }))
       );

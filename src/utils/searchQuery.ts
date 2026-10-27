@@ -1,3 +1,4 @@
+import { hasClosedEyes, isSoftFocus, type CullingPhoto, type CullingSettings } from "./culling.ts";
 // Search box syntax: `rating:>=4 person:anna tag:beach date:2024-06 -flag:reject "summer party"`.
 // Recognised `key:value` terms filter the photos; everything else is free text (plain or smart search).
 // A leading "-" negates a term. Values with spaces go in quotes: camera:"EOS R6". person:anna|bob = either.
@@ -87,6 +88,8 @@ export interface MatchablePhoto {
 export interface MatchContext {
   // Photos of the album with this name (case-insensitive), or undefined if there is no such album
   albumHashes?: (name: string) => Set<string> | undefined;
+  // Sensitivity of the closed-eye and focus checks (is:blinking, is:blurry)
+  culling?: CullingSettings;
 }
 
 const RAW_EXT = /\.(cr2|cr3|nef|arw|dng|orf|rw2|pef|raf)$/i;
@@ -178,6 +181,10 @@ function matchOne(p: MatchablePhoto, t: SearchTerm, ctx: MatchContext): boolean 
         case "basket": case "pinned": return Boolean(p.in_basket);
         case "pick": case "picked": return p.flag === "pick";
         case "reject": case "rejected": return p.flag === "reject";
+        case "blinking": case "closed-eyes": case "eyes-closed":
+          return hasClosedEyes(p as unknown as CullingPhoto, ctx.culling);
+        case "blurry": case "soft": case "out-of-focus":
+          return isSoftFocus(p as unknown as CullingPhoto, ctx.culling);
         default: return false;
       }
     default:

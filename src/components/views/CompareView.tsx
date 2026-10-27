@@ -2,10 +2,13 @@ import { useRef, useMemo } from "react";
 import { useWheel } from "../../hooks/useWheel";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { PhotoItem, ViewMode } from "../../types/lumina";
+import { cullScore, hasClosedEyes, isSoftFocus, DEFAULT_CULLING, type CullingSettings } from "../../utils/culling";
 import {
   ChevronLeft,
   ChevronRight,
   Columns,
+  EyeOff,
+  Focus,
   Star,
   Trophy,
   ZoomIn,
@@ -27,6 +30,7 @@ interface CompareViewProps {
   onKeepAndTrashRest: (keepHash: string, otherHashes: string[]) => Promise<void>;
   // How many photos qualified for comparing (only the first 4 are shown)
   compareCandidateCount?: number;
+  culling?: CullingSettings;
 }
 
 export default function CompareView({
@@ -43,6 +47,7 @@ export default function CompareView({
   setAutoMatchNotice,
   onKeepAndTrashRest,
   compareCandidateCount = 0,
+  culling = DEFAULT_CULLING,
 }: CompareViewProps) {
   const isPanningCompareRef = useRef<boolean>(false);
   const panStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -73,12 +78,12 @@ export default function CompareView({
       if (members.length >= 2) {
         out.push({
           groupId,
-          members: [...members].sort((a, b) => b.sharpness - a.sharpness),
+          members: [...members].sort((a, b) => cullScore(b, culling) - cullScore(a, culling)),
         });
       }
     }
     return out;
-  }, [photos]);
+  }, [photos, culling]);
 
   const currentGroupId = comparePhotos[0]?.duplicate_group ?? null;
   const currentBurstIdx = useMemo(() => {
@@ -246,6 +251,16 @@ export default function CompareView({
                   <div className="font-semibold text-zinc-200 truncate">{cp.name}</div>
                   <div className="text-[11px] font-mono text-emerald-400 flex items-center gap-1.5">
                     <span>Focus Score: {cp.sharpness}</span>
+                    {hasClosedEyes(cp, culling) && (
+                      <span className="inline-flex items-center gap-0.5 text-rose-300">
+                        • <EyeOff className="w-3 h-3" /> Eyes closed
+                      </span>
+                    )}
+                    {isSoftFocus(cp, culling) && (
+                      <span className="inline-flex items-center gap-0.5 text-orange-300">
+                        • <Focus className="w-3 h-3" /> Soft face
+                      </span>
+                    )}
                     {cp.rating > 0 && (
                       <span className="inline-flex items-center gap-0.5 text-amber-400">
                         • <Star className="w-3 h-3 fill-amber-400" /> {cp.rating}

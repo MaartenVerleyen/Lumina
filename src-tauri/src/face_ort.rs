@@ -1,6 +1,7 @@
 use crate::*;
 use ort::session::Session;
 use ort::value::Tensor;
+use std::sync::OnceLock;
 
 // ----------------- FACE ENGINE v2: SCRFD + ALIGNED ARCFACE ON ONNX RUNTIME -----------------
 // Detector: SCRFD det_10g at 640x640 (letterboxed, never squashed) with 5 facial landmarks.
@@ -17,6 +18,11 @@ pub const EMBEDDER_FILE: &str = "w600k_r50.onnx";
 // SHA-256 of the files in InsightFace's official buffalo_l release (v0.7)
 pub const DETECTOR_SHA256: &str = "5838f7fe053675b1c7a08b633df49e7af5495cee0493c7dcf6697200b85b5b91";
 pub const EMBEDDER_SHA256: &str = "4c06341c33c2ca1f86781dab0e829f88ad5b64be9fba56e56bc9ebdefc619e43";
+// Closed eyes are judged by the smart search model (CLIP) on the face: how much closer the face is to
+// "open eyes" than to "closed eyes". On a labelled set (eye_calibration test) this separated open from shut
+// eyes with an AUC of 0.96, where landmark models and a dedicated eye classifier reached 0.5-0.75.
+pub const EYES_OPEN_PROMPT: &str = "open eyes";
+pub const EYES_CLOSED_PROMPT: &str = "closed eyes";
 
 const DET_SIZE: usize = 640;
 const DET_SCORE_THRESHOLD: f32 = 0.5;
@@ -36,6 +42,10 @@ const ARCFACE_TEMPLATE: [(f32, f32); 5] = [
 pub struct FaceModels {
     detector: Mutex<Session>,
     embedder: Mutex<Session>,
+    // Optional (needs the smart search models): faces are found and named without it, only the closed-eye
+    // check is skipped. Built on first use, so installing smart search later works without a restart.
+    eyes: OnceLock<EyeScorer>,
+    models_dir: PathBuf,
     pub device: String,
 }
 
@@ -51,6 +61,15 @@ pub struct Detection {
 pub struct FaceV2 {
     pub detection: Detection,
     pub embedding: Vec<f32>,
+    pub quality: FaceQuality,
+}
+
+// How usable a face is for culling: an eyes-open score (CLIP margin; below about -0.013 the eyes look shut)
+// and focus on the face itself
+#[derive(Clone, Copy, Debug, Default)]
+pub struct FaceQuality {
+    pub eyes_open: Option<f32>,
+    pub sharpness: Option<f32>,
 }
 
 static ORT_ENV: LazyLock<Option<ort::environment::Environment>> =
@@ -89,7 +108,13 @@ impl FaceModels {
                 (d, e, format!("CPU (GPU unavailable: {gpu_err})"))
             }
         };
-        let models = FaceModels { detector: Mutex::new(detector), embedder: Mutex::new(embedder), device };
+        let models = FaceModels {
+            detector: Mutex::new(detector),
+            embedder: Mutex::new(embedder),
+            eyes: OnceLock::new(),
+            models_dir: models_dir.to_path_buf(),
+            device,
+        };
         // First DirectML run compiles shaders (~1-2 s): do it now, not on the user's first photo
         let warm = image::RgbImage::new(320, 240);
         let _ = models.detect(&DynamicImage::ImageRgb8(warm));
@@ -206,7 +231,7 @@ impl FaceModels {
         Ok(embeddings)
     }
 
-    // Detect, align and embed every face in the image
+    // Detect, align and embed every face in the image, with its eye opening and focus
     pub fn analyze(&self, img: &DynamicImage) -> Result<Vec<FaceV2>, String> {
         let detections = self.detect(img)?;
         if detections.is_empty() {
@@ -218,9 +243,86 @@ impl FaceModels {
         Ok(detections
             .into_iter()
             .zip(embeddings)
-            .map(|(detection, embedding)| FaceV2 { detection, embedding })
+            .zip(aligned.iter())
+            .map(|((detection, embedding), face)| {
+                let quality = self.quality(img, &detection, face);
+                FaceV2 { detection, embedding, quality }
+            })
             .collect())
     }
+
+    // Eyes-open score and focus for one detected face (`aligned` is its 112x112 ArcFace crop)
+    pub fn quality(&self, img: &DynamicImage, detection: &Detection, aligned: &image::RgbImage) -> FaceQuality {
+        let eyes_open = self.eye_scorer().and_then(|e| e.score(img, detection.bbox));
+        FaceQuality { eyes_open, sharpness: Some(face_sharpness(aligned)) }
+    }
+
+    #[cfg(test)]
+    pub fn can_judge_eyes(&self) -> bool {
+        self.eye_scorer().is_some()
+    }
+
+    fn eye_scorer(&self) -> Option<&EyeScorer> {
+        if let Some(e) = self.eyes.get() {
+            return Some(e);
+        }
+        let clip = clip::clip_models_if_present(&self.models_dir)?;
+        let open = clip.embed_text(EYES_OPEN_PROMPT).ok()?;
+        let closed = clip.embed_text(EYES_CLOSED_PROMPT).ok()?;
+        let _ = self.eyes.set(EyeScorer { clip, open, closed });
+        self.eyes.get()
+    }
+
+    // Eye and focus measurements for a face stored as a box: its landmarks come from the detector run inside
+    // the box (like embed_region), or the template placed in the box
+    pub fn quality_for_box(&self, img: &DynamicImage, rgb: &image::RgbImage, bbox: (f64, f64, f64, f64)) -> Result<FaceQuality, String> {
+        let landmarks = self.landmarks_for_box(img, bbox)?;
+        let aligned = align_face(rgb, &landmarks);
+        Ok(self.quality(img, &Detection { bbox, score: 0.0, landmarks }, &aligned))
+    }
+}
+
+pub struct EyeScorer {
+    clip: Arc<clip::ClipModels>,
+    open: Vec<f32>,
+    closed: Vec<f32>,
+}
+
+impl EyeScorer {
+    // The face (its box enlarged by 20%, square) through CLIP: similarity to "open eyes" minus "closed eyes"
+    fn score(&self, img: &DynamicImage, bbox: (f64, f64, f64, f64)) -> Option<f32> {
+        let (w, h) = (img.width() as f64, img.height() as f64);
+        let side = (bbox.2 * w).max(bbox.3 * h) * 1.2;
+        if side < 24.0 {
+            return None;
+        }
+        let (cx, cy) = ((bbox.0 + bbox.2 / 2.0) * w, (bbox.1 + bbox.3 / 2.0) * h);
+        let (x, y) = ((cx - side / 2.0).max(0.0), (cy - side / 2.0).max(0.0));
+        let face = img.crop_imm(x as u32, y as u32, side.min(w - x) as u32, side.min(h - y) as u32);
+        let e = self.clip.embed_image(&face).ok()?;
+        let dot = |t: &[f32]| e.iter().zip(t).map(|(a, b)| a * b).sum::<f32>();
+        Some(dot(&self.open) - dot(&self.closed))
+    }
+}
+
+// Focus on the face: variance of the Laplacian over the middle of the aligned 112x112 crop (eyes, nose,
+// mouth), so a sharp background can't hide a soft face. Scale-independent because every crop is 112 px.
+pub fn face_sharpness(aligned: &image::RgbImage) -> f32 {
+    let gray = |x: u32, y: u32| {
+        let p = aligned.get_pixel(x, y);
+        0.299 * p[0] as f32 + 0.587 * p[1] as f32 + 0.114 * p[2] as f32
+    };
+    let (mut sum, mut sum_sq, mut n) = (0f64, 0f64, 0f64);
+    for y in 30..95u32 {
+        for x in 24..88u32 {
+            let lap = gray(x - 1, y) + gray(x + 1, y) + gray(x, y - 1) + gray(x, y + 1) - 4.0 * gray(x, y);
+            sum += lap as f64;
+            sum_sq += (lap * lap) as f64;
+            n += 1.0;
+        }
+    }
+    let mean = sum / n;
+    (sum_sq / n - mean * mean) as f32
 }
 
 // Least-squares similarity transform (rotation + uniform scale + translation) mapping `src` onto `dst`.
@@ -467,9 +569,9 @@ pub fn face_thumbnail(img: &DynamicImage, bbox: (f64, f64, f64, f64)) -> image::
 }
 
 impl FaceModels {
-    // Embedding for a box the user drew: find the face's landmarks by running the detector inside the box
-    // (enlarged by 40%); if the detector finds nothing there, align on the box itself.
-    pub fn embed_region(&self, img: &DynamicImage, bbox: (f64, f64, f64, f64)) -> Result<Vec<f32>, String> {
+    // Landmarks for a box (e.g. one the user drew): the detector run inside the box (enlarged by 40%); if it
+    // finds nothing there, the template placed in the box itself. Used to embed and measure stored boxes.
+    fn landmarks_for_box(&self, img: &DynamicImage, bbox: (f64, f64, f64, f64)) -> Result<[(f32, f32); 5], String> {
         let (w, h) = (img.width() as f64, img.height() as f64);
         let pad = 0.4;
         let x0 = ((bbox.0 - bbox.2 * pad / 2.0) * w).clamp(0.0, w - 1.0);
@@ -477,9 +579,7 @@ impl FaceModels {
         let x1 = ((bbox.0 + bbox.2 * (1.0 + pad / 2.0)) * w).clamp(x0 + 1.0, w);
         let y1 = ((bbox.1 + bbox.3 * (1.0 + pad / 2.0)) * h).clamp(y0 + 1.0, h);
         let region = img.crop_imm(x0 as u32, y0 as u32, (x1 - x0) as u32, (y1 - y0) as u32);
-        let rgb = img.to_rgb8();
-
-        let landmarks = match self.detect(&region)?.into_iter().next() {
+        Ok(match self.detect(&region)?.into_iter().next() {
             // Detections are sorted by score; map the best one's landmarks back to full-image pixels
             Some(d) => d.landmarks.map(|(lx, ly)| (lx + x0 as f32, ly + y0 as f32)),
             None => {
@@ -491,8 +591,12 @@ impl FaceModels {
                 );
                 ARCFACE_TEMPLATE.map(|(tx, ty)| (bx + tx / 112.0 * side, by + ty / 112.0 * side))
             }
-        };
-        let aligned = align_face(&rgb, &landmarks);
+        })
+    }
+
+    pub fn embed_region(&self, img: &DynamicImage, bbox: (f64, f64, f64, f64)) -> Result<Vec<f32>, String> {
+        let landmarks = self.landmarks_for_box(img, bbox)?;
+        let aligned = align_face(&img.to_rgb8(), &landmarks);
         self.embed(&[aligned])?.into_iter().next().ok_or_else(|| "no embedding produced".to_string())
     }
 }
@@ -510,6 +614,7 @@ pub fn record_face_v2(
     score: f64,
     person_name: Option<String>,
     source: &str,
+    quality: FaceQuality,
 ) -> Option<FaceInstance> {
     let mut previous_person: Option<String> = None;
     let (face_id, resolved_person_name) =
@@ -530,8 +635,8 @@ pub fn record_face_v2(
     let face_thumb_str = face_thumb_path.to_string_lossy().to_string();
 
     let _ = conn.execute(
-        "INSERT INTO photo_faces (face_id, hash, bbox_x, bbox_y, bbox_w, bbox_h, person_name, face_thumb, embedding, embedding_blob, engine, confidence, source)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, '[]', ?9, ?10, ?11, ?12)
+        "INSERT INTO photo_faces (face_id, hash, bbox_x, bbox_y, bbox_w, bbox_h, person_name, face_thumb, embedding, embedding_blob, engine, confidence, source, eyes_open, face_sharpness)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, '[]', ?9, ?10, ?11, ?12, ?13, ?14)
          ON CONFLICT(face_id) DO UPDATE SET
             bbox_x = excluded.bbox_x,
             bbox_y = excluded.bbox_y,
@@ -543,7 +648,9 @@ pub fn record_face_v2(
             embedding_blob = excluded.embedding_blob,
             engine = excluded.engine,
             confidence = excluded.confidence,
-            source = excluded.source",
+            source = excluded.source,
+            eyes_open = COALESCE(excluded.eyes_open, photo_faces.eyes_open),
+            face_sharpness = COALESCE(excluded.face_sharpness, photo_faces.face_sharpness)",
         params![
             face_id,
             hash,
@@ -556,7 +663,9 @@ pub fn record_face_v2(
             embedding_to_blob(&embedding),
             FACE_ENGINE_V2,
             score,
-            source
+            source,
+            quality.eyes_open,
+            quality.sharpness
         ],
     );
     if let Ok(mut cache) = FACE_EMBEDDING_CACHE.lock() {
@@ -585,5 +694,7 @@ pub fn record_face_v2(
         person_name: resolved_person_name,
         face_thumb: face_thumb_str,
         confidence: score,
+        eyes_open: quality.eyes_open.map(f64::from),
+        face_sharpness: quality.sharpness.map(f64::from),
     })
 }

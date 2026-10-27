@@ -41,6 +41,7 @@ mod face_match;
 mod prepare;
 mod import;
 mod watch;
+mod face_quality;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -91,6 +92,9 @@ pub struct FaceInstance {
     pub person_name: Option<String>,
     pub face_thumb: String,
     pub confidence: f64,
+    // Eye opening (about 0.3+ open, under 0.15 shut) and focus on the face; None for faces not measured yet
+    pub eyes_open: Option<f64>,
+    pub face_sharpness: Option<f64>,
 }
 
 #[derive(Serialize, Clone)]
@@ -425,6 +429,7 @@ pub fn run() {
             import::start_import,
             import::cancel_import,
             watch::watch_library,
+            face_quality::measure_face_quality,
             system::copy_image_to_clipboard,
             decode::ensure_high_res_preview,
             system::close_splashscreen

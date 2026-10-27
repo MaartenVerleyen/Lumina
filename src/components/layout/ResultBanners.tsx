@@ -46,7 +46,7 @@ export default function ResultBanners({ lib }: { lib: LibraryState }) {
               onClick={lib.handleKeepSharpestInAllGroups}
               className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold shadow transition"
             >
-              Keep Sharpest & Stage Rest for _Trash
+              Keep Best & Stage Rest for _Trash
             </button>
           </div>
         )}

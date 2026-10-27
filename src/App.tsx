@@ -530,6 +530,8 @@ export default function App() {
               duplicatePhotosCount={lib.duplicatePhotosCount}
               gpsPhotosCount={lib.gpsPhotosCount}
               stagedPhotosCount={lib.stagedPhotos.length}
+              eyesClosedCount={lib.eyesClosedCount}
+              softFocusCount={lib.softFocusCount}
               folderTree={lib.folderTree}
               expandedFolders={lib.expandedFolders}
               setExpandedFolders={lib.setExpandedFolders}
@@ -611,6 +613,7 @@ export default function App() {
               setAutoMatchNotice={lib.setAutoMatchNotice}
               onKeepAndTrashRest={lib.handleKeepAndTrashRest}
               compareCandidateCount={lib.compareCandidateCount}
+              culling={lib.culling}
             />
           ) : lib.photos.length === 0 ? (
             <NoLibrary lib={lib} gridContainerRef={gridContainerRef} />
@@ -629,6 +632,7 @@ export default function App() {
               analyzingHashes={lib.analyzingHashes}
               burstGroupCounts={lib.burstGroupCounts}
               sharpestInGroup={lib.sharpestInGroup}
+              culling={lib.culling}
               showAllBurstVersions={lib.showAllBurstVersions}
               expandedBurstGroups={lib.expandedBurstGroups}
               simpleMode={lib.simpleMode}

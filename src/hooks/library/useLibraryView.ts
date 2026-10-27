@@ -6,6 +6,8 @@ import { diskPathOf, RAW_OR_HEIC_NAME } from "../../utils/rawPairs";
 import { matchesTerms } from "../../utils/searchQuery";
 import { matchesPeopleExpr } from "../../utils/peopleQuery";
 import { NAME_COLLATOR, TEXT_COLLATOR, compareStrings, searchTextOf } from "./shared";
+import { cullScore, hasClosedEyes, isSoftFocus } from "../../utils/culling";
+import { cullingOf, useSettings } from "../../settings";
 import type { Collections } from "./useCollections";
 import type { SmartSearch } from "./useSmartSearch";
 import type { LibraryCore } from "./core";
@@ -44,6 +46,10 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
     setExpandedFolders,
   } = filters;
   const { tripOfHash, albumContext, albumSets } = collections;
+  // Closed eyes and soft focus, at the sensitivity chosen in Settings
+  const settings = useSettings();
+  const culling = useMemo(() => cullingOf(settings), [settings.eyesCheck, settings.focusCheck]);
+  const matchContext = useMemo(() => ({ ...albumContext, culling }), [albumContext, culling]);
   const { semanticScores, setSemanticResult } = smart;
   const [isLoupeOpen, setIsLoupeOpen] = useState<boolean>(false);
   // Synchronized Compare Mode State
@@ -87,6 +93,8 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
     burstGroupCounts,
     totalBurstGroups,
     duplicatePhotosCount,
+    eyesClosedCount,
+    softFocusCount,
   } = useMemo(() => {
     const staged: PhotoItem[] = [];
     let gps = 0;
@@ -95,6 +103,9 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
     let rejects = 0;
     let basket = 0;
     let dupCount = 0;
+    let eyesClosed = 0;
+    let soft = 0;
+    // The best photo of each burst: open eyes, then a sharp main face, then overall sharpness
     const best = new Map<number, { hash: string; sharpness: number }>();
     const counts = new Map<number, number>();
 
@@ -106,13 +117,16 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
       if (p.flag === "pick") picks++;
       else if (p.flag === "reject") rejects++;
       if (p.in_basket) basket++;
+      if (hasClosedEyes(p, culling)) eyesClosed++;
+      if (isSoftFocus(p, culling)) soft++;
 
       if (p.duplicate_group && p.subfolder !== "_Trash") {
         dupCount++;
         counts.set(p.duplicate_group, (counts.get(p.duplicate_group) || 0) + 1);
         const cur = best.get(p.duplicate_group);
-        if (!cur || p.sharpness > cur.sharpness) {
-          best.set(p.duplicate_group, { hash: p.hash, sharpness: p.sharpness });
+        const score = cullScore(p, culling);
+        if (!cur || score > cur.sharpness) {
+          best.set(p.duplicate_group, { hash: p.hash, sharpness: score });
         }
       }
     }
@@ -128,8 +142,10 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
       burstGroupCounts: counts,
       totalBurstGroups: counts.size,
       duplicatePhotosCount: dupCount,
+      eyesClosedCount: eyesClosed,
+      softFocusCount: soft,
     };
-  }, [photos]);
+  }, [photos, culling]);
 
   const visiblePhotos = useMemo(() => {
     const q = semanticScores ? "" : parsedSearch.text.toLowerCase();
@@ -148,6 +164,8 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
       if (smartFilter === "HAS_OCR" && !p.ocr_text) return false;
       if (smartFilter === "HAS_GPS" && (p.latitude == null || p.longitude == null)) return false;
       if (smartFilter === "STAGED" && !p.staged_target) return false;
+      if (smartFilter === "EYES_CLOSED" && !hasClosedEyes(p, culling)) return false;
+      if (smartFilter === "SOFT_FOCUS" && !isSoftFocus(p, culling)) return false;
 
       if (selectedPeriodRange) {
         const [startDay, endDay] = selectedPeriodRange;
@@ -188,7 +206,7 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
       if (activeTag !== "ALL" && !p.tags.includes(activeTag)) return false;
 
       if (q && !searchTextOf(p).includes(q)) return false;
-      if (terms.length > 0 && !matchesTerms(p, terms, albumContext)) return false;
+      if (terms.length > 0 && !matchesTerms(p, terms, matchContext)) return false;
       if (albumFilter && !albumFilter.has(p.hash)) return false;
       if (importedHashes && !importedHashes.has(p.hash)) return false;
       if (semanticScores && !semanticScores.has(p.hash)) return false;
@@ -203,7 +221,7 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
     // `filtered` is already a fresh array: sort it in place
     const sorted = filtered.sort((a, b) => {
       if (smartFilter === "DUPLICATES") {
-        return (a.duplicate_group || 0) - (b.duplicate_group || 0) || b.sharpness - a.sharpness;
+        return (a.duplicate_group || 0) - (b.duplicate_group || 0) || cullScore(b, culling) - cullScore(a, culling);
       }
       switch (sortBy) {
         case "NAME_ASC":
@@ -264,7 +282,7 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
       emittedGroups.add(grp);
 
       const members = groupMembers.get(grp) || [p];
-      const orderedMembers = [...members].sort((a, b) => b.sharpness - a.sharpness);
+      const orderedMembers = [...members].sort((a, b) => cullScore(b, culling) - cullScore(a, culling));
 
       if (showAllBurstVersions || expandedBurstGroups.has(grp)) {
         finalDisplay.push(...orderedMembers);
@@ -285,7 +303,8 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
     tripOfHash,
     activeTag,
     parsedSearch,
-    albumContext,
+    matchContext,
+    culling,
     albumSets,
     activeAlbumId,
     importedHashes,
@@ -316,7 +335,7 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
         .filter(
           (p) => p.duplicate_group === activePhoto.duplicate_group && p.subfolder !== "_Trash"
         )
-        .sort((a, b) => b.sharpness - a.sharpness)
+        .sort((a, b) => cullScore(b, culling) - cullScore(a, culling))
         .slice(0, 4);
     }
     const idx = activeHash ? visiblePhotos.findIndex((p) => p.hash === activeHash) : 0;
@@ -421,6 +440,9 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
     burstGroupCounts,
     totalBurstGroups,
     duplicatePhotosCount,
+    eyesClosedCount,
+    softFocusCount,
+    culling,
     visiblePhotos,
     compareCandidateCount,
     comparePhotos,

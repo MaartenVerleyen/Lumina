@@ -970,3 +970,80 @@ fn import_groups_pairs_and_finds_duplicates() {
     assert!(!groups[0].1[0].1, "its RAW is not");
     let _ = fs::remove_dir_all(card.parent().unwrap());
 }
+
+// Closed-eye and face-focus calibration (manual), through the app's own face pipeline (FaceModels::analyze).
+// Folders: open eyes, closed eyes (only each photo's largest face counts there: others may be looking on),
+// and optionally sharp and blurred copies of the same photos for face focus.
+// PowerShell: $env:LUMINA_EYES_OPEN="..."; $env:LUMINA_EYES_CLOSED="..."; [$env:LUMINA_SHARP="..."; $env:LUMINA_SOFT="..."]
+//             cargo test --lib eye_calibration -- --ignored --nocapture
+#[test]
+#[ignore]
+fn eye_calibration() {
+    let models_dir = std::env::var("LUMINA_MODELS")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from(std::env::var("LOCALAPPDATA").unwrap()).join(prepare::APP_IDENTIFIER).join("models"));
+    let models = FaceModels::load(&models_dir).expect("face models");
+    assert!(models.can_judge_eyes(), "the closed-eye check needs the smart search models");
+    let faces_in = |dir: &str, largest_only: bool| -> Vec<FaceQuality> {
+        let mut out = Vec::new();
+        for path in WalkDir::new(dir).into_iter().flatten().map(|e| e.into_path()) {
+            if !path.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("jpg")) {
+                continue;
+            }
+            let Ok(img) = open_and_orient_image(&path) else { continue };
+            let Ok(mut faces) = models.analyze(&img) else { continue };
+            faces.retain(|f| (f.detection.bbox.2 * img.width() as f64).max(f.detection.bbox.3 * img.height() as f64) >= 60.0);
+            if largest_only {
+                faces.sort_by(|a, b| (b.detection.bbox.2 * b.detection.bbox.3).partial_cmp(&(a.detection.bbox.2 * a.detection.bbox.3)).unwrap());
+                faces.truncate(1);
+            }
+            out.extend(faces.into_iter().map(|f| f.quality));
+        }
+        out
+    };
+    let report = |name: &str, good: Vec<f32>, bad: Vec<f32>| {
+        let auc = good.iter().map(|g| bad.iter().map(|b| if g > b { 1.0 } else if g == b { 0.5 } else { 0.0 }).sum::<f64>()).sum::<f64>()
+            / (good.len() * bad.len()).max(1) as f64;
+        let q = |v: &[f32], p: f64| {
+            let mut v = v.to_vec();
+            v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            v.get(((v.len() as f64 - 1.0) * p).round() as usize).copied().unwrap_or(f32::NAN)
+        };
+        println!("{name}: AUC {auc:.3}");
+        for (label, v) in [("good", &good), ("bad", &bad)] {
+            println!(
+                "  {label} n={} p05 {:.4} p25 {:.4} median {:.4} p75 {:.4} p95 {:.4}",
+                v.len(),
+                q(v, 0.05),
+                q(v, 0.25),
+                q(v, 0.5),
+                q(v, 0.75),
+                q(v, 0.95)
+            );
+        }
+    };
+    if let (Ok(open), Ok(closed)) = (std::env::var("LUMINA_EYES_OPEN"), std::env::var("LUMINA_EYES_CLOSED")) {
+        let o: Vec<f32> = faces_in(&open, false).iter().filter_map(|q| q.eyes_open).collect();
+        let c: Vec<f32> = faces_in(&closed, true).iter().filter_map(|q| q.eyes_open).collect();
+        for t in [-0.009f32, -0.011, -0.013, -0.015] {
+            println!(
+                "eyes threshold {t}: {:.1}% of open faces flagged, {:.1}% of closed faces caught",
+                o.iter().filter(|v| **v < t).count() as f64 * 100.0 / o.len().max(1) as f64,
+                c.iter().filter(|v| **v < t).count() as f64 * 100.0 / c.len().max(1) as f64
+            );
+        }
+        report("eyes open score", o, c);
+    }
+    if let (Ok(sharp), Ok(soft)) = (std::env::var("LUMINA_SHARP"), std::env::var("LUMINA_SOFT")) {
+        let s: Vec<f32> = faces_in(&sharp, false).iter().filter_map(|q| q.sharpness).collect();
+        let b: Vec<f32> = faces_in(&soft, false).iter().filter_map(|q| q.sharpness).collect();
+        for t in [20.0f32, 40.0, 60.0, 80.0, 120.0] {
+            println!(
+                "focus threshold {t}: {:.1}% of sharp faces flagged, {:.1}% of soft faces caught",
+                s.iter().filter(|v| **v < t).count() as f64 * 100.0 / s.len().max(1) as f64,
+                b.iter().filter(|v| **v < t).count() as f64 * 100.0 / b.len().max(1) as f64
+            );
+        }
+        report("face sharpness", s, b);
+    }
+}

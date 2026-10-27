@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
 import type { ImportPattern } from "./types/lumina";
+import type { CheckLevel, CullingSettings } from "./utils/culling";
 
 // Lumina's settings in one place: typed, validated, saved as one localStorage entry and readable from any
 // component with useSettings(). Window layout (pane sizes, open tab) is remembered separately (app/layout.ts).
@@ -19,6 +20,9 @@ export interface Settings {
   importSkipDuplicates: boolean;
   // Rescan quietly when photos in the open library change outside Lumina
   watchLibrary: boolean;
+  // Culling warnings: closed eyes and a soft main face
+  eyesCheck: CheckLevel;
+  focusCheck: CheckLevel;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -31,6 +35,8 @@ export const DEFAULT_SETTINGS: Settings = {
   offerImportOnCard: true,
   importSkipDuplicates: true,
   watchLibrary: true,
+  eyesCheck: "normal",
+  focusCheck: "normal",
 };
 
 const SETTINGS_KEY = "lumina_settings";
@@ -53,6 +59,8 @@ const VALIDATORS: { [K in keyof Settings]: (v: unknown) => v is Settings[K] } = 
   offerImportOnCard: isBool,
   importSkipDuplicates: isBool,
   watchLibrary: isBool,
+  eyesCheck: oneOf("off", "normal", "high"),
+  focusCheck: oneOf("off", "normal", "high"),
 };
 
 // Saved settings over the defaults, field by field: an unknown or invalid value falls back to its default.
@@ -109,4 +117,8 @@ function subscribe(listener: () => void) {
 
 export function useSettings(): Settings {
   return useSyncExternalStore(subscribe, getSettings);
+}
+
+export function cullingOf(s: Settings): CullingSettings {
+  return { eyes: s.eyesCheck, focus: s.focusCheck };
 }

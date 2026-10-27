@@ -5,6 +5,8 @@ import {
   Camera,
   ChevronDown,
   ChevronRight,
+  EyeOff,
+  Focus,
   FileText,
   Flag,
   Folder,
@@ -39,6 +41,8 @@ interface LeftSidebarProps {
   duplicatePhotosCount: number;
   gpsPhotosCount: number;
   stagedPhotosCount: number;
+  eyesClosedCount: number;
+  softFocusCount: number;
   folderTree: { rootCount: number; nodes: FolderTreeNode[] };
   expandedFolders: Set<string>;
   setExpandedFolders: React.Dispatch<React.SetStateAction<Set<string>>>;
@@ -78,6 +82,8 @@ function LeftSidebar({
   duplicatePhotosCount,
   gpsPhotosCount,
   stagedPhotosCount,
+  eyesClosedCount,
+  softFocusCount,
   folderTree,
   expandedFolders,
   setExpandedFolders,
@@ -296,6 +302,28 @@ function LeftSidebar({
       icon: <MapPin className="w-3.5 h-3.5 text-emerald-400" />,
       hideInSimple: false,
     },
+    ...(eyesClosedCount > 0
+      ? [
+          {
+            id: "EYES_CLOSED",
+            label: "Eyes Closed",
+            count: eyesClosedCount,
+            icon: <EyeOff className="w-3.5 h-3.5 text-rose-400" />,
+            hideInSimple: false,
+          },
+        ]
+      : []),
+    ...(softFocusCount > 0
+      ? [
+          {
+            id: "SOFT_FOCUS",
+            label: "Out of Focus",
+            count: softFocusCount,
+            icon: <Focus className="w-3.5 h-3.5 text-orange-400" />,
+            hideInSimple: false,
+          },
+        ]
+      : []),
     ...(stagedPhotosCount > 0
       ? [
           {
