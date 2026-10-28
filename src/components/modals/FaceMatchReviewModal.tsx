@@ -21,6 +21,7 @@ import {
   ScanFace,
   ShieldCheck,
   Sparkles,
+  Star,
   User,
   UserMinus,
   Users,
@@ -32,11 +33,13 @@ interface FaceMatchReviewModalProps {
   onShowPhotos?: (person: string) => void;
   onRenamePerson?: (oldName: string, newName: string) => Promise<string | null>;
   onSetPersonHidden?: (name: string, hidden: boolean) => Promise<void>;
+  onSetPersonStarred?: (name: string, starred: boolean) => Promise<void>;
   isOpen: boolean;
   initialPerson: string | null;
   onClose: () => void;
   people: PersonItem[];
   pendingCounts: Record<string, number>;
+  reducePendingCount: (person: string, by: number) => void;
   setPhotos: React.Dispatch<React.SetStateAction<PhotoItem[]>>;
   refreshPeople: (currentFolder?: string, skipPendingScan?: boolean) => Promise<void>;
   folder: string;
@@ -60,11 +63,13 @@ export default function FaceMatchReviewModal({
   onShowPhotos,
   onRenamePerson,
   onSetPersonHidden,
+  onSetPersonStarred,
   isOpen,
   initialPerson,
   onClose,
   people,
   pendingCounts,
+  reducePendingCount,
   setPhotos,
   refreshPeople,
   folder,
@@ -262,13 +267,14 @@ export default function FaceMatchReviewModal({
           ]);
         }
         syncUpdatedFacesToPhotos(updatedFacesMap);
+        reducePendingCount(person, affectedItems.length);
         await refreshPeople(undefined, true);
       } catch (err) {
         restoreCandidates(affectedItems);
         setActionError(`Could not confirm ${faceIds.length} face(s) as "${person}": ${String(err)}`);
       }
     },
-    [listPerson, isLoading, candidates, syncUpdatedFacesToPhotos, refreshPeople]
+    [listPerson, isLoading, candidates, syncUpdatedFacesToPhotos, refreshPeople, reducePendingCount]
   );
 
   // Deny 1 or more pending candidates WITHOUT triggering a full re-scan on every click!
@@ -301,13 +307,14 @@ export default function FaceMatchReviewModal({
             { action: "deny", person, candidates: affectedItems },
           ]);
         }
+        reducePendingCount(person, affectedItems.length);
         await refreshPeople(undefined, true);
       } catch (err) {
         restoreCandidates(affectedItems);
         setActionError(`Could not deny ${faceIds.length} face(s) for "${person}": ${String(err)}`);
       }
     },
-    [listPerson, isLoading, candidates, refreshPeople]
+    [listPerson, isLoading, candidates, refreshPeople, reducePendingCount]
   );
 
   function toggleSelected(faceId: string) {
@@ -669,7 +676,11 @@ export default function FaceMatchReviewModal({
               Confirmed People ({people.length})
             </span>
 
-            {[...people.filter((p) => !p.hidden), ...people.filter((p) => p.hidden)].map((p, i, list) => {
+            {[
+              ...people.filter((p) => !p.hidden && p.starred),
+              ...people.filter((p) => !p.hidden && !p.starred),
+              ...people.filter((p) => p.hidden),
+            ].map((p, i, list) => {
               const isSelected = view === "person" && p.name.toLowerCase() === activePerson.toLowerCase();
               const pending = pendingCounts[p.name] || 0;
               const menuOpen = personMenu?.name === p.name;
@@ -682,30 +693,82 @@ export default function FaceMatchReviewModal({
                   loadDataForPerson(result, statusTab);
                 }
               };
+              // The row is a flex line (person, pill, ⋯) so nothing overlaps; hidden people are dimmed on their
+              // content only, as opacity on the wrapper would trap the menu beneath the rows that follow
               return (
-                <div key={p.name} className={`relative ${p.hidden ? "opacity-60" : ""}`}>
+                <div key={p.name} className="relative">
                   {firstHidden && (
                     <span className="block text-[11px] font-bold text-zinc-600 uppercase tracking-wider px-2 pt-2 pb-1">
                       Hidden
                     </span>
                   )}
-                  {(onRenamePerson || onSetPersonHidden) && (
+                  <div
+                    className={`flex items-center gap-1 pr-1 rounded-xl border text-xs transition ${
+                      isSelected
+                        ? "bg-indigo-600/20 text-indigo-200 border-indigo-500/40 shadow-sm"
+                        : "hover:bg-zinc-900 text-zinc-300 border-transparent"
+                    }`}
+                  >
                     <button
                       onClick={() => {
-                        setPersonMenu(menuOpen ? null : { name: p.name, mode: "menu" });
-                        setPersonMenuInput("");
+                        setView("person");
+                        loadDataForPerson(p.name, statusTab);
                       }}
-                      className="absolute right-1 top-1 z-10 px-1.5 py-0.5 rounded text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 text-xs"
-                      aria-label={`Options for ${p.name}`}
-                      title="Rename, merge or hide"
+                      className={`flex-1 min-w-0 flex items-center gap-2.5 p-2 text-left ${p.hidden ? "opacity-60" : ""}`}
                     >
-                      ⋯
+                      {p.cover_thumb ? (
+                        <img
+                          src={convertFileSrc(p.cover_thumb)}
+                          alt={p.name}
+                          className="w-8 h-8 rounded-full object-cover border border-zinc-700 shrink-0"
+                        />
+                      ) : (
+                        <div className="w-8 h-8 rounded-full bg-zinc-800 flex items-center justify-center shrink-0">
+                          <User className="w-4 h-4 text-zinc-400" />
+                        </div>
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <div className="font-semibold capitalize truncate flex items-center gap-1">
+                          <span className="truncate">{p.name}</span>
+                          {p.starred && <Star className="w-3 h-3 text-amber-300 fill-current shrink-0" aria-label="Starred" />}
+                        </div>
+                        <div className="text-[11px] text-zinc-500 font-mono">{p.photo_count} confirmed</div>
+                      </div>
+                      {pending > 0 && (
+                        <span className="px-2 py-0.5 rounded-full bg-amber-500/20 border border-amber-400/40 text-amber-300 font-mono text-[11px] font-bold shrink-0">
+                          +{pending}?
+                        </span>
+                      )}
                     </button>
-                  )}
+                    {(onRenamePerson || onSetPersonHidden || onSetPersonStarred) && (
+                      <button
+                        onClick={() => {
+                          setPersonMenu(menuOpen ? null : { name: p.name, mode: "menu" });
+                          setPersonMenuInput("");
+                        }}
+                        className="shrink-0 px-1.5 py-0.5 rounded text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 text-xs"
+                        aria-label={`Options for ${p.name}`}
+                        title="Star, rename, merge or hide"
+                      >
+                        ⋯
+                      </button>
+                    )}
+                  </div>
                   {menuOpen && personMenu && (
-                    <div className="absolute right-1 top-7 z-20 w-56 bg-raised border border-zinc-700 rounded-lg shadow-2xl p-1 text-xs">
+                    <div className="absolute right-1 top-full mt-1 z-30 w-56 bg-raised border border-zinc-700 rounded-lg shadow-2xl p-1 text-xs">
                       {personMenu.mode === "menu" ? (
                         <>
+                          {onSetPersonStarred && !p.hidden && (
+                            <button
+                              onClick={() => {
+                                onSetPersonStarred(p.name, !p.starred);
+                                setPersonMenu(null);
+                              }}
+                              className="w-full text-left px-2 py-1.5 rounded hover:bg-zinc-800 text-zinc-200"
+                            >
+                              {p.starred ? "Unstar" : "Star (Best of focuses on them)"}
+                            </button>
+                          )}
                           {onRenamePerson && (
                             <button
                               onClick={() => {
@@ -781,43 +844,6 @@ export default function FaceMatchReviewModal({
                       )}
                     </div>
                   )}
-                <button
-                  onClick={() => {
-                    setView("person");
-                    loadDataForPerson(p.name, statusTab);
-                  }}
-                  className={`w-full flex items-center justify-between p-2 rounded-xl text-xs transition ${
-                    isSelected
-                      ? "bg-indigo-600/20 text-indigo-200 border border-indigo-500/40 shadow-sm"
-                      : "hover:bg-zinc-900 text-zinc-300 border border-transparent"
-                  }`}
-                >
-                  <div className="flex items-center gap-2.5 truncate">
-                    {p.cover_thumb ? (
-                      <img
-                        src={convertFileSrc(p.cover_thumb)}
-                        alt={p.name}
-                        className="w-8 h-8 rounded-full object-cover border border-zinc-700 shrink-0"
-                      />
-                    ) : (
-                      <div className="w-8 h-8 rounded-full bg-zinc-800 flex items-center justify-center shrink-0">
-                        <User className="w-4 h-4 text-zinc-400" />
-                      </div>
-                    )}
-                    <div className="text-left truncate">
-                      <div className="font-semibold capitalize truncate">{p.name}</div>
-                      <div className="text-[11px] text-zinc-500 font-mono">
-                        {p.photo_count} confirmed
-                      </div>
-                    </div>
-                  </div>
-
-                  {pending > 0 && (
-                    <span className="px-2 py-0.5 rounded-full bg-amber-500/20 border border-amber-400/40 text-amber-300 font-mono text-[11px] font-bold shrink-0 mr-5">
-                      +{pending}?
-                    </span>
-                  )}
-                </button>
                 </div>
               );
             })}

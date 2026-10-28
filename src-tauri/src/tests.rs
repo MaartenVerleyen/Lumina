@@ -22,6 +22,79 @@ fn normalize_date_rejects_garbage() {
     assert_eq!(normalize_date_str("not a date at all"), "");
 }
 
+#[test]
+fn file_names_with_a_date_and_time() {
+    let dt = |n: &str| date_from_filename(n).and_then(|d| d.1);
+    assert_eq!(dt("IMG_20230615_183000.jpg").as_deref(), Some("2023-06-15 18:30:00"));
+    assert_eq!(dt("PXL_20230615_183000123.jpg").as_deref(), Some("2023-06-15 18:30:00"));
+    assert_eq!(dt("Screenshot_2023-06-15-18-30-00.png").as_deref(), Some("2023-06-15 18:30:00"));
+    assert_eq!(dt("2023-06-15 18.30.00.jpg").as_deref(), Some("2023-06-15 18:30:00"));
+    assert_eq!(dt("20230615183000.jpg").as_deref(), Some("2023-06-15 18:30:00"));
+}
+
+#[test]
+fn file_names_with_only_a_date() {
+    assert_eq!(date_from_filename("IMG-20230615-WA0001.jpg"), Some(("2023-06-15".into(), None)));
+    assert_eq!(date_from_filename("Holiday 2023-06-15.jpg"), Some(("2023-06-15".into(), None)));
+}
+
+#[test]
+fn copied_photo_without_exif_gets_its_modification_time() {
+    // A copy is created now but keeps the original's modification time (2020-06-15 12:00 UTC)
+    let dir = std::env::temp_dir().join(format!("lumina-date-test-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("pasted.jpg");
+    let file = std::fs::File::create(&path).unwrap();
+    file.set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_592_222_400)).unwrap();
+    drop(file);
+    let meta = std::fs::metadata(&path).unwrap();
+    let date = fallback_photo_date(&path, Some(&meta));
+    // Local time: 12:00 UTC is still 15 June in every time zone between UTC-12 and UTC+11
+    assert!(date.starts_with("2020-06-15 "), "{date}");
+    let old = format_system_time_iso(meta.created().unwrap());
+    assert!(is_old_creation_time_date(&path, &old, &meta));
+    assert!(!is_old_creation_time_date(&path, &date, &meta));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn near_duplicates_need_a_close_fingerprint_and_agreeing_clip_vectors() {
+    use crate::scan::{group_near_duplicates, DupCandidate};
+    let unit = |angle: f32| vec![angle.cos(), angle.sin()];
+    let (same_scene, also_same, other_scene) = (unit(0.0), unit(0.3), unit(1.2));
+    fn item(dhash: u64, clip: Option<&Vec<f32>>) -> DupCandidate<'_> {
+        DupCandidate { dhash: Some(dhash), loose: false, clip: clip.map(|v| v.as_slice()) }
+    }
+    let groups = group_near_duplicates(&[
+        item(0xff00, Some(&same_scene)),
+        // 2 bits apart and CLIP agrees (cos 0.3 = 0.955): same group
+        item(0xff03, Some(&also_same)),
+        // 2 bits apart, but CLIP sees another scene (cos 1.2 = 0.36): not grouped
+        item(0xff0c, Some(&other_scene)),
+        // Without a CLIP vector the fingerprint decides
+        item(0xff30, None),
+        // Fingerprint too far (16 bits)
+        item(0x00ff, Some(&same_scene)),
+    ]);
+    assert_eq!(groups, vec![Some(1), Some(1), None, Some(1), None]);
+
+    // Saved images (no camera) 10 bits apart: grouped only when CLIP confirms
+    fn loose(dhash: u64, clip: Option<&Vec<f32>>) -> DupCandidate<'_> {
+        DupCandidate { loose: true, ..item(dhash, clip) }
+    }
+    let confirmed = group_near_duplicates(&[loose(0, Some(&same_scene)), loose(0x3ff, Some(&also_same))]);
+    assert_eq!(confirmed, vec![Some(1), Some(1)]);
+    let unconfirmed = group_near_duplicates(&[loose(0, None), loose(0x3ff, None)]);
+    assert_eq!(unconfirmed, vec![None, None]);
+}
+
+#[test]
+fn file_names_without_a_date() {
+    for name in ["DSC01234.jpg", "1698412345678.jpg", "IMG_1234.HEIC", "photo 2023.jpg", "20231399.jpg", "2023-06_15.jpg"] {
+        assert_eq!(date_from_filename(name), None, "{name}");
+    }
+}
+
 // ----------------- CLOCK SHIFT -----------------
 
 #[test]
@@ -825,11 +898,11 @@ fn album_names_are_unique_ignoring_case_and_members_are_not_duplicated() {
 fn renaming_a_person_onto_an_existing_name_merges_them() {
     let mut conn = Connection::open_in_memory().unwrap();
     conn.execute_batch(
-        "CREATE TABLE people (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL, cover_face_thumb TEXT DEFAULT '', hidden INTEGER DEFAULT 0);
+        "CREATE TABLE people (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL, cover_face_thumb TEXT DEFAULT '', hidden INTEGER DEFAULT 0, starred INTEGER DEFAULT 0);
          CREATE TABLE photo_people (hash TEXT, person_name TEXT, PRIMARY KEY (hash, person_name));
          CREATE TABLE photo_faces (face_id TEXT PRIMARY KEY, hash TEXT, person_name TEXT);
          CREATE TABLE face_rejections (face_id TEXT NOT NULL, person_name TEXT NOT NULL, PRIMARY KEY (face_id, person_name));
-         INSERT INTO people (name, cover_face_thumb) VALUES ('anna', 'a.jpg'), ('Anna Smith', '');
+         INSERT INTO people (name, cover_face_thumb, starred) VALUES ('anna', 'a.jpg', 1), ('Anna Smith', '', 0);
          INSERT INTO photo_people VALUES ('h1', 'anna'), ('h2', 'anna'), ('h2', 'Anna Smith');
          INSERT INTO photo_faces VALUES ('f1', 'h1', 'anna'), ('f2', 'h2', 'Anna Smith');
          INSERT INTO face_rejections VALUES ('f9', 'anna');",
@@ -858,6 +931,9 @@ fn renaming_a_person_onto_an_existing_name_merges_them() {
         )
         .unwrap();
     assert_eq!(leftovers, 0);
+    // The star of the merged-away person carries over
+    let starred: i64 = conn.query_row("SELECT starred FROM people", [], |r| r.get(0)).unwrap();
+    assert_eq!(starred, 1);
 
     // A capitalisation-only rename is a rename, not a merge
     people::rename_person_in_db(&mut conn, "Anna Smith", "ANNA SMITH").unwrap();

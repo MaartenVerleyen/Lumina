@@ -11,7 +11,7 @@ pub async fn get_people(app: AppHandle, root_folder: Option<String>) -> Result<V
             .prepare(
                 "SELECT p.id, p.name, COUNT(DISTINCT pp.hash) as cnt,
                         COALESCE(NULLIF(p.cover_face_thumb, ''), '') as face_crop,
-                        MIN(pp.hash) as fallback_hash, COALESCE(p.hidden, 0)
+                        MIN(pp.hash) as fallback_hash, COALESCE(p.hidden, 0), COALESCE(p.starred, 0)
                  FROM people p
                  JOIN photo_people pp ON p.name = pp.person_name
                  JOIN photos ph_main ON pp.hash = ph_main.hash
@@ -43,6 +43,7 @@ pub async fn get_people(app: AppHandle, root_folder: Option<String>) -> Result<V
                     photo_count: row.get(2)?,
                     cover_thumb,
                     hidden: row.get::<_, i32>(5)? != 0,
+                    starred: row.get::<_, i32>(6)? != 0,
                 })
             })
             .map_err(|e| e.to_string())?;
@@ -182,6 +183,13 @@ pub fn rename_person_in_db(conn: &mut Connection, old: &str, new: &str) -> Resul
             params![old, new],
         )
         .map_err(|e| e.to_string())?;
+        // Starred if either of the two was
+        tx.execute(
+            "UPDATE people SET starred = 1
+             WHERE lower(name) = lower(?2) AND EXISTS (SELECT 1 FROM people WHERE lower(name) = lower(?1) AND starred = 1)",
+            params![old, new],
+        )
+        .map_err(|e| e.to_string())?;
         tx.execute("DELETE FROM people WHERE lower(name) = lower(?1)", params![old]).map_err(|e| e.to_string())?;
     } else {
         tx.execute("UPDATE people SET name = ?2 WHERE lower(name) = lower(?1)", params![old, new])
@@ -203,6 +211,17 @@ pub fn set_person_hidden(app: AppHandle, name: String, hidden: bool) -> Result<(
     if let Ok(mut cache) = PENDING_CANDIDATES_CACHE.lock() {
         cache.clear();
     }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn set_person_starred(app: AppHandle, name: String, starred: bool) -> Result<(), String> {
+    let conn = open_global_db(&app)?;
+    conn.execute(
+        "UPDATE people SET starred = ?2 WHERE lower(name) = lower(?1)",
+        params![name.trim(), starred as i32],
+    )
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
 

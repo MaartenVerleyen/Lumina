@@ -182,10 +182,11 @@ export default function TimelineDrawer({
         wEnd.setDate(wEnd.getDate() + 6);
         const sStr = formatIsoDate(wStart);
         const eStr = formatIsoDate(wEnd);
+        // "2–8" over "Jun", like the day bars (a lone "–8" under the start date read as minus 8)
         buckets.push({
           key: sStr,
-          label: `${MONTH_NAMES[wStart.getMonth()]} ${wStart.getDate()}`,
-          subLabel: `–${wEnd.getDate()}`,
+          label: `${wStart.getDate()}–${wEnd.getDate()}`,
+          subLabel: MONTH_NAMES[wStart.getMonth()],
           startDate: sStr < minDay ? minDay : sStr,
           endDate: eStr > maxDay ? maxDay : eStr,
           count: 0,

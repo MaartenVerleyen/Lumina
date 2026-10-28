@@ -3,6 +3,7 @@ import { Virtualizer } from "@tanstack/react-virtual";
 import { PhotoItem } from "../../types/lumina";
 import { GridLayout, LayoutRow } from "../../utils/gridLayout";
 import { thumbSrc } from "../../utils/photoHelpers";
+import DateScrubber from "./DateScrubber";
 import { hasClosedEyes, isSoftFocus, type CullingSettings } from "../../utils/culling";
 import {
   Crosshair,
@@ -96,29 +97,49 @@ export default function VirtualPhotoGrid({
   const floatingLabel = hasHeaders ? currentHeaderLabel(layout.rows, rowVirtualizer.scrollOffset ?? 0) : null;
 
   return (
-    <div ref={gridContainerRef} className="flex-1 overflow-y-auto p-4">
-      {floatingLabel && (
-        // Sticky month label: zero-height so it never shifts the grid
-        <div className="sticky top-0 z-30 h-0 pointer-events-none">
-          <span className="inline-block -mt-2 px-3 py-1 rounded-full bg-raised/90 border border-zinc-700/70 text-xs font-semibold text-zinc-200 shadow-lg backdrop-blur-md">
-            {floatingLabel}
-          </span>
-        </div>
-      )}
-      <div
-        role="listbox"
-        aria-multiselectable="true"
-        aria-label="Photos"
-        style={{
-          height: `${rowVirtualizer.getTotalSize()}px`,
-          width: "100%",
-          position: "relative",
-        }}
-      >
-        {rowVirtualizer.getVirtualItems().map((virtualRow) => {
-          const row = layout.rows[virtualRow.index];
-          if (!row) return null;
-          if (row.kind === "header") {
+    // The wrapper holds the date scrubber in place over the scrolling grid
+    <div className="flex-1 min-h-0 relative flex flex-col">
+      <div ref={gridContainerRef} className="flex-1 overflow-y-auto p-4">
+        {floatingLabel && (
+          // Sticky month label: zero-height so it never shifts the grid
+          <div className="sticky top-0 z-30 h-0 pointer-events-none">
+            <span className="inline-block -mt-2 px-3 py-1 rounded-full bg-raised/90 border border-zinc-700/70 text-xs font-semibold text-zinc-200 shadow-lg backdrop-blur-md">
+              {floatingLabel}
+            </span>
+          </div>
+        )}
+        <div
+          role="listbox"
+          aria-multiselectable="true"
+          aria-label="Photos"
+          style={{
+            height: `${rowVirtualizer.getTotalSize()}px`,
+            width: "100%",
+            position: "relative",
+          }}
+        >
+          {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+            const row = layout.rows[virtualRow.index];
+            if (!row) return null;
+            if (row.kind === "header") {
+              return (
+                <div
+                  key={row.key}
+                  role="presentation"
+                  style={{
+                    position: "absolute",
+                    top: 0,
+                    left: 0,
+                    width: "100%",
+                    height: `${row.height}px`,
+                    transform: `translateY(${virtualRow.start}px)`,
+                  }}
+                  className="flex items-end pb-2.5"
+                >
+                  <h3 className="text-sm font-semibold text-zinc-200">{row.label}</h3>
+                </div>
+              );
+            }
             return (
               <div
                 key={row.key}
@@ -131,63 +152,49 @@ export default function VirtualPhotoGrid({
                   height: `${row.height}px`,
                   transform: `translateY(${virtualRow.start}px)`,
                 }}
-                className="flex items-end pb-2.5"
               >
-                <h3 className="text-sm font-semibold text-zinc-200">{row.label}</h3>
+                {row.items.map((item) => {
+                  const photo = visiblePhotos[item.index];
+                  if (!photo) return null;
+                  const grp = photo.duplicate_group;
+                  return (
+                    <PhotoCard
+                      key={photo.hash}
+                      photo={photo}
+                      index={item.index}
+                      left={item.x}
+                      width={item.width}
+                      height={row.height}
+                      gridStyle={gridStyle}
+                      cardDetails={cardDetails}
+                      isSelected={selectedHashes.has(photo.hash)}
+                      isActive={photo.hash === activeHash}
+                      isAnalyzing={analyzingHashes.has(photo.hash)}
+                      burstCount={grp ? burstGroupCounts.get(grp) || 1 : 1}
+                      isBurstExpanded={grp ? showAllBurstVersions || expandedBurstGroups.has(grp) : false}
+                      isSharpestPick={Boolean(grp && sharpestInGroup.get(grp)?.hash === photo.hash)}
+                      eyesClosed={hasClosedEyes(photo, culling)}
+                      softFocus={isSoftFocus(photo, culling)}
+                      thumbFailed={failedThumbs.has(photo.thumb_path)}
+                      simpleMode={simpleMode}
+                      handlePhotoClick={handlePhotoClick}
+                      setActiveHash={setActiveHash}
+                      setIsLoupeOpen={setIsLoupeOpen}
+                      toggleBurstGroupExpand={toggleBurstGroupExpand}
+                      onPhotoContextMenu={onPhotoContextMenu}
+                      onCardPointerDown={onCardPointerDown}
+                      onThumbError={onThumbError}
+                    />
+                  );
+                })}
               </div>
             );
-          }
-          return (
-            <div
-              key={row.key}
-              role="presentation"
-              style={{
-                position: "absolute",
-                top: 0,
-                left: 0,
-                width: "100%",
-                height: `${row.height}px`,
-                transform: `translateY(${virtualRow.start}px)`,
-              }}
-            >
-              {row.items.map((item) => {
-                const photo = visiblePhotos[item.index];
-                if (!photo) return null;
-                const grp = photo.duplicate_group;
-                return (
-                  <PhotoCard
-                    key={photo.hash}
-                    photo={photo}
-                    index={item.index}
-                    left={item.x}
-                    width={item.width}
-                    height={row.height}
-                    gridStyle={gridStyle}
-                    cardDetails={cardDetails}
-                    isSelected={selectedHashes.has(photo.hash)}
-                    isActive={photo.hash === activeHash}
-                    isAnalyzing={analyzingHashes.has(photo.hash)}
-                    burstCount={grp ? burstGroupCounts.get(grp) || 1 : 1}
-                    isBurstExpanded={grp ? showAllBurstVersions || expandedBurstGroups.has(grp) : false}
-                    isSharpestPick={Boolean(grp && sharpestInGroup.get(grp)?.hash === photo.hash)}
-                    eyesClosed={hasClosedEyes(photo, culling)}
-                    softFocus={isSoftFocus(photo, culling)}
-                    thumbFailed={failedThumbs.has(photo.thumb_path)}
-                    simpleMode={simpleMode}
-                    handlePhotoClick={handlePhotoClick}
-                    setActiveHash={setActiveHash}
-                    setIsLoupeOpen={setIsLoupeOpen}
-                    toggleBurstGroupExpand={toggleBurstGroupExpand}
-                    onPhotoContextMenu={onPhotoContextMenu}
-                    onCardPointerDown={onCardPointerDown}
-                    onThumbError={onThumbError}
-                  />
-                );
-              })}
-            </div>
-          );
-        })}
+          })}
+        </div>
       </div>
+      {hasHeaders && (
+        <DateScrubber rows={layout.rows} scrollRef={gridContainerRef} scrollTop={rowVirtualizer.scrollOffset ?? 0} />
+      )}
     </div>
   );
 }

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { ChevronDown, ChevronRight, Search, User, Users, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Search, Star, User, Users, X } from "lucide-react";
 import { PersonItem } from "../../types/lumina";
 import {
   combinePeople,
@@ -29,6 +29,8 @@ interface PeopleSidebarProps {
   onChooseCover: (name: string) => void;
   onRename: (oldName: string, newName: string) => Promise<string | null>;
   onSetHidden: (name: string, hidden: boolean) => Promise<void>;
+  // Starred people come first and Best of focuses on them
+  onSetStarred: (name: string, starred: boolean) => Promise<void>;
   // Collapsed list sections ("people-hidden"), remembered with the layout
   collapsedSections: string[];
   onToggleSection: (id: string) => void;
@@ -50,6 +52,7 @@ export default function PeopleSidebar({
   onChooseCover,
   onRename,
   onSetHidden,
+  onSetStarred,
   collapsedSections,
   onToggleSection,
 }: PeopleSidebarProps) {
@@ -73,7 +76,7 @@ export default function PeopleSidebar({
     const t = parsed.typing.toLowerCase();
     return t ? people.filter((p) => p.name.toLowerCase().includes(t)) : people;
   }, [people, parsed.typing]);
-  const visible = listed.filter((p) => !p.hidden);
+  const visible = [...listed.filter((p) => !p.hidden && p.starred), ...listed.filter((p) => !p.hidden && !p.starred)];
   const hidden = listed.filter((p) => p.hidden);
 
   // What Enter does: one name adds that person (the first one listed when the name is ambiguous),
@@ -200,6 +203,19 @@ export default function PeopleSidebar({
             title={`Review ${pending} suggested match${pending === 1 ? "" : "es"} for ${p.name}`}
           >
             {pending} to review
+          </button>
+        )}
+        {!p.hidden && (
+          <button
+            onClick={() => onSetStarred(p.name, !p.starred)}
+            className={`shrink-0 p-0.5 rounded hover:bg-zinc-800 ${
+              p.starred ? "text-amber-300" : "text-zinc-500 hover:text-amber-300 opacity-0 group-hover:opacity-100 focus:opacity-100"
+            }`}
+            aria-label={p.starred ? `Unstar ${p.name}` : `Star ${p.name}`}
+            aria-pressed={p.starred}
+            title={p.starred ? "Starred: Best of focuses on their photos (click to unstar)" : "Star: Best of focuses on their photos"}
+          >
+            <Star className={`w-3.5 h-3.5 ${p.starred ? "fill-current" : ""}`} />
           </button>
         )}
         <button
@@ -420,6 +436,17 @@ export default function PeopleSidebar({
                 </button>
               )}
               <div className="h-px bg-zinc-800 my-1" />
+              {!menuPerson.hidden && (
+                <button
+                  className={menuItem}
+                  onClick={() => {
+                    onSetStarred(menuPerson.name, !menuPerson.starred);
+                    setMenu(null);
+                  }}
+                >
+                  {menuPerson.starred ? "Unstar" : "Star (Best of focuses on them)"}
+                </button>
+              )}
               <button
                 className={menuItem}
                 onClick={() => {

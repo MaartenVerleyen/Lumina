@@ -278,25 +278,28 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
       }
     }
 
-    const emittedGroups = new Set<number>();
-    const finalDisplay: PhotoItem[] = [];
+    // Best version first per group
+    const orderedGroups = new Map<number, PhotoItem[]>();
+    for (const [grp, members] of groupMembers) {
+      orderedGroups.set(grp, [...members].sort((a, b) => cullScore(b, culling) - cullScore(a, culling)));
+    }
 
+    const finalDisplay: PhotoItem[] = [];
     for (const p of sorted) {
       const grp = p.duplicate_group;
-      if (!grp || p.subfolder === "_Trash") {
+      // With every version shown, each photo keeps its own place in the order
+      if (!grp || p.subfolder === "_Trash" || showAllBurstVersions) {
         finalDisplay.push(p);
         continue;
       }
-      if (emittedGroups.has(grp)) continue;
-      emittedGroups.add(grp);
-
-      const members = groupMembers.get(grp) || [p];
-      const orderedMembers = [...members].sort((a, b) => cullScore(b, culling) - cullScore(a, culling));
-
-      if (showAllBurstVersions || expandedBurstGroups.has(grp)) {
+      // A group sits where its shown (best) photo sorts: near-duplicates can be weeks or months apart (an
+      // original and a WhatsApp copy), and placing the group at its first member put photos under the wrong month
+      const orderedMembers = orderedGroups.get(grp) || [p];
+      if (p !== orderedMembers[0]) continue;
+      if (expandedBurstGroups.has(grp)) {
         finalDisplay.push(...orderedMembers);
       } else {
-        finalDisplay.push(orderedMembers[0]);
+        finalDisplay.push(p);
       }
     }
 

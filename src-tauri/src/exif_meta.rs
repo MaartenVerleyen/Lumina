@@ -66,6 +66,104 @@ pub fn normalize_date_str(raw: &str) -> String {
     String::new()
 }
 
+// A date in a file name, as phones and apps write them: "IMG_20230615_183000", "IMG-20230615-WA0001",
+// "PXL_20230615_183000123", "Screenshot_2023-06-15-18-30-00", "2023-06-15 18.30.00". Returns the date and,
+// when the name has one, the time ("2023-06-15 18:30:00" / "2023-06-15").
+pub fn date_from_filename(name: &str) -> Option<(String, Option<String>)> {
+    let b = name.as_bytes();
+    let digits = |from: usize, n: usize| -> Option<u32> {
+        let s = b.get(from..from + n)?;
+        s.iter().all(|c| c.is_ascii_digit()).then(|| std::str::from_utf8(s).ok()?.parse().ok())?
+    };
+    let is_sep = |i: usize| matches!(b.get(i), Some(b'-' | b'_' | b'.' | b' '));
+    for start in 0..b.len() {
+        if !b[start].is_ascii_digit() || (start > 0 && b[start - 1].is_ascii_digit()) {
+            continue;
+        }
+        // YYYYMMDD or YYYY-MM-DD (one separator style throughout)
+        let sep = is_sep(start + 4) as usize;
+        if sep == 1 && b.get(start + 4) != b.get(start + 7) {
+            continue;
+        }
+        let (Some(y), Some(m), Some(d)) = (digits(start, 4), digits(start + 4 + sep, 2), digits(start + 6 + 2 * sep, 2)) else {
+            continue;
+        };
+        let mut i = start + 8 + 2 * sep;
+        if !(1990..=2100).contains(&y) || !(1..=12).contains(&m) || !(1..=31).contains(&d) {
+            continue;
+        }
+        // Part of a longer number (an ID, a Unix timestamp) unless a time follows
+        let joined_time = sep == 0 && b.get(i).is_some_and(|c| c.is_ascii_digit());
+        if joined_time && digits(i, 6).is_none() {
+            continue;
+        }
+        let date = format!("{y:04}-{m:02}-{d:02}");
+        // HHMMSS or HH-MM-SS / HH.MM.SS, right after the date or after one separator (or "T")
+        if !joined_time && (is_sep(i) || b.get(i) == Some(&b'T')) {
+            i += 1;
+        }
+        let tsep = (b.get(i).is_some_and(|c| c.is_ascii_digit()) && is_sep(i + 2)) as usize;
+        let time = match (digits(i, 2), digits(i + 2 + tsep, 2), digits(i + 4 + 2 * tsep, 2)) {
+            (Some(hh), Some(mm), Some(ss)) if hh < 24 && mm < 60 && ss < 60 => Some(format!("{date} {hh:02}:{mm:02}:{ss:02}")),
+            _ => None,
+        };
+        return Some((date, time));
+    }
+    None
+}
+
+// File times are UTC; photo dates (EXIF) are local wall-clock time
+fn system_time_local_iso(st: std::time::SystemTime) -> String {
+    #[cfg(windows)]
+    {
+        use windows::Win32::Foundation::FILETIME;
+        use windows::Win32::Storage::FileSystem::FileTimeToLocalFileTime;
+        const UNIX_TO_FILETIME_SECS: u64 = 11_644_473_600;
+        if let Ok(d) = st.duration_since(std::time::UNIX_EPOCH) {
+            let ticks = (d.as_secs() + UNIX_TO_FILETIME_SECS) * 10_000_000 + u64::from(d.subsec_nanos() / 100);
+            let utc = FILETIME { dwLowDateTime: ticks as u32, dwHighDateTime: (ticks >> 32) as u32 };
+            let mut local = FILETIME::default();
+            if unsafe { FileTimeToLocalFileTime(&utc, &mut local) }.is_ok() {
+                let local_ticks = (u64::from(local.dwHighDateTime) << 32) | u64::from(local.dwLowDateTime);
+                if let Some(secs) = (local_ticks / 10_000_000).checked_sub(UNIX_TO_FILETIME_SECS) {
+                    return format_system_time_iso(std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs));
+                }
+            }
+        }
+    }
+    format_system_time_iso(st)
+}
+
+// The date of a photo without an EXIF date: a date in its name, else the earliest file time. Copying a file
+// gives it a new creation time but keeps its modification time, so the earlier one is the closer to the shot.
+pub fn fallback_photo_date(file_path: &Path, meta: Option<&fs::Metadata>) -> String {
+    let file_time = meta
+        .and_then(|m| match (m.created().ok(), m.modified().ok()) {
+            (Some(c), Some(m)) => Some(c.min(m)),
+            (c, m) => c.or(m),
+        })
+        .map(system_time_local_iso)
+        .filter(|s| !s.is_empty());
+    let name = file_path.file_name().map(|n| n.to_string_lossy()).unwrap_or_default();
+    match date_from_filename(&name) {
+        Some((_, Some(date_time))) => date_time,
+        // A name with only a date: the file time when it falls on that day (it has the time), else midnight
+        Some((date, None)) => match file_time {
+            Some(ft) if ft.starts_with(&date) => ft,
+            _ => format!("{date} 00:00:00"),
+        },
+        None => file_time.unwrap_or_default(),
+    }
+}
+
+// Before 4.0.1 a photo without an EXIF date got its file's creation time (UTC), which is when it was copied
+// to this PC. Such dates are recognised (no file I/O) so the next scan reads the photo's date again.
+pub fn is_old_creation_time_date(file_path: &Path, captured_at: &str, meta: &fs::Metadata) -> bool {
+    !captured_at.is_empty()
+        && meta.created().map(|c| format_system_time_iso(c) == captured_at).unwrap_or(false)
+        && fallback_photo_date(file_path, Some(meta)) != captured_at
+}
+
 pub struct FullExifPass {
     pub width: u32,
     pub height: u32,
@@ -279,11 +377,7 @@ pub fn extract_all_exif_with_head(file_path: &Path, head: Option<&[u8]>) -> Full
     }
 
     if date_str.is_empty() {
-        if let Ok(meta) = fs::metadata(file_path) {
-            if let Ok(ctime) = meta.created().or_else(|_| meta.modified()) {
-                date_str = format_system_time_iso(ctime);
-            }
-        }
+        date_str = fallback_photo_date(file_path, fs::metadata(file_path).ok().as_ref());
     }
 
     FullExifPass {

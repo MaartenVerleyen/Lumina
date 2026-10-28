@@ -216,7 +216,8 @@ pub fn compute_face_suggestions(
                 })
             })
             .map_err(|e| e.to_string())?;
-        unassigned = rows.flatten().collect();
+        let ignored = ignored_face_ids(conn);
+        unassigned = rows.flatten().filter(|u: &Unassigned| !ignored.contains(&u.face_id)).collect();
     }
     if unassigned.is_empty() {
         return Ok(HashMap::new());
@@ -507,6 +508,48 @@ pub async fn reject_face_candidates_batch(
     .map_err(|e| e.to_string())?
 }
 
+// "Ignore" (a stranger, a face on a poster): a rejection for this reserved name, which no person can have.
+// Being a rejection, it survives a rescan like the others (face_scan::carry_over_rejections).
+pub const IGNORED_FACE: &str = "\u{1}ignored";
+
+pub fn ignored_face_ids(conn: &Connection) -> HashSet<String> {
+    conn.prepare("SELECT face_id FROM face_rejections WHERE person_name = ?1")
+        .and_then(|mut s| s.query_map(params![IGNORED_FACE], |r| r.get::<_, String>(0)).map(|rows| rows.flatten().collect()))
+        .unwrap_or_default()
+}
+
+// Ignored faces are left out of "Who is this?" and of every person's suggestions; `ignore: false` undoes it
+#[tauri::command]
+pub async fn ignore_faces(app: AppHandle, face_ids: Vec<String>, ignore: bool) -> Result<usize, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut conn = open_global_db(&app)?;
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        for fid in &face_ids {
+            let sql = if ignore {
+                "INSERT OR IGNORE INTO face_rejections (face_id, person_name) VALUES (?1, ?2)"
+            } else {
+                "DELETE FROM face_rejections WHERE face_id = ?1 AND person_name = ?2"
+            };
+            tx.execute(sql, params![fid, IGNORED_FACE]).map_err(|e| e.to_string())?;
+        }
+        tx.commit().map_err(|e| e.to_string())?;
+        if let Ok(mut g) = PENDING_CANDIDATES_CACHE.lock() {
+            if ignore {
+                let id_set: HashSet<&String> = face_ids.iter().collect();
+                for list in g.values_mut() {
+                    list.retain(|c| !id_set.contains(&c.face_id));
+                }
+            } else {
+                // Restored faces may be someone's suggestion again
+                g.clear();
+            }
+        }
+        Ok(face_ids.len())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 pub async fn unreject_face_candidates_batch(
     app: AppHandle,
@@ -625,8 +668,8 @@ pub async fn assign_faces_to_person_batch(
                         params![clean, fid],
                     );
                     let _ = tx.execute(
-                        "DELETE FROM face_rejections WHERE face_id = ?1 AND lower(person_name) = lower(?2)",
-                        params![fid, clean],
+                        "DELETE FROM face_rejections WHERE face_id = ?1 AND (lower(person_name) = lower(?2) OR person_name = ?3)",
+                        params![fid, clean, IGNORED_FACE],
                     );
                     let _ = tx.execute(
                         "INSERT OR IGNORE INTO photo_people (hash, person_name) VALUES (?1, ?2)",
@@ -684,8 +727,9 @@ pub async fn get_unknown_face_clusters(app: AppHandle, root_folder: Option<Strin
     tauri::async_runtime::spawn_blocking(move || {
         let conn = open_global_db(&app)?;
         let suggestions = refresh_suggestion_cache(&app, &conn, root_folder.as_deref())?;
-        let suggested: std::collections::HashSet<String> =
+        let mut suggested: std::collections::HashSet<String> =
             suggestions.values().flatten().map(|c| c.face_id.clone()).collect();
+        suggested.extend(ignored_face_ids(&conn));
         let prefix = make_folder_prefix(root_folder.as_deref());
         let thumbs_dir = get_app_storage_dir(&app).join("thumbnails");
         let previews_dir = get_app_storage_dir(&app).join("previews");

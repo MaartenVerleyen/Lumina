@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { PhotoItem } from "../../types/lumina";
-import { highlightCandidates } from "../../utils/highlights";
+import { highlightCandidates, type HighlightFocus } from "../../utils/highlights";
 import type { LibraryCore } from "./core";
 import type { FilterState } from "./useFilterState";
 import type { LibraryView } from "./useLibraryView";
@@ -11,6 +11,8 @@ export interface HighlightsState {
   title: string;
   source: PhotoItem[];
   count: number;
+  // Best of: chosen around the starred people
+  focus?: HighlightFocus;
   // The picks, null while they are being chosen
   hashes: string[] | null;
 }
@@ -23,13 +25,15 @@ export function useHighlights(core: LibraryCore, filters: FilterState, view: Lib
   const { culling, clearAllFilters } = view;
   const [highlights, setHighlights] = useState<HighlightsState | null>(null);
 
-  async function choose(title: string, source: PhotoItem[], count: number) {
-    setHighlights({ title, source, count, hashes: null });
+  // The picks are chosen one at a time, best first, so the best 4 of a set are also the first 4 of its best 25:
+  // a cover made from pickHighlights(source, 4) shows photos that are in the set's highlights
+  const pickHighlights = (source: PhotoItem[], count: number, focus?: HighlightFocus) =>
+    invoke<string[]>("pick_highlights", { candidates: highlightCandidates(source, culling, focus), count });
+
+  async function choose(title: string, source: PhotoItem[], count: number, focus?: HighlightFocus) {
+    setHighlights({ title, source, count, focus, hashes: null });
     try {
-      const hashes = await invoke<string[]>("pick_highlights", {
-        candidates: highlightCandidates(source, culling),
-        count,
-      });
+      const hashes = await pickHighlights(source, count, focus);
       setHighlights((h) => (h && h.title === title && h.count === count ? { ...h, hashes } : h));
     } catch (err) {
       setHighlights(null);
@@ -37,8 +41,10 @@ export function useHighlights(core: LibraryCore, filters: FilterState, view: Lib
     }
   }
 
-  const openHighlights = (title: string, source: PhotoItem[], count = 20) => choose(title, source, count);
-  const setHighlightsCount = (count: number) => highlights && choose(highlights.title, highlights.source, count);
+  const openHighlights = (title: string, source: PhotoItem[], count = 20, focus?: HighlightFocus) =>
+    choose(title, source, count, focus);
+  const setHighlightsCount = (count: number) =>
+    highlights && choose(highlights.title, highlights.source, count, highlights.focus);
 
   function showHighlightsInGrid() {
     if (!highlights?.hashes) return;
@@ -62,6 +68,7 @@ export function useHighlights(core: LibraryCore, filters: FilterState, view: Lib
   return {
     highlights,
     setHighlights,
+    pickHighlights,
     openHighlights,
     setHighlightsCount,
     showHighlightsInGrid,

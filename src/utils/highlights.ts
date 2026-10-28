@@ -10,6 +10,8 @@ export interface HighlightPhoto extends CullingPhoto {
   people: string[];
   captured_at: string;
   subfolder: string;
+  // File name (Best of recognises photos received through WhatsApp by it)
+  name?: string;
   staged_target?: string | null;
   damaged?: boolean;
   duplicate_group?: number | null;
@@ -30,9 +32,30 @@ export function captureTime(capturedAt: string): number | null {
   return Number.isNaN(t) || +m[1] < 1971 ? null : t / 1000;
 }
 
+// Best of a year is about the user's own life: photos of their starred people, not every photo of friends or
+// forwarded through WhatsApp. `starred` holds the starred people's names in lower case (may be empty).
+export interface HighlightFocus {
+  starred: Set<string>;
+}
+
+// Saved from WhatsApp: "IMG-20230615-WA0001.jpg", or kept in a WhatsApp folder
+export function isReceivedPhoto(p: Pick<HighlightPhoto, "name" | "subfolder">): boolean {
+  return /-WA\d{4}/i.test(p.name ?? "") || /whatsapp/i.test(p.subfolder);
+}
+
+function focusBonus(p: HighlightPhoto, focus: HighlightFocus): number {
+  const starredHere = p.people.filter((name) => focus.starred.has(name.toLowerCase())).length;
+  if (starredHere > 0) return 2 + 0.5 * Math.min(2, starredHere - 1);
+  let bonus = 0;
+  // Only other people (named or not): someone else's moment
+  if (focus.starred.size > 0 && (p.people.length > 0 || p.faces.length > 0)) bonus -= 1.5;
+  if (isReceivedPhoto(p)) bonus -= 1.5;
+  return bonus;
+}
+
 // The app's own judgement of a photo, or null when it shouldn't be a highlight at all (rejected, on its way
 // to _Trash, damaged, a screenshot)
-export function highlightScore(p: HighlightPhoto, culling: CullingSettings): number | null {
+export function highlightScore(p: HighlightPhoto, culling: CullingSettings, focus?: HighlightFocus): number | null {
   if (p.flag === "reject" || p.staged_target === "_Trash" || p.subfolder === "_Trash" || p.subfolder.startsWith("_Trash / "))
     return null;
   if (p.damaged || p.tags.includes("screenshot")) return null;
@@ -45,13 +68,18 @@ export function highlightScore(p: HighlightPhoto, culling: CullingSettings): num
   const face = [...p.faces].sort((a, b) => b.bbox_w * b.bbox_h - a.bbox_w * a.bbox_h)[0];
   const sharp = face?.face_sharpness ?? p.sharpness;
   score += Math.min(1, Math.log1p(Math.max(0, sharp)) / Math.log1p(2000));
+  if (focus) score += focusBonus(p, focus);
   return score;
 }
 
-export function highlightCandidates(photos: HighlightPhoto[], culling: CullingSettings): HighlightCandidate[] {
+export function highlightCandidates(
+  photos: HighlightPhoto[],
+  culling: CullingSettings,
+  focus?: HighlightFocus
+): HighlightCandidate[] {
   const out: HighlightCandidate[] = [];
   for (const p of photos) {
-    const base = highlightScore(p, culling);
+    const base = highlightScore(p, culling, focus);
     if (base === null) continue;
     out.push({ hash: p.hash, base, group: p.duplicate_group ?? null, time: captureTime(p.captured_at) });
   }

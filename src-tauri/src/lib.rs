@@ -175,6 +175,8 @@ pub struct PersonItem {
     pub photo_count: i64,
     pub cover_thumb: String,
     pub hidden: bool,
+    // The people who matter most to the user: Best of focuses on their photos
+    pub starred: bool,
 }
 
 #[derive(Serialize, Clone)]
@@ -376,6 +378,7 @@ pub fn run() {
             people::remove_person_from_photos,
             people::rename_person,
             people::set_person_hidden,
+            people::set_person_starred,
             people::set_person_cover,
             albums::get_trip_names,
             albums::set_trip_name,
@@ -386,6 +389,7 @@ pub fn run() {
             face_review::unassign_faces_batch,
             face_review::reject_face_candidates_batch,
             face_review::unreject_face_candidates_batch,
+            face_review::ignore_faces,
             face_review::get_pending_face_match_counts,
             face_scan::detect_faces_in_photo,
             face_scan::scan_library_faces_batch,

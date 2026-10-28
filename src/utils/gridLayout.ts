@@ -18,7 +18,8 @@ export interface LayoutItem {
 }
 
 export type LayoutRow =
-  | { kind: "header"; key: string; label: string; top: number; height: number }
+  // `key` identifies the row; `group` is what the header stands for (e.g. "2024-06")
+  | { kind: "header"; key: string; group: string; label: string; top: number; height: number }
   | { kind: "photos"; key: string; top: number; height: number; items: LayoutItem[] };
 
 export interface GridLayout {
@@ -74,7 +75,7 @@ function buildRows(
     }
     if (key !== null && options.groupKey) {
       const label = options.groupLabel ? options.groupLabel(key) : key;
-      rows.push({ kind: "header", key: `h${groupStart}`, label, top, height: options.headerHeight });
+      rows.push({ kind: "header", key: `h${groupStart}`, group: key, label, top, height: options.headerHeight });
       top += options.headerHeight;
     }
     const indices: number[] = [];

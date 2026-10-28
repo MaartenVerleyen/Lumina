@@ -1,12 +1,70 @@
 use crate::*;
 
-pub fn assign_duplicate_groups(photos: &mut [PhotoItem]) {
+// One photo as the near-duplicate grouping sees it
+pub struct DupCandidate<'a> {
+    pub dhash: Option<u64>,
+    // Screenshots and photos without a camera (saved images): their small fingerprint may differ a little more,
+    // when CLIP confirms the match
+    pub loose: bool,
+    // CLIP image vector (smart search index), when the photo has one
+    pub clip: Option<&'a [f32]>,
+}
+
+// Two photos whose 64-bit fingerprints are this close (bits differing) are candidates
+const DUP_MAX_BITS: u32 = 8;
+const DUP_MAX_BITS_LOOSE: u32 = 11;
+// The fingerprint only sees a 9x8 grey thumbnail, so unrelated photos with a similar layout of light and dark
+// (a laptop screen, a bathroom, a train board) can match. When both photos have a CLIP vector, it must agree
+// too. Tuned on 1,513 grouped pairs of a real library (2026-10-29): bursts and filtered copies scored >= 0.82,
+// different scenes (two web pages on a screen, two different children in the same room) <= 0.81.
+const DUP_MIN_CLIP_SIMILARITY: f32 = 0.82;
+
+fn near_duplicates(a: &DupCandidate, b: &DupCandidate) -> bool {
+    let (Some(h1), Some(h2)) = (a.dhash, b.dhash) else {
+        return false;
+    };
+    let bits = (h1 ^ h2).count_ones();
+    match (a.clip, b.clip) {
+        (Some(va), Some(vb)) => {
+            let max_bits = if a.loose && b.loose { DUP_MAX_BITS_LOOSE } else { DUP_MAX_BITS };
+            bits <= max_bits && face_match::dot(va, vb) >= DUP_MIN_CLIP_SIMILARITY
+        }
+        // Without CLIP to confirm, only the strict fingerprint distance: nearly all mismatches were 9-11 bits apart
+        _ => bits <= DUP_MAX_BITS,
+    }
+}
+
+// Groups near-duplicates among `items` (in capture order): each photo is compared with the next 300. Returns a
+// group number (from 1) per item, None for photos without a near-duplicate.
+pub fn group_near_duplicates(items: &[DupCandidate]) -> Vec<Option<usize>> {
+    let n = items.len();
+    let mut groups = vec![None; n];
+    let mut next_group = 1usize;
+    for i in 0..n {
+        if groups[i].is_some() || items[i].dhash.is_none() {
+            continue;
+        }
+        let members: Vec<usize> = (i + 1..(i + 300).min(n))
+            .filter(|&j| groups[j].is_none() && near_duplicates(&items[i], &items[j]))
+            .collect();
+        if !members.is_empty() {
+            groups[i] = Some(next_group);
+            for j in members {
+                groups[j] = Some(next_group);
+            }
+            next_group += 1;
+        }
+    }
+    groups
+}
+
+pub fn assign_duplicate_groups(photos: &mut [PhotoItem], clip: &HashMap<String, Vec<f32>>) {
     for p in photos.iter_mut() {
         p.duplicate_group = None;
     }
 
-    // Order indices chronologically by captured_at then name so bursts with different prefixes still sit adjacent
-    let mut order: Vec<usize> = (0..photos.len()).collect();
+    // Chronologically by captured_at then name, so bursts with different prefixes still sit adjacent
+    let mut order: Vec<usize> = (0..photos.len()).filter(|&i| photos[i].subfolder != "_Trash").collect();
     order.sort_by(|&a, &b| {
         photos[a]
             .captured_at
@@ -14,57 +72,23 @@ pub fn assign_duplicate_groups(photos: &mut [PhotoItem]) {
             .then_with(|| photos[a].name.cmp(&photos[b].name))
     });
 
-    let parsed: Vec<(Option<u64>, bool)> = photos
+    let items: Vec<DupCandidate> = order
         .iter()
-        .map(|p| {
-            let h = if p.dhash.len() == 16 {
-                u64::from_str_radix(&p.dhash, 16).ok()
-            } else {
-                None
-            };
-            let is_scr = p.tags.iter().any(|t| t == "screenshot")
-                || p.name.ends_with(".png")
-                || p.name.ends_with(".PNG")
-                || p.camera_model.is_empty();
-            (h, is_scr)
+        .map(|&i| {
+            let p = &photos[i];
+            DupCandidate {
+                dhash: (p.dhash.len() == 16).then(|| u64::from_str_radix(&p.dhash, 16).ok()).flatten(),
+                loose: p.tags.iter().any(|t| t == "screenshot")
+                    || p.name.ends_with(".png")
+                    || p.name.ends_with(".PNG")
+                    || p.camera_model.is_empty(),
+                clip: clip.get(&p.hash).map(|v| v.as_slice()),
+            }
         })
         .collect();
-
-    let n = order.len();
-    let mut visited = vec![false; photos.len()];
-    let mut current_group = 1usize;
-
-    for pos_i in 0..n {
-        let i = order[pos_i];
-        if visited[i] || photos[i].subfolder == "_Trash" {
-            continue;
-        }
-        let (Some(h1), is_scr_1) = parsed[i] else {
-            continue;
-        };
-
-        let mut members = vec![i];
-        let limit = (pos_i + 300).min(n);
-        for pos_j in (pos_i + 1)..limit {
-            let j = order[pos_j];
-            if visited[j] || photos[j].subfolder == "_Trash" {
-                continue;
-            }
-            if let (Some(h2), is_scr_2) = parsed[j] {
-                let max_dist = if is_scr_1 && is_scr_2 { 11 } else { 8 };
-                if (h1 ^ h2).count_ones() <= max_dist {
-                    members.push(j);
-                }
-            }
-        }
-
-        if members.len() > 1 {
-            for &idx in &members {
-                visited[idx] = true;
-                photos[idx].duplicate_group = Some(current_group);
-            }
-            current_group += 1;
-        }
+    let groups = group_near_duplicates(&items);
+    for (pos, &i) in order.iter().enumerate() {
+        photos[i].duplicate_group = groups[pos];
     }
 }
 
@@ -85,44 +109,24 @@ pub fn compute_db_duplicate_groups(conn: &Connection, root_folder: Option<&str>)
         let dhash_str: String = r.get(1)?;
         let cam: String = r.get(2)?;
         let path: String = r.get(4)?;
-        let h_val = u64::from_str_radix(&dhash_str, 16).unwrap_or(0);
         let is_scr = cam.is_empty() || path.ends_with(".png") || path.ends_with(".PNG");
-        Ok((hash, h_val, is_scr))
+        Ok((hash, u64::from_str_radix(&dhash_str, 16).ok(), is_scr))
     }) else {
         return map;
     };
 
-    let items: Vec<(String, u64, bool)> = rows.flatten().collect();
-    let n = items.len();
-    let mut visited = vec![false; n];
-    let mut grp = 1usize;
-
-    for i in 0..n {
-        if visited[i] {
-            continue;
-        }
-        let (_, h1, s1) = items[i];
-        let mut members = vec![i];
-        let limit = (i + 300).min(n);
-        for j in (i + 1)..limit {
-            if visited[j] {
-                continue;
-            }
-            let (_, h2, s2) = items[j];
-            let max_d = if s1 && s2 { 11 } else { 8 };
-            if (h1 ^ h2).count_ones() <= max_d {
-                members.push(j);
-            }
-        }
-        if members.len() > 1 {
-            for &idx in &members {
-                visited[idx] = true;
-                map.insert(items[idx].0.clone(), grp);
-            }
-            grp += 1;
+    let rows: Vec<(String, Option<u64>, bool)> = rows.flatten().collect();
+    let hashes: Vec<String> = rows.iter().map(|r| r.0.clone()).collect();
+    let clip = clip::clip_vectors(conn, &hashes);
+    let items: Vec<DupCandidate> = rows
+        .iter()
+        .map(|(hash, dhash, loose)| DupCandidate { dhash: *dhash, loose: *loose, clip: clip.get(hash).map(|v| v.as_slice()) })
+        .collect();
+    for ((hash, _, _), group) in rows.iter().zip(group_near_duplicates(&items)) {
+        if let Some(g) = group {
+            map.insert(hash.clone(), g);
         }
     }
-
     map
 }
 
@@ -534,6 +538,7 @@ pub async fn scan_folder(
                         && !c.captured_at.is_empty()
                         && c.size == size_bytes
                         && c.mtime == modified_time
+                        && !is_old_creation_time_date(&file_path, &c.captured_at, &metadata)
                     {
                         needs_db_upsert = false;
                         (
@@ -951,7 +956,8 @@ pub async fn scan_folder(
         );
 
         photos.sort_by(|a, b| a.subfolder.cmp(&b.subfolder).then(a.name.cmp(&b.name)));
-        assign_duplicate_groups(&mut photos);
+        let hashes: Vec<String> = photos.iter().map(|p| p.hash.clone()).collect();
+        assign_duplicate_groups(&mut photos, &clip::clip_vectors(&conn, &hashes));
 
         // Thumbnails from before the 480 px size keep showing until their replacement is written
         let upgrade: HashSet<String> = if force {

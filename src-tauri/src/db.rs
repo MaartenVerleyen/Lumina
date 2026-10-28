@@ -126,6 +126,8 @@ pub fn open_global_db(app: &AppHandle) -> Result<Connection, String> {
     albums::ensure_album_tables(&conn);
     // Hidden people: kept on their photos, left out of the people bar and of suggestions
     let _ = conn.execute("ALTER TABLE people ADD COLUMN hidden INTEGER DEFAULT 0", []);
+    // Starred people: Best of favours photos with them
+    let _ = conn.execute("ALTER TABLE people ADD COLUMN starred INTEGER DEFAULT 0", []);
 
     // Smart search: one CLIP image vector per photo (little-endian f32), tagged with the model that made it
     let _ = conn.execute(

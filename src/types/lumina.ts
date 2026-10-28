@@ -96,6 +96,8 @@ export interface PersonItem {
   cover_thumb: string;
   // Hidden people stay on their photos but leave the people bar and get no suggestions
   hidden: boolean;
+  // The people who matter most: Best of focuses on their photos
+  starred: boolean;
 }
 
 export interface ThumbBatchItem {

@@ -88,6 +88,14 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
     } catch {}
   }
 
+  // After accepting or denying suggestions: the badge counts follow at once, without recomputing every match
+  function reducePendingCount(person: string, by: number) {
+    setPendingFaceCounts((prev) => {
+      const key = Object.keys(prev).find((k) => k.toLowerCase() === person.toLowerCase());
+      return key ? { ...prev, [key]: Math.max(0, prev[key] - by) } : prev;
+    });
+  }
+
   // Debounced: opening a folder changes `folder` and then `photos.length`, which used to run the
   // (expensive) face-match count twice back to back
   useEffect(() => {
@@ -493,6 +501,16 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
     }
   }
 
+  async function handleSetPersonStarred(name: string, starred: boolean) {
+    try {
+      await invoke("set_person_starred", { name, starred });
+      setPeople((prev) => prev.map((p) => (p.name === name ? { ...p, starred } : p)));
+      addLog("FACE", `${starred ? "Starred" : "Unstarred"} "${name}"`);
+    } catch (err) {
+      setError(String(err));
+    }
+  }
+
   async function handleSetPersonCover(name: string, faceId: string) {
     try {
       await invoke("set_person_cover", { name, faceId });
@@ -506,6 +524,7 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
   return {
     people,
     pendingFaceCounts,
+    reducePendingCount,
     faceReviewPerson,
     setFaceReviewPerson,
     faceScanProgress,
@@ -531,6 +550,7 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
     handleBatchAssignPerson,
     handleRenamePerson,
     handleSetPersonHidden,
+    handleSetPersonStarred,
     handleSetPersonCover,
   };
 }

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowUpDown, Calendar, Check, ChevronDown, Columns, Folder, FolderSync, Layers, SlidersHorizontal, Trophy, X } from "lucide-react";
+import { ArrowUpDown, Calendar, Check, ChevronDown, Columns, FilterX, Folder, FolderSync, Layers, SlidersHorizontal, Trophy, X } from "lucide-react";
 import type { LibraryState } from "../../hooks/useLibraryState";
 import { AutoStagePreset, OrientationFilter, SortOption } from "../../types/lumina";
 
@@ -88,6 +88,19 @@ export function scopeTitle(lib: LibraryState): string {
 // The bar above the photo grid: Timeline, bursts, Compare, Highlights and two menus (View, Organize)
 export default function PhotoToolbar({ lib }: { lib: LibraryState }) {
   const viewChanged = lib.orientationFilter !== "ALL" || !lib.autoAdvance;
+  // The filters clearAllFilters resets
+  const activeFilterCount = [
+    lib.smartFilter !== "ALL",
+    lib.orientationFilter !== "ALL",
+    lib.searchQuery.trim() !== "" || lib.semanticScores !== null,
+    lib.activeSubfolder !== "ALL",
+    lib.activeEvent !== "ALL",
+    lib.activeTag !== "ALL",
+    lib.activeAlbumId !== null,
+    lib.peopleFilter !== null,
+    lib.hashFilter !== null,
+    lib.selectedPeriodRange !== null,
+  ].filter(Boolean).length;
   return (
     <div className="bg-panel border-b border-zinc-800/60 px-4 py-1.5 flex items-center justify-between text-xs gap-3 flex-wrap shrink-0">
       <div className="flex items-center gap-2 flex-wrap">
@@ -108,6 +121,28 @@ export default function PhotoToolbar({ lib }: { lib: LibraryState }) {
               ? "Filter by Date"
               : "Timeline"}
           </span>
+          {lib.selectedPeriodRange && (
+            <span
+              role="button"
+              tabIndex={0}
+              onClick={(e) => {
+                e.stopPropagation();
+                lib.setSelectedPeriodRange(null);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  lib.setSelectedPeriodRange(null);
+                }
+              }}
+              className="-mr-1 p-0.5 rounded hover:bg-emerald-500/25 hover:text-white"
+              aria-label="Clear the date filter"
+              title="Clear the date filter"
+            >
+              <X className="w-3 h-3" />
+            </span>
+          )}
         </button>
 
         {lib.totalBurstGroups > 0 && (
@@ -160,6 +195,17 @@ export default function PhotoToolbar({ lib }: { lib: LibraryState }) {
               <X className="w-3 h-3" />
             </button>
           </span>
+        )}
+
+        {activeFilterCount > 0 && (
+          <button
+            onClick={lib.clearAllFilters}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium border transition bg-zinc-900 hover:bg-red-950/50 text-zinc-300 hover:text-red-200 border-zinc-800 hover:border-red-500/40"
+            title="Show all photos again: clears the date, folder, people, search, album and other filters"
+          >
+            <FilterX className="w-3.5 h-3.5" />
+            <span>Clear all filters ({activeFilterCount})</span>
+          </button>
         )}
       </div>
 

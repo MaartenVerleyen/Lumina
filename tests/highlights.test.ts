@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { captureTime, highlightScore, highlightCandidates, onThisDay, type HighlightPhoto } from "../src/utils/highlights.ts";
+import { captureTime, highlightScore, highlightCandidates, isReceivedPhoto, onThisDay, type HighlightPhoto } from "../src/utils/highlights.ts";
 import { DEFAULT_CULLING } from "../src/utils/culling.ts";
 
 let n = 0;
@@ -45,6 +45,25 @@ test("what counts in the score", () => {
     assert.equal(highlightScore(p, DEFAULT_CULLING), null);
   }
   assert.equal(highlightCandidates([photo(), photo({ flag: "reject" })], DEFAULT_CULLING).length, 1);
+});
+
+test("best of focuses on starred people and leaves out received photos", () => {
+  const focus = { starred: new Set(["anna"]) };
+  const score = (over: Partial<HighlightPhoto>) => highlightScore(photo(over), DEFAULT_CULLING, focus)!;
+  const face = { bbox_w: 0.2, bbox_h: 0.2, eyes_open: 0.01, face_sharpness: 300 };
+  const withAnna = score({ people: ["Anna"], faces: [face] });
+  const withFriend = score({ people: ["Bob"], faces: [face] });
+  const landscape = score({});
+  assert.ok(withAnna > landscape && landscape > withFriend);
+  // A rated photo of friends doesn't beat an unrated one of Anna
+  assert.ok(withAnna > score({ people: ["Bob"], faces: [face], rating: 3 }));
+  // Received through WhatsApp: down, unless a starred person is in it
+  assert.ok(score({ name: "IMG-20230615-WA0001.jpg" }) < landscape);
+  assert.ok(score({ subfolder: "WhatsApp Images" }) < landscape);
+  assert.ok(score({ name: "IMG-20230615-WA0001.jpg", people: ["Anna"], faces: [face] }) > landscape);
+  assert.equal(isReceivedPhoto({ name: "IMG_20230615_183000.jpg", subfolder: "2023" }), false);
+  // Without a focus the score is unchanged
+  assert.equal(highlightScore(photo({ people: ["Bob"] }), DEFAULT_CULLING), highlightScore(photo({ people: ["Bob"] }), DEFAULT_CULLING, undefined));
 });
 
 test("on this day: earlier years, newest first, best first", () => {

@@ -1,8 +1,9 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { BookImage, Calendar, Check, MoreHorizontal, Plane, Plus, Search, Sparkles, Trophy } from "lucide-react";
 import { Album, PhotoItem, SavedSearch } from "../../types/lumina";
 import { Trip } from "../../utils/trips";
 import { thumbSrc } from "../../utils/photoHelpers";
+import type { HighlightFocus } from "../../utils/highlights";
 
 interface TripEntry {
   id: string;
@@ -27,7 +28,11 @@ interface CollectionsViewProps {
   onDeleteAlbum: (id: number) => Promise<void>;
   onDeleteSavedSearch: (id: number) => Promise<void>;
   onRenameTrip: (id: string, name: string) => Promise<void>;
-  onHighlights: (title: string, hashes: string[], count?: number) => void;
+  onHighlights: (title: string, hashes: string[], count?: number, focus?: HighlightFocus) => void;
+  // The best `count` photos of a set, as Highlights would choose them
+  pickHighlights: (source: PhotoItem[], count: number, focus?: HighlightFocus) => Promise<string[]>;
+  // What Best of focuses on (the starred people)
+  bestOfFocus: HighlightFocus;
   onShareGallery: (title: string, hashes: string[]) => void;
 }
 
@@ -156,6 +161,8 @@ export default function CollectionsView({
   onDeleteSavedSearch,
   onRenameTrip,
   onHighlights,
+  pickHighlights,
+  bestOfFocus,
   onShareGallery,
 }: CollectionsViewProps) {
   const [filter, setFilter] = useState("");
@@ -187,21 +194,49 @@ export default function CollectionsView({
   };
 
   const visibleAlbums = albums.filter((a) => matches(a.name));
-  // Best of each year in the open folder, newest first (best-rated photos as the cover)
-  const years = useMemo(() => {
+  // Best of each year in the open folder, newest first
+  const allYears = useMemo(() => {
     const byYear = new Map<number, PhotoItem[]>();
     for (const p of photoByHash.values()) {
       const y = Number((p.captured_at || "").slice(0, 4));
       if (y >= 1971) byYear.set(y, [...(byYear.get(y) ?? []), p]);
     }
-    return Array.from(byYear, ([year, list]) => ({
+    const starredKey = [...bestOfFocus.starred].sort().join("|");
+    return Array.from(byYear, ([year, photos]) => ({
       year,
-      hashes: list.map((p) => p.hash),
-      cover: [...list].sort((a, b) => b.rating - a.rating || b.sharpness - a.sharpness).map((p) => p.hash),
+      photos,
+      hashes: photos.map((p) => p.hash),
+      // Changes when photos come or go, their stars, flags or people change, or other people are starred:
+      // what moves the picks
+      signature: `${photos.length}:${photos.reduce(
+        (s, p) => s + p.rating * 3 + (p.flag === "pick" ? 1 : p.flag === "reject" ? 2 : 0) + p.people.length * 7,
+        0
+      )}:${starredKey}`,
     }))
-      .filter((y) => y.hashes.length >= 5 && matches(`best of ${y.year}`))
+      .filter((y) => y.hashes.length >= 5)
       .sort((a, b) => b.year - a.year);
-  }, [photoByHash, q]);
+  }, [photoByHash, bestOfFocus]);
+  const years = allYears.filter((y) => matches(`best of ${y.year}`));
+  // Each year's cover: its top highlights, so the cover shows photos that are in "Best of" when opened
+  const [covers, setCovers] = useState<Record<number, { signature: string; hashes: string[] }>>({});
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      for (const y of allYears) {
+        if (cancelled) return;
+        if (covers[y.year]?.signature === y.signature) continue;
+        try {
+          const hashes = await pickHighlights(y.photos, 4, bestOfFocus);
+          if (!cancelled) setCovers((prev) => ({ ...prev, [y.year]: { signature: y.signature, hashes } }));
+        } catch {
+          // The card keeps its placeholder
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [allYears]);
   const visibleSmart = savedSearches.filter((s) => matches(s.name) || matches(s.query));
 
   return (
@@ -317,14 +352,19 @@ export default function CollectionsView({
           <h2 className="text-xs font-bold text-zinc-400 uppercase tracking-wider flex items-center gap-2">
             <Trophy className="w-4 h-4 text-amber-300" /> Best of
           </h2>
+          <span className="text-xs text-zinc-500 -mt-1">
+            {bestOfFocus.starred.size > 0
+              ? "Focused on your starred people. Photos of others and photos received through WhatsApp count for less."
+              : "Tip: star the people who matter most (People → ⋯ → Star) and Best of focuses on photos of them."}
+          </span>
           <div className={sectionGrid}>
             {years.map((y) => (
               <Card
                 key={y.year}
                 title={`Best of ${y.year}`}
                 subtitle={`Highlights from ${y.hashes.length} photos`}
-                cover={<Cover hashes={y.cover} photoByHash={photoByHash} icon={<Trophy className="w-8 h-8" />} />}
-                onOpen={() => onHighlights(`Best of ${y.year}`, y.hashes, 25)}
+                cover={<Cover hashes={covers[y.year]?.hashes ?? []} photoByHash={photoByHash} icon={<Trophy className="w-8 h-8" />} />}
+                onOpen={() => onHighlights(`Best of ${y.year}`, y.hashes, 25, bestOfFocus)}
               />
             ))}
           </div>

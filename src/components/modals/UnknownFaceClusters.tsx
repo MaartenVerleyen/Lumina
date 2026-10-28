@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { FaceCluster, FaceInstance, PhotoItem } from "../../types/lumina";
-import { Check, Loader2, RefreshCw, Users } from "lucide-react";
+import { Check, EyeOff, Loader2, RefreshCw, Undo2, Users, X } from "lucide-react";
 
 interface UnknownFaceClustersProps {
   folder: string;
@@ -23,6 +23,8 @@ export default function UnknownFaceClusters({
   const [busy, setBusy] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
+  // The last faces ignored, for Undo
+  const [lastIgnored, setLastIgnored] = useState<string[] | null>(null);
 
   async function load() {
     setIsLoading(true);
@@ -70,23 +72,76 @@ export default function UnknownFaceClusters({
     }
   }
 
+  // Ignore a whole group (strangers, faces on posters) or one face that doesn't belong in its group, without
+  // naming anyone: they are no longer grouped or suggested
+  async function ignoreFaces(index: number, faceIds: string[]) {
+    setError("");
+    try {
+      await invoke<number>("ignore_faces", { faceIds, ignore: true });
+      const ignored = new Set(faceIds);
+      setClusters((prev) =>
+        prev
+          .map((c, i) =>
+            i !== index
+              ? c
+              : {
+                  ...c,
+                  size: c.size - faceIds.length,
+                  face_ids: c.face_ids.filter((id) => !ignored.has(id)),
+                  samples: c.samples.filter((f) => !ignored.has(f.face_id)),
+                }
+          )
+          .filter((c) => c.size >= 2)
+      );
+      setNames({});
+      setLastIgnored(faceIds);
+    } catch (err) {
+      setError(`Could not ignore these faces: ${String(err)}`);
+    }
+  }
+
+  async function undoIgnore() {
+    if (!lastIgnored) return;
+    try {
+      await invoke<number>("ignore_faces", { faceIds: lastIgnored, ignore: false });
+      setLastIgnored(null);
+      await load();
+    } catch (err) {
+      setError(`Could not undo: ${String(err)}`);
+    }
+  }
+
   return (
     <div className="flex-1 flex flex-col min-h-0">
       <div className="px-6 py-3 bg-card border-b border-zinc-800/80 flex items-center justify-between text-xs shrink-0">
         <div className="text-zinc-300">
           <span className="font-bold text-zinc-100">Who is this?</span>
           <span className="text-zinc-500 ml-2">
-            Unnamed faces that look like the same person. Name a group to assign all of its faces at once.
+            Unnamed faces that look like the same person. Name a group to assign all of its faces at once, or
+            ignore faces you don't want to name.
           </span>
         </div>
-        <button
-          onClick={load}
-          disabled={isLoading}
-          className="px-2.5 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 flex items-center gap-1.5"
-        >
-          <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? "animate-spin" : ""}`} />
-          <span>Regroup</span>
-        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          {lastIgnored && (
+            <button
+              onClick={undoIgnore}
+              className="px-2.5 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 flex items-center gap-1.5"
+            >
+              <Undo2 className="w-3.5 h-3.5" />
+              <span>
+                Undo ignore ({lastIgnored.length} face{lastIgnored.length === 1 ? "" : "s"})
+              </span>
+            </button>
+          )}
+          <button
+            onClick={load}
+            disabled={isLoading}
+            className="px-2.5 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 flex items-center gap-1.5"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? "animate-spin" : ""}`} />
+            <span>Regroup</span>
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -117,14 +172,24 @@ export default function UnknownFaceClusters({
             <div key={cluster.face_ids[0]} className="p-3 rounded-xl bg-zinc-950/70 border border-zinc-800 flex flex-col gap-2.5">
               <div className="flex items-center gap-1.5 flex-wrap">
                 {cluster.samples.map((face) => (
-                  <img
-                    key={face.face_id}
-                    src={convertFileSrc(face.face_thumb)}
-                    alt=""
-                    title={face.photo_name}
-                    loading="lazy"
-                    className="w-16 h-16 rounded-lg object-cover border border-zinc-800"
-                  />
+                  <div key={face.face_id} className="relative group">
+                    <img
+                      src={convertFileSrc(face.face_thumb)}
+                      alt=""
+                      title={face.photo_name}
+                      loading="lazy"
+                      className="w-16 h-16 rounded-lg object-cover border border-zinc-800"
+                    />
+                    <button
+                      onClick={() => ignoreFaces(index, [face.face_id])}
+                      disabled={busy !== null}
+                      title="Ignore this face (not part of this group)"
+                      aria-label="Ignore this face"
+                      className="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-zinc-950/85 border border-zinc-700 text-zinc-300 hover:text-red-300 hover:border-red-500/60 items-center justify-center hidden group-hover:flex"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
                 ))}
                 {cluster.size > cluster.samples.length && (
                   <span className="text-[11px] text-zinc-500 font-mono px-2">
@@ -154,6 +219,16 @@ export default function UnknownFaceClusters({
                 >
                   {busy === index ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
                   <span>Name all {cluster.size}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => ignoreFaces(index, cluster.face_ids)}
+                  disabled={busy !== null}
+                  title="Don't name these faces: they are no longer grouped or suggested"
+                  className="px-3 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 disabled:opacity-40 border border-zinc-800 text-zinc-300 flex items-center gap-1.5"
+                >
+                  <EyeOff className="w-3.5 h-3.5" />
+                  <span>Ignore</span>
                 </button>
               </form>
             </div>

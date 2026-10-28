@@ -71,6 +71,11 @@ import { useConfirmRequest } from "./confirm";
 
 export default function App() {
   const lib = useLibraryState();
+  // Best of focuses on the starred people
+  const bestOfFocus = useMemo(
+    () => ({ starred: new Set(lib.people.filter((p) => p.starred).map((p) => p.name.toLowerCase())) }),
+    [lib.people]
+  );
   const welcome = useWelcomeTour();
   const settings = useSettings();
   const updater = useUpdater(settings.checkForUpdates);
@@ -529,6 +534,7 @@ export default function App() {
                 onChooseCover={setCoverPickerPerson}
                 onRename={lib.handleRenamePerson}
                 onSetHidden={lib.handleSetPersonHidden}
+                onSetStarred={lib.handleSetPersonStarred}
                 collapsedSections={collapsedSections}
                 onToggleSection={(id) =>
                   setCollapsedSections((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
@@ -602,12 +608,15 @@ export default function App() {
               onDeleteAlbum={lib.handleDeleteAlbum}
               onDeleteSavedSearch={lib.handleDeleteSavedSearch}
               onRenameTrip={lib.handleRenameTrip}
+              pickHighlights={lib.pickHighlights}
+              bestOfFocus={bestOfFocus}
               onShareGallery={(title, hashes) => lib.openGallery(title, hashes)}
-              onHighlights={(title, hashes, count) =>
+              onHighlights={(title, hashes, count, focus) =>
                 lib.openHighlights(
                   title,
                   hashes.map((h) => lib.photoByHash.get(h)).filter((p): p is PhotoItem => Boolean(p)),
-                  count
+                  count,
+                  focus
                 )
               }
             />
@@ -1062,14 +1071,20 @@ export default function App() {
       <FaceMatchReviewModal
         isOpen={Boolean(lib.faceReviewPerson)}
         initialPerson={lib.faceReviewPerson}
-        onClose={() => lib.setFaceReviewPerson(null)}
+        onClose={() => {
+          lib.setFaceReviewPerson(null);
+          // Confirmed faces sharpen each person's profile, so the suggestions themselves may have changed
+          lib.refreshPeople();
+        }}
         people={lib.people}
         pendingCounts={lib.pendingFaceCounts}
+        reducePendingCount={lib.reducePendingCount}
         setPhotos={lib.setPhotos}
         refreshPeople={lib.refreshPeople}
         folder={lib.folder}
         onRenamePerson={lib.handleRenamePerson}
         onSetPersonHidden={lib.handleSetPersonHidden}
+        onSetPersonStarred={lib.handleSetPersonStarred}
         onShowPhotos={(person) => {
           lib.setFaceReviewPerson(null);
           lib.setPeopleFilter({ person });
