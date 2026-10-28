@@ -14,6 +14,18 @@ export interface ReleaseNotes {
 // Newest first. Add an entry for every release that should greet updating users with "What's new".
 export const RELEASE_NOTES: ReleaseNotes[] = [
   {
+    version: "4.0.1",
+    items: [
+      { title: "Star your people", text: "Star the people who matter most (People → ⋯ → Star). They come first in the lists, and Best of focuses on photos of them instead of friends' photos or pictures received through WhatsApp." },
+      { title: "Jump through time", text: "Sorted by date, move the mouse to the right edge of the grid: the whole timeline slides out. Click a year, or click and drag to go month by month." },
+      { title: "Clear filters faster", text: "An × on the date filter clears just the date, and Clear all filters shows all photos again in one click." },
+      { title: "Ignore faces", text: "In Who is this?, ignore a whole group or a single face without naming anyone. Undo is one click away." },
+      { title: "Better photo dates", text: "Photos without a date inside the file now get the date in their name (IMG_20230615…, WhatsApp) or the date they were last modified, no longer the day they were copied to this PC. Existing photos are corrected on the next scan." },
+      { title: "Smarter similar shots", text: "Photos are only grouped as similar when the smart search index agrees, so unrelated photos no longer end up in one stack." },
+      { title: "Fixes", text: "Grid months in the right order, Best of covers that match the photos inside, review counts that update at once, week labels on the timeline, and the person menu in Face Review no longer hidden or overlapped." },
+    ],
+  },
+  {
     version: "4.0.0",
     items: [
       { title: "Import photos", text: "From a memory card, USB drive or folder into dated folders, skipping photos you already have. Lumina offers it when a camera card is connected." },
