@@ -848,11 +848,20 @@ fn empty_trash_blocking(app: &AppHandle, root_folder: String, permanent: bool) -
     let targets = trash_targets(&conn, &root_folder)?;
     let photo_paths: Vec<PathBuf> = targets.iter().map(|t| PathBuf::from(&t.1)).collect();
     let sidecars = sidecars_for_many(&photo_paths);
-    let total = targets.len();
+    // Sidecars whose photo left earlier (e.g. before Lumina recycled sidecars too): counted in the progress,
+    // since the Recycle Bin takes only a few files a second on a hard drive
+    let orphans = orphan_trash_sidecars(&root_folder);
+    let total = targets.len() + orphans.len();
     let stage = if permanent { "Deleting _Trash permanently..." } else { "Moving _Trash to the Recycle Bin..." };
+    let orphan_stage = if permanent {
+        "Deleting leftover sidecar files..."
+    } else {
+        "Moving leftover sidecar files to the Recycle Bin..."
+    };
     let mut result = TrashResult::default();
+    let is_cancelled = || crate::scan::SCAN_GENERATION.load(std::sync::atomic::Ordering::Acquire) != generation;
 
-    let progress = |done: usize, file: &str, finished: bool| {
+    let progress = |stage: &str, done: usize, file: &str, finished: bool| {
         let _ = app.emit(
             "scan-progress",
             ScanProgressEvent {
@@ -867,11 +876,11 @@ fn empty_trash_blocking(app: &AppHandle, root_folder: String, permanent: bool) -
     };
 
     for (i, batch) in targets.chunks(TRASH_BATCH).enumerate() {
-        if crate::scan::SCAN_GENERATION.load(std::sync::atomic::Ordering::Acquire) != generation {
+        if is_cancelled() {
             result.cancelled = true;
             break;
         }
-        progress(i * TRASH_BATCH, batch[0].1.rsplit(['\\', '/']).next().unwrap_or(""), false);
+        progress(stage, i * TRASH_BATCH, batch[0].1.rsplit(['\\', '/']).next().unwrap_or(""), false);
         let mut paths: Vec<PathBuf> = Vec::with_capacity(batch.len() * 2);
         for (_, p, _) in batch {
             let p = PathBuf::from(p);
@@ -900,10 +909,14 @@ fn empty_trash_blocking(app: &AppHandle, root_folder: String, permanent: bool) -
         }
     }
 
-    // Sidecars whose photo left earlier (e.g. before Lumina recycled sidecars too)
     if !result.cancelled && !result.refused_permanent {
-        let orphans = orphan_trash_sidecars(&root_folder);
-        for batch in orphans.chunks(TRASH_BATCH * 2) {
+        for (i, batch) in orphans.chunks(TRASH_BATCH / 2).enumerate() {
+            if is_cancelled() {
+                result.cancelled = true;
+                break;
+            }
+            let file = batch[0].file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+            progress(orphan_stage, targets.len() + i * (TRASH_BATCH / 2), &file, false);
             let outcome = remove_paths(batch, permanent);
             result.sidecars += outcome.gone.len();
             result.failures.extend(to_failures(outcome.failed));
@@ -915,7 +928,7 @@ fn empty_trash_blocking(app: &AppHandle, root_folder: String, permanent: bool) -
     }
 
     remove_empty_dirs(&Path::new(&root_folder).join("_Trash"));
-    progress(total, "", true);
+    progress(stage, total, "", true);
     Ok(result)
 }
 
