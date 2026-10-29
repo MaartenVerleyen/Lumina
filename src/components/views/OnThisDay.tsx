@@ -34,7 +34,19 @@ export default function OnThisDay({
   const [dismissed, setDismissed] = useState(dismissedToday);
   // Recomputed when the date changes too (Lumina left open past midnight)
   const day = today();
-  const groups = useMemo(() => onThisDay(photos, new Date(), culling, 5), [photos, culling, day]);
+  // Every photo of each day shown (for "Show the N photos"), in one pass: this component re-renders on every
+  // scroll step of the grid, and filtering the whole library per day there froze a 175k-photo library
+  const { groups, hashesOfDay } = useMemo(() => {
+    const groups = onThisDay(photos, new Date(), culling, 5);
+    const hashesOfDay = new Map<string, string[]>(groups.map((g) => [g.date, []]));
+    if (hashesOfDay.size > 0) {
+      for (const p of photos) {
+        const list = hashesOfDay.get((p.captured_at || "").slice(0, 10).replace(/:/g, "-"));
+        if (list) list.push(p.hash);
+      }
+    }
+    return { groups, hashesOfDay };
+  }, [photos, culling, day]);
   if (dismissed || groups.length === 0) return null;
 
   const dismiss = () => {
@@ -51,7 +63,7 @@ export default function OnThisDay({
         <span className="text-[12px] font-semibold text-zinc-100">On this day</span>
       </div>
       {groups.map((g) => {
-        const all = photos.filter((p) => (p.captured_at || "").slice(0, 10).replace(/:/g, "-") === g.date).map((p) => p.hash);
+        const all = hashesOfDay.get(g.date) ?? [];
         return (
           <button
             key={g.date}

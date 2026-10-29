@@ -108,3 +108,10 @@ export function thumbSrc(photo: Pick<PhotoItem, "thumb_path" | "thumb_rev">): st
   const src = convertFileSrc(photo.thumb_path);
   return photo.thumb_rev ? `${src}?v=${photo.thumb_rev}` : src;
 }
+
+// 1536 -> "2 KB", 3.2e9 -> "3.2 GB"
+export function formatBytes(bytes: number): string {
+  if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`;
+  if (bytes >= 1e6) return `${Math.round(bytes / 1e6)} MB`;
+  return `${Math.max(1, Math.round(bytes / 1e3))} KB`;
+}

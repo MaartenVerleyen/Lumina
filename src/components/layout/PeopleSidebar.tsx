@@ -165,7 +165,7 @@ export default function PeopleSidebar({
           e.preventDefault();
           openMenu(p.name, e.clientX, e.clientY);
         }}
-        className={`group relative flex items-center gap-2 pl-1.5 pr-1 py-1 rounded-xl border transition ${
+        className={`@container group relative flex items-center gap-2 pl-1.5 pr-1 py-1 rounded-xl border transition ${
           on ? "bg-emerald-500/15 border-emerald-500/40" : "border-transparent hover:bg-zinc-900"
         } ${p.hidden ? "opacity-60" : ""}`}
       >
@@ -186,12 +186,20 @@ export default function PeopleSidebar({
           className="flex-1 min-w-0 flex items-center gap-2.5 text-left"
           title="Click: show their photos · Ctrl+click: combine with others"
         >
-          {avatar(p)}
+          <span className="relative shrink-0">
+            {avatar(p)}
+            {/* In a narrow panel the count rides on the avatar, so the name keeps its room (review via ⋯) */}
+            {pending > 0 && (
+              <span className="@[17rem]:hidden absolute -top-1 -right-1.5 min-w-4 px-1 rounded-full bg-amber-500 text-zinc-950 text-[10px] font-bold leading-4 text-center">
+                {pending}
+              </span>
+            )}
+          </span>
           <span className="min-w-0">
             <span className={`block text-xs font-semibold capitalize truncate ${on ? "text-emerald-100" : "text-zinc-200"}`}>
               {p.name}
             </span>
-            <span className="block text-[11px] text-zinc-500 whitespace-nowrap">
+            <span className="block text-[11px] text-zinc-500 truncate">
               {p.photo_count} photo{p.photo_count === 1 ? "" : "s"}
             </span>
           </span>
@@ -199,7 +207,7 @@ export default function PeopleSidebar({
         {pending > 0 && (
           <button
             onClick={() => onReview(p.name)}
-            className="shrink-0 px-2 py-0.5 rounded-full bg-amber-500/15 hover:bg-amber-500/30 border border-amber-400/40 text-amber-300 text-[11px] font-semibold"
+            className="hidden @[17rem]:block shrink-0 px-2 py-0.5 rounded-full bg-amber-500/15 hover:bg-amber-500/30 border border-amber-400/40 text-amber-300 text-[11px] font-semibold"
             title={`Review ${pending} suggested match${pending === 1 ? "" : "es"} for ${p.name}`}
           >
             {pending} to review

@@ -209,7 +209,28 @@ export interface CommitResult {
 
 export interface TrashResult {
   recycled: number;
+  sidecars: number;
+  removed_hashes: string[];
   failures: FileOpFailure[];
+  // The Recycle Bin couldn't take a file: Lumina stopped instead of deleting it permanently
+  refused_permanent: boolean;
+  cancelled: boolean;
+}
+
+export interface RecycleBinInfo {
+  drive: string;
+  // Size limit in bytes; null when Windows doesn't say
+  capacity: number | null;
+  used: number;
+  // False for network or removable drives, or when the Recycle Bin is switched off
+  supported: boolean;
+}
+
+export interface TrashSummary {
+  photos: number;
+  bytes: number;
+  orphan_sidecars: number;
+  bin: RecycleBinInfo;
 }
 
 // One-time download of the face recognition models (InsightFace buffalo_l, 288 MB)

@@ -672,75 +672,273 @@ fn prune_orphaned_cache_blocking(app: AppHandle) -> Result<usize, String> {
     Ok(removed)
 }
 
-// Sends files to the OS Recycle Bin in one batch. Never deletes permanently: a file that cannot be
-// recycled is reported and left in place. Returns the paths that are gone afterwards.
-pub fn recycle_files(paths: &[PathBuf]) -> (Vec<PathBuf>, Vec<FileOpFailure>) {
-    let existing: Vec<&PathBuf> = paths.iter().filter(|p| p.exists()).collect();
-    let mut failures = Vec::new();
-    if trash::delete_all(&existing).is_err() {
-        // Retry one by one so a single locked file doesn't block the rest
-        for p in &existing {
-            if p.exists() {
-                if let Err(e) = trash::delete(p) {
-                    failures.push(FileOpFailure {
-                        file: p.to_string_lossy().to_string(),
-                        error: format!("could not move to Recycle Bin: {e}"),
-                    });
-                }
+
+// Library photos in _Trash, or staged to go there, under this root: (hash, path, size in bytes)
+fn trash_targets(conn: &Connection, root_folder: &str) -> Result<Vec<(String, String, u64)>, String> {
+    let prefix = make_folder_prefix(Some(root_folder));
+    let mut stmt = conn
+        .prepare(
+            "SELECT hash, current_path, COALESCE(file_size, 0) FROM photos
+             WHERE (subfolder = '_Trash' OR subfolder LIKE '\\_Trash / %' ESCAPE '\\' OR staged_target = '_Trash')
+               AND current_path LIKE ?1 ESCAPE '!'",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(params![prefix], |r| Ok((r.get(0)?, r.get(1)?, r.get::<_, i64>(2)?.max(0) as u64)))
+        .map_err(|e| e.to_string())?;
+    Ok(rows.flatten().collect())
+}
+
+fn is_xmp(p: &Path) -> bool {
+    p.extension().map(|x| x.eq_ignore_ascii_case("xmp")).unwrap_or(false)
+}
+
+fn walk_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    if let Ok(entries) = fs::read_dir(dir) {
+        for e in entries.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                walk_files(&p, out);
+            } else {
+                out.push(p);
             }
         }
     }
-    let gone = paths.iter().filter(|p| !p.exists()).cloned().collect();
-    (gone, failures)
+}
+
+// Sidecars left in the _Trash folder whose photo is gone
+pub(crate) fn orphan_trash_sidecars(root_folder: &str) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    walk_files(&Path::new(root_folder).join("_Trash"), &mut files);
+    let others: HashSet<(PathBuf, String)> = files
+        .iter()
+        .filter(|p| !is_xmp(p))
+        .filter_map(|p| Some((p.parent()?.to_path_buf(), p.file_stem()?.to_string_lossy().to_lowercase())))
+        .collect();
+    let names: HashSet<String> = files.iter().map(|p| p.to_string_lossy().to_lowercase()).collect();
+    files
+        .into_iter()
+        .filter(|p| is_xmp(p))
+        .filter(|p| {
+            let full = p.to_string_lossy().to_lowercase();
+            let base = &full[..full.len() - 4];
+            let stem = p.file_stem().map(|s| s.to_string_lossy().to_lowercase()).unwrap_or_default();
+            let parent = p.parent().map(Path::to_path_buf).unwrap_or_default();
+            // `photo.jpg.xmp` belongs to `photo.jpg`; `photo.xmp` to any `photo.*`
+            !names.contains(base) && !others.contains(&(parent, stem))
+        })
+        .collect()
+}
+
+// Same rules as `sidecars_for`, for many photos at once: each folder is listed once instead of per photo,
+// and a same-named partner that is itself being removed doesn't keep `name.xmp` behind.
+pub(crate) fn sidecars_for_many(photos: &[PathBuf]) -> HashMap<PathBuf, Vec<PathBuf>> {
+    let leaving: HashSet<String> = photos.iter().map(|p| p.to_string_lossy().to_lowercase()).collect();
+    let mut listings: HashMap<PathBuf, HashMap<String, PathBuf>> = HashMap::new();
+    let mut out = HashMap::new();
+    for src in photos {
+        let Some(dir) = src.parent() else { continue };
+        let listing = listings.entry(dir.to_path_buf()).or_insert_with(|| {
+            fs::read_dir(dir)
+                .map(|entries| {
+                    entries
+                        .flatten()
+                        .map(|e| (e.file_name().to_string_lossy().to_lowercase(), e.path()))
+                        .collect()
+                })
+                .unwrap_or_default()
+        });
+        let name = src.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
+        let stem = src.file_stem().map(|s| s.to_string_lossy().to_lowercase()).unwrap_or_default();
+        let mut found = Vec::new();
+        if let Some(full) = listing.get(&format!("{name}.xmp")) {
+            found.push(full.clone());
+        }
+        if let Some(stem_xmp) = listing.get(&format!("{stem}.xmp")) {
+            let partner_stays = listing.values().any(|p| {
+                !is_xmp(p)
+                    && p.file_stem().map(|s| s.to_string_lossy().to_lowercase()).as_deref() == Some(stem.as_str())
+                    && !leaving.contains(&p.to_string_lossy().to_lowercase())
+            });
+            if !partner_stays && !found.contains(stem_xmp) {
+                found.push(stem_xmp.clone());
+            }
+        }
+        if !found.is_empty() {
+            out.insert(src.clone(), found);
+        }
+    }
+    out
+}
+
+#[derive(Serialize)]
+pub struct TrashSummary {
+    pub photos: usize,
+    pub bytes: u64,
+    // Sidecars in the _Trash folder whose photo is already gone
+    pub orphan_sidecars: usize,
+    pub bin: crate::recycle::RecycleBinInfo,
+}
+
+// What emptying _Trash would remove, and whether the Recycle Bin on that drive can hold it
+#[tauri::command]
+pub async fn trash_summary(app: AppHandle, root_folder: String) -> Result<TrashSummary, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let conn = open_global_db(&app)?;
+        let targets = trash_targets(&conn, &root_folder)?;
+        Ok(TrashSummary {
+            photos: targets.len(),
+            bytes: targets.iter().map(|t| t.2).sum(),
+            orphan_sidecars: orphan_trash_sidecars(&root_folder).len(),
+            bin: crate::recycle::bin_info(Path::new(&root_folder)),
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[derive(Serialize, Default)]
 pub struct TrashResult {
     pub recycled: usize,
+    pub sidecars: usize,
+    pub removed_hashes: Vec<String>,
     pub failures: Vec<FileOpFailure>,
+    // The Recycle Bin couldn't take a file and Lumina stopped instead of deleting it permanently
+    pub refused_permanent: bool,
+    pub cancelled: bool,
 }
 
+// Empties _Trash in batches with progress. To the Recycle Bin unless `permanent` (the user chose that
+// after being told the Recycle Bin can't hold it); the Recycle Bin route never deletes anything for good.
 #[tauri::command]
-pub async fn empty_library_trash_to_os(app: AppHandle, root_folder: String) -> Result<TrashResult, String> {
-    tauri::async_runtime::spawn_blocking(move || empty_trash_blocking(&app, root_folder))
+pub async fn empty_library_trash_to_os(
+    app: AppHandle,
+    root_folder: String,
+    permanent: Option<bool>,
+) -> Result<TrashResult, String> {
+    tauri::async_runtime::spawn_blocking(move || empty_trash_blocking(&app, root_folder, permanent.unwrap_or(false)))
         .await
         .map_err(|e| e.to_string())?
 }
 
-fn empty_trash_blocking(app: &AppHandle, root_folder: String) -> Result<TrashResult, String> {
-    let mut conn = open_global_db(app)?;
-    let prefix = make_folder_prefix(Some(&root_folder));
+const TRASH_BATCH: usize = 200;
 
-    let targets: Vec<(String, String)> = {
-        let mut stmt = conn
-            .prepare(
-                "SELECT hash, current_path FROM photos
-                 WHERE (subfolder = '_Trash' OR staged_target = '_Trash') AND current_path LIKE ?1 ESCAPE '!'",
-            )
-            .map_err(|e| e.to_string())?;
-        let rows = stmt
-            .query_map(params![prefix], |r| Ok((r.get(0)?, r.get(1)?)))
-            .map_err(|e| e.to_string())?;
-        rows.flatten().collect()
+fn remove_paths(paths: &[PathBuf], permanent: bool) -> crate::recycle::RecycleOutcome {
+    if !permanent {
+        return crate::recycle::recycle(paths);
+    }
+    let mut outcome = crate::recycle::RecycleOutcome { gone: Vec::new(), failed: Vec::new(), refused_permanent: false };
+    for p in paths {
+        match fs::remove_file(p) {
+            Ok(()) => outcome.gone.push(p.clone()),
+            Err(_) if !p.exists() => outcome.gone.push(p.clone()),
+            Err(e) => outcome.failed.push((p.clone(), format!("could not delete: {e}"))),
+        }
+    }
+    outcome
+}
+
+fn to_failures(failed: Vec<(PathBuf, String)>) -> impl Iterator<Item = FileOpFailure> {
+    failed.into_iter().map(|(p, error)| FileOpFailure { file: p.to_string_lossy().to_string(), error })
+}
+
+fn empty_trash_blocking(app: &AppHandle, root_folder: String, permanent: bool) -> Result<TrashResult, String> {
+    let generation = crate::scan::SCAN_GENERATION.load(std::sync::atomic::Ordering::Acquire);
+    let mut conn = open_global_db(app)?;
+    let targets = trash_targets(&conn, &root_folder)?;
+    let photo_paths: Vec<PathBuf> = targets.iter().map(|t| PathBuf::from(&t.1)).collect();
+    let sidecars = sidecars_for_many(&photo_paths);
+    let total = targets.len();
+    let stage = if permanent { "Deleting _Trash permanently..." } else { "Moving _Trash to the Recycle Bin..." };
+    let mut result = TrashResult::default();
+
+    let progress = |done: usize, file: &str, finished: bool| {
+        let _ = app.emit(
+            "scan-progress",
+            ScanProgressEvent {
+                stage: stage.to_string(),
+                current_file: file.to_string(),
+                completed: done,
+                total,
+                percent: (done * 100) / total.max(1),
+                done: finished,
+            },
+        );
     };
 
-    if targets.is_empty() {
-        return Ok(TrashResult::default());
+    for (i, batch) in targets.chunks(TRASH_BATCH).enumerate() {
+        if crate::scan::SCAN_GENERATION.load(std::sync::atomic::Ordering::Acquire) != generation {
+            result.cancelled = true;
+            break;
+        }
+        progress(i * TRASH_BATCH, batch[0].1.rsplit(['\\', '/']).next().unwrap_or(""), false);
+        let mut paths: Vec<PathBuf> = Vec::with_capacity(batch.len() * 2);
+        for (_, p, _) in batch {
+            let p = PathBuf::from(p);
+            if let Some(side) = sidecars.get(&p) {
+                paths.extend(side.iter().cloned());
+            }
+            paths.push(p);
+        }
+        let outcome = remove_paths(&paths, permanent);
+        let gone: HashSet<&PathBuf> = outcome.gone.iter().collect();
+        let mut gone_hashes = Vec::new();
+        for (h, p, _) in batch {
+            let p = PathBuf::from(p);
+            if gone.contains(&p) {
+                gone_hashes.push(h.clone());
+                result.sidecars += sidecars.get(&p).map(|s| s.iter().filter(|x| gone.contains(x)).count()).unwrap_or(0);
+            }
+        }
+        forget_deleted_photos(app, &mut conn, &gone_hashes);
+        result.recycled += gone_hashes.len();
+        result.removed_hashes.extend(gone_hashes);
+        result.failures.extend(to_failures(outcome.failed));
+        if outcome.refused_permanent {
+            result.refused_permanent = true;
+            break;
+        }
     }
 
-    let paths: Vec<PathBuf> = targets.iter().map(|(_, p)| PathBuf::from(p)).collect();
-    let (gone, failures) = recycle_files(&paths);
-    let gone_set: std::collections::HashSet<&PathBuf> = gone.iter().collect();
-    let deleted_hashes: Vec<&String> = targets
-        .iter()
-        .filter(|(_, p)| gone_set.contains(&PathBuf::from(p)))
-        .map(|(h, _)| h)
-        .collect();
+    // Sidecars whose photo left earlier (e.g. before Lumina recycled sidecars too)
+    if !result.cancelled && !result.refused_permanent {
+        let orphans = orphan_trash_sidecars(&root_folder);
+        for batch in orphans.chunks(TRASH_BATCH * 2) {
+            let outcome = remove_paths(batch, permanent);
+            result.sidecars += outcome.gone.len();
+            result.failures.extend(to_failures(outcome.failed));
+            if outcome.refused_permanent {
+                result.refused_permanent = true;
+                break;
+            }
+        }
+    }
 
-    // Drop DB rows and every cached derivative (thumbnail, preview, face crops, embeddings) of recycled photos
+    remove_empty_dirs(&Path::new(&root_folder).join("_Trash"));
+    progress(total, "", true);
+    Ok(result)
+}
+
+// Removes empty folders bottom-up, the folder itself included when it ends up empty
+fn remove_empty_dirs(dir: &Path) {
+    if let Ok(entries) = fs::read_dir(dir) {
+        for e in entries.flatten() {
+            if e.path().is_dir() {
+                remove_empty_dirs(&e.path());
+            }
+        }
+    }
+    let _ = fs::remove_dir(dir);
+}
+
+// Drops DB rows and every cached derivative (thumbnail, preview, face crops, embeddings) of removed photos
+fn forget_deleted_photos(app: &AppHandle, conn: &mut Connection, hashes: &[String]) {
+    if hashes.is_empty() {
+        return;
+    }
     let mut face_thumbs: Vec<String> = Vec::new();
     if let Ok(tx) = conn.transaction() {
-        for h in &deleted_hashes {
+        for h in hashes {
             if let Ok(mut stmt) = tx.prepare_cached("SELECT face_id, face_thumb FROM photo_faces WHERE hash = ?1") {
                 if let Ok(rows) = stmt.query_map(params![h], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))) {
                     for (face_id, thumb) in rows.flatten() {
@@ -762,24 +960,12 @@ fn empty_trash_blocking(app: &AppHandle, root_folder: String) -> Result<TrashRes
     if let Ok(mut pending) = PENDING_CANDIDATES_CACHE.lock() {
         pending.clear();
     }
-
     let app_dir = get_app_storage_dir(app);
-    for h in &deleted_hashes {
+    for h in hashes {
         let _ = fs::remove_file(app_dir.join("thumbnails").join(format!("{h}.jpg")));
         let _ = fs::remove_file(app_dir.join("previews").join(format!("{h}_preview.jpg")));
     }
     for thumb in face_thumbs {
         let _ = fs::remove_file(thumb);
     }
-
-    // If the physical _Trash directory is now empty, remove it cleanly
-    let trash_dir = Path::new(&root_folder).join("_Trash");
-    if trash_dir.exists() {
-        let _ = fs::remove_dir(&trash_dir);
-    }
-
-    Ok(TrashResult {
-        recycled: deleted_hashes.len(),
-        failures,
-    })
 }

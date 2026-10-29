@@ -145,6 +145,18 @@ const sectionGrid = "grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(1
 
 // The Collections tab: albums, smart albums and automatic trips & events, as cards.
 // Clicking a card opens the Photos tab filtered to it.
+interface CoverPick {
+  signature: string;
+  hashes: string[];
+}
+
+// Trips shown per year until "Show all": every trip card has a cover of up to four photos
+const TRIPS_PER_YEAR = 12;
+
+// Year covers outlive the view: picking them sends every photo of a year to the backend, so switching
+// back to Collections shouldn't redo it for years that didn't change
+const coverCache = new Map<number, CoverPick>();
+
 export default function CollectionsView({
   albums,
   albumCounts,
@@ -167,6 +179,8 @@ export default function CollectionsView({
 }: CollectionsViewProps) {
   const [filter, setFilter] = useState("");
   const [newAlbumName, setNewAlbumName] = useState<string | null>(null);
+  // Years whose trips are all shown (the rest show the first few: a large library has well over a thousand)
+  const [expandedYears, setExpandedYears] = useState<Set<number>>(new Set());
   const [renaming, setRenaming] = useState<{ kind: "album" | "trip"; id: string; value: string } | null>(null);
 
   const q = filter.trim().toLowerCase();
@@ -180,7 +194,9 @@ export default function CollectionsView({
       if (!matches(e.label)) continue;
       const trip = tripsById.get(e.id);
       const year = trip ? new Date(trip.start).getUTCFullYear() : 0;
-      groups.set(year, [...(groups.get(year) ?? []), e]);
+      const group = groups.get(year);
+      if (group) group.push(e);
+      else groups.set(year, [e]);
     }
     return Array.from(groups.entries()).sort((a, b) => b[0] - a[0]);
   }, [tripEntries, tripsById, q]);
@@ -199,7 +215,11 @@ export default function CollectionsView({
     const byYear = new Map<number, PhotoItem[]>();
     for (const p of photoByHash.values()) {
       const y = Number((p.captured_at || "").slice(0, 4));
-      if (y >= 1971) byYear.set(y, [...(byYear.get(y) ?? []), p]);
+      if (y < 1971) continue;
+      // Pushed in place: copying the year's array for every photo is quadratic in a large library
+      const list = byYear.get(y);
+      if (list) list.push(p);
+      else byYear.set(y, [p]);
     }
     const starredKey = [...bestOfFocus.starred].sort().join("|");
     return Array.from(byYear, ([year, photos]) => ({
@@ -208,7 +228,7 @@ export default function CollectionsView({
       hashes: photos.map((p) => p.hash),
       // Changes when photos come or go, their stars, flags or people change, or other people are starred:
       // what moves the picks
-      signature: `${photos.length}:${photos.reduce(
+      signature: `${photos[0].hash}:${photos.length}:${photos.reduce(
         (s, p) => s + p.rating * 3 + (p.flag === "pick" ? 1 : p.flag === "reject" ? 2 : 0) + p.people.length * 7,
         0
       )}:${starredKey}`,
@@ -218,7 +238,8 @@ export default function CollectionsView({
   }, [photoByHash, bestOfFocus]);
   const years = allYears.filter((y) => matches(`best of ${y.year}`));
   // Each year's cover: its top highlights, so the cover shows photos that are in "Best of" when opened
-  const [covers, setCovers] = useState<Record<number, { signature: string; hashes: string[] }>>({});
+  // Kept across visits (see coverCache): only years whose signature changed are picked again
+  const [covers, setCovers] = useState<Record<number, CoverPick>>(() => Object.fromEntries(coverCache));
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -227,6 +248,7 @@ export default function CollectionsView({
         if (covers[y.year]?.signature === y.signature) continue;
         try {
           const hashes = await pickHighlights(y.photos, 4, bestOfFocus);
+          coverCache.set(y.year, { signature: y.signature, hashes });
           if (!cancelled) setCovers((prev) => ({ ...prev, [y.year]: { signature: y.signature, hashes } }));
         } catch {
           // The card keeps its placeholder
@@ -382,7 +404,7 @@ export default function CollectionsView({
           <div key={year} className="flex flex-col gap-2">
             <h3 className="text-sm font-semibold text-zinc-300">{year || "Undated"}</h3>
             <div className={sectionGrid}>
-              {entries.map((e) => (
+              {(q || expandedYears.has(year) ? entries : entries.slice(0, TRIPS_PER_YEAR)).map((e) => (
                 <Card
                   key={e.id}
                   title={e.label}
@@ -407,6 +429,21 @@ export default function CollectionsView({
                 />
               ))}
             </div>
+            {!q && entries.length > TRIPS_PER_YEAR && (
+              <button
+                onClick={() =>
+                  setExpandedYears((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(year)) next.delete(year);
+                    else next.add(year);
+                    return next;
+                  })
+                }
+                className="self-start text-xs text-sky-300 hover:text-sky-200 px-2 py-1 rounded-md hover:bg-zinc-900"
+              >
+                {expandedYears.has(year) ? "Show fewer" : `Show all ${entries.length}`}
+              </button>
+            )}
           </div>
         ))}
       </section>

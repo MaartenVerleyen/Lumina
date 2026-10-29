@@ -150,7 +150,9 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
     };
   }, [photos, culling]);
 
-  const visiblePhotos = useMemo(() => {
+  // The filtered, sorted photos. Kept apart from the burst stacking below, so opening or collapsing bursts
+  // doesn't filter and sort the whole library again (about a second at 175k photos)
+  const sortedView = useMemo((): { list: PhotoItem[]; stackBursts: boolean } => {
     const q = semanticScores ? "" : parsedSearch.text.toLowerCase();
     const terms = parsedSearch.terms;
     const albumFilter = activeAlbumId !== null ? albumSets.get(activeAlbumId) ?? new Set<string>() : null;
@@ -222,9 +224,9 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
       const ranked = filtered.sort((a, b) => (semanticScores.get(b.hash) ?? 0) - (semanticScores.get(a.hash) ?? 0));
       if (semanticCut) {
         const line = semanticCutoff(ranked.map((p) => semanticScores.get(p.hash) ?? 0));
-        return ranked.filter((p) => (semanticScores.get(p.hash) ?? 0) >= line).slice(0, SEMANTIC_MAX_HITS);
+        return { list: ranked.filter((p) => (semanticScores.get(p.hash) ?? 0) >= line).slice(0, SEMANTIC_MAX_HITS), stackBursts: false };
       }
-      return ranked;
+      return { list: ranked, stackBursts: false };
     }
 
     // `filtered` is already a fresh array: sort it in place
@@ -237,15 +239,17 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
           return NAME_COLLATOR.compare(a.name, b.name);
         case "NAME_DESC":
           return NAME_COLLATOR.compare(b.name, a.name);
+        // Photos of the same second (bursts, exact copies) by plain name order: a collator here made the sort of
+        // a library full of copies several times slower
         case "DATE_DESC":
           return (
             compareStrings(b.captured_at || "", a.captured_at || "") ||
-            TEXT_COLLATOR.compare(a.name, b.name)
+            compareStrings(a.name, b.name)
           );
         case "DATE_ASC":
           return (
             compareStrings(a.captured_at || "9999", b.captured_at || "9999") ||
-            TEXT_COLLATOR.compare(a.name, b.name)
+            compareStrings(a.name, b.name)
           );
         case "SCORE_DESC":
           return b.sharpness - a.sharpness;
@@ -267,7 +271,36 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
       }
     });
 
-    if (viewMode === "map") return sorted;
+    return { list: sorted, stackBursts: true };
+  }, [
+    photos,
+    smartFilter,
+    orientationFilter,
+    selectedPeriodRange,
+    peopleFilter,
+    activeSubfolder,
+    activeEvent,
+    tripOfHash,
+    activeTag,
+    parsedSearch,
+    matchContext,
+    culling,
+    albumSets,
+    activeAlbumId,
+    hashFilter,
+    sortBy,
+    semanticScores,
+    semanticCut,
+  ]);
+
+  // The map shows every photo where it was taken. Only this boolean matters here, not the tab itself:
+  // switching between other tabs mustn't filter, sort and lay out the whole library again.
+  const isMapTab = viewMode === "map";
+
+  // Bursts and near-duplicates stacked to their best photo, unless shown open
+  const visiblePhotos = useMemo(() => {
+    const { list: sorted, stackBursts } = sortedView;
+    if (!stackBursts || isMapTab) return sorted;
 
     const groupMembers = new Map<number, PhotoItem[]>();
     for (const p of sorted) {
@@ -278,10 +311,11 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
       }
     }
 
-    // Best version first per group
+    // Best version first per group (each photo's score worked out once, not on every comparison)
     const orderedGroups = new Map<number, PhotoItem[]>();
     for (const [grp, members] of groupMembers) {
-      orderedGroups.set(grp, [...members].sort((a, b) => cullScore(b, culling) - cullScore(a, culling)));
+      const score = new Map(members.map((p) => [p, cullScore(p, culling)]));
+      orderedGroups.set(grp, [...members].sort((a, b) => score.get(b)! - score.get(a)!));
     }
 
     const finalDisplay: PhotoItem[] = [];
@@ -304,29 +338,7 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
     }
 
     return finalDisplay;
-  }, [
-    photos,
-    smartFilter,
-    orientationFilter,
-    selectedPeriodRange,
-    peopleFilter,
-    activeSubfolder,
-    activeEvent,
-    tripOfHash,
-    activeTag,
-    parsedSearch,
-    matchContext,
-    culling,
-    albumSets,
-    activeAlbumId,
-    hashFilter,
-    sortBy,
-    showAllBurstVersions,
-    expandedBurstGroups,
-    viewMode,
-    semanticScores,
-    semanticCut,
-  ]);
+  }, [sortedView, isMapTab, culling, showAllBurstVersions, expandedBurstGroups]);
 
   // Photos that qualify for Compare before the 4-photo cap (Compare shows "+N more")
   const compareCandidateCount = useMemo(() => {

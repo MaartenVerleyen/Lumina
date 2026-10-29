@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowUpDown, Calendar, Check, ChevronDown, Columns, FilterX, Folder, FolderSync, Layers, SlidersHorizontal, Trophy, X } from "lucide-react";
+import { ArrowUpDown, Calendar, Check, ChevronDown, Columns, Copy, FilterX, Folder, FolderSync, Layers, SlidersHorizontal, Trophy, X } from "lucide-react";
 import type { LibraryState } from "../../hooks/useLibraryState";
 import { AutoStagePreset, OrientationFilter, SortOption } from "../../types/lumina";
 
@@ -285,6 +285,17 @@ export default function PhotoToolbar({ lib }: { lib: LibraryState }) {
               >
                 <FolderSync className="w-3.5 h-3.5" />
                 {lib.simpleMode ? "Auto-sort visible photos" : "Auto-stage visible photos"}
+              </button>
+              <button
+                onClick={() => {
+                  close();
+                  lib.openDuplicates();
+                }}
+                className="w-full flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200"
+                title="Exact copies and the same photo saved as different files, across all folders"
+              >
+                <Copy className="w-3.5 h-3.5 text-sky-300" />
+                Find duplicates…
               </button>
               {lib.totalBurstGroups > 0 && (
                 <button

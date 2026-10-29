@@ -180,7 +180,10 @@ const MONTHS = [
 
 // "2024:06:15 10:00:00" or "2024-06-15 ..." -> "2024-06"; no date -> "undated"
 export function monthKeyOf(capturedAt: string | undefined): string {
-  const m = /^(\d{4})[-:](\d{2})/.exec(capturedAt || "");
+  const s = capturedAt || "";
+  // Lumina stores "YYYY-MM-DD ...": the first 7 characters are the key (no regex for the common case)
+  if (s.length >= 7 && s[4] === "-" && s.charCodeAt(0) >= 48 && s.charCodeAt(0) <= 57) return s.slice(0, 7);
+  const m = /^(\d{4})[-:](\d{2})/.exec(s);
   return m ? `${m[1]}-${m[2]}` : "undated";
 }
 

@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import { useDialogFocus } from "../../hooks/useDialogFocus";
 import { Loader2 } from "lucide-react";
 
@@ -10,6 +11,42 @@ interface OperationProgressModalProps {
   total: number;
   onCancel?: () => void;
   cancelLabel?: string;
+  // Show files per second and time left (off when `completed` isn't a count of files)
+  showRate?: boolean;
+}
+
+// How long the rate is averaged over: long enough to smooth out slow files, short enough to follow changes
+const RATE_WINDOW_MS = 20000;
+
+function formatEta(seconds: number): string {
+  if (seconds < 60) return "less than a minute";
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `about ${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  return `about ${hours} h ${minutes % 60} min`;
+}
+
+// Files per second over the last RATE_WINDOW_MS, starting over when the stage changes
+function useRate(isOpen: boolean, stage: string, completed: number): number | null {
+  const samples = useRef<{ t: number; done: number }[]>([]);
+  const stageRef = useRef(stage);
+  const [rate, setRate] = useState<number | null>(null);
+  useEffect(() => {
+    const now = performance.now();
+    const last = samples.current[samples.current.length - 1];
+    if (!isOpen || stageRef.current !== stage || (last && completed < last.done)) {
+      samples.current = [];
+      stageRef.current = stage;
+      setRate(null);
+      if (!isOpen) return;
+    }
+    const s = samples.current;
+    s.push({ t: now, done: completed });
+    while (s.length > 2 && now - s[0].t > RATE_WINDOW_MS) s.shift();
+    const seconds = (now - s[0].t) / 1000;
+    setRate(seconds >= 3 && completed > s[0].done ? (completed - s[0].done) / seconds : null);
+  }, [isOpen, stage, completed]);
+  return rate;
 }
 
 export default function OperationProgressModal({
@@ -21,8 +58,10 @@ export default function OperationProgressModal({
   total,
   onCancel,
   cancelLabel = "Cancel",
+  showRate = true,
 }: OperationProgressModalProps) {
   const dialogRef = useDialogFocus<HTMLDivElement>(isOpen);
+  const rate = useRate(isOpen && showRate, stage, completed);
   if (!isOpen) return null;
 
   // Until the backend reports a total (e.g. while it lists the folder) the bar is indeterminate
@@ -58,10 +97,16 @@ export default function OperationProgressModal({
             <span className="truncate">{currentFile || "Processing..."}</span>
             {known && (
               <span className="shrink-0 ml-2">
-                {completed} / {total} ({percent}%)
+                {completed.toLocaleString()} / {total.toLocaleString()} ({percent}%)
               </span>
             )}
           </div>
+          {known && rate !== null && (
+            <div className="flex justify-between text-[11px] text-zinc-500 font-mono">
+              <span>{rate >= 10 ? Math.round(rate) : rate.toFixed(1)} files/s</span>
+              <span>{formatEta(Math.max(0, total - completed) / rate)} left</span>
+            </div>
+          )}
         </div>
 
         {onCancel && (

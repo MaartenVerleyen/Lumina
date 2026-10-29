@@ -1244,3 +1244,196 @@ fn backup_csv_quoting() {
     assert_eq!(csv_field("beach, sunset"), "\"beach, sunset\"");
     assert_eq!(csv_field("a \"quote\""), "\"a \"\"quote\"\"\"");
 }
+
+// ----------------- DUPLICATES -----------------
+
+fn dup_row(hash: &str, path: &str, size: i64, pixels: i64, captured_at: &str, dhash: u64) -> duplicates::DupRow {
+    duplicates::DupRow {
+        hash: hash.into(),
+        path: path.into(),
+        size,
+        mtime: 0,
+        pixels,
+        captured_at: captured_at.into(),
+        dhash: Some(dhash),
+        info: 0,
+    }
+}
+
+#[test]
+fn exact_copies_are_proven_from_the_salted_ids() {
+    let copy_path = r"D:\Takeout\Family\IMG_1.jpg";
+    let rows = vec![
+        dup_row("aaaa", r"D:\Photos\IMG_1.jpg", 1000, 12, "", 0),
+        dup_row(&salt_hash_with_path("aaaa", copy_path), copy_path, 1000, 12, "", 0),
+        // Same size, but not a copy: its ID isn't derived from the original's
+        dup_row("bbbb", r"D:\Photos\IMG_2.jpg", 1000, 12, "", 0),
+    ];
+    assert_eq!(duplicates::exact_copy_sets(&rows).into_iter().map(|mut s| { s.sort(); s }).collect::<Vec<_>>(), vec![vec![0, 1]]);
+}
+
+#[test]
+fn the_copy_to_keep_is_largest_then_oldest_then_most_info() {
+    let mut small = dup_row("s", r"D:\a\x.jpg", 100, 10, "2020-01-01 10:00:00", 0);
+    let big = dup_row("b", r"D:\b\x.jpg", 50, 20, "2021-01-01 10:00:00", 0);
+    assert_eq!(duplicates::keeper_order(&big, &small), std::cmp::Ordering::Less);
+    small.pixels = 20;
+    small.size = 50;
+    // Same size: the older one
+    assert_eq!(duplicates::keeper_order(&small, &big), std::cmp::Ordering::Less);
+    let mut rated = big.clone();
+    rated.captured_at = small.captured_at.clone();
+    rated.info = 3;
+    assert_eq!(duplicates::keeper_order(&rated, &small), std::cmp::Ordering::Less);
+}
+
+#[test]
+fn same_photo_needs_the_same_shot_not_a_burst_or_a_raw() {
+    use duplicates::{camera_frame, same_photo};
+    assert_eq!(camera_frame(r"D:\a\DSC00645.JPG"), Some(("dsc".into(), 645)));
+    assert_eq!(camera_frame(r"D:\a\IMG_7619.CR3.jpg"), Some(("img".into(), 7619)));
+    assert_eq!(camera_frame(r"D:\a\2023-09-25-0495.CR3.jpg"), None);
+    let clip = HashMap::new();
+    let t = "2017-09-13 15:14:01";
+    let original = dup_row("a", r"D:\a\DSC00645.JPG", 9, 9, t, 0xff00);
+    let resized = dup_row("b", r"D:\t\DSC00645.JPG", 3, 2, t, 0xff01);
+    let bw = dup_row("c", r"D:\a\DSC00645BW.jpg", 9, 9, t, 0xff03);
+    let next_frame = dup_row("d", r"D:\a\DSC00646.JPG", 9, 9, t, 0xff00);
+    let raw = dup_row("e", r"D:\a\DSC00645.ARW", 9, 9, t, 0xff00);
+    assert!(same_photo(&original, &resized, &clip));
+    assert!(same_photo(&original, &bw, &clip));
+    assert!(!same_photo(&original, &next_frame, &clip));
+    assert!(!same_photo(&original, &raw, &clip));
+    // Grouped only within one second, and never on a date without a time
+    let rows = vec![original, resized, dup_row("f", r"D:\w\IMG-1-WA0001.jpg", 1, 1, "2020-05-30 00:00:00", 0), dup_row("g", r"D:\w\IMG-1-WA0002.jpg", 1, 1, "2020-05-30 00:00:00", 0)];
+    let sets = duplicates::same_photo_sets(&rows, &[0, 1, 2, 3], &clip);
+    assert_eq!(sets.len(), 1);
+    assert_eq!(sets[0].len(), 2);
+
+    // An export matching two burst frames doesn't join them into one set
+    let rows = vec![
+        dup_row("a", r"D:\a\DSC03762.JPG", 9, 9, t, 0xff00),
+        dup_row("b", r"D:\d\i5659--1x-1.ARW.jpg", 9, 9, t, 0xff00),
+        dup_row("c", r"D:\a\DSC03763.JPG", 9, 9, t, 0xff00),
+    ];
+    let sets = duplicates::same_photo_sets(&rows, &[0, 1, 2], &clip);
+    assert!(sets.iter().all(|s| !(s.contains(&0) && s.contains(&2))), "{sets:?}");
+}
+
+#[test]
+fn staging_duplicates_gives_the_kept_copy_their_stars_tags_people_and_albums() {
+    let conn = Connection::open_in_memory().unwrap();
+    conn.execute_batch(
+        "CREATE TABLE photos (hash TEXT PRIMARY KEY, rating INTEGER, flag TEXT, color_label TEXT, ai_caption TEXT, staged_target TEXT);
+         CREATE TABLE photo_tags (hash TEXT, tag TEXT, PRIMARY KEY (hash, tag));
+         CREATE TABLE photo_people (hash TEXT, person_name TEXT, PRIMARY KEY (hash, person_name));
+         CREATE TABLE album_photos (album_id INTEGER, hash TEXT, PRIMARY KEY (album_id, hash));
+         INSERT INTO photos VALUES ('keep', 2, NULL, NULL, '', NULL), ('extra', 4, 'pick', 'red', 'A beach', NULL);
+         INSERT INTO photo_tags VALUES ('keep', 'sea'), ('extra', 'sea'), ('extra', 'holiday');
+         INSERT INTO photo_people VALUES ('extra', 'Anna');
+         INSERT INTO album_photos VALUES (7, 'extra');",
+    )
+    .unwrap();
+    duplicates::merge_into_keeper(&conn, "keep", "extra").unwrap();
+    let (rating, flag, label, caption): (i64, String, String, String) = conn
+        .query_row("SELECT rating, flag, color_label, ai_caption FROM photos WHERE hash = 'keep'", [], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+        })
+        .unwrap();
+    assert_eq!((rating, flag.as_str(), label.as_str(), caption.as_str()), (4, "pick", "red", "A beach"));
+    let count = |sql: &str| conn.query_row(sql, [], |r| r.get::<_, i64>(0)).unwrap();
+    assert_eq!(count("SELECT COUNT(*) FROM photo_tags WHERE hash = 'keep'"), 2);
+    assert_eq!(count("SELECT COUNT(*) FROM photo_people WHERE hash = 'keep'"), 1);
+    assert_eq!(count("SELECT COUNT(*) FROM album_photos WHERE hash = 'keep'"), 1);
+}
+
+// Duplicates in a real library (read-only): LUMINA_DIAG_DB=<path to library.db> cargo test --lib duplicates_in_library -- --ignored --nocapture
+#[test]
+#[ignore]
+fn duplicates_in_library() {
+    let Ok(db) = std::env::var("LUMINA_DIAG_DB") else {
+        eprintln!("Set LUMINA_DIAG_DB");
+        return;
+    };
+    let conn = Connection::open_with_flags(&db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    let started = Instant::now();
+    let (sets, photos) = duplicates::find_duplicate_sets(&conn, None).unwrap();
+    let count = |kind: &str| {
+        let s: Vec<&duplicates::DuplicateSet> = sets.iter().filter(|s| s.kind == kind).collect();
+        (s.len(), s.iter().map(|s| s.hashes.len() - 1).sum::<usize>())
+    };
+    eprintln!("{photos} photos in {} ms", started.elapsed().as_millis());
+    eprintln!("exact: {:?} (sets, extra files)", count("exact"));
+    eprintln!("same photo: {:?} (sets, extra files)", count("same_photo"));
+    let path = |h: &str| conn.query_row("SELECT current_path FROM photos WHERE hash = ?1", params![h], |r| r.get::<_, String>(0)).unwrap();
+    for set in sets.iter().filter(|s| s.kind == "same_photo").step_by(997).take(8) {
+        eprintln!("--");
+        for h in &set.hashes {
+            eprintln!("  {h} {}", path(h));
+        }
+    }
+}
+
+// Real Recycle Bin on each drive (moves scratch files there): LUMINA_RECYCLE_DIRS="C:\tmp;D:\tmp" cargo test --lib recycle_on_drives -- --ignored --nocapture
+#[test]
+#[ignore]
+fn recycle_on_drives() {
+    let Ok(dirs) = std::env::var("LUMINA_RECYCLE_DIRS") else {
+        eprintln!("Set LUMINA_RECYCLE_DIRS");
+        return;
+    };
+    for dir in dirs.split(';') {
+        let dir = std::path::Path::new(dir).join("lumina-recycle-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let files: Vec<std::path::PathBuf> = (0..3)
+            .map(|i| {
+                let p = dir.join(format!("recycle-test-{i}.txt"));
+                std::fs::write(&p, b"Lumina recycle test").unwrap();
+                p
+            })
+            .collect();
+        let info = crate::recycle::bin_info(&dir);
+        eprintln!("{info:?}");
+        let started = Instant::now();
+        let outcome = crate::recycle::recycle(&files);
+        eprintln!(
+            "  gone {} failed {:?} refused {} in {} ms",
+            outcome.gone.len(),
+            outcome.failed,
+            outcome.refused_permanent,
+            started.elapsed().as_millis()
+        );
+        if std::env::var("LUMINA_EXPECT_REFUSED").is_ok() {
+            // Nothing may be deleted when the Recycle Bin can't take it
+            assert!(outcome.refused_permanent);
+            assert!(files.iter().all(|p| p.exists()));
+            let _ = std::fs::remove_dir_all(&dir);
+        } else {
+            assert_eq!(outcome.gone.len(), 3);
+            assert!(!outcome.refused_permanent);
+            let _ = std::fs::remove_dir(&dir);
+        }
+    }
+}
+
+#[test]
+fn trash_sidecars_travel_and_orphans_are_found() {
+    let root = std::env::temp_dir().join(format!("lumina-trash-sidecars-{}", std::process::id()));
+    let trash = root.join("_Trash");
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&trash).unwrap();
+    for name in ["a.jpg", "a.jpg.xmp", "b.xmp", "c.cr2", "c.jpg", "c.xmp", "d.nef", "d.xmp"] {
+        std::fs::write(trash.join(name), b"x").unwrap();
+    }
+    // Only c.jpg leaves while c.cr2 stays: c.xmp belongs to the RAW and stays too
+    let leaving = vec![trash.join("a.jpg"), trash.join("c.jpg"), trash.join("d.nef")];
+    let found = crate::files::sidecars_for_many(&leaving);
+    assert_eq!(found.get(&trash.join("a.jpg")), Some(&vec![trash.join("a.jpg.xmp")]));
+    assert_eq!(found.get(&trash.join("c.jpg")), None);
+    assert_eq!(found.get(&trash.join("d.nef")), Some(&vec![trash.join("d.xmp")]));
+
+    // b.xmp has no photo left; the others still have theirs
+    let orphans = crate::files::orphan_trash_sidecars(&root.to_string_lossy());
+    assert_eq!(orphans, vec![trash.join("b.xmp")]);
+    let _ = std::fs::remove_dir_all(&root);
+}

@@ -60,7 +60,11 @@ windows = { version = "0.62", features = [
     "Win32_System_Threading",
     "Win32_System_Com",
     "Win32_Graphics_Imaging",
+    "Win32_System_Registry",
+    "Win32_UI_Shell",
 ] }
+# The `#[implement]` macro (Recycle Bin progress sink) expands to `::windows_core` paths
+windows-core = "0.62"
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]

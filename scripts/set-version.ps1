@@ -1,4 +1,4 @@
-# Sets Lumina's version everywhere it is written down (app, Rust crate, setup app, npm package).
+# Sets Lumina's version everywhere it is written down (app, Rust crate, setup app, npm package, splash screen).
 #   powershell -ExecutionPolicy Bypass -File scripts\set-version.ps1 3.7.0
 # Then add a release-notes entry for it in src\utils\welcome.ts and commit.
 param([Parameter(Mandatory = $true)][string]$Version)
@@ -25,6 +25,11 @@ Set-JsonVersion "$root\src-tauri\tauri.conf.json"
 Set-JsonVersion "$root\installer\src-tauri\tauri.conf.json"
 Set-CargoVersion "$root\src-tauri\Cargo.toml"
 Set-CargoVersion "$root\installer\src-tauri\Cargo.toml"
+
+# The splash screen is static HTML shown before the app loads: its badge carries the version too
+$splash = "$root\public\splashscreen.html"
+$splashRegex = New-Object System.Text.RegularExpressions.Regex('<span class="badge">v[^<]*</span>')
+[IO.File]::WriteAllText($splash, $splashRegex.Replace([IO.File]::ReadAllText($splash), "<span class=`"badge`">v$Version</span>", 1), $utf8)
 # package-lock.json and Cargo.lock follow on the next npm install / cargo build
 Push-Location $root
 try { npm install --package-lock-only --silent | Out-Null } finally { Pop-Location }

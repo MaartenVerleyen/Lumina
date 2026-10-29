@@ -45,6 +45,8 @@ mod face_quality;
 mod highlights;
 mod gallery;
 mod backup;
+mod duplicates;
+mod recycle;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -364,6 +366,8 @@ pub fn run() {
             library::set_manual_location,
             library::stage_photo_move,
             library::stage_photos_move,
+            duplicates::find_duplicates,
+            duplicates::stage_duplicate_extras,
             library::clear_all_staged,
             library::get_staged_operations,
             files::commit_staged_operations,
@@ -429,6 +433,7 @@ pub fn run() {
             ai::unload_ollama_vram,
             ai::pull_ollama_model,
             files::empty_library_trash_to_os,
+            files::trash_summary,
             system::open_in_default_app,
             system::reveal_in_file_manager,
             system::create_library_subfolder,

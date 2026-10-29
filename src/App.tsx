@@ -58,6 +58,7 @@ import NewFolderModal from "./components/modals/NewFolderModal";
 import ShortcutsModal from "./components/modals/ShortcutsModal";
 import ImportModal from "./components/modals/ImportModal";
 import HighlightsModal from "./components/modals/HighlightsModal";
+import DuplicatesModal from "./components/modals/DuplicatesModal";
 import GalleryModal from "./components/modals/GalleryModal";
 import RestoreModal from "./components/modals/RestoreModal";
 import { scopeTitle } from "./components/layout/PhotoToolbar";
@@ -65,6 +66,7 @@ import OnThisDay from "./components/views/OnThisDay";
 import SettingsModal, { SettingsSection } from "./components/modals/SettingsModal";
 import UpdateBanner from "./components/layout/UpdateBanner";
 import { useUpdater } from "./hooks/useUpdater";
+import { useThrottled } from "./hooks/useThrottled";
 import { useSettings } from "./settings";
 import ConfirmDialog from "./components/modals/ConfirmDialog";
 import { useConfirmRequest } from "./confirm";
@@ -89,7 +91,8 @@ export default function App() {
     setIsRightCollapsed,
     collapsedSections,
     setCollapsedSections,
-    draggingPaneRef,
+    isDraggingPane,
+    startPaneDrag,
   } = usePaneLayout(lib);
   const [centerWidth, setCenterWidth] = useState<number>(960);
 
@@ -162,6 +165,9 @@ export default function App() {
     const mainEl = centerMainRef.current;
     const gridEl = gridContainerRef.current;
     if (!mainEl && !gridEl) return;
+    // Collections has no grid: measuring the panel there (no scrollbar) would change the width and lay out
+    // every photo again, twice (going in and coming back), for nothing
+    if (lib.viewMode === "collections") return;
 
     // Always the same basis: the grid's inner width (clientWidth excludes the scrollbar) minus its p-4
     // padding. Observing two elements and mixing their widths made the column count flicker.
@@ -182,12 +188,14 @@ export default function App() {
   const isDateSorted =
     (lib.sortBy === "DATE_DESC" || lib.sortBy === "DATE_ASC") && lib.smartFilter !== "DUPLICATES" && !lib.semanticScores;
   const gridGap = lib.gridStyle === "justified" ? 8 : 14;
+  // Laying out every photo again for each frame of a divider drag is what made dragging stutter
+  const layoutWidth = useThrottled(centerWidth, isDraggingPane, 120);
   const layout = useMemo(() => {
-    const width = Math.max(320, centerWidth);
+    const width = Math.max(320, layoutWidth);
     const photos = lib.visiblePhotos;
-    const grouping = isDateSorted
-      ? { groupKey: (i: number) => monthKeyOf(photos[i].captured_at), groupLabel: monthLabel }
-      : {};
+    // Each photo's month worked out once (the layout asks for it more than once per photo)
+    const months = isDateSorted ? photos.map((p) => monthKeyOf(p.captured_at)) : [];
+    const grouping = isDateSorted ? { groupKey: (i: number) => months[i], groupLabel: monthLabel } : {};
     if (lib.gridStyle === "justified") {
       return buildJustifiedLayout(photos, {
         width,
@@ -209,7 +217,7 @@ export default function App() {
       cardHeight: thumbH + SQUARE_FOOTER_HEIGHT,
       ...grouping,
     });
-  }, [lib.visiblePhotos, lib.gridStyle, lib.zoomLevel, centerWidth, isDateSorted, gridGap]);
+  }, [lib.visiblePhotos, lib.gridStyle, lib.zoomLevel, layoutWidth, isDateSorted, gridGap]);
 
   const rowVirtualizer = useVirtualizer({
     count: layout.rows.length,
@@ -290,6 +298,7 @@ export default function App() {
     isSettingsOpen ||
     lib.importSource !== null ||
     lib.highlights !== null ||
+    lib.duplicates !== null ||
     lib.galleryTarget !== null ||
     lib.restoreTarget !== null ||
     welcome.isOpen ||
@@ -322,6 +331,7 @@ export default function App() {
     setIsSettingsOpen(false);
     lib.setImportSource(null);
     lib.setHighlights(null);
+    lib.setDuplicates(null);
     lib.setGalleryTarget(null);
     lib.setRestoreTarget(null);
     lib.setExportTargets(null);
@@ -577,10 +587,7 @@ export default function App() {
             )}
 
             <div
-              onMouseDown={() => {
-                draggingPaneRef.current = "left";
-                document.body.style.cursor = "col-resize";
-              }}
+              onMouseDown={() => startPaneDrag("left")}
               className="w-1 bg-zinc-800/50 hover:bg-emerald-500 active:bg-emerald-400 cursor-col-resize transition-colors shrink-0 z-10"
               title="Drag to resize left pane"
             />
@@ -744,10 +751,7 @@ export default function App() {
         {!isRightCollapsed && isPhotoTab && lib.activePhoto && (
           <>
             <div
-              onMouseDown={() => {
-                draggingPaneRef.current = "right";
-                document.body.style.cursor = "col-resize";
-              }}
+              onMouseDown={() => startPaneDrag("right")}
               className="w-1 bg-zinc-800/50 hover:bg-emerald-500 active:bg-emerald-400 cursor-col-resize transition-colors shrink-0 z-10"
               title="Drag to resize right inspector freely"
             />
@@ -936,7 +940,7 @@ export default function App() {
         title={
           lib.ollamaPullProgress
             ? `Downloading AI Vision Model (${lib.ollamaPullProgress.model})`
-            : "Loading & Indexing Photo Library"
+            : lib.progressTitle ?? "Loading & Indexing Photo Library"
         }
         stage={
           lib.ollamaPullProgress
@@ -956,6 +960,7 @@ export default function App() {
         total={lib.ollamaPullProgress ? 100 : lib.scanProgress?.total ?? 0}
         onCancel={lib.handleCancelOperation}
         cancelLabel={lib.ollamaPullProgress ? "Cancel Download" : "Cancel"}
+        showRate={!lib.ollamaPullProgress}
       />
 
       {/* Batch AI Post-Run Report Modal with 1-Click Retry Failures */}
@@ -991,6 +996,15 @@ export default function App() {
       />
 
       <ShortcutsModal lib={lib} />
+
+      <DuplicatesModal
+        duplicates={lib.duplicates}
+        photoByHash={lib.photoByHash}
+        folder={lib.folder}
+        onClose={() => lib.setDuplicates(null)}
+        onStage={lib.stageDuplicates}
+        confirmAction={lib.confirmAction}
+      />
 
       <HighlightsModal
         highlights={lib.highlights}

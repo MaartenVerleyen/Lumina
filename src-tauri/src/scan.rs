@@ -259,6 +259,95 @@ pub struct CachedRow {
     pub thumb_edge: u32,
 }
 
+// One indexed file: the photo, its path on disk, size in bytes, mtime, and whether its row must be written
+type IndexedFile = (PhotoItem, String, u64, u64, bool);
+
+// Files indexed between two saves to the library
+const INDEX_CHUNK: usize = 1000;
+
+// Gives copies their own hash, then writes new and changed rows in one transaction.
+// Returns how many rows were written.
+fn save_indexed(
+    conn: &mut Connection,
+    indexed: &mut [IndexedFile],
+    thumbs_dir: &Path,
+    previews_dir: &Path,
+    force: bool,
+) -> usize {
+    let collision_entries: Vec<(String, String, bool)> = indexed
+        .iter()
+        .map(|(p, disk_path, _, _, upsert)| (p.hash.clone(), disk_path.clone(), *upsert))
+        .collect();
+    for (idx, salted_hash) in resolve_hash_collisions(conn, &collision_entries) {
+        let (p, _, _, _, needs_upsert) = &mut indexed[idx];
+        let thumb_file = thumbs_dir.join(format!("{}.jpg", salted_hash));
+        let preview_file = previews_dir.join(format!("{}_preview.jpg", salted_hash));
+        p.thumb_ready = !force && thumb_file.metadata().map(|m| m.len() > 256).unwrap_or(false);
+        if p.pair_raw_path.is_some() {
+            p.path = if preview_file.exists() { &preview_file } else { &thumb_file }
+                .to_string_lossy()
+                .to_string();
+        }
+        p.thumb_path = thumb_file.to_string_lossy().to_string();
+        p.tags.retain(|t| t == "screenshot");
+        p.people.clear();
+        p.faces.clear();
+        p.hash = salted_hash;
+        *needs_upsert = true;
+    }
+
+    let upsert_count = indexed.iter().filter(|(_, _, _, _, upsert)| *upsert).count();
+    if upsert_count == 0 {
+        return 0;
+    }
+    if let Ok(tx) = conn.transaction() {
+        for (p, orig_disk_path, size_bytes, mtime, needs_upsert) in indexed.iter() {
+            if !*needs_upsert {
+                continue;
+            }
+            let _ = tx.execute(
+                "INSERT INTO photos (hash, current_path, subfolder, file_size, modified_time, width, height, rating, flag, color_label, rotation, ai_caption, ocr_text, captured_at, camera_model, location, latitude, longitude, dhash, sharpness, staged_target, exif_checked, focal_length, aperture, shutter_speed, iso, lens_model)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, 1, ?22, ?23, ?24, ?25, ?26)
+                 ON CONFLICT(hash) DO UPDATE SET
+                    current_path = excluded.current_path,
+                    subfolder = excluded.subfolder,
+                    file_size = excluded.file_size,
+                    modified_time = excluded.modified_time,
+                    width = CASE WHEN excluded.width > 0 THEN excluded.width ELSE photos.width END,
+                    height = CASE WHEN excluded.height > 0 THEN excluded.height ELSE photos.height END,
+                    captured_at = excluded.captured_at,
+                    camera_model = excluded.camera_model,
+                    location = excluded.location,
+                    latitude = excluded.latitude,
+                    longitude = excluded.longitude,
+                    staged_target = excluded.staged_target,
+                    focal_length = COALESCE(excluded.focal_length, photos.focal_length),
+                    aperture = COALESCE(excluded.aperture, photos.aperture),
+                    shutter_speed = COALESCE(excluded.shutter_speed, photos.shutter_speed),
+                    iso = COALESCE(excluded.iso, photos.iso),
+                    lens_model = COALESCE(excluded.lens_model, photos.lens_model),
+                    exif_checked = 1",
+                params![
+                    p.hash, orig_disk_path, p.subfolder, size_bytes, mtime, p.width, p.height, p.rating,
+                    p.flag, p.color_label, p.rotation,
+                    p.ai_caption, p.ocr_text, p.captured_at, p.camera_model,
+                    p.location, p.latitude, p.longitude, p.dhash, p.sharpness,
+                    p.staged_target, p.focal_length, p.aperture, p.shutter_speed, p.iso, p.lens_model
+                ],
+            );
+
+            if p.tags.iter().any(|t| t == "screenshot") {
+                let _ = tx.execute(
+                    "INSERT OR IGNORE INTO photo_tags (hash, tag) VALUES (?1, 'screenshot')",
+                    params![p.hash],
+                );
+            }
+        }
+        let _ = tx.commit();
+    }
+    upsert_count
+}
+
 #[tauri::command]
 pub async fn scan_folder(
     app: AppHandle,
@@ -480,346 +569,285 @@ pub async fn scan_folder(
             .num_threads(io_threads)
             .build()
             .map_err(|e| e.to_string())?;
-        let indexed_results: Vec<(PhotoItem, String, u64, u64, bool)> = index_pool.install(|| candidate_paths
-            .into_par_iter()
-            .filter_map(|file_path| {
-                if is_cancelled() {
-                    return None;
+        let index_one = |file_path: PathBuf| -> Option<IndexedFile> {
+            if is_cancelled() {
+                return None;
+            }
+            let metadata = fs::metadata(&file_path).ok()?;
+            let size_bytes = metadata.len();
+            if size_bytes == 0 {
+                return None;
+            }
+            let size_kb = size_bytes / 1024;
+            let modified_time = metadata
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+
+            let orig_path_str = file_path.to_string_lossy().to_string();
+            let file_name_str = file_path.file_name()?.to_string_lossy().to_string();
+            let ext_lower = file_path
+                .extension()
+                .map(|e| e.to_string_lossy().to_lowercase())
+                .unwrap_or_default();
+
+            let mut needs_db_upsert = true;
+
+            let (
+                hash,
+                width,
+                height,
+                rating,
+                flag,
+                color_label,
+                rotation,
+                in_basket,
+                ai_caption,
+                ocr_text,
+                captured_at,
+                camera_model,
+                location,
+                lat,
+                lon,
+                dhash,
+                sharpness,
+                staged_target,
+                focal_length,
+                aperture,
+                shutter_speed,
+                iso,
+                lens_model,
+            ) = if let Some(c) = cache_map.get(&orig_path_str) {
+                if !force
+                    && c.exif_checked == 1
+                    && !c.captured_at.is_empty()
+                    && c.size == size_bytes
+                    && c.mtime == modified_time
+                    && !is_old_creation_time_date(&file_path, &c.captured_at, &metadata)
+                {
+                    needs_db_upsert = false;
+                    (
+                        c.hash.clone(),
+                        c.width,
+                        c.height,
+                        c.rating,
+                        c.flag.clone(),
+                        c.color_label.clone(),
+                        c.rotation,
+                        c.in_basket,
+                        c.ai_caption.clone(),
+                        c.ocr_text.clone(),
+                        c.captured_at.clone(),
+                        c.camera_model.clone(),
+                        c.location.clone(),
+                        c.lat,
+                        c.lon,
+                        c.dhash.clone(),
+                        c.sharpness,
+                        c.staged_target.clone(),
+                        c.focal_length.clone(),
+                        c.aperture.clone(),
+                        c.shutter_speed.clone(),
+                        c.iso.clone(),
+                        c.lens_model.clone(),
+                    )
+                } else {
+                    let (h, head) = if c.size == size_bytes {
+                        (c.hash.clone(), None)
+                    } else {
+                        let (h, head) = hash_and_read_head(&file_path, size_bytes).ok()?;
+                        (h, Some(head))
+                    };
+                    let ex = extract_all_exif_with_head(&file_path, head.as_deref());
+                    let (w, ht) = if c.width > 0 && c.height > 0 && !force {
+                        (c.width, c.height)
+                    } else {
+                        (ex.width, ex.height)
+                    };
+                    (
+                        h,
+                        w,
+                        ht,
+                        c.rating,
+                        c.flag.clone(),
+                        c.color_label.clone(),
+                        c.rotation,
+                        c.in_basket,
+                        c.ai_caption.clone(),
+                        c.ocr_text.clone(),
+                        if !ex.captured_at.is_empty() { ex.captured_at } else { c.captured_at.clone() },
+                        if !ex.camera_model.is_empty() { ex.camera_model } else { c.camera_model.clone() },
+                        if !ex.location.is_empty() { ex.location } else { c.location.clone() },
+                        ex.lat.or(c.lat),
+                        ex.lon.or(c.lon),
+                        if force { String::new() } else { c.dhash.clone() },
+                        if force { 0.0 } else { c.sharpness },
+                        c.staged_target.clone(),
+                        ex.focal_length.or_else(|| c.focal_length.clone()),
+                        ex.aperture.or_else(|| c.aperture.clone()),
+                        ex.shutter_speed.or_else(|| c.shutter_speed.clone()),
+                        ex.iso.or_else(|| c.iso.clone()),
+                        ex.lens_model.or_else(|| c.lens_model.clone()),
+                    )
                 }
-                let metadata = fs::metadata(&file_path).ok()?;
-                let size_bytes = metadata.len();
-                if size_bytes == 0 {
-                    return None;
+            } else {
+                // One head read serves the hash, the dimensions and the EXIF parse
+                let (h, head) = hash_and_read_head(&file_path, size_bytes).ok()?;
+                let ex = extract_all_exif_with_head(&file_path, Some(&head));
+                (
+                    h,
+                    ex.width,
+                    ex.height,
+                    0,
+                    None,
+                    None,
+                    0,
+                    false,
+                    String::new(),
+                    String::new(),
+                    ex.captured_at,
+                    ex.camera_model,
+                    ex.location,
+                    ex.lat,
+                    ex.lon,
+                    String::new(),
+                    0.0,
+                    None,
+                    ex.focal_length,
+                    ex.aperture,
+                    ex.shutter_speed,
+                    ex.iso,
+                    ex.lens_model,
+                )
+            };
+
+            let thumb_file = thumbs_dir.join(format!("{}.jpg", hash));
+            let preview_file = previews_dir.join(format!("{}_preview.jpg", hash));
+            let is_raw_heic = is_raw_or_heic_ext(&ext_lower);
+
+            // Thumbnail is ready as soon as the 360px thumb file exists (no need to wait for 1920px previews!)
+            let thumb_ready = !force && thumb_file.metadata().map(|m| m.len() > 256).unwrap_or(false);
+
+            // For RAW & HEIC files, point display path to the 1920px preview if already cached, otherwise the 360px thumb JPEG so WebView2 renders immediately!
+            let display_path_str = if is_raw_heic {
+                if preview_file.exists() {
+                    preview_file.to_string_lossy().to_string()
+                } else {
+                    thumb_file.to_string_lossy().to_string()
                 }
-                let size_kb = size_bytes / 1024;
-                let modified_time = metadata
-                    .modified()
-                    .ok()
-                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0);
+            } else {
+                orig_path_str.clone()
+            };
 
-                let orig_path_str = file_path.to_string_lossy().to_string();
-                let file_name_str = file_path.file_name()?.to_string_lossy().to_string();
-                let ext_lower = file_path
-                    .extension()
-                    .map(|e| e.to_string_lossy().to_lowercase())
-                    .unwrap_or_default();
+            let subfolder = get_relative_subfolder(&root_path, &file_path);
+            let mut tags = tags_map.get(&hash).cloned().unwrap_or_default();
 
-                let mut needs_db_upsert = true;
+            if is_likely_screenshot(&file_path, &camera_model, None, None)
+                && !tags.iter().any(|t| t == "screenshot")
+            {
+                tags.push("screenshot".to_string());
+                tags.sort();
+                needs_db_upsert = true;
+            }
 
-                let (
+            let people = people_map.get(&hash).cloned().unwrap_or_default();
+            let faces = faces_map.get(&hash).cloned().unwrap_or_default();
+
+            let cur_done = scanned_counter.fetch_add(1, Ordering::Relaxed) + 1;
+            if cur_done % 25 == 0 || cur_done == total_candidates {
+                let pct = ((cur_done * 100) / total_candidates.max(1)).min(99);
+                let _ = app_scan_progress.emit(
+                    "scan-progress",
+                    ScanProgressEvent {
+                        stage: if force {
+                            "Deep Reprocessing EXIF & thumbnails...".to_string()
+                        } else {
+                            "Indexing library files...".to_string()
+                        },
+                        current_file: file_name_str.clone(),
+                        completed: cur_done,
+                        total: total_candidates,
+                        percent: pct,
+                        done: false,
+                    },
+                );
+            }
+
+            Some((
+                PhotoItem {
                     hash,
+                    name: file_name_str,
+                    subfolder,
+                    path: display_path_str,
+                    thumb_path: thumb_file.to_string_lossy().to_string(),
+                    size_kb,
                     width,
                     height,
+                    thumb_ready,
                     rating,
                     flag,
                     color_label,
                     rotation,
                     in_basket,
+                    tags,
+                    people,
+                    faces,
                     ai_caption,
                     ocr_text,
                     captured_at,
                     camera_model,
                     location,
-                    lat,
-                    lon,
+                    latitude: lat,
+                    longitude: lon,
                     dhash,
                     sharpness,
+                    duplicate_group: None,
                     staged_target,
                     focal_length,
                     aperture,
                     shutter_speed,
                     iso,
                     lens_model,
-                ) = if let Some(c) = cache_map.get(&orig_path_str) {
-                    if !force
-                        && c.exif_checked == 1
-                        && !c.captured_at.is_empty()
-                        && c.size == size_bytes
-                        && c.mtime == modified_time
-                        && !is_old_creation_time_date(&file_path, &c.captured_at, &metadata)
-                    {
-                        needs_db_upsert = false;
-                        (
-                            c.hash.clone(),
-                            c.width,
-                            c.height,
-                            c.rating,
-                            c.flag.clone(),
-                            c.color_label.clone(),
-                            c.rotation,
-                            c.in_basket,
-                            c.ai_caption.clone(),
-                            c.ocr_text.clone(),
-                            c.captured_at.clone(),
-                            c.camera_model.clone(),
-                            c.location.clone(),
-                            c.lat,
-                            c.lon,
-                            c.dhash.clone(),
-                            c.sharpness,
-                            c.staged_target.clone(),
-                            c.focal_length.clone(),
-                            c.aperture.clone(),
-                            c.shutter_speed.clone(),
-                            c.iso.clone(),
-                            c.lens_model.clone(),
-                        )
+                    pair_raw_path: if is_raw_heic {
+                        Some(orig_path_str.clone())
                     } else {
-                        let (h, head) = if c.size == size_bytes {
-                            (c.hash.clone(), None)
-                        } else {
-                            let (h, head) = hash_and_read_head(&file_path, size_bytes).ok()?;
-                            (h, Some(head))
-                        };
-                        let ex = extract_all_exif_with_head(&file_path, head.as_deref());
-                        let (w, ht) = if c.width > 0 && c.height > 0 && !force {
-                            (c.width, c.height)
-                        } else {
-                            (ex.width, ex.height)
-                        };
-                        (
-                            h,
-                            w,
-                            ht,
-                            c.rating,
-                            c.flag.clone(),
-                            c.color_label.clone(),
-                            c.rotation,
-                            c.in_basket,
-                            c.ai_caption.clone(),
-                            c.ocr_text.clone(),
-                            if !ex.captured_at.is_empty() { ex.captured_at } else { c.captured_at.clone() },
-                            if !ex.camera_model.is_empty() { ex.camera_model } else { c.camera_model.clone() },
-                            if !ex.location.is_empty() { ex.location } else { c.location.clone() },
-                            ex.lat.or(c.lat),
-                            ex.lon.or(c.lon),
-                            if force { String::new() } else { c.dhash.clone() },
-                            if force { 0.0 } else { c.sharpness },
-                            c.staged_target.clone(),
-                            ex.focal_length.or_else(|| c.focal_length.clone()),
-                            ex.aperture.or_else(|| c.aperture.clone()),
-                            ex.shutter_speed.or_else(|| c.shutter_speed.clone()),
-                            ex.iso.or_else(|| c.iso.clone()),
-                            ex.lens_model.or_else(|| c.lens_model.clone()),
-                        )
-                    }
-                } else {
-                    // One head read serves the hash, the dimensions and the EXIF parse
-                    let (h, head) = hash_and_read_head(&file_path, size_bytes).ok()?;
-                    let ex = extract_all_exif_with_head(&file_path, Some(&head));
-                    (
-                        h,
-                        ex.width,
-                        ex.height,
-                        0,
-                        None,
-                        None,
-                        0,
-                        false,
-                        String::new(),
-                        String::new(),
-                        ex.captured_at,
-                        ex.camera_model,
-                        ex.location,
-                        ex.lat,
-                        ex.lon,
-                        String::new(),
-                        0.0,
-                        None,
-                        ex.focal_length,
-                        ex.aperture,
-                        ex.shutter_speed,
-                        ex.iso,
-                        ex.lens_model,
-                    )
-                };
-
-                let thumb_file = thumbs_dir.join(format!("{}.jpg", hash));
-                let preview_file = previews_dir.join(format!("{}_preview.jpg", hash));
-                let is_raw_heic = is_raw_or_heic_ext(&ext_lower);
-
-                // Thumbnail is ready as soon as the 360px thumb file exists (no need to wait for 1920px previews!)
-                let thumb_ready = !force && thumb_file.metadata().map(|m| m.len() > 256).unwrap_or(false);
-
-                // For RAW & HEIC files, point display path to the 1920px preview if already cached, otherwise the 360px thumb JPEG so WebView2 renders immediately!
-                let display_path_str = if is_raw_heic {
-                    if preview_file.exists() {
-                        preview_file.to_string_lossy().to_string()
-                    } else {
-                        thumb_file.to_string_lossy().to_string()
-                    }
-                } else {
-                    orig_path_str.clone()
-                };
-
-                let subfolder = get_relative_subfolder(&root_path, &file_path);
-                let mut tags = tags_map.get(&hash).cloned().unwrap_or_default();
-
-                if is_likely_screenshot(&file_path, &camera_model, None, None)
-                    && !tags.iter().any(|t| t == "screenshot")
-                {
-                    tags.push("screenshot".to_string());
-                    tags.sort();
-                    needs_db_upsert = true;
-                }
-
-                let people = people_map.get(&hash).cloned().unwrap_or_default();
-                let faces = faces_map.get(&hash).cloned().unwrap_or_default();
-
-                let cur_done = scanned_counter.fetch_add(1, Ordering::Relaxed) + 1;
-                if cur_done % 25 == 0 || cur_done == total_candidates {
-                    let pct = ((cur_done * 100) / total_candidates.max(1)).min(99);
-                    let _ = app_scan_progress.emit(
-                        "scan-progress",
-                        ScanProgressEvent {
-                            stage: if force {
-                                "Deep Reprocessing EXIF & thumbnails...".to_string()
-                            } else {
-                                "Indexing library files...".to_string()
-                            },
-                            current_file: file_name_str.clone(),
-                            completed: cur_done,
-                            total: total_candidates,
-                            percent: pct,
-                            done: false,
-                        },
-                    );
-                }
-
-                Some((
-                    PhotoItem {
-                        hash,
-                        name: file_name_str,
-                        subfolder,
-                        path: display_path_str,
-                        thumb_path: thumb_file.to_string_lossy().to_string(),
-                        size_kb,
-                        width,
-                        height,
-                        thumb_ready,
-                        rating,
-                        flag,
-                        color_label,
-                        rotation,
-                        in_basket,
-                        tags,
-                        people,
-                        faces,
-                        ai_caption,
-                        ocr_text,
-                        captured_at,
-                        camera_model,
-                        location,
-                        latitude: lat,
-                        longitude: lon,
-                        dhash,
-                        sharpness,
-                        duplicate_group: None,
-                        staged_target,
-                        focal_length,
-                        aperture,
-                        shutter_speed,
-                        iso,
-                        lens_model,
-                        pair_raw_path: if is_raw_heic {
-                            Some(orig_path_str.clone())
-                        } else {
-                            None
-                        },
-                        // Only trust the stored flag while the file is unchanged (a re-download may have fixed it)
-                        damaged: cache_map
-                            .get(&orig_path_str)
-                            .map(|c| c.damaged && c.size == size_bytes && c.mtime == modified_time)
-                            .unwrap_or(false),
+                        None
                     },
-                    orig_path_str,
-                    size_bytes,
-                    modified_time,
-                    needs_db_upsert,
-                ))
-            })
-            .collect());
+                    // Only trust the stored flag while the file is unchanged (a re-download may have fixed it)
+                    damaged: cache_map
+                        .get(&orig_path_str)
+                        .map(|c| c.damaged && c.size == size_bytes && c.mtime == modified_time)
+                        .unwrap_or(false),
+                },
+                orig_path_str,
+                size_bytes,
+                modified_time,
+                needs_db_upsert,
+            ))
+        };
 
-        // Cancelled (or superseded by a newer scan): nothing is written, the UI keeps what it showed before
-        if is_cancelled() {
-            return Err(SCAN_CANCELLED.to_string());
-        }
-        let mut indexed_results = indexed_results;
-        let collision_entries: Vec<(String, String, bool)> = indexed_results
-            .iter()
-            .map(|(p, disk_path, _, _, upsert)| (p.hash.clone(), disk_path.clone(), *upsert))
-            .collect();
-        for (idx, salted_hash) in resolve_hash_collisions(&conn, &collision_entries) {
-            let (p, _, _, _, needs_upsert) = &mut indexed_results[idx];
-            let thumb_file = thumbs_dir.join(format!("{}.jpg", salted_hash));
-            let preview_file = previews_dir.join(format!("{}_preview.jpg", salted_hash));
-            p.thumb_ready = !force && thumb_file.metadata().map(|m| m.len() > 256).unwrap_or(false);
-            if p.pair_raw_path.is_some() {
-                p.path = if preview_file.exists() { &preview_file } else { &thumb_file }
-                    .to_string_lossy()
-                    .to_string();
+        // Indexed in chunks, each saved as soon as it's done: a cancelled or interrupted first index keeps
+        // its progress, and the next scan picks up where it stopped (saved files are cache hits).
+        // A cancelled scan (or one superseded by a newer scan) returns an error; the UI keeps what it showed.
+        let mut indexed_results: Vec<IndexedFile> = Vec::with_capacity(total_candidates);
+        let mut upsert_count = 0;
+        let mut save_ms = 0;
+        for chunk in candidate_paths.chunks(INDEX_CHUNK) {
+            let mut done: Vec<IndexedFile> =
+                index_pool.install(|| chunk.par_iter().cloned().filter_map(&index_one).collect());
+            let save_started = Instant::now();
+            upsert_count += save_indexed(&mut conn, &mut done, &thumbs_dir, &previews_dir, force);
+            save_ms += elapsed_ms(save_started);
+            indexed_results.append(&mut done);
+            if is_cancelled() {
+                return Err(SCAN_CANCELLED.to_string());
             }
-            p.thumb_path = thumb_file.to_string_lossy().to_string();
-            p.tags.retain(|t| t == "screenshot");
-            p.people.clear();
-            p.faces.clear();
-            p.hash = salted_hash;
-            *needs_upsert = true;
         }
 
-        let index_ms = elapsed_ms(index_started);
+        let index_ms = elapsed_ms(index_started).saturating_sub(save_ms);
         let db_started = Instant::now();
-        let upsert_count = indexed_results.iter().filter(|(_, _, _, _, upsert)| *upsert).count();
-        let has_upserts = upsert_count > 0;
-        if has_upserts {
-            if let Ok(tx) = conn.transaction() {
-                for (p, orig_disk_path, size_bytes, mtime, needs_upsert) in &indexed_results {
-                    if !*needs_upsert {
-                        continue;
-                    }
-                    let _ = tx.execute(
-                        "INSERT INTO photos (hash, current_path, subfolder, file_size, modified_time, width, height, rating, flag, color_label, rotation, ai_caption, ocr_text, captured_at, camera_model, location, latitude, longitude, dhash, sharpness, staged_target, exif_checked, focal_length, aperture, shutter_speed, iso, lens_model)
-                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, 1, ?22, ?23, ?24, ?25, ?26)
-                         ON CONFLICT(hash) DO UPDATE SET
-                            current_path = excluded.current_path,
-                            subfolder = excluded.subfolder,
-                            file_size = excluded.file_size,
-                            modified_time = excluded.modified_time,
-                            width = CASE WHEN excluded.width > 0 THEN excluded.width ELSE photos.width END,
-                            height = CASE WHEN excluded.height > 0 THEN excluded.height ELSE photos.height END,
-                            captured_at = excluded.captured_at,
-                            camera_model = excluded.camera_model,
-                            location = excluded.location,
-                            latitude = excluded.latitude,
-                            longitude = excluded.longitude,
-                            staged_target = excluded.staged_target,
-                            focal_length = COALESCE(excluded.focal_length, photos.focal_length),
-                            aperture = COALESCE(excluded.aperture, photos.aperture),
-                            shutter_speed = COALESCE(excluded.shutter_speed, photos.shutter_speed),
-                            iso = COALESCE(excluded.iso, photos.iso),
-                            lens_model = COALESCE(excluded.lens_model, photos.lens_model),
-                            exif_checked = 1",
-                        params![
-                            p.hash, orig_disk_path, p.subfolder, size_bytes, mtime, p.width, p.height, p.rating,
-                            p.flag, p.color_label, p.rotation,
-                            p.ai_caption, p.ocr_text, p.captured_at, p.camera_model,
-                            p.location, p.latitude, p.longitude, p.dhash, p.sharpness,
-                            p.staged_target, p.focal_length, p.aperture, p.shutter_speed, p.iso, p.lens_model
-                        ],
-                    );
-
-                    if p.tags.iter().any(|t| t == "screenshot") {
-                        let _ = tx.execute(
-                            "INSERT OR IGNORE INTO photo_tags (hash, tag) VALUES (?1, 'screenshot')",
-                            params![p.hash],
-                        );
-                    }
-                }
-                let _ = tx.commit();
-            }
-        }
 
         // Rows left behind by files edited in place: fold them into the row this scan uses for that path
         let claimed_twice = paths_claimed_twice(&conn, &folder_prefix);
@@ -885,7 +913,7 @@ pub async fn scan_folder(
             }
         }
 
-        let db_ms = elapsed_ms(db_started);
+        let db_ms = save_ms + elapsed_ms(db_started);
 
         let mut photos: Vec<PhotoItem> = indexed_results
             .into_iter()

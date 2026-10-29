@@ -6,9 +6,15 @@ import { captureSnapshots } from "./undo";
 import type { LibraryView } from "./useLibraryView";
 import type { LibraryCore } from "./core";
 import type { FilterState } from "./useFilterState";
+import type { useFolder } from "./useFolder";
 
 // Staged moves: stage to a folder, auto-organize by rule, dismiss, and commit to disk
-export function useStaging(core: LibraryCore, filters: FilterState, view: LibraryView) {
+export function useStaging(
+  core: LibraryCore,
+  filters: FilterState,
+  view: LibraryView,
+  folderHook: ReturnType<typeof useFolder>
+) {
   const {
     folder,
     photos,
@@ -26,6 +32,7 @@ export function useStaging(core: LibraryCore, filters: FilterState, view: Librar
   } = core;
   const { smartFilter, setSmartFilter } = filters;
   const { visiblePhotos } = view;
+  const { watchQuietUntilRef, setProgressTitle } = folderHook;
   const [isCommitModalOpen, setIsCommitModalOpen] = useState<boolean>(false);
   const [smartRenameOnCommit, setSmartRenameOnCommit] = useState<boolean>(false);
   const [autoStagePreset, setAutoStagePreset] = useState<AutoStagePreset>("YEAR_MONTH_CITY");
@@ -122,11 +129,15 @@ export function useStaging(core: LibraryCore, filters: FilterState, view: Librar
   async function handleCommitAllStaged() {
     if (!folder || isCommittingRef.current) return;
     isCommittingRef.current = true;
+    // The moves are Lumina's own: the folder watcher shouldn't rescan for each of them
+    watchQuietUntilRef.current = Number.POSITIVE_INFINITY;
     try {
+      setProgressTitle("Committing changes to disk");
       const result = await invoke<CommitResult>("commit_staged_operations", {
         rootFolder: folder,
         smartRename: smartRenameOnCommit,
       });
+      setProgressTitle(null);
       const res = await invoke<PhotoItem[]>("scan_folder", {
         folderPath: folder,
         forceReprocess: false,
@@ -150,6 +161,8 @@ export function useStaging(core: LibraryCore, filters: FilterState, view: Librar
       setError(String(err));
     } finally {
       isCommittingRef.current = false;
+      watchQuietUntilRef.current = Date.now() + 4000;
+      setProgressTitle(null);
     }
   }
 

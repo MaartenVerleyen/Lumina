@@ -2,7 +2,8 @@ import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import { PhotoItem, ThumbBatchProgress, ThumbBatchItem, ExifRefreshResult, PerfLogEvent, TrashResult, ScanProgressEvent } from "../../types/lumina";
+import { PhotoItem, ThumbBatchProgress, ThumbBatchItem, ExifRefreshResult, PerfLogEvent, TrashResult, TrashSummary, ScanProgressEvent } from "../../types/lumina";
+import { formatBytes } from "../../utils/photoHelpers";
 import { RAW_OR_HEIC_NAME } from "../../utils/rawPairs";
 import { isSameFolder, SCAN_CANCELLED } from "./shared";
 import { useSettings } from "../../settings";
@@ -39,6 +40,8 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
   });
   const [scanProgress, setScanProgress] = useState<ScanProgressEvent | null>(null);
   const [isScanningFolder, setIsScanningFolder] = useState<boolean>(false);
+  // Title of the progress dialog when it isn't a folder scan (e.g. emptying _Trash)
+  const [progressTitle, setProgressTitle] = useState<string | null>(null);
   const [progress, setProgress] = useState<{ completed: number; total: number } | null>(null);
   // A quiet rescan (files changed outside Lumina, or after an import) shows no progress dialog
   const silentScanRef = useRef(false);
@@ -226,41 +229,80 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
 
   async function handleEmptyTrashToRecycleBin() {
     if (!folder) return;
-    const inTrash = photos.filter((p) => p.subfolder === "_Trash" || p.subfolder.startsWith("_Trash / ")).length;
-    if (inTrash === 0) {
+    let summary: TrashSummary;
+    try {
+      summary = await invoke<TrashSummary>("trash_summary", { rootFolder: folder });
+    } catch (err) {
+      setError(String(err));
+      return;
+    }
+    if (summary.photos === 0 && summary.orphan_sidecars === 0) {
       setAutoMatchNotice("_Trash is empty: commit staged rejects first to move them there.");
       return;
     }
-    const ok = await confirmAction(
-      `Move the ${inTrash} photo(s) in _Trash to the Windows Recycle Bin?\n\nYou can still restore them from the Recycle Bin, but not from Lumina.`,
-      "Move to Recycle Bin",
-      { title: "Empty _Trash", kind: "danger" }
-    );
-    if (!ok) return;
+    const { bin } = summary;
+    const what =
+      summary.photos > 0
+        ? `${summary.photos} photo(s) in _Trash (${formatBytes(summary.bytes)}) and their sidecars`
+        : `${summary.orphan_sidecars} leftover sidecar file(s) in _Trash`;
+    // Windows deletes for good what doesn't fit, so stay well under the limit
+    const fits = bin.supported && (bin.capacity === null || summary.bytes <= bin.capacity * 0.95);
+    let permanent = false;
+    if (fits) {
+      const overflow = bin.capacity === null ? 0 : bin.used + summary.bytes - bin.capacity;
+      const room =
+        overflow > 0
+          ? `\n\nTo make room, Windows will remove the oldest ${formatBytes(overflow)} already in the Recycle Bin.`
+          : "";
+      const ok = await confirmAction(
+        `Move ${what} to the Windows Recycle Bin?\n\nYou can still restore them from the Recycle Bin, but not from Lumina.${room}`,
+        "Move to Recycle Bin",
+        { title: "Empty _Trash", kind: "danger" }
+      );
+      if (!ok) return;
+    } else {
+      const why = !bin.supported
+        ? `Drive ${bin.drive} has no Recycle Bin (a network or removable drive, or the Recycle Bin is switched off for it).`
+        : `The Recycle Bin on ${bin.drive} holds at most ${formatBytes(bin.capacity ?? 0)}, so it can't keep these files.`;
+      const ok = await confirmAction(
+        `${why}\n\nDelete ${what} permanently? This can't be undone.\n\nTo keep them recoverable, cancel and make the Recycle Bin bigger first (right-click the Recycle Bin › Properties › choose drive ${bin.drive}).`,
+        "Delete permanently",
+        { title: "Empty _Trash", kind: "danger" }
+      );
+      if (!ok) return;
+      permanent = true;
+    }
+
+    // Lumina's own deletes shouldn't trigger the folder watcher's rescan
+    watchQuietUntilRef.current = Number.POSITIVE_INFINITY;
+    setProgressTitle("Emptying _Trash");
     try {
-      const result = await invoke<TrashResult>("empty_library_trash_to_os", {
-        rootFolder: folder,
-      });
-      const count = result.recycled;
+      const result = await invoke<TrashResult>("empty_library_trash_to_os", { rootFolder: folder, permanent });
+      const removed = new Set(result.removed_hashes);
+      if (removed.size > 0) setPhotos((prev) => prev.filter((p) => !removed.has(p.hash)));
       for (const f of result.failures) {
-        addLog("DISK", `Could not recycle ${f.file}`, f.error);
+        addLog("DISK", `Could not ${permanent ? "delete" : "recycle"} ${f.file}`, f.error);
       }
-      if (result.failures.length > 0) {
+      const left = summary.photos - result.recycled;
+      if (result.refused_permanent) {
         setError(
-          `${result.failures.length} file(s) could not be moved to the Recycle Bin and were left in place. See the Session Log.`
+          `The Recycle Bin on ${bin.drive} couldn't take more files, so Lumina stopped instead of letting Windows delete them permanently. ${left} photo(s) are still in _Trash.`
         );
+      } else if (result.failures.length > 0) {
+        setError(`${result.failures.length} file(s) could not be removed and were left in place. See the Session Log.`);
       }
-      if (count > 0) {
-        const res = await invoke<PhotoItem[]>("scan_folder", {
-          folderPath: folder,
-          forceReprocess: false,
-        });
-        setPhotos(res);
-        setAutoMatchNotice(`Moved ${count} rejected photo(s) to your OS Recycle Bin.`);
-        addLog("DISK", `Moved ${count} _Trash photo(s) to OS Recycle Bin`);
-      }
+      const verb = permanent ? "Deleted" : "Moved";
+      const where = permanent ? "permanently" : "to the Recycle Bin";
+      const sidecars = result.sidecars > 0 ? ` and ${result.sidecars} sidecar(s)` : "";
+      const stopped = result.cancelled ? ` Stopped: ${left} photo(s) are still in _Trash.` : "";
+      setAutoMatchNotice(`${verb} ${result.recycled} photo(s)${sidecars} ${where}.${stopped}`);
+      addLog("DISK", `${verb} ${result.recycled} _Trash photo(s)${sidecars} ${where}`);
     } catch (err) {
       setError(String(err));
+    } finally {
+      watchQuietUntilRef.current = Date.now() + 4000;
+      setProgressTitle(null);
+      setScanProgress(null);
     }
   }
 
@@ -462,6 +504,8 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
     watchQuietUntilRef,
     recentFolders,
     scanProgress,
+    progressTitle,
+    setProgressTitle,
     isScanningFolder,
     progress,
     handleLoadFolderPath,

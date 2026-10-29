@@ -58,6 +58,7 @@ export function buildPaletteActions({
     { id: "commit", group: "Organize", label: "Review & commit staged moves", keywords: "disk move apply", enabled: lib.stagedPhotos.length > 0, run: () => lib.setIsCommitModalOpen(true) },
     { id: "dismiss", group: "Organize", label: "Dismiss all staged moves", enabled: lib.stagedPhotos.length > 0, run: lib.handleDismissAllStaged },
     { id: "auto-stage", group: "Organize", label: "Auto-stage visible photos by rule", keywords: "organize sort folders", enabled: hasPhotos, run: lib.handleAutoOrganizeByPreset },
+    { id: "duplicates", group: "Organize", label: "Find duplicates (exact copies, same photo)…", keywords: "copies double takeout identical remove", enabled: hasPhotos, run: lib.openDuplicates },
     { id: "keep-sharpest", group: "Organize", label: "Keep the best of every burst, stage rest for _Trash", keywords: "duplicates sharpest eyes", enabled: lib.totalBurstGroups > 0, run: lib.handleKeepSharpestInAllGroups },
     { id: "gallery", group: "Photo", label: "Share selection as a web gallery…", keywords: "website html page share online", enabled: hasSelection, run: () => lib.openGallery(scopeTitle(lib)) },
     { id: "highlights", group: "Select", label: "Highlights of what is shown", keywords: "best of favourites top", enabled: lib.visiblePhotos.length > 1, run: () => lib.openHighlights(scopeTitle(lib), lib.visiblePhotos) },

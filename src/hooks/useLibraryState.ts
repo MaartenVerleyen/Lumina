@@ -16,6 +16,7 @@ import { useHealth } from "./library/useHealth";
 import { useImport } from "./library/useImport";
 import { useHighlights } from "./library/useHighlights";
 import { useBackup } from "./library/useBackup";
+import { useDuplicates } from "./library/useDuplicates";
 
 export type { Toast } from "./library/shared";
 
@@ -33,7 +34,7 @@ export function useLibraryState() {
   const smart = useSmartSearch(core, filters, folder.progress !== null);
   const view = useLibraryView(core, filters, collections, smart);
   const triage = useTriage(core, view);
-  const staging = useStaging(core, filters, view);
+  const staging = useStaging(core, filters, view, folder);
   const location = useLocation(core);
   const people = usePeople(core, filters);
   const ai = useAi(core);
@@ -42,6 +43,7 @@ export function useLibraryState() {
   const importer = useImport(core, filters, folder);
   const highlighter = useHighlights(core, filters, view, collections);
   const backup = useBackup(core, folder.recentFolders);
+  const duplicates = useDuplicates(core);
 
   return {
     ...core,
@@ -61,6 +63,7 @@ export function useLibraryState() {
     ...importer,
     ...highlighter,
     ...backup,
+    ...duplicates,
     canUndo: core.undo.canUndo,
     canRedo: core.undo.canRedo,
     handleUndo: core.undo.handleUndo,
