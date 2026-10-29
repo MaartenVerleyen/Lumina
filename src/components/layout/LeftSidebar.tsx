@@ -15,6 +15,7 @@ import {
   Package,
   Pin,
   Smartphone,
+  MessageCircle,
   Sparkles,
   Star,
   Trash2,
@@ -37,6 +38,7 @@ interface LeftSidebarProps {
   basketCount: number;
   rejectsCount: number;
   screenshotPhotosCount: number;
+  whatsappPhotosCount: number;
   totalBurstGroups: number;
   duplicatePhotosCount: number;
   gpsPhotosCount: number;
@@ -78,6 +80,7 @@ function LeftSidebar({
   basketCount,
   rejectsCount,
   screenshotPhotosCount,
+  whatsappPhotosCount,
   totalBurstGroups,
   duplicatePhotosCount,
   gpsPhotosCount,
@@ -277,6 +280,13 @@ function LeftSidebar({
       label: "Screenshots",
       count: screenshotPhotosCount,
       icon: <Smartphone className="w-3.5 h-3.5 text-zinc-400" />,
+      hideInSimple: false,
+    },
+    {
+      id: "WHATSAPP",
+      label: "WhatsApp",
+      count: whatsappPhotosCount,
+      icon: <MessageCircle className="w-3.5 h-3.5 text-green-400" />,
       hideInSimple: false,
     },
     {

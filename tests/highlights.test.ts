@@ -61,7 +61,9 @@ test("best of focuses on starred people and leaves out received photos", () => {
   assert.ok(score({ name: "IMG-20230615-WA0001.jpg" }) < landscape);
   assert.ok(score({ subfolder: "WhatsApp Images" }) < landscape);
   assert.ok(score({ name: "IMG-20230615-WA0001.jpg", people: ["Anna"], faces: [face] }) > landscape);
-  assert.equal(isReceivedPhoto({ name: "IMG_20230615_183000.jpg", subfolder: "2023" }), false);
+  assert.equal(isReceivedPhoto({ name: "IMG_20230615_183000.jpg", subfolder: "2023", tags: [] }), false);
+  // The scan's "whatsapp" tag counts too (e.g. a renamed file in a "WhatsApp Images" folder elsewhere)
+  assert.equal(isReceivedPhoto({ name: "photo.jpg", subfolder: "2023", tags: ["whatsapp"] }), true);
   // Without a focus the score is unchanged
   assert.equal(highlightScore(photo({ people: ["Bob"] }), DEFAULT_CULLING), highlightScore(photo({ people: ["Bob"] }), DEFAULT_CULLING, undefined));
 });

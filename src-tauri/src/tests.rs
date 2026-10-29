@@ -1437,3 +1437,127 @@ fn trash_sidecars_travel_and_orphans_are_found() {
     assert_eq!(orphans, vec![trash.join("b.xmp")]);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn takeout_and_folder_dates() {
+    use crate::exif_meta::{fallback_photo_date, takeout_photo_date};
+    let root = std::env::temp_dir().join(format!("lumina-takeout-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let part1 = root.join("Takeout").join("Google Photos").join("Family");
+    let part2 = root.join("Takeout").join("Google Photos (2)").join("Family");
+    std::fs::create_dir_all(&part1).unwrap();
+    std::fs::create_dir_all(&part2).unwrap();
+    let json = |secs: u64| format!("{{\"photoTakenTime\": {{\"timestamp\": \"{secs}\"}}}}");
+    // 24 Nov 2022 18:15:10 UTC
+    let taken = 1_669_313_710u64;
+
+    // Same folder, newest naming
+    std::fs::write(part1.join("a.jpg"), b"x").unwrap();
+    std::fs::write(part1.join("a.jpg.supplemental-metadata.json"), json(taken)).unwrap();
+    // Older naming, and a "(1)" duplicate
+    std::fs::write(part1.join("b(1).jpg"), b"x").unwrap();
+    std::fs::write(part1.join("b.jpg(1).json"), json(taken + 60)).unwrap();
+    // "-edited" uses the original's JSON
+    std::fs::write(part1.join("c-edited.jpg"), b"x").unwrap();
+    std::fs::write(part1.join("c.jpg.json"), json(taken + 120)).unwrap();
+    // JSON in another part of the export
+    std::fs::write(part1.join("d.jpg"), b"x").unwrap();
+    std::fs::write(part2.join("d.jpg.supplemental-metadata.json"), json(taken + 180)).unwrap();
+
+    for (name, offset) in [("a.jpg", 0), ("b(1).jpg", 60), ("c-edited.jpg", 120), ("d.jpg", 180)] {
+        let got = takeout_photo_date(&part1.join(name)).unwrap_or_else(|| panic!("no Takeout date for {name}"));
+        // Local time: within a day of the UTC moment, on the right minute
+        assert!(got.starts_with("2022-11-2"), "{name}: {got}");
+        let expected_min_sec = format!("{:02}:{:02}", (15 + offset / 60) % 60, 10);
+        assert!(got.ends_with(&expected_min_sec), "{name}: {got}");
+    }
+    assert_eq!(takeout_photo_date(&part1.join("none.jpg")), None);
+
+    // No JSON: the folder's year wins over a later file time (when the files were copied)
+    let year_dir = root.join("New Zealand 2018");
+    std::fs::create_dir_all(&year_dir).unwrap();
+    let f = year_dir.join("beach.jpg");
+    std::fs::write(&f, b"x").unwrap();
+    let meta = std::fs::metadata(&f).unwrap();
+    assert_eq!(fallback_photo_date(&f, Some(&meta)), "2018-01-01 00:00:00");
+    // A range of years says nothing
+    let range_dir = root.join("Holidays 2018-2020");
+    std::fs::create_dir_all(&range_dir).unwrap();
+    let g = range_dir.join("x.jpg");
+    std::fs::write(&g, b"x").unwrap();
+    let meta = std::fs::metadata(&g).unwrap();
+    assert!(!fallback_photo_date(&g, Some(&meta)).starts_with("2018-01-01"));
+    // A date in the name still comes first
+    let h = year_dir.join("IMG_20190305_101010.jpg");
+    std::fs::write(&h, b"x").unwrap();
+    let meta = std::fs::metadata(&h).unwrap();
+    assert_eq!(fallback_photo_date(&h, Some(&meta)), "2019-03-05 10:10:10");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+// Which photos the next scan re-dates (read-only): LUMINA_DIAG_DB=<library.db> cargo test --lib redate_in_library -- --ignored --nocapture
+#[test]
+#[ignore]
+fn redate_in_library() {
+    let Ok(db) = std::env::var("LUMINA_DIAG_DB") else {
+        eprintln!("Set LUMINA_DIAG_DB");
+        return;
+    };
+    let conn = Connection::open_with_flags(&db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    let rows: Vec<(String, String)> = conn
+        .prepare("SELECT current_path, COALESCE(captured_at, '') FROM photos")
+        .unwrap()
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+        .unwrap()
+        .flatten()
+        .collect();
+    let started = Instant::now();
+    let mut changes: HashMap<String, usize> = HashMap::new();
+    let mut samples: Vec<String> = Vec::new();
+    for (path, captured) in &rows {
+        let p = std::path::Path::new(path);
+        let Ok(meta) = std::fs::metadata(p) else { continue };
+        if !crate::exif_meta::is_old_creation_time_date(p, captured, &meta) {
+            continue;
+        }
+        let new = crate::exif_meta::fallback_photo_date(p, Some(&meta));
+        let source = if crate::exif_meta::takeout_photo_date(p).is_some() { "takeout json" } else { "folder year" };
+        *changes.entry(format!("{source}: {} -> {}", &captured[..4.min(captured.len())], &new[..4.min(new.len())])).or_default() += 1;
+        if samples.len() < 12 && (samples.len() % 2 == 0 || source == "folder year") {
+            samples.push(format!("{captured} -> {new}  {path}"));
+        }
+    }
+    eprintln!("{} photos checked in {} ms", rows.len(), started.elapsed().as_millis());
+    let mut list: Vec<_> = changes.into_iter().collect();
+    list.sort_by(|a, b| b.1.cmp(&a.1));
+    for (k, n) in list.iter().take(25) {
+        eprintln!("{n:6}  {k}");
+    }
+    eprintln!("total {}", list.iter().map(|x| x.1).sum::<usize>());
+    for s in samples {
+        eprintln!("  {s}");
+    }
+}
+
+#[test]
+fn whatsapp_media_by_name_and_folder() {
+    use crate::imaging::is_whatsapp_media;
+    use std::path::Path;
+    assert!(is_whatsapp_media(Path::new(r"D:\Photos\IMG-20200313-WA0014.jpg")));
+    assert!(is_whatsapp_media(Path::new(r"D:\Photos\IMG-20171127-WA0007-edited.jpg")));
+    assert!(is_whatsapp_media(Path::new(r"D:\Phone\WhatsApp Images\Sent\photo.jpg")));
+    assert!(!is_whatsapp_media(Path::new(r"D:\Photos\IMG_20200313_101010.jpg")));
+    assert!(!is_whatsapp_media(Path::new(r"D:\Photos\HAWAII-WAVE.jpg")));
+    assert!(!is_whatsapp_media(Path::new(r"D:\Photos\x-wa12.jpg")));
+}
+
+#[test]
+fn screen_sized_jpeg_is_not_a_screenshot() {
+    use crate::imaging::is_likely_screenshot;
+    use std::path::Path;
+    let img = image::DynamicImage::new_rgb8(8, 8);
+    let dims = Some((1080, 1920));
+    assert!(!is_likely_screenshot(Path::new("IMG-20200313-WA0014.jpg"), "", Some(&img), dims));
+    assert!(is_likely_screenshot(Path::new("IMG_5107.PNG"), "", Some(&img), dims));
+    assert!(is_likely_screenshot(Path::new("Screenshot_20180320-155259.jpg"), "", Some(&img), dims));
+}

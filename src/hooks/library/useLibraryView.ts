@@ -89,6 +89,7 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
     stagedPhotos,
     gpsPhotosCount,
     screenshotPhotosCount,
+    whatsappPhotosCount,
     picksCount,
     rejectsCount,
     basketCount,
@@ -102,6 +103,7 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
     const staged: PhotoItem[] = [];
     let gps = 0;
     let screenshots = 0;
+    let whatsapp = 0;
     let picks = 0;
     let rejects = 0;
     let basket = 0;
@@ -117,6 +119,7 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
       if (p.staged_target) staged.push(p);
       if (p.latitude != null && p.longitude != null) gps++;
       if (p.tags.includes("screenshot")) screenshots++;
+      if (p.tags.includes("whatsapp")) whatsapp++;
       if (p.flag === "pick") picks++;
       else if (p.flag === "reject") rejects++;
       if (p.in_basket) basket++;
@@ -138,6 +141,7 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
       stagedPhotos: staged,
       gpsPhotosCount: gps,
       screenshotPhotosCount: screenshots,
+      whatsappPhotosCount: whatsapp,
       picksCount: picks,
       rejectsCount: rejects,
       basketCount: basket,
@@ -164,6 +168,7 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
       if (smartFilter === "UNTAGGED" && (p.tags.length > 0 || p.ai_caption.length > 0)) return false;
       if (smartFilter === "AI_TAGGED" && p.tags.length === 0 && !p.ai_caption) return false;
       if (smartFilter === "SCREENSHOTS" && !p.tags.includes("screenshot")) return false;
+      if (smartFilter === "WHATSAPP" && !p.tags.includes("whatsapp")) return false;
       if (smartFilter === "DUPLICATES" && (!p.duplicate_group || p.subfolder === "_Trash"))
         return false;
       if (smartFilter === "HAS_OCR" && !p.ocr_text) return false;
@@ -458,6 +463,7 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
     stagedPhotos,
     gpsPhotosCount,
     screenshotPhotosCount,
+    whatsappPhotosCount,
     picksCount,
     rejectsCount,
     basketCount,

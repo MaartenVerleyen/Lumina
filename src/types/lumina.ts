@@ -289,6 +289,7 @@ export type SmartFilter =
   | "UNTAGGED"
   | "AI_TAGGED"
   | "SCREENSHOTS"
+  | "WHATSAPP"
   | "DUPLICATES"
   | "HAS_OCR"
   | "HAS_GPS"

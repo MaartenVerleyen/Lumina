@@ -129,6 +129,30 @@ pub fn open_global_db(app: &AppHandle) -> Result<Connection, String> {
     // Starred people: Best of favours photos with them
     let _ = conn.execute("ALTER TABLE people ADD COLUMN starred INTEGER DEFAULT 0", []);
 
+    // One-time clean-ups, in order; PRAGMA user_version records how many have run
+    let done: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap_or(0);
+    if done < 1 {
+        // Up to 4.0.1 every photo of a screen size was tagged "screenshot", JPEGs included (mostly WhatsApp
+        // and phone photos at 1080 x 1920). Only PNG and WebP count now: drop the tag those JPEGs got that way.
+        let sizes: Vec<String> = crate::imaging::SCREEN_SIZES
+            .iter()
+            .flat_map(|&(w, h)| [format!("(width = {w} AND height = {h})"), format!("(width = {h} AND height = {w})")])
+            .collect();
+        let _ = conn.execute(
+            &format!(
+                "DELETE FROM photo_tags WHERE tag = 'screenshot' AND hash IN (
+                   SELECT hash FROM photos WHERE ({})
+                     AND lower(current_path) NOT LIKE '%.png' AND lower(current_path) NOT LIKE '%.webp'
+                     AND lower(current_path) NOT LIKE '%screenshot%' AND lower(current_path) NOT LIKE '%screen shot%'
+                     AND lower(current_path) NOT LIKE '%schermopname%' AND lower(current_path) NOT LIKE '%schermafbeelding%'
+                     AND lower(current_path) NOT LIKE '%capture%' AND lower(current_path) NOT LIKE '%snip%')",
+                sizes.join(" OR ")
+            ),
+            [],
+        );
+        let _ = conn.execute_batch("PRAGMA user_version = 1");
+    }
+
     // Smart search: one CLIP image vector per photo (little-endian f32), tagged with the model that made it
     let _ = conn.execute(
         "CREATE TABLE IF NOT EXISTS photo_clip (hash TEXT PRIMARY KEY, embedding BLOB NOT NULL, model TEXT NOT NULL)",

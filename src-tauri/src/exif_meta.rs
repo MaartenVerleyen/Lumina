@@ -134,16 +134,125 @@ fn system_time_local_iso(st: std::time::SystemTime) -> String {
     format_system_time_iso(st)
 }
 
-// The date of a photo without an EXIF date: a date in its name, else the earliest file time. Copying a file
-// gives it a new creation time but keeps its modification time, so the earlier one is the closer to the shot.
+// The earliest file time as local time. Copying a file gives it a new creation time but keeps its
+// modification time, so the earlier one is the closer to the shot.
+fn file_time_date(meta: Option<&fs::Metadata>) -> Option<String> {
+    meta.and_then(|m| match (m.created().ok(), m.modified().ok()) {
+        (Some(c), Some(m)) => Some(c.min(m)),
+        (c, m) => c.or(m),
+    })
+    .map(system_time_local_iso)
+    .filter(|s| !s.is_empty())
+}
+
+// JSON names Google Takeout writes next to a photo, newest style first: "IMG_1.jpg.supplemental-metadata.json",
+// "IMG_1.jpg.json"; a duplicate "IMG_1(1).jpg" gets "IMG_1.jpg.supplemental-metadata(1).json" / "IMG_1.jpg(1).json".
+// An "-edited" copy has no JSON of its own: it uses the original's; a "(1)" copy without one does too.
+fn takeout_json_names(name: &str) -> Vec<String> {
+    let (stem, ext) = match name.rfind('.') {
+        Some(i) => (&name[..i], &name[i..]),
+        None => (name, ""),
+    };
+    let mut stems = vec![stem.to_string()];
+    for suffix in ["-edited", "-bewerkt"] {
+        if let Some(original) = stem.strip_suffix(suffix) {
+            stems.push(original.to_string());
+        }
+    }
+    let mut out = Vec::new();
+    for stem in stems {
+        let copy = stem
+            .strip_suffix(')')
+            .and_then(|s| s.rsplit_once('('))
+            .filter(|(_, n)| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()));
+        out.push(format!("{stem}{ext}.supplemental-metadata.json"));
+        out.push(format!("{stem}{ext}.json"));
+        if let Some((base, n)) = copy {
+            out.insert(out.len() - 2, format!("{base}{ext}.supplemental-metadata({n}).json"));
+            out.insert(out.len() - 2, format!("{base}{ext}({n}).json"));
+            // Last resort: the original's JSON (a copy with the same name is almost always the same shot)
+            out.push(format!("{base}{ext}.supplemental-metadata.json"));
+            out.push(format!("{base}{ext}.json"));
+        }
+    }
+    out
+}
+
+// "Google Photos (2)" -> "Google Photos"
+fn takeout_part_base(name: &str) -> &str {
+    name.strip_suffix(')')
+        .and_then(|s| s.rsplit_once(" ("))
+        .filter(|(_, n)| n.chars().all(|c| c.is_ascii_digit()))
+        .map(|(base, _)| base)
+        .unwrap_or(name)
+}
+
+// When Google Takeout exported this photo: its JSON sidecar's "photoTakenTime" (UTC) as local time.
+// A large export is split into parts ("Google Photos", "Google Photos (2)", …) and a photo's JSON can land in
+// the same album folder of another part, so those are tried too.
+pub fn takeout_photo_date(file_path: &Path) -> Option<String> {
+    let name = file_path.file_name()?.to_string_lossy().to_string();
+    let album_dir = file_path.parent()?;
+    let mut dirs = vec![album_dir.to_path_buf()];
+    if let (Some(album), Some(part)) = (album_dir.file_name(), album_dir.parent()) {
+        if let (Some(part_name), Some(export)) = (part.file_name().map(|n| n.to_string_lossy().to_string()), part.parent()) {
+            let base = takeout_part_base(&part_name);
+            if base.starts_with("Google Photos") || base.starts_with("Google Foto") {
+                if let Ok(entries) = fs::read_dir(export) {
+                    for e in entries.flatten() {
+                        let other = e.file_name().to_string_lossy().to_string();
+                        if other != part_name && takeout_part_base(&other) == base {
+                            dirs.push(e.path().join(album));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let names = takeout_json_names(&name);
+    for dir in &dirs {
+        for json_name in &names {
+            let Ok(text) = fs::read_to_string(dir.join(json_name)) else { continue };
+            let Ok(json) = serde_json::from_str::<JsonValue>(&text) else { continue };
+            let ts = &json["photoTakenTime"]["timestamp"];
+            let Some(secs) = ts.as_str().and_then(|s| s.parse::<u64>().ok()).or_else(|| ts.as_u64()) else {
+                continue;
+            };
+            if secs == 0 {
+                continue;
+            }
+            return Some(system_time_local_iso(std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs)));
+        }
+    }
+    None
+}
+
+// The year in the nearest folder name that has one ("Photos from 2022", "New Zealand 2018"), up to three levels up
+fn folder_year(file_path: &Path) -> Option<u32> {
+    for dir in file_path.ancestors().skip(1).take(3) {
+        let name = dir.file_name()?.to_string_lossy().to_string();
+        let b = name.as_bytes();
+        let mut years = (0..b.len().saturating_sub(3)).filter_map(|i| {
+            let standalone = (i == 0 || !b[i - 1].is_ascii_digit()) && b.get(i + 4).is_none_or(|c| !c.is_ascii_digit());
+            let y: u32 = name.get(i..i + 4)?.parse().ok()?;
+            (standalone && (1990..=2100).contains(&y)).then_some(y)
+        });
+        if let Some(y) = years.next() {
+            // Two different years ("2019-2021") say nothing about one photo
+            if years.all(|other| other == y) {
+                return Some(y);
+            }
+            return None;
+        }
+    }
+    None
+}
+
+// The date of a photo without an EXIF date, from the most to the least trustworthy: a date in its name,
+// Google Takeout's record of when it was taken, the year in its folder name when the file time is later
+// (a file time years after the folder's year is when it was copied), else the earliest file time.
 pub fn fallback_photo_date(file_path: &Path, meta: Option<&fs::Metadata>) -> String {
-    let file_time = meta
-        .and_then(|m| match (m.created().ok(), m.modified().ok()) {
-            (Some(c), Some(m)) => Some(c.min(m)),
-            (c, m) => c.or(m),
-        })
-        .map(system_time_local_iso)
-        .filter(|s| !s.is_empty());
+    let file_time = file_time_date(meta);
     let name = file_path.file_name().map(|n| n.to_string_lossy()).unwrap_or_default();
     match date_from_filename(&name) {
         Some((_, Some(date_time))) => date_time,
@@ -152,15 +261,27 @@ pub fn fallback_photo_date(file_path: &Path, meta: Option<&fs::Metadata>) -> Str
             Some(ft) if ft.starts_with(&date) => ft,
             _ => format!("{date} 00:00:00"),
         },
-        None => file_time.unwrap_or_default(),
+        None => {
+            if let Some(taken) = takeout_photo_date(file_path) {
+                return taken;
+            }
+            let ft = file_time.unwrap_or_default();
+            let ft_year = ft.get(..4).and_then(|y| y.parse::<u32>().ok());
+            match (folder_year(file_path), ft_year) {
+                (Some(year), Some(fy)) if fy > year => format!("{year:04}-01-01 00:00:00"),
+                _ => ft,
+            }
+        }
     }
 }
 
-// Before 4.0.1 a photo without an EXIF date got its file's creation time (UTC), which is when it was copied
-// to this PC. Such dates are recognised (no file I/O) so the next scan reads the photo's date again.
+// A photo dated from its file's times: before 4.0.1 the creation time (UTC), since then the earliest file time.
+// Such dates are recognised without reading the photo, and read again when a better source now gives
+// another date (a Takeout JSON, the folder's year).
 pub fn is_old_creation_time_date(file_path: &Path, captured_at: &str, meta: &fs::Metadata) -> bool {
     !captured_at.is_empty()
-        && meta.created().map(|c| format_system_time_iso(c) == captured_at).unwrap_or(false)
+        && (meta.created().map(|c| format_system_time_iso(c) == captured_at).unwrap_or(false)
+            || file_time_date(Some(meta)).as_deref() == Some(captured_at))
         && fallback_photo_date(file_path, Some(meta)) != captured_at
 }
 

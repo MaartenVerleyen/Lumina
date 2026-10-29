@@ -39,8 +39,8 @@ export interface HighlightFocus {
 }
 
 // Saved from WhatsApp: "IMG-20230615-WA0001.jpg", or kept in a WhatsApp folder
-export function isReceivedPhoto(p: Pick<HighlightPhoto, "name" | "subfolder">): boolean {
-  return /-WA\d{4}/i.test(p.name ?? "") || /whatsapp/i.test(p.subfolder);
+export function isReceivedPhoto(p: Pick<HighlightPhoto, "name" | "subfolder" | "tags">): boolean {
+  return p.tags.includes("whatsapp") || /-WA\d{4}/i.test(p.name ?? "") || /whatsapp/i.test(p.subfolder);
 }
 
 function focusBonus(p: HighlightPhoto, focus: HighlightFocus): number {

@@ -259,6 +259,9 @@ pub struct CachedRow {
     pub thumb_edge: u32,
 }
 
+// Tags the scan sets from the file itself (name, folder), kept on a copy that gets its own hash
+const AUTO_FILE_TAGS: &[&str] = &["screenshot", "whatsapp"];
+
 // One indexed file: the photo, its path on disk, size in bytes, mtime, and whether its row must be written
 type IndexedFile = (PhotoItem, String, u64, u64, bool);
 
@@ -289,7 +292,7 @@ fn save_indexed(
                 .to_string();
         }
         p.thumb_path = thumb_file.to_string_lossy().to_string();
-        p.tags.retain(|t| t == "screenshot");
+        p.tags.retain(|t| AUTO_FILE_TAGS.contains(&t.as_str()));
         p.people.clear();
         p.faces.clear();
         p.hash = salted_hash;
@@ -336,11 +339,8 @@ fn save_indexed(
                 ],
             );
 
-            if p.tags.iter().any(|t| t == "screenshot") {
-                let _ = tx.execute(
-                    "INSERT OR IGNORE INTO photo_tags (hash, tag) VALUES (?1, 'screenshot')",
-                    params![p.hash],
-                );
+            for tag in p.tags.iter().filter(|t| AUTO_FILE_TAGS.contains(&t.as_str())) {
+                let _ = tx.execute("INSERT OR IGNORE INTO photo_tags (hash, tag) VALUES (?1, ?2)", params![p.hash, tag]);
             }
         }
         let _ = tx.commit();
@@ -748,6 +748,11 @@ pub async fn scan_folder(
                 && !tags.iter().any(|t| t == "screenshot")
             {
                 tags.push("screenshot".to_string());
+                tags.sort();
+                needs_db_upsert = true;
+            }
+            if is_whatsapp_media(&file_path) && !tags.iter().any(|t| t == "whatsapp") {
+                tags.push("whatsapp".to_string());
                 tags.sort();
                 needs_db_upsert = true;
             }

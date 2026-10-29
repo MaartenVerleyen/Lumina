@@ -568,6 +568,7 @@ export default function App() {
               basketCount={lib.basketCount}
               rejectsCount={lib.rejectsCount}
               screenshotPhotosCount={lib.screenshotPhotosCount}
+              whatsappPhotosCount={lib.whatsappPhotosCount}
               totalBurstGroups={lib.totalBurstGroups}
               duplicatePhotosCount={lib.duplicatePhotosCount}
               gpsPhotosCount={lib.gpsPhotosCount}
