@@ -43,9 +43,11 @@ localStorage, read anywhere with `useSettings()`.
 | :--- | :--- |
 | `lib.rs` | shared types, app setup, command registration |
 | `db.rs` | opening the database, schema and migrations, folder scoping |
-| `scan.rs` | walking a folder, hashing, EXIF, duplicate and burst grouping; folds rows left by files edited in place into the current row |
+| `scan.rs` | walking a folder, hashing, EXIF, duplicate and burst grouping; saves the index every 1000 files so an interrupted scan resumes; folds rows left by files edited in place into the current row |
 | `storage.rs` | drive-aware I/O: few readers in folder order on a hard drive, full parallelism on an SSD |
-| `imaging.rs`, `exif_meta.rs` | content hash, dHash, sharpness, screenshot detection; EXIF parsing |
+| `imaging.rs`, `exif_meta.rs` | content hash, dHash, sharpness, screenshot and WhatsApp detection; EXIF parsing and the date fallback (file name, Google Takeout JSON, folder year, file time) |
+| `duplicates.rs` | exact copies (proved from the path-salted hashes, no file reads) and the same photo in another file (same second, dHash and CLIP); merging metadata onto the copy that is kept |
+| `recycle.rs` | the Windows Recycle Bin: its size limit per drive, and an `IFileOperation` whose progress sink refuses any delete Windows would make permanent |
 | `decode.rs`, `fastdecode.rs` | RAW embedded previews, orientation, scaled JPEG decoding, in-process WIC for HEIC |
 | `thumbs.rs` | the background thumbnail pipeline (readers, then a bounded queue, decoders on `BG_POOL`, a collector that writes to the DB and sends batches to the UI) |
 | `face_ort.rs` | face engine: SCRFD `det_10g` detection with landmarks, alignment, ArcFace `w600k_r50` embeddings, on ONNX Runtime with DirectML (CPU fallback) |
@@ -57,7 +59,7 @@ localStorage, read anywhere with `useSettings()`.
 | `face_eval.rs` | manual benchmark on a labelled folder (`#[ignore]` test) |
 | `clip.rs` | smart search: CLIP ViT-B/32 image encoder, multilingual text encoder, indexing job, query |
 | `ai.rs` | Ollama: start, pull, flash-attention setting, per-photo caption/tags/OCR with a constrained JSON schema |
-| `albums.rs`, `export.rs`, `files.rs`, `library.rs` | albums and smart albums; export; staged moves, commit, trash, XMP sidecars; offline place search |
+| `albums.rs`, `export.rs`, `files.rs`, `library.rs` | albums and smart albums; export; staged moves, commit, emptying `_Trash` in batches with its sidecars, XMP sidecars; offline place search |
 | `face_quality.rs` | closed eyes (CLIP zero-shot on the aligned face) and face sharpness, measured in the face scan and backfilled for older faces |
 | `highlights.rs` | highlights: a score per photo and a diverse pick (no two from one burst, spread in time and look) |
 | `import.rs`, `watch.rs` | importing from cards, drives and folders (dated folders, duplicate check, verified copies, card detection); watching the open library for outside changes |
@@ -77,7 +79,15 @@ walk folder ─► head read (hash + dimensions + EXIF in one read) ─► DB up
 ```
 
 Each scan bumps `SCAN_GENERATION`. Workers check it, so opening another folder stops the previous scan's
-background work, and events from an old scan are ignored.
+background work, and events from an old scan are ignored. Files are indexed in chunks of 1000 and each chunk
+is written to the database straight away, so a cancelled or interrupted first index keeps its progress.
+
+A photo without an EXIF date gets, in this order: a date in its file name, the `photoTakenTime` from a
+Google Takeout JSON (also looked up in the same album of the other parts of a split export), the year in a
+folder name when the file time is a later year, else the earliest file time. Photos dated from file times are
+read again on the next scan when a better source gives another date.
+
+One-time data clean-ups run in `db.rs` and are counted in `PRAGMA user_version`.
 
 ### AI captions
 

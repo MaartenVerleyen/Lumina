@@ -53,7 +53,7 @@ uploaded.
   | People and tags | `person:anna` · `person:anna\|bob` · `tag:beach` |
   | Place, camera, lens, file name | `place:lagos` · `camera:"EOS R6"` · `lens:24-70` · `name:IMG_12` |
   | Dates | `date:2024` · `date:2024-06` · `date:2024-06-01..2024-06-30` · `date:<2020` |
-  | Properties | `has:gps` · `has:faces` · `has:ocr` · `is:raw` · `is:screenshot` · `album:"Holiday"` |
+  | Properties | `has:gps` · `has:faces` · `has:ocr` · `is:raw` · `is:screenshot` · `is:whatsapp` · `album:"Holiday"` |
 
   Put `-` in front of a filter to exclude it (`-flag:reject`). Save any search as a smart album that keeps
   itself up to date.
@@ -90,8 +90,15 @@ uploaded.
   `is:blurry`. The sensitivity can be set (or switched off) in Settings.
 - **Pick / reject / rate / colour label** from the keyboard, with optional auto-advance to the next photo.
 - **Full-screen view** with a filmstrip, and a **timeline** to filter by year, month, week or day.
+- **Find duplicates:** exact copies spread over your folders, and the same photo saved again as another file
+  (a resized or edited copy). Lumina keeps the largest, oldest copy with the most info, moves ratings,
+  people and albums onto it, and stages the others for `_Trash`.
+- **Screenshots and WhatsApp photos** are recognised and have their own filters, and Best of leaves them
+  out or ranks them lower.
 - Rejected photos go to a `_Trash` folder first. Moves and renames are staged and only applied when you
   commit them. Almost everything can be undone with <kbd>Ctrl</kbd>+<kbd>Z</kbd>.
+- **Emptying `_Trash`** moves photos and their sidecars to the Windows Recycle Bin. Lumina never lets Windows
+  delete them for good: when the Recycle Bin can't hold them it asks first.
 
 ### Organise and share
 
@@ -117,6 +124,11 @@ uploaded.
 - **Backups** of everything you added (ratings, people, captions, albums, settings) to one
   `.luminabackup` file, by hand or automatically every day or week. **Restore** it on the same PC or a new
   one: point each library folder to where the photos are now and everything follows them.
+- **Photo dates** come from the camera (EXIF), else from the file name (`IMG_20230615_…`, WhatsApp), from
+  Google Takeout's JSON files for a Google Photos export, or from a year in the folder name, before falling
+  back to the file's own date.
+- **Large libraries** on a hard drive are indexed in the background and saved as they go, so an interrupted
+  first index resumes where it stopped.
 - **Updates** are checked once a day and installed with one click from GitHub Releases.
 
 ### Formats

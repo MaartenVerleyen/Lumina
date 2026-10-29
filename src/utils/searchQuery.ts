@@ -190,6 +190,7 @@ function matchOne(p: MatchablePhoto, t: SearchTerm, ctx: MatchContext): boolean 
         case "raw": return RAW_EXT.test(p.name);
         case "paired": return Boolean(p.pair_raw_path);
         case "screenshot": return p.tags.includes("screenshot");
+        case "whatsapp": return p.tags.includes("whatsapp");
         case "damaged": return Boolean(p.damaged);
         case "staged": return Boolean(p.staged_target);
         case "basket": case "pinned": return Boolean(p.in_basket);

@@ -14,6 +14,19 @@ export interface ReleaseNotes {
 // Newest first. Add an entry for every release that should greet updating users with "What's new".
 export const RELEASE_NOTES: ReleaseNotes[] = [
   {
+    version: "4.0.3",
+    items: [
+      { title: "Find duplicates", text: "Organize → Find duplicates lists exact copies spread over your folders, and the same photo saved again as another file. Lumina keeps the largest, oldest copy with the most info, moves your ratings, people and albums onto it, and stages the rest for _Trash." },
+      { title: "A safer Empty _Trash", text: "Emptying _Trash never deletes a photo for good behind your back. Lumina checks that the Recycle Bin can hold everything and asks first if it can't. It shows its progress, can be cancelled, and takes .xmp sidecars along." },
+      { title: "Google Takeout dates", text: "Photos from a Google Photos export get the date Google recorded for them, even when the export was split into parts. Without one, a year in the folder name beats the day the files were copied. Existing photos are corrected on the next scan." },
+      { title: "WhatsApp photos", text: "Photos received through WhatsApp get a whatsapp tag and their own filter in the sidebar." },
+      { title: "Fewer false screenshots", text: "Phone photos that happen to have a screen's size are no longer marked as screenshots. Wrong marks are removed once, automatically." },
+      { title: "Indexing you can interrupt", text: "A large library is saved as it is indexed, so a cancelled or interrupted first index carries on where it stopped. The progress window shows files per second and the time left." },
+      { title: "Faster with large libraries", text: "Collections, switching tabs and resizing the side panes are much quicker with tens of thousands of photos. Collections shows the first 12 trips of each year, with Show all for the rest." },
+      { title: "Fixes", text: "The review count no longer runs over a person's name in a narrow People pane, and the splash screen shows the right version." },
+    ],
+  },
+  {
     version: "4.0.1",
     items: [
       { title: "Star your people", text: "Star the people who matter most (People → ⋯ → Star). They come first in the lists, and Best of focuses on photos of them instead of friends' photos or pictures received through WhatsApp." },
