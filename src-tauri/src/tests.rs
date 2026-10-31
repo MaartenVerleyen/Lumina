@@ -1293,20 +1293,22 @@ fn same_photo_needs_the_same_shot_not_a_burst_or_a_raw() {
     assert_eq!(camera_frame(r"D:\a\DSC00645.JPG"), Some(("dsc".into(), 645)));
     assert_eq!(camera_frame(r"D:\a\IMG_7619.CR3.jpg"), Some(("img".into(), 7619)));
     assert_eq!(camera_frame(r"D:\a\2023-09-25-0495.CR3.jpg"), None);
+    assert_eq!(camera_frame(r"D:\a\IMG_E7619.HEIC"), Some(("img".into(), 7619)));
     let clip = HashMap::new();
+    let looks = HashMap::new();
     let t = "2017-09-13 15:14:01";
     let original = dup_row("a", r"D:\a\DSC00645.JPG", 9, 9, t, 0xff00);
     let resized = dup_row("b", r"D:\t\DSC00645.JPG", 3, 2, t, 0xff01);
     let bw = dup_row("c", r"D:\a\DSC00645BW.jpg", 9, 9, t, 0xff03);
     let next_frame = dup_row("d", r"D:\a\DSC00646.JPG", 9, 9, t, 0xff00);
     let raw = dup_row("e", r"D:\a\DSC00645.ARW", 9, 9, t, 0xff00);
-    assert!(same_photo(&original, &resized, &clip));
-    assert!(same_photo(&original, &bw, &clip));
-    assert!(!same_photo(&original, &next_frame, &clip));
-    assert!(!same_photo(&original, &raw, &clip));
+    assert!(same_photo(&original, &resized, &clip, &looks));
+    assert!(same_photo(&original, &bw, &clip, &looks));
+    assert!(!same_photo(&original, &next_frame, &clip, &looks));
+    assert!(!same_photo(&original, &raw, &clip, &looks));
     // Grouped only within one second, and never on a date without a time
     let rows = vec![original, resized, dup_row("f", r"D:\w\IMG-1-WA0001.jpg", 1, 1, "2020-05-30 00:00:00", 0), dup_row("g", r"D:\w\IMG-1-WA0002.jpg", 1, 1, "2020-05-30 00:00:00", 0)];
-    let sets = duplicates::same_photo_sets(&rows, &[0, 1, 2, 3], &clip);
+    let sets = duplicates::same_photo_sets(&rows, &[0, 1, 2, 3], &clip, &looks);
     assert_eq!(sets.len(), 1);
     assert_eq!(sets[0].len(), 2);
 
@@ -1316,8 +1318,61 @@ fn same_photo_needs_the_same_shot_not_a_burst_or_a_raw() {
         dup_row("b", r"D:\d\i5659--1x-1.ARW.jpg", 9, 9, t, 0xff00),
         dup_row("c", r"D:\a\DSC03763.JPG", 9, 9, t, 0xff00),
     ];
-    let sets = duplicates::same_photo_sets(&rows, &[0, 1, 2], &clip);
+    let looks: HashMap<String, Vec<u8>> = ["a", "b", "c"].iter().map(|h| (h.to_string(), test_look(0))).collect();
+    let sets = duplicates::same_photo_sets(&rows, &[0, 1, 2], &clip, &looks);
     assert!(sets.iter().all(|s| !(s.contains(&0) && s.contains(&2))), "{sets:?}");
+    // ... and joins the frame it matches best, not the first one it was compared with
+    let mut looks = looks;
+    looks.get_mut("a").unwrap().iter_mut().enumerate().for_each(|(i, v)| *v = v.saturating_add((i * 7 % 5) as u8));
+    assert!(same_photo(&rows[0], &rows[1], &clip, &looks));
+    let sets = duplicates::same_photo_sets(&rows, &[0, 1, 2], &clip, &looks);
+    assert_eq!(sets.into_iter().map(|mut s| { s.sort(); s }).collect::<Vec<_>>(), vec![vec![1, 2]]);
+}
+
+// A 64x64 grey test picture: a few bars, `shift` pixels to the right
+fn test_look(shift: usize) -> Vec<u8> {
+    let n = duplicates::LOOK_EDGE as usize;
+    (0..n * n).map(|i| if ((i % n + n - shift) / 7 + i / n / 13).is_multiple_of(2) { 40 } else { 200 }).collect()
+}
+
+#[test]
+fn file_names_tell_a_copy_from_a_burst() {
+    use duplicates::{NamesSay::*, names_say};
+    // Copies and edits of one shot
+    assert_eq!(names_say(r"D:\a\IMG_5748.CR3.jpg", r"D:\d\IMG_5748_1.CR3.jpg"), SameShot);
+    assert_eq!(names_say(r"D:\a\IMG_4187.HEIC", r"D:\a\IMG_E4187.HEIC"), SameShot);
+    assert_eq!(names_say(r"D:\t\20140208_025350.jpg", r"D:\t\20140208_025350-edited.jpg"), SameShot);
+    assert_eq!(names_say(r"D:\t\IMG_20180922_111851.jpg", r"D:\t\IMG_20180922_111851-EFFECTS-edited.jpg"), SameShot);
+    assert_eq!(names_say(r"D:\t\IMG20260912042644.jpg", r"D:\t\IMG20260912042644~2.jpg"), SameShot);
+    assert_eq!(names_say(r"D:\a\DSC00467.JPG", r"D:\b\MAARTEN - DSC00467(1).JPG"), SameShot);
+    // Burst frames
+    assert_eq!(names_say(r"D:\t\IMG20261014172951.jpg", r"D:\t\IMG20261014172951_01.jpg"), OtherShot);
+    assert_eq!(names_say(r"D:\t\IMG_20171018_213508_012.jpg", r"D:\t\IMG_20171018_213508_008.jpg"), OtherShot);
+    assert_eq!(names_say(r"D:\t\IMG_20210926_105547__01.jpg", r"D:\t\IMG_20210926_105547.jpg"), OtherShot);
+    assert_eq!(names_say(r"D:\a\IMG_1835.HEIC", r"D:\a\IMG_E1836.HEIC"), OtherShot);
+    // Nothing to go on
+    assert_eq!(names_say(r"D:\i\BJZH8955.JPG", r"D:\i\JHBL1609.JPG"), Unknown);
+    assert_eq!(names_say(r"D:\a\holiday-beach.jpg", r"D:\a\holiday-sunset.jpg"), Unknown);
+}
+
+#[test]
+fn unrelated_names_need_matching_thumbnails() {
+    use duplicates::{same_photo, same_photo_by_data};
+    let clip = HashMap::new();
+    let t = "2026-04-25 13:04:48";
+    let a = dup_row("a", r"D:\i\BJZH8955.JPG", 9, 9, t, 0xff00);
+    let b = dup_row("b", r"D:\i\JHBL1609.JPG", 9, 9, t, 0xff00);
+    assert_eq!(same_photo_by_data(&a, &b, &clip), None);
+    // No thumbnails: not the same photo
+    assert!(!same_photo(&a, &b, &clip, &HashMap::new()));
+    let looks = |sb: usize| -> HashMap<String, Vec<u8>> { [("a".to_string(), test_look(0)), ("b".to_string(), test_look(sb))].into() };
+    assert!(same_photo(&a, &b, &clip, &looks(0)));
+    // Something moved
+    assert!(!same_photo(&a, &b, &clip, &looks(3)));
+    // A brighter, recompressed copy still matches
+    let mut brighter = looks(0);
+    brighter.get_mut("b").unwrap().iter_mut().enumerate().for_each(|(i, v)| *v = (*v as u32 * 9 / 10 + 20 + (i % 3) as u32) as u8);
+    assert!(same_photo(&a, &b, &clip, &brighter));
 }
 
 #[test]
@@ -1356,8 +1411,9 @@ fn duplicates_in_library() {
         return;
     };
     let conn = Connection::open_with_flags(&db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    let thumbs = std::path::Path::new(&db).parent().unwrap().join("thumbnails");
     let started = Instant::now();
-    let (sets, photos) = duplicates::find_duplicate_sets(&conn, None).unwrap();
+    let (sets, photos) = duplicates::find_duplicate_sets(&conn, None, &thumbs).unwrap();
     let count = |kind: &str| {
         let s: Vec<&duplicates::DuplicateSet> = sets.iter().filter(|s| s.kind == kind).collect();
         (s.len(), s.iter().map(|s| s.hashes.len() - 1).sum::<usize>())

@@ -16,7 +16,7 @@ const KINDS: { kind: Kind; label: string; hint: string }[] = [
   {
     kind: "same_photo",
     label: "Same photo, different file",
-    hint: "One shot saved more than once: resized by Google Photos, a developed or edited export, a black and white version. Taken in the same second and looking alike; RAW files are never included.",
+    hint: "One shot saved more than once: resized by Google Photos, a developed or edited export, a black and white version. Taken in the same second and looking alike; bursts and RAW files are never included.",
   },
 ];
 const PAGE = 30;

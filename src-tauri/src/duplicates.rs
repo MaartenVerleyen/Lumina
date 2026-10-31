@@ -6,8 +6,10 @@ use crate::*;
 //    path (scan::resolve_hash_collisions), so salt(A, path of B) == B means B is a copy of A.
 //  - "same_photo": the same shot as different files (resized by Google Photos, a developed export, an edit,
 //    a black and white version): taken in the same second and looking alike. RAW files are left out (a RAW
-//    is the source of its JPG, not a duplicate of it), and so are two different frame numbers of one camera
-//    (a burst within one second).
+//    is the source of its JPG, not a duplicate of it), and so are bursts: two frame numbers of one camera,
+//    or a phone's "_01" frame. Files whose names don't tie them to one shot (UUIDs, renamed exports, a time
+//    that only came from copying the files) must also match closely on their thumbnails, as a burst where
+//    someone moved still passes the 64-bit fingerprint.
 // Every set lists the copy to keep first: the largest, then the oldest, then the one with the most information.
 
 #[derive(Serialize)]
@@ -36,7 +38,13 @@ const SAME_PHOTO_MAX_BITS_WITHOUT_CLIP: u32 = 4;
 // Same-second pairs that really were one shot scored down to 0.77 (a black and white version); lower is two
 // cameras catching the same moment
 const SAME_PHOTO_MIN_CLIP: f32 = 0.75;
+// Edge correlation of two thumbnails at 64x64 for files with unrelated names (calibrated 2026-10-31 on
+// 13k same-second pairs): copies and edits score 0.95-1; bursts where a child or a dog moved score lower
+const SAME_PHOTO_MIN_EDGES: f32 = 0.95;
+pub const LOOK_EDGE: u32 = 64;
 const RAW_EXTENSIONS: &[&str] = &["cr2", "cr3", "nef", "arw", "dng", "orf", "rw2", "pef", "raf"];
+// What Google Photos and phone editors append to an edited copy's name
+const EDIT_MARKERS: &[&str] = &["edited", "bewerkt", "bearbeitet", "modifié", "effects", "smile", "collage", "pano", "motion"];
 
 // The copy to keep sorts first: largest (pixels, then bytes), oldest (capture time, then file time), most info,
 // then the shortest path
@@ -117,6 +125,8 @@ pub fn camera_frame(path: &str) -> Option<(String, u64)> {
         return None;
     }
     let rest = stem[prefix.len()..].trim_start_matches('_');
+    // An iPhone edit: IMG_E7619
+    let rest = if prefix == "img" { rest.strip_prefix('e').unwrap_or(rest) } else { rest };
     let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
     if digits.len() < 3 || digits.len() > 6 {
         return None;
@@ -131,26 +141,153 @@ fn is_raw(path: &str) -> bool {
         .unwrap_or(false)
 }
 
-// Whether two photos taken in the same second are one shot (see the module comment)
-pub fn same_photo(a: &DupRow, b: &DupRow, clip: &HashMap<String, Vec<f32>>) -> bool {
-    if is_raw(&a.path) || is_raw(&b.path) {
-        return false;
+// The file name without what copies and edits add: "IMG_5748.CR3.jpg", "MAARTEN - IMG_5748(1).jpg" and
+// "IMG_5748-EFFECTS-edited.jpg" are all "img_5748"
+fn base_name(path: &str) -> String {
+    let mut s = Path::new(path).file_stem().map(|s| s.to_string_lossy().to_lowercase()).unwrap_or_default();
+    if let Some((_, after)) = s.rsplit_once(" - ") {
+        s = after.to_string();
     }
+    loop {
+        let before = s.len();
+        if let Some((stem, ext)) = s.rsplit_once('.')
+            && (RAW_EXTENSIONS.contains(&ext) || ["jpg", "jpeg", "heic", "png"].contains(&ext))
+        {
+            s = stem.to_string();
+        }
+        if let Some((stem, tag)) = s.rsplit_once('-')
+            && EDIT_MARKERS.contains(&tag)
+        {
+            s = stem.to_string();
+        }
+        for (open, close) in [("(", ")"), ("~", "")] {
+            if let Some((stem, n)) = s.rsplit_once(open)
+                && let Some(n) = n.strip_suffix(close)
+                && !n.is_empty()
+                && n.chars().all(|c| c.is_ascii_digit())
+            {
+                s = stem.to_string();
+            }
+        }
+        if let Some(stem) = s.strip_suffix(" copy") {
+            s = stem.to_string();
+        }
+        s = s.trim().to_string();
+        if s.len() == before {
+            return s;
+        }
+    }
+}
+
+// "IMG20250906145215_01" -> ("img20250906145215", 1): a phone's numbered frames within one second, named
+// after the date and time ("IMG_20171018_213508_012", "IMG_20210926_105547__01")
+fn timed_frame(path: &str) -> Option<(String, u32)> {
+    let name = base_name(path);
+    let (base, n) = match name.rsplit_once('_') {
+        Some((base, n)) if (1..=3).contains(&n.len()) && n.chars().all(|c| c.is_ascii_digit()) => {
+            (base.trim_end_matches('_'), n.parse().ok()?)
+        }
+        _ => (name.as_str(), 0),
+    };
+    (base.chars().filter(|c| c.is_ascii_digit()).count() >= 14).then(|| (base.to_string(), n))
+}
+
+// What the file names alone say about two photos taken in the same second
+#[derive(PartialEq, Debug)]
+pub enum NamesSay {
     // Two frames of one burst
-    if let (Some(fa), Some(fb)) = (camera_frame(&a.path), camera_frame(&b.path))
+    OtherShot,
+    // The same camera frame, or one file named after the other
+    SameShot,
+    // Unrelated names: only the pictures can tell
+    Unknown,
+}
+
+pub fn names_say(a: &str, b: &str) -> NamesSay {
+    if let (Some(fa), Some(fb)) = (camera_frame(a), camera_frame(b))
+        && fa.0 == fb.0
+    {
+        return if fa.1 == fb.1 { NamesSay::SameShot } else { NamesSay::OtherShot };
+    }
+    if let (Some(fa), Some(fb)) = (timed_frame(a), timed_frame(b))
         && fa.0 == fb.0
         && fa.1 != fb.1
     {
-        return false;
+        return NamesSay::OtherShot;
+    }
+    if base_name(a) == base_name(b) { NamesSay::SameShot } else { NamesSay::Unknown }
+}
+
+// Whether two photos taken in the same second are one shot (see the module comment). `None`: they may be,
+// if their thumbnails match closely (`look_similarity`).
+pub fn same_photo_by_data(a: &DupRow, b: &DupRow, clip: &HashMap<String, Vec<f32>>) -> Option<bool> {
+    if is_raw(&a.path) || is_raw(&b.path) {
+        return Some(false);
+    }
+    let names = names_say(&a.path, &b.path);
+    if names == NamesSay::OtherShot {
+        return Some(false);
     }
     let (Some(ha), Some(hb)) = (a.dhash, b.dhash) else {
-        return false;
+        return Some(false);
     };
     let bits = (ha ^ hb).count_ones();
-    match (clip.get(&a.hash), clip.get(&b.hash)) {
+    let alike = match (clip.get(&a.hash), clip.get(&b.hash)) {
         (Some(va), Some(vb)) => bits <= SAME_PHOTO_MAX_BITS && face_match::dot(va, vb) >= SAME_PHOTO_MIN_CLIP,
         _ => bits <= SAME_PHOTO_MAX_BITS_WITHOUT_CLIP,
+    };
+    if !alike {
+        return Some(false);
     }
+    (names == NamesSay::SameShot).then_some(true)
+}
+
+// How surely two photos are one shot, or None when they aren't: matching names beat any look
+fn link_strength(a: &DupRow, b: &DupRow, clip: &HashMap<String, Vec<f32>>, looks: &HashMap<String, Vec<u8>>) -> Option<f32> {
+    match same_photo_by_data(a, b, clip) {
+        Some(true) => Some(2.0),
+        Some(false) => None,
+        None => {
+            let score = look_similarity(looks.get(&a.hash)?, looks.get(&b.hash)?);
+            (score >= SAME_PHOTO_MIN_EDGES).then_some(score)
+        }
+    }
+}
+
+#[cfg(test)]
+pub fn same_photo(a: &DupRow, b: &DupRow, clip: &HashMap<String, Vec<f32>>, looks: &HashMap<String, Vec<u8>>) -> bool {
+    link_strength(a, b, clip, looks).is_some()
+}
+
+// A thumbnail as LOOK_EDGE x LOOK_EDGE grey pixels, for `look_similarity`
+pub fn look_of(thumbnail: &Path) -> Option<Vec<u8>> {
+    let img = image::open(thumbnail).ok()?;
+    Some(img.resize_exact(LOOK_EDGE, LOOK_EDGE, image::imageops::FilterType::Triangle).to_luma8().into_raw())
+}
+
+// Correlation of the edges of two looks: robust to resizing, recompression, colour and tone edits, not to
+// anything moving
+fn look_similarity(a: &[u8], b: &[u8]) -> f32 {
+    let edges = |px: &[u8]| -> Vec<f32> {
+        let n = LOOK_EDGE as usize;
+        let mut e = Vec::with_capacity((n - 1) * (n - 1));
+        for y in 0..n - 1 {
+            for x in 0..n - 1 {
+                let p = px[y * n + x] as f32;
+                e.push((px[y * n + x + 1] as f32 - p).abs() + (px[(y + 1) * n + x] as f32 - p).abs());
+            }
+        }
+        let mean = e.iter().sum::<f32>() / e.len() as f32;
+        e.iter_mut().for_each(|v| *v -= mean);
+        let norm = e.iter().map(|v| v * v).sum::<f32>().sqrt().max(1e-6);
+        e.iter_mut().for_each(|v| *v /= norm);
+        e
+    };
+    let n = (LOOK_EDGE * LOOK_EDGE) as usize;
+    if a.len() != n || b.len() != n {
+        return 0.0;
+    }
+    face_match::dot(&edges(a), &edges(b))
 }
 
 // A real capture time to the second (a date from a file name alone has none)
@@ -158,42 +295,77 @@ fn has_exact_time(captured_at: &str) -> bool {
     captured_at.len() >= 19 && !captured_at.ends_with("00:00:00")
 }
 
-// Sets of the same shot among `candidates` (indices into `rows`: one per exact-copy set, plus every other photo)
-pub fn same_photo_sets(rows: &[DupRow], candidates: &[usize], clip: &HashMap<String, Vec<f32>>) -> Vec<Vec<usize>> {
-    let mut by_second: HashMap<&str, Vec<usize>> = HashMap::new();
+// Candidates (indices into `rows`) taken in the same second, per second
+fn by_second<'a>(rows: &'a [DupRow], candidates: &[usize]) -> Vec<Vec<usize>> {
+    let mut by_second: HashMap<&'a str, Vec<usize>> = HashMap::new();
     for &i in candidates {
         if has_exact_time(&rows[i].captured_at) {
             by_second.entry(&rows[i].captured_at[..19]).or_default().push(i);
         }
     }
-    let mut parent: Vec<usize> = (0..rows.len()).collect();
-    // Camera frames in each set so far: an export can look like two frames of a burst, and must not join them
-    let mut frames: HashMap<usize, Vec<(String, u64)>> = HashMap::new();
-    let mut linked = Vec::new();
-    for members in by_second.values().filter(|m| m.len() > 1) {
+    by_second.into_values().filter(|m| m.len() > 1).collect()
+}
+
+// The photos whose thumbnails `same_photo` has to compare
+pub fn photos_to_look_at(rows: &[DupRow], candidates: &[usize], clip: &HashMap<String, Vec<f32>>) -> Vec<String> {
+    let mut out = Vec::new();
+    for members in by_second(rows, candidates) {
         for (x, &a) in members.iter().enumerate() {
             for &b in &members[x + 1..] {
-                if !same_photo(&rows[a], &rows[b], clip) {
-                    continue;
+                if same_photo_by_data(&rows[a], &rows[b], clip).is_none() {
+                    out.push(rows[a].hash.clone());
+                    out.push(rows[b].hash.clone());
                 }
-                let (ra, rb) = (find(&mut parent, a), find(&mut parent, b));
-                if ra == rb {
-                    continue;
-                }
-                let frames_of = |root: usize, i: usize, frames: &HashMap<usize, Vec<(String, u64)>>| {
-                    frames.get(&root).cloned().unwrap_or_else(|| camera_frame(&rows[i].path).into_iter().collect())
-                };
-                let (fa, fb) = (frames_of(ra, a, &frames), frames_of(rb, b, &frames));
-                if fa.iter().any(|x| fb.iter().any(|y| x.0 == y.0 && x.1 != y.1)) {
-                    continue;
-                }
-                parent[rb] = ra;
-                frames.remove(&rb);
-                frames.insert(ra, [fa, fb].concat());
-                linked.push(a);
-                linked.push(b);
             }
         }
+    }
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
+// Sets of the same shot among `candidates` (indices into `rows`: one per exact-copy set, plus every other photo)
+pub fn same_photo_sets(
+    rows: &[DupRow],
+    candidates: &[usize],
+    clip: &HashMap<String, Vec<f32>>,
+    looks: &HashMap<String, Vec<u8>>,
+) -> Vec<Vec<usize>> {
+    let mut links: Vec<(f32, usize, usize)> = Vec::new();
+    for members in by_second(rows, candidates) {
+        for (x, &a) in members.iter().enumerate() {
+            for &b in &members[x + 1..] {
+                if let Some(strength) = link_strength(&rows[a], &rows[b], clip, looks) {
+                    links.push((strength, a, b));
+                }
+            }
+        }
+    }
+    // Surest links first: an export joins the burst frame it was made from before one that merely looks alike
+    links.sort_by(|x, y| y.0.total_cmp(&x.0).then(x.1.cmp(&y.1)).then(x.2.cmp(&y.2)));
+
+    let mut parent: Vec<usize> = (0..rows.len()).collect();
+    // Burst frames in each set so far: an export can look like two frames of a burst, and must not join them
+    let mut frames: HashMap<usize, Vec<(String, u64)>> = HashMap::new();
+    let frame_of = |i: usize| camera_frame(&rows[i].path).or_else(|| timed_frame(&rows[i].path).map(|(base, n)| (base, n as u64)));
+    let mut linked = Vec::new();
+    for (_, a, b) in links {
+        let (ra, rb) = (find(&mut parent, a), find(&mut parent, b));
+        if ra == rb {
+            continue;
+        }
+        let frames_of = |root: usize, i: usize, frames: &HashMap<usize, Vec<(String, u64)>>| {
+            frames.get(&root).cloned().unwrap_or_else(|| frame_of(i).into_iter().collect())
+        };
+        let (fa, fb) = (frames_of(ra, a, &frames), frames_of(rb, b, &frames));
+        if fa.iter().any(|x| fb.iter().any(|y| x.0 == y.0 && x.1 != y.1)) {
+            continue;
+        }
+        parent[rb] = ra;
+        frames.remove(&rb);
+        frames.insert(ra, [fa, fb].concat());
+        linked.push(a);
+        linked.push(b);
     }
     linked.sort_unstable();
     linked.dedup();
@@ -241,7 +413,8 @@ pub async fn find_duplicates(app: AppHandle, root_folder: Option<String>) -> Res
     tauri::async_runtime::spawn_blocking(move || {
         let started = Instant::now();
         let conn = open_global_db(&app)?;
-        let (sets, photos) = find_duplicate_sets(&conn, root_folder.as_deref())?;
+        let thumbs_dir = get_app_storage_dir(&app).join("thumbnails");
+        let (sets, photos) = find_duplicate_sets(&conn, root_folder.as_deref(), &thumbs_dir)?;
         emit_perf(&app, "Find duplicates", started, photos, format!("{} sets", sets.len()));
         Ok(sets)
     })
@@ -250,7 +423,7 @@ pub async fn find_duplicates(app: AppHandle, root_folder: Option<String>) -> Res
 }
 
 // The duplicate sets of a folder, exact copies first, each newest first; also returns how many photos it read
-pub fn find_duplicate_sets(conn: &Connection, root_folder: Option<&str>) -> Result<(Vec<DuplicateSet>, usize), String> {
+pub fn find_duplicate_sets(conn: &Connection, root_folder: Option<&str>, thumbs_dir: &Path) -> Result<(Vec<DuplicateSet>, usize), String> {
     {
         let rows = load_rows(conn, root_folder)?;
         let ordered = |set: Vec<usize>| -> Vec<usize> {
@@ -282,7 +455,11 @@ pub fn find_duplicate_sets(conn: &Connection, root_folder: Option<&str>) -> Resu
                 .collect()
         };
         let clip = clip::clip_vectors(conn, &timed);
-        let same: Vec<Vec<usize>> = same_photo_sets(&rows, &candidates, &clip).into_iter().map(ordered).collect();
+        let looks: HashMap<String, Vec<u8>> = photos_to_look_at(&rows, &candidates, &clip)
+            .into_par_iter()
+            .filter_map(|h| look_of(&thumbs_dir.join(format!("{h}.jpg"))).map(|l| (h, l)))
+            .collect();
+        let same: Vec<Vec<usize>> = same_photo_sets(&rows, &candidates, &clip, &looks).into_iter().map(ordered).collect();
 
         let newest_first = |sets: Vec<Vec<usize>>, kind: &str| -> Vec<DuplicateSet> {
             let mut sets = sets;

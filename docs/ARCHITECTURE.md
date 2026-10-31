@@ -46,7 +46,7 @@ localStorage, read anywhere with `useSettings()`.
 | `scan.rs` | walking a folder, hashing, EXIF, duplicate and burst grouping; saves the index every 1000 files so an interrupted scan resumes; folds rows left by files edited in place into the current row |
 | `storage.rs` | drive-aware I/O: few readers in folder order on a hard drive, full parallelism on an SSD |
 | `imaging.rs`, `exif_meta.rs` | content hash, dHash, sharpness, screenshot and WhatsApp detection; EXIF parsing and the date fallback (file name, Google Takeout JSON, folder year, file time) |
-| `duplicates.rs` | exact copies (proved from the path-salted hashes, no file reads) and the same photo in another file (same second, dHash and CLIP); merging metadata onto the copy that is kept |
+| `duplicates.rs` | exact copies (proved from the path-salted hashes, no file reads) and the same photo in another file (same second, dHash and CLIP; file names that don't tie two files to one shot also need their thumbnails' edges to match, so bursts stay out); merging metadata onto the copy that is kept |
 | `recycle.rs` | the Windows Recycle Bin: its size limit per drive, and an `IFileOperation` whose progress sink refuses any delete Windows would make permanent |
 | `decode.rs`, `fastdecode.rs` | RAW embedded previews, orientation, scaled JPEG decoding, in-process WIC for HEIC |
 | `thumbs.rs` | the background thumbnail pipeline (readers, then a bounded queue, decoders on `BG_POOL`, a collector that writes to the DB and sends batches to the UI) |
