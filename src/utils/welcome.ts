@@ -14,6 +14,14 @@ export interface ReleaseNotes {
 // Newest first. Add an entry for every release that should greet updating users with "What's new".
 export const RELEASE_NOTES: ReleaseNotes[] = [
   {
+    version: "4.1.0",
+    items: [
+      { title: "Duplicates without bursts", text: "Find duplicates no longer lists burst shots or photos taken a moment apart as the same photo. Photos whose names don't show they are one shot must also look the same in detail, so a child who moved or a dog that turned its head keeps both pictures." },
+      { title: "iPhone edits paired right", text: "An iPhone edit (IMG_E1234) is matched with its own original, not with the next photo." },
+      { title: "Developed photos in the right place", text: "A RAW developed twice or exported under a new name joins the burst frame it was made from, not a neighbouring frame that looks alike." },
+    ],
+  },
+  {
     version: "4.0.3",
     items: [
       { title: "Find duplicates", text: "Organize → Find duplicates lists exact copies spread over your folders, and the same photo saved again as another file. Lumina keeps the largest, oldest copy with the most info, moves your ratings, people and albums onto it, and stages the rest for _Trash." },

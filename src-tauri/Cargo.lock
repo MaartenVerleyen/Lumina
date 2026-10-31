@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "Lumina"
-version = "4.0.3"
+version = "4.1.0"
 dependencies = [
  "base64 0.22.1",
  "blake3",
