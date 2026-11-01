@@ -1,6 +1,6 @@
 [package]
 name = "Lumina"
-version = "4.1.0"
+version = "4.2.0"
 description = "A Local AI supported photo organisation and finder app"
 authors = ["Maarten"]
 edition = "2024"

@@ -14,6 +14,17 @@ export interface ReleaseNotes {
 // Newest first. Add an entry for every release that should greet updating users with "What's new".
 export const RELEASE_NOTES: ReleaseNotes[] = [
   {
+    version: "4.2.0",
+    items: [
+      { title: "Videos", text: "Videos join your library: in the grid with their length, on the map and in trips, played in full screen with Space to pause. Lumina reads when and where they were recorded and which phone or camera made them. Switch between all, photos and videos on the Photos, People and Map tabs." },
+      { title: "Every video plays", text: "MTS, AVI and other older formats get a playable copy on request. Lumina downloads ffmpeg for this once and keeps the copies in its cache." },
+      { title: "Live Photos", text: "An iPhone Live Photo's short clip hides behind its photo, even when it sits in another folder. Hover LIVE in full screen, or hold L, to play it. Trashing or moving the photo takes the clip along." },
+      { title: "Search and faces in videos", text: "Smart search looks at several moments of each video, so \"sheep in a field\" finds the video where they appear halfway. Scan Faces finds the people in videos too, each person once per video. Scan everything, only photos, only videos or only what is shown." },
+      { title: "You see it working", text: "Sorting or filtering a large library shows a spinner over the grid, and a new sort order starts at the top." },
+      { title: "Fixes", text: "Removed photos no longer turn up in smart search, and a rescan no longer reports an internal error behind the scenes." },
+    ],
+  },
+  {
     version: "4.1.0",
     items: [
       { title: "Duplicates without bursts", text: "Find duplicates no longer lists burst shots or photos taken a moment apart as the same photo. Photos whose names don't show they are one shot must also look the same in detail, so a child who moved or a dog that turned its head keeps both pictures." },

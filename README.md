@@ -53,7 +53,7 @@ uploaded.
   | People and tags | `person:anna` · `person:anna\|bob` · `tag:beach` |
   | Place, camera, lens, file name | `place:lagos` · `camera:"EOS R6"` · `lens:24-70` · `name:IMG_12` |
   | Dates | `date:2024` · `date:2024-06` · `date:2024-06-01..2024-06-30` · `date:<2020` |
-  | Properties | `has:gps` · `has:faces` · `has:ocr` · `is:raw` · `is:screenshot` · `is:whatsapp` · `album:"Holiday"` |
+  | Properties | `has:gps` · `has:faces` · `has:ocr` · `is:raw` · `is:video` · `is:screenshot` · `is:whatsapp` · `album:"Holiday"` |
 
   Put `-` in front of a filter to exclude it (`-flag:reject`). Save any search as a smart album that keeps
   itself up to date.
@@ -79,6 +79,18 @@ uploaded.
   ratings and picks, open eyes, sharp faces, how good a photo looks, and variety (never two from the same
   burst). **Best of** each year is one click in Collections.
 - **On this day:** a strip above the grid with the best photos taken on today's date in earlier years.
+
+### Videos
+
+- **Videos are part of the library:** in the grid with their length, on the map, in trips and albums, and
+  dated by when they were recorded. Lumina reads the date, place, size and camera from the video file.
+- **Played inside Lumina** (H.264, HEVC, AV1, VP9). Older formats such as MTS, AVI and MPEG get a playable
+  copy on request; Lumina downloads ffmpeg once for this.
+- **All / Photos / Videos** on the Photos, People and Map tabs.
+- **Live Photos:** an iPhone Live Photo's clip hides behind its photo, even in another folder, and plays when
+  you hover LIVE in full screen or hold <kbd>L</kbd>.
+- **Smart search and faces in videos:** Lumina looks at a few moments of each video, so a search finds what
+  appears halfway through, and the people in a video show up under their name.
 
 ### Culling
 
@@ -136,10 +148,13 @@ uploaded.
 JPEG, PNG, HEIC/HEIF and RAW (CR2, CR3, NEF, ARW, DNG, ORF, RW2, PEF, RAF). RAW files show their embedded
 preview; a RAW file and its JPEG are treated as a pair.
 
+Videos: MP4, MOV, M4V, 3GP, AVI, MTS, M2TS and MPG.
+
 ## Requirements
 
 - **Windows 10 or 11.** HEIC support uses the Windows imaging codecs (install *HEIF Image Extensions* from
-  the Microsoft Store if HEIC files don't show).
+  the Microsoft Store if HEIC files don't show). iPhone videos (HEVC) need *HEVC Video Extensions* from the
+  Microsoft Store to show and play.
 - **[Ollama](https://ollama.com)** for captions, tags and OCR, with a vision model. Lumina can start Ollama
   and download the default model (`qwen3-vl:8b`) for you. It also offers to switch on Ollama's flash
   attention, which is about 10–15% faster.
