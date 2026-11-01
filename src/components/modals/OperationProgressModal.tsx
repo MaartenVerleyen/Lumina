@@ -26,7 +26,9 @@ function formatEta(seconds: number): string {
   return `about ${hours} h ${minutes % 60} min`;
 }
 
-// Files per second over the last RATE_WINDOW_MS, starting over when the stage changes
+// Files per second over the last RATE_WINDOW_MS, starting over when the stage changes. Progress only records
+// a sample; the shown rate is worked out once a second (setting state on every progress event, hundreds a
+// second during a rescan, made React report an update loop)
 function useRate(isOpen: boolean, stage: string, completed: number): number | null {
   const samples = useRef<{ t: number; done: number }[]>([]);
   const stageRef = useRef(stage);
@@ -37,15 +39,24 @@ function useRate(isOpen: boolean, stage: string, completed: number): number | nu
     if (!isOpen || stageRef.current !== stage || (last && completed < last.done)) {
       samples.current = [];
       stageRef.current = stage;
-      setRate(null);
       if (!isOpen) return;
     }
     const s = samples.current;
     s.push({ t: now, done: completed });
     while (s.length > 2 && now - s[0].t > RATE_WINDOW_MS) s.shift();
-    const seconds = (now - s[0].t) / 1000;
-    setRate(seconds >= 3 && completed > s[0].done ? (completed - s[0].done) / seconds : null);
   }, [isOpen, stage, completed]);
+  useEffect(() => {
+    setRate(null);
+    if (!isOpen) return;
+    const timer = setInterval(() => {
+      const s = samples.current;
+      const first = s[0];
+      const last = s[s.length - 1];
+      const seconds = first ? (performance.now() - first.t) / 1000 : 0;
+      setRate(first && seconds >= 3 && last.done > first.done ? (last.done - first.done) / seconds : null);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [isOpen, stage]);
   return rate;
 }
 

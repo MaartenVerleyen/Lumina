@@ -62,18 +62,24 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
     });
   }
 
-  // Listen for Folder Scan Progress Events
+  // Listen for Folder Scan Progress Events. A rescan of an indexed library sends hundreds a second; only the
+  // latest is shown, once per frame (setting state for each one made React report an update loop)
   useEffect(() => {
+    let latest: ScanProgressEvent | null = null;
+    let frame = 0;
     const unlisten = listen<ScanProgressEvent>("scan-progress", (event) => {
       const prog = event.payload;
       if (silentScanRef.current) return;
-      if (prog.done) {
-        setScanProgress(null);
-      } else {
-        setScanProgress(prog);
+      latest = prog.done ? null : prog;
+      if (!frame) {
+        frame = requestAnimationFrame(() => {
+          frame = 0;
+          setScanProgress(latest);
+        });
       }
     });
     return () => {
+      cancelAnimationFrame(frame);
       unlisten.then((f) => f());
     };
   }, []);
