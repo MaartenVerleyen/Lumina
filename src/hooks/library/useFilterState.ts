@@ -32,6 +32,12 @@ export function useFilterState() {
   // embedded, the previous matches stay visible instead of flickering back to the full grid
   // The search box: `key:value` terms (rating:>=4 person:anna ...) plus free text for plain or smart search
   const parsedSearch = useMemo(() => parseSearchQuery(deferredSearchQuery), [deferredSearchQuery]);
+  // The grid follows sorting, quick filters and the people filter the same way: the menu or sidebar answers
+  // at once, the grid catches up, and `isGridUpdating` shows it is working (a large library takes a moment)
+  const gridSortBy = useDeferredValue(sortBy);
+  const gridSmartFilter = useDeferredValue(smartFilter);
+  const gridPeopleFilter = useDeferredValue(peopleFilter);
+  const isGridUpdating = gridSortBy !== sortBy || gridSmartFilter !== smartFilter || gridPeopleFilter !== peopleFilter;
 
   return {
     peopleFilter,
@@ -67,6 +73,10 @@ export function useFilterState() {
     expandedFolders,
     setExpandedFolders,
     parsedSearch,
+    gridSortBy,
+    gridSmartFilter,
+    gridPeopleFilter,
+    isGridUpdating,
   };
 }
 

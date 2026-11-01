@@ -42,7 +42,7 @@ import WelcomeTour from "./components/modals/WelcomeTour";
 import { useWelcomeTour } from "./hooks/useWelcomeTour";
 import FaceMatchReviewModal, { UNKNOWN_FACES } from "./components/modals/FaceMatchReviewModal";
 import { PhotoItem } from "./types/lumina";
-import { FolderOpen } from "lucide-react";
+import { FolderOpen, Loader2 } from "lucide-react";
 import { usePaneLayout } from "./app/usePaneLayout";
 import { useWindowFileDrop } from "./app/useWindowFileDrop";
 import { useAppKeys } from "./app/useAppKeys";
@@ -186,7 +186,7 @@ export default function App() {
   // Grid layout: rows (and month headers when sorted by date) computed up front for the virtualizer.
   // Smart search ranks by relevance, so its results get no month headers.
   const isDateSorted =
-    (lib.sortBy === "DATE_DESC" || lib.sortBy === "DATE_ASC") && lib.smartFilter !== "DUPLICATES" && !lib.semanticScores;
+    (lib.gridSortBy === "DATE_DESC" || lib.gridSortBy === "DATE_ASC") && lib.gridSmartFilter !== "DUPLICATES" && !lib.semanticScores;
   const gridGap = lib.gridStyle === "justified" ? 8 : 14;
   // Laying out every photo again for each frame of a divider drag is what made dragging stutter
   const layoutWidth = useThrottled(centerWidth, isDraggingPane, 120);
@@ -233,6 +233,16 @@ export default function App() {
   useEffect(() => {
     rowVirtualizer.measure();
   }, [layout, rowVirtualizer]);
+
+  // A new order starts at the top: otherwise the grid stays where it was scrolled and the change is easy to miss
+  const firstSortRef = useRef(true);
+  useEffect(() => {
+    if (firstSortRef.current) {
+      firstSortRef.current = false;
+      return;
+    }
+    rowVirtualizer.scrollToOffset(0);
+  }, [lib.gridSortBy]);
 
   const navigateToIndex = useCallback(
     (nextIdx: number, extendSelection: boolean) => {
@@ -649,6 +659,12 @@ export default function App() {
           <FilterBar lib={lib} saveSearchName={saveSearchName} setSaveSearchName={setSaveSearchName} />
 
           <ResultBanners lib={lib} />
+          {lib.isGridUpdating && (
+            <div className="absolute top-28 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 px-3 py-1.5 rounded-full bg-zinc-900/95 border border-zinc-700 text-xs text-zinc-200 shadow-xl pointer-events-none">
+              <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-400" />
+              {lib.gridSortBy !== lib.sortBy ? "Sorting…" : "Filtering…"}
+            </div>
+          )}
           {settings.onThisDay && lib.viewMode === "grid" && !anyFilterActive && (
             <OnThisDay
               photos={lib.photos}

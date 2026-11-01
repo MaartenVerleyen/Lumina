@@ -18,14 +18,15 @@ import type { FilterState } from "./useFilterState";
 // What the grid shows, derived from the photos and filters: visible photos, counts, bursts, compare set
 export function useLibraryView(core: LibraryCore, filters: FilterState, collections: Collections, smart: SmartSearch) {
   const { photos, setPhotos, activeHash, setActiveHash, selectedHashes, setSelectedHashes, selectionAnchorHashRef, activePhoto, viewMode } = core;
+  // The grid uses the deferred filters (see useFilterState): it catches up with the menus a moment later
   const {
-    smartFilter,
+    gridSmartFilter: smartFilter,
     setSmartFilter,
     orientationFilter,
     setOrientationFilter,
     selectedPeriodRange,
     setSelectedPeriodRange,
-    peopleFilter,
+    gridPeopleFilter: peopleFilter,
     setPeopleFilter,
     activeSubfolder,
     setActiveSubfolder,
@@ -39,7 +40,7 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
     setActiveAlbumId,
     hashFilter,
     setHashFilter,
-    sortBy,
+    gridSortBy: sortBy,
     showAllBurstVersions,
     setShowAllBurstVersions,
     expandedBurstGroups,
