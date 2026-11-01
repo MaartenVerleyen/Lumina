@@ -325,6 +325,7 @@ export default function App() {
   // Collections shows no photo grid: grid shortcuts (P, X, 1-5 ...) must not act on a hidden selection
   const anyFilterActive =
     lib.smartFilter !== "ALL" ||
+    lib.mediaFilter !== "ALL" ||
     lib.searchQuery.trim() !== "" ||
     lib.activeSubfolder !== "ALL" ||
     lib.activeEvent !== "ALL" ||
@@ -586,6 +587,8 @@ export default function App() {
               eyesClosedCount={lib.eyesClosedCount}
               softFocusCount={lib.softFocusCount}
               videosCount={lib.videosCount}
+              mediaFilter={lib.mediaFilter}
+              setMediaFilter={lib.setMediaFilter}
               stillsCount={lib.stillsCount}
               shownCount={lib.shownCount}
               folderTree={lib.folderTree}

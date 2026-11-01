@@ -24,6 +24,8 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
     setSmartFilter,
     orientationFilter,
     setOrientationFilter,
+    gridMediaFilter: mediaFilter,
+    setMediaFilter,
     selectedPeriodRange,
     setSelectedPeriodRange,
     gridPeopleFilter: peopleFilter,
@@ -194,8 +196,8 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
       if (smartFilter === "STAGED" && !p.staged_target) return false;
       if (smartFilter === "EYES_CLOSED" && !hasClosedEyes(p, culling)) return false;
       if (smartFilter === "SOFT_FOCUS" && !isSoftFocus(p, culling)) return false;
-      if (smartFilter === "VIDEOS" && !isVideo(p)) return false;
-      if (smartFilter === "PHOTOS" && isVideo(p)) return false;
+      if (mediaFilter === "VIDEOS" && !isVideo(p)) return false;
+      if (mediaFilter === "PHOTOS" && isVideo(p)) return false;
 
       if (selectedPeriodRange) {
         const [startDay, endDay] = selectedPeriodRange;
@@ -317,6 +319,7 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
     semanticScores,
     semanticCut,
     settings.showLiveClips,
+    mediaFilter,
   ]);
 
   // The map shows every photo where it was taken. Only this boolean matters here, not the tab itself:
@@ -447,6 +450,7 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
   // Empty-grid "Clear all filters": back to the whole library
   function clearAllFilters() {
     setSmartFilter("ALL");
+    setMediaFilter("ALL");
     setOrientationFilter("ALL");
     setActiveSubfolder("ALL");
     setActiveEvent("ALL");

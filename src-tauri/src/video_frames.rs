@@ -41,6 +41,28 @@ pub fn frame_of_face(face_id: &str) -> Option<usize> {
     rest.split('_').next()?.parse().ok()
 }
 
+// Frames made before the decoder's padded rows were read correctly can be skewed (2026-11-01). They are made
+// again once: the frames go, with the smart search vectors taken from them, and the next thumbnail pass
+// writes new frames and thumbnails. Returns whether it happened.
+const FRAMES_VERSION: &str = "2";
+
+pub fn refresh_outdated_frames(frames_dir: &Path, conn: &Connection) -> bool {
+    let marker = frames_dir.join("version");
+    if fs::read_to_string(&marker).ok().as_deref() == Some(FRAMES_VERSION) {
+        return false;
+    }
+    let _ = fs::create_dir_all(frames_dir);
+    for entry in fs::read_dir(frames_dir).into_iter().flatten().flatten() {
+        if entry.path().extension().is_some_and(|e| e == "jpg") {
+            let _ = fs::remove_file(entry.path());
+        }
+    }
+    let _ = conn.execute("DELETE FROM photo_clip_frames", []);
+    crate::clip::forget_frame_vectors();
+    let _ = fs::write(&marker, FRAMES_VERSION);
+    true
+}
+
 pub fn delete_frames(frames_dir: &Path, hash: &str) {
     for n in 0..FRAME_POSITIONS.len() {
         let _ = fs::remove_file(frame_path(frames_dir, hash, n));
@@ -99,7 +121,7 @@ mod mf {
     use super::*;
     use std::cell::Cell;
     use std::sync::Once;
-    use windows::core::{GUID, HSTRING};
+    use windows::core::{Interface, GUID, HSTRING};
     use windows::Win32::Media::MediaFoundation::*;
     use windows::Win32::System::Com::StructuredStorage::PROPVARIANT;
     use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
@@ -151,7 +173,6 @@ mod mf {
             if w == 0 || h == 0 {
                 return None;
             }
-            let stride = current.GetUINT32(&MF_MT_DEFAULT_STRIDE).map(|s| s as i32).unwrap_or(w as i32 * 4);
             // HDV and DV store non-square pixels (1440 x 1080 shown as 1920 x 1080)
             let (par_n, par_d) = current
                 .GetUINT64(&MF_MT_PIXEL_ASPECT_RATIO)
@@ -177,7 +198,7 @@ mod mf {
                         break;
                     }
                 }
-                let Some(img) = read_frame(&reader, video, w, h, stride) else { break };
+                let Some(img) = read_frame(&reader, video, (w, h)) else { break };
                 let img = if display_w != w { img.resize_exact(display_w, h, image::imageops::FilterType::Triangle) } else { img };
                 frames.push(img);
             }
@@ -185,8 +206,51 @@ mod mf {
         }
     }
 
-    // The next decoded frame after a seek (the reader skips the stream ticks that carry no picture)
-    unsafe fn read_frame(reader: &IMFSourceReader, video: u32, w: u32, h: u32, stride: i32) -> Option<DynamicImage> {
+    // BGRX rows to an RGB image. `first_row` is the top row of the picture; `pitch` the distance in bytes from
+    // one row to the next (negative for pictures stored bottom-up). Decoders pad rows: a 478 px wide frame is
+    // stored in rows of 480 px, so the pitch must come from the decoder, never from the width.
+    unsafe fn copy_rows(first_row: *const u8, pitch: isize, w: u32, h: u32) -> Option<DynamicImage> {
+        if first_row.is_null() || pitch.unsigned_abs() < w as usize * 4 {
+            return None;
+        }
+        let mut rgb = image::RgbImage::new(w, h);
+        for y in 0..h as usize {
+            let row = unsafe { std::slice::from_raw_parts(first_row.offset(y as isize * pitch), w as usize * 4) };
+            for (x, px) in row.chunks_exact(4).enumerate() {
+                rgb.put_pixel(x as u32, y as u32, image::Rgb([px[2], px[1], px[0]]));
+            }
+        }
+        Some(DynamicImage::ImageRgb8(rgb))
+    }
+
+    // The visible area of a frame of `frame` size: the display aperture when the decoder states one (a 478 x 850
+    // video is decoded into 480 x 864), else the picture size the reader first reported, at the top left
+    unsafe fn visible_area(media: &IMFMediaType, frame: (u32, u32), first: (u32, u32)) -> (u32, u32, u32, u32) {
+        let mut blob = [0u8; 16];
+        let aperture = unsafe { media.GetBlob(&MF_MT_MINIMUM_DISPLAY_APERTURE, &mut blob, None) }.ok().map(|_| {
+            let x = i16::from_le_bytes([blob[2], blob[3]]).max(0) as u32;
+            let y = i16::from_le_bytes([blob[6], blob[7]]).max(0) as u32;
+            let cx = i32::from_le_bytes(blob[8..12].try_into().unwrap_or_default()).max(0) as u32;
+            let cy = i32::from_le_bytes(blob[12..16].try_into().unwrap_or_default()).max(0) as u32;
+            (x, y, cx, cy)
+        });
+        match aperture {
+            Some((x, y, cx, cy)) if cx > 0 && cy > 0 && x + cx <= frame.0 && y + cy <= frame.1 => (x, y, cx, cy),
+            _ => (0, 0, first.0.min(frame.0), first.1.min(frame.1)),
+        }
+    }
+
+    // The next decoded frame after a seek (the reader skips the stream ticks that carry no picture), cropped to
+    // its visible area. The size, stride and aperture are read for every frame: once decoding starts the reader
+    // may switch to the decoder's padded size (MF_SOURCE_READERF_CURRENTMEDIATYPECHANGED).
+    unsafe fn read_frame(reader: &IMFSourceReader, video: u32, first: (u32, u32)) -> Option<DynamicImage> {
+        let img = unsafe { read_full_frame(reader, video) }?;
+        let media = unsafe { reader.GetCurrentMediaType(video) }.ok()?;
+        let (x, y, cw, ch) = unsafe { visible_area(&media, (img.width(), img.height()), first) };
+        Some(if (x, y, cw, ch) == (0, 0, img.width(), img.height()) { img } else { img.crop_imm(x, y, cw, ch) })
+    }
+
+    unsafe fn read_full_frame(reader: &IMFSourceReader, video: u32) -> Option<DynamicImage> {
         for _ in 0..64 {
             let mut flags = 0u32;
             let mut sample: Option<IMFSample> = None;
@@ -195,26 +259,36 @@ mod mf {
                 return None;
             }
             let Some(sample) = sample else { continue };
-            let buffer = unsafe { sample.ConvertToContiguousBuffer() }.ok()?;
+            let media = unsafe { reader.GetCurrentMediaType(video) }.ok()?;
+            let size = unsafe { media.GetUINT64(&MF_MT_FRAME_SIZE) }.ok()?;
+            let (w, h) = ((size >> 32) as u32, size as u32);
+            if w == 0 || h == 0 {
+                return None;
+            }
+            let stride = unsafe { media.GetUINT32(&MF_MT_DEFAULT_STRIDE) }.ok().map(|s| s as i32);
+            let buffer = unsafe { sample.GetBufferByIndex(0) }.or_else(|_| unsafe { sample.ConvertToContiguousBuffer() }).ok()?;
+            // A 2D buffer knows its own pitch and where the top row starts
+            if let Ok(buffer2d) = buffer.cast::<IMF2DBuffer>() {
+                let mut first_row: *mut u8 = std::ptr::null_mut();
+                let mut pitch = 0i32;
+                unsafe { buffer2d.Lock2D(&mut first_row, &mut pitch) }.ok()?;
+                let img = unsafe { copy_rows(first_row, pitch as isize, w, h) };
+                let _ = unsafe { buffer2d.Unlock2D() };
+                return img;
+            }
+            // Otherwise the media type's stride, or the buffer length divided over the rows
             let mut ptr: *mut u8 = std::ptr::null_mut();
             let mut len = 0u32;
             unsafe { buffer.Lock(&mut ptr, None, Some(&mut len)) }.ok()?;
+            let stride = stride.unwrap_or_else(|| (len / h.max(1)) as i32);
             let row_bytes = stride.unsigned_abs() as usize;
-            let needed = row_bytes * h as usize;
-            let img = if ptr.is_null() || (len as usize) < needed || row_bytes < w as usize * 4 {
+            let img = if ptr.is_null() || (len as usize) < row_bytes * h as usize {
                 None
+            } else if stride < 0 {
+                // Stored bottom-up: the top row is the last one in memory
+                unsafe { copy_rows(ptr.add(row_bytes * (h as usize - 1)), stride as isize, w, h) }
             } else {
-                let data = unsafe { std::slice::from_raw_parts(ptr, needed) };
-                let mut rgb = image::RgbImage::new(w, h);
-                for y in 0..h as usize {
-                    // A negative stride means the rows are stored bottom-up
-                    let src_row = if stride < 0 { h as usize - 1 - y } else { y };
-                    let row = &data[src_row * row_bytes..src_row * row_bytes + w as usize * 4];
-                    for (x, px) in row.chunks_exact(4).enumerate() {
-                        rgb.put_pixel(x as u32, y as u32, image::Rgb([px[2], px[1], px[0]]));
-                    }
-                }
-                Some(DynamicImage::ImageRgb8(rgb))
+                unsafe { copy_rows(ptr, stride as isize, w, h) }
             };
             let _ = unsafe { buffer.Unlock() };
             return img;

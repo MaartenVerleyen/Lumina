@@ -400,6 +400,13 @@ fn ensure_clip_cache(conn: &Connection) {
 }
 
 // Removed photos leave smart search at once (their rows go with the photo, in the caller's transaction)
+// Every video's frame vectors (the frames are being made again)
+pub fn forget_frame_vectors() {
+    if let Ok(mut cache) = FRAME_CACHE.lock() {
+        cache.clear();
+    }
+}
+
 pub fn forget_vectors(hashes: &[String]) {
     if let Ok(mut cache) = CLIP_CACHE.lock() {
         for h in hashes {

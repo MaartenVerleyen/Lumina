@@ -1,5 +1,5 @@
 import { useState, useMemo, useDeferredValue } from "react";
-import { SmartFilter, OrientationFilter, SortOption } from "../../types/lumina";
+import { SmartFilter, OrientationFilter, SortOption, MediaFilter } from "../../types/lumina";
 import { parseSearchQuery } from "../../utils/searchQuery";
 import { PeopleExpr } from "../../utils/peopleQuery";
 
@@ -9,6 +9,7 @@ export function useFilterState() {
   const [peopleFilter, setPeopleFilter] = useState<PeopleExpr | null>(null);
   const [smartFilter, setSmartFilter] = useState<SmartFilter>("ALL");
   const [orientationFilter, setOrientationFilter] = useState<OrientationFilter>("ALL");
+  const [mediaFilter, setMediaFilter] = useState<MediaFilter>("ALL");
   const [activeSubfolder, setActiveSubfolder] = useState<string>("ALL");
   const [activeEvent, setActiveEvent] = useState<string>("ALL");
   const [activeTag, setActiveTag] = useState<string>("ALL");
@@ -37,7 +38,9 @@ export function useFilterState() {
   const gridSortBy = useDeferredValue(sortBy);
   const gridSmartFilter = useDeferredValue(smartFilter);
   const gridPeopleFilter = useDeferredValue(peopleFilter);
-  const isGridUpdating = gridSortBy !== sortBy || gridSmartFilter !== smartFilter || gridPeopleFilter !== peopleFilter;
+  const gridMediaFilter = useDeferredValue(mediaFilter);
+  const isGridUpdating =
+    gridSortBy !== sortBy || gridSmartFilter !== smartFilter || gridPeopleFilter !== peopleFilter || gridMediaFilter !== mediaFilter;
 
   return {
     peopleFilter,
@@ -46,6 +49,8 @@ export function useFilterState() {
     setSmartFilter,
     orientationFilter,
     setOrientationFilter,
+    mediaFilter,
+    setMediaFilter,
     activeSubfolder,
     setActiveSubfolder,
     activeEvent,
@@ -76,6 +81,7 @@ export function useFilterState() {
     gridSortBy,
     gridSmartFilter,
     gridPeopleFilter,
+    gridMediaFilter,
     isGridUpdating,
   };
 }

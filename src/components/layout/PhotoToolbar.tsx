@@ -91,6 +91,7 @@ export default function PhotoToolbar({ lib }: { lib: LibraryState }) {
   // The filters clearAllFilters resets
   const activeFilterCount = [
     lib.smartFilter !== "ALL",
+    lib.mediaFilter !== "ALL",
     lib.orientationFilter !== "ALL",
     lib.searchQuery.trim() !== "" || lib.semanticScores !== null,
     lib.activeSubfolder !== "ALL",
@@ -144,6 +145,30 @@ export default function PhotoToolbar({ lib }: { lib: LibraryState }) {
             </span>
           )}
         </button>
+
+        {/* Photos, videos or both: the same filter on the Photos, People and Map tabs */}
+        {lib.videosCount > 0 && (
+          <div className="flex bg-zinc-900 border border-zinc-800 rounded-lg p-0.5 text-[11px]" role="group" aria-label="Show photos, videos or both">
+            {(
+              [
+                ["ALL", "All"],
+                ["PHOTOS", "Photos"],
+                ["VIDEOS", "Videos"],
+              ] as const
+            ).map(([value, label]) => (
+              <button
+                key={value}
+                onClick={() => lib.setMediaFilter(value)}
+                aria-pressed={lib.mediaFilter === value}
+                className={`px-2 py-0.5 rounded-md transition ${
+                  lib.mediaFilter === value ? "bg-emerald-500/20 text-emerald-300 font-semibold" : "text-zinc-400 hover:text-zinc-200"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
 
         {lib.totalBurstGroups > 0 && (
           <button

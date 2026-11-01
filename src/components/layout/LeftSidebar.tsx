@@ -1,5 +1,5 @@
 import { memo, useMemo } from "react";
-import { FolderTreeNode, PhotoItem, SmartFilter } from "../../types/lumina";
+import { FolderTreeNode, MediaFilter, PhotoItem, SmartFilter } from "../../types/lumina";
 import {
   BrainCircuit,
   Camera,
@@ -48,6 +48,8 @@ interface LeftSidebarProps {
   eyesClosedCount: number;
   softFocusCount: number;
   videosCount: number;
+  mediaFilter: MediaFilter;
+  setMediaFilter: (f: MediaFilter) => void;
   stillsCount: number;
   shownCount: number;
   folderTree: { rootCount: number; nodes: FolderTreeNode[] };
@@ -93,6 +95,8 @@ function LeftSidebar({
   eyesClosedCount,
   softFocusCount,
   videosCount,
+  mediaFilter,
+  setMediaFilter,
   stillsCount,
   shownCount,
   folderTree,
@@ -383,8 +387,11 @@ function LeftSidebar({
         {!collapsedSections.includes("filters") && (
         <div className="mt-2 flex flex-col gap-0.5 text-xs">
           {filterItems.map((item) => {
+            // Photos and Videos set the media filter (also in the toolbar on every photo tab); All clears both
+            const isMedia = item.id === "PHOTOS" || item.id === "VIDEOS";
             const isSelected =
-              smartFilter === item.id &&
+              (isMedia ? smartFilter === "ALL" && mediaFilter === item.id : smartFilter === item.id) &&
+              (item.id !== "ALL" || mediaFilter === "ALL") &&
               !hasPeopleFilter &&
               activeSubfolder === "ALL" &&
               activeEvent === "ALL";
@@ -393,7 +400,13 @@ function LeftSidebar({
                 key={item.id}
                 {...(DROP_FILTERS[item.id] ?? {})}
                 onClick={() => {
-                  setSmartFilter(item.id as SmartFilter);
+                  if (isMedia) {
+                    setSmartFilter("ALL");
+                    setMediaFilter(item.id as MediaFilter);
+                  } else {
+                    setSmartFilter(item.id as SmartFilter);
+                    if (item.id === "ALL") setMediaFilter("ALL");
+                  }
                   clearPeopleFilter();
                   setActiveSubfolder("ALL");
                   setActiveEvent("ALL");

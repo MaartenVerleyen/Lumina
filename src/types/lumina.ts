@@ -305,9 +305,10 @@ export type SmartFilter =
   | "HAS_GPS"
   | "STAGED"
   | "EYES_CLOSED"
-  | "SOFT_FOCUS"
-  | "PHOTOS"
-  | "VIDEOS";
+  | "SOFT_FOCUS";
+
+// Photos, videos or both: a filter of its own (combines with the quick filters), set on any photo tab
+export type MediaFilter = "ALL" | "PHOTOS" | "VIDEOS";
 
 export type OrientationFilter = "ALL" | "LANDSCAPE" | "PORTRAIT" | "SQUARE";
 
