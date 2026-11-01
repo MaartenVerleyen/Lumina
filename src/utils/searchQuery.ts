@@ -86,6 +86,7 @@ export interface MatchablePhoto {
   damaged?: boolean;
   staged_target?: string | null;
   in_basket?: boolean;
+  media_type?: string;
 }
 
 export interface MatchContext {
@@ -96,6 +97,7 @@ export interface MatchContext {
 }
 
 const RAW_EXT = /\.(cr2|cr3|nef|arw|dng|orf|rw2|pef|raf)$/i;
+const VIDEO_EXT = /\.(mp4|mov|m4v|3gp|avi|mts|m2ts|mpg|mpeg)$/i;
 
 function compare(a: number, op: TermOp, b: number): boolean {
   switch (op) {
@@ -188,6 +190,8 @@ function matchOne(p: MatchablePhoto, t: SearchTerm, ctx: MatchContext): boolean 
     case "is":
       switch (v) {
         case "raw": return RAW_EXT.test(p.name);
+        case "video": case "movie": return p.media_type === "video" || (!p.media_type && VIDEO_EXT.test(p.name));
+        case "photo": return !(p.media_type === "video" || (!p.media_type && VIDEO_EXT.test(p.name)));
         case "paired": return Boolean(p.pair_raw_path);
         case "screenshot": return p.tags.includes("screenshot");
         case "whatsapp": return p.tags.includes("whatsapp");

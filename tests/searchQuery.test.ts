@@ -65,6 +65,15 @@ test("each term kind matches", () => {
   assert.ok(!match("is:staged"));
 });
 
+test("is:video and is:photo tell videos from photos", () => {
+  const clip = { ...photo, name: "IMG_0002.MOV", media_type: "video" };
+  const isClip = (q: string) => matchesTerms(clip, parseSearchQuery(q).terms, {});
+  assert.ok(isClip("is:video") && !isClip("is:photo"));
+  assert.ok(match("is:photo") && !match("is:video"));
+  // Rows from before videos were indexed have no media type: the name decides
+  assert.ok(matchesTerms({ ...photo, name: "a.mts" }, parseSearchQuery("is:video").terms, {}));
+});
+
 test("negation flips a term", () => {
   assert.ok(match("-flag:reject"));
   assert.ok(!match("-person:anna"));

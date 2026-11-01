@@ -7,6 +7,7 @@ import { matchesTerms } from "../../utils/searchQuery";
 import { matchesPeopleExpr } from "../../utils/peopleQuery";
 import { NAME_COLLATOR, TEXT_COLLATOR, compareStrings, searchTextOf } from "./shared";
 import { cullScore, hasClosedEyes, isSoftFocus } from "../../utils/culling";
+import { isVideo } from "../../utils/media";
 import { semanticCutoff, SEMANTIC_MAX_HITS } from "../../utils/semanticCutoff";
 import { cullingOf, useSettings } from "../../settings";
 import type { Collections } from "./useCollections";
@@ -99,6 +100,7 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
     duplicatePhotosCount,
     eyesClosedCount,
     softFocusCount,
+    videosCount,
   } = useMemo(() => {
     const staged: PhotoItem[] = [];
     let gps = 0;
@@ -110,6 +112,7 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
     let dupCount = 0;
     let eyesClosed = 0;
     let soft = 0;
+    let videos = 0;
     // The best photo of each burst: open eyes, then a sharp main face, then overall sharpness
     const best = new Map<number, { hash: string; sharpness: number }>();
     const counts = new Map<number, number>();
@@ -125,6 +128,7 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
       if (p.in_basket) basket++;
       if (hasClosedEyes(p, culling)) eyesClosed++;
       if (isSoftFocus(p, culling)) soft++;
+      if (isVideo(p)) videos++;
 
       if (p.duplicate_group && p.subfolder !== "_Trash") {
         dupCount++;
@@ -151,6 +155,7 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
       duplicatePhotosCount: dupCount,
       eyesClosedCount: eyesClosed,
       softFocusCount: soft,
+      videosCount: videos,
     };
   }, [photos, culling]);
 
@@ -176,6 +181,8 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
       if (smartFilter === "STAGED" && !p.staged_target) return false;
       if (smartFilter === "EYES_CLOSED" && !hasClosedEyes(p, culling)) return false;
       if (smartFilter === "SOFT_FOCUS" && !isSoftFocus(p, culling)) return false;
+      if (smartFilter === "VIDEOS" && !isVideo(p)) return false;
+      if (smartFilter === "PHOTOS" && isVideo(p)) return false;
 
       if (selectedPeriodRange) {
         const [startDay, endDay] = selectedPeriodRange;
@@ -356,9 +363,10 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
     return 0;
   }, [selectedHashes, visiblePhotos, activePhoto, photos]);
 
+  // Compare lays photos side by side at full size: videos stay out
   const comparePhotos = useMemo(() => {
     if (selectedHashes.size >= 2) {
-      return visiblePhotos.filter((p) => selectedHashes.has(p.hash)).slice(0, 4);
+      return visiblePhotos.filter((p) => selectedHashes.has(p.hash) && !isVideo(p)).slice(0, 4);
     }
     if (activePhoto?.duplicate_group) {
       return photos
@@ -368,9 +376,10 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
         .sort((a, b) => cullScore(b, culling) - cullScore(a, culling))
         .slice(0, 4);
     }
-    const idx = activeHash ? visiblePhotos.findIndex((p) => p.hash === activeHash) : 0;
+    const stills = visiblePhotos.filter((p) => !isVideo(p));
+    const idx = activeHash ? stills.findIndex((p) => p.hash === activeHash) : 0;
     const start = Math.max(0, idx);
-    return visiblePhotos.slice(start, start + 2);
+    return stills.slice(start, start + 2);
   }, [selectedHashes, visiblePhotos, activePhoto, photos, activeHash]);
 
   // On-Demand 1920px High-Res Preview Generation for RAW & HEIC when viewing in Loupe or Compare
@@ -473,6 +482,7 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
     duplicatePhotosCount,
     eyesClosedCount,
     softFocusCount,
+    videosCount,
     culling,
     visiblePhotos,
     compareCandidateCount,

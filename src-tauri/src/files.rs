@@ -647,9 +647,10 @@ fn prune_orphaned_cache_blocking(app: AppHandle) -> Result<usize, String> {
     let app_dir = get_app_storage_dir(&app);
     let thumbs_dir = app_dir.join("thumbnails");
     let faces_dir = app_dir.join("faces");
+    let frames_dir = crate::video_frames::frames_dir(&app_dir);
 
     let mut removed = 0usize;
-    for dir in [&thumbs_dir, &faces_dir] {
+    for dir in [&thumbs_dir, &faces_dir, &frames_dir] {
         if let Ok(entries) = fs::read_dir(dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
@@ -967,16 +968,20 @@ fn forget_deleted_photos(app: &AppHandle, conn: &mut Connection, hashes: &[Strin
             let _ = tx.execute("DELETE FROM photo_tags WHERE hash = ?1", params![h]);
             let _ = tx.execute("DELETE FROM photo_people WHERE hash = ?1", params![h]);
             let _ = tx.execute("DELETE FROM photo_faces WHERE hash = ?1", params![h]);
+            let _ = tx.execute("DELETE FROM photo_clip WHERE hash = ?1", params![h]);
         }
         let _ = tx.commit();
     }
+    crate::clip::forget_vectors(hashes);
     if let Ok(mut pending) = PENDING_CANDIDATES_CACHE.lock() {
         pending.clear();
     }
     let app_dir = get_app_storage_dir(app);
+    let frames_dir = crate::video_frames::frames_dir(&app_dir);
     for h in hashes {
         let _ = fs::remove_file(app_dir.join("thumbnails").join(format!("{h}.jpg")));
         let _ = fs::remove_file(app_dir.join("previews").join(format!("{h}_preview.jpg")));
+        crate::video_frames::delete_frames(&frames_dir, h);
     }
     for thumb in face_thumbs {
         let _ = fs::remove_file(thumb);

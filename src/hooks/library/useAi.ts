@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { confirmDialog } from "../../confirm";
 import { PhotoItem, OllamaStatus, AiAnalysisResult, AiPerf, OllamaPullProgress, AiFailureItem, AiBatchReport } from "../../types/lumina";
 import { diskPathOf } from "../../utils/rawPairs";
+import { isVideo, photosOnly } from "../../utils/media";
 import { AI_CANCELLED, PULL_CANCELLED, summarizeAiPerf, topLibraryTags } from "./shared";
 import type { LibraryCore } from "./core";
 
@@ -135,7 +136,8 @@ export function useAi(core: LibraryCore) {
   }
 
   async function handleAiAnalyzeSingle() {
-    if (!activePhoto || analyzingHashes.has(activePhoto.hash)) return;
+    // Captions and text are for photos (a video has no single picture to describe yet)
+    if (!activePhoto || isVideo(activePhoto) || analyzingHashes.has(activePhoto.hash)) return;
     if (aiBatchProgress) {
       // Ollama handles one request at a time: a single analysis would just queue behind the batch
       setError("Batch AI is running: wait for it to finish or stop it first.");
@@ -183,6 +185,7 @@ export function useAi(core: LibraryCore) {
   // photo's image prepared while the current one is analysed, retries for real failures, and batched UI updates.
   // Photos that already have AI results are skipped unless the user chooses to re-analyse them.
   async function runBatchAiOnList(requested: PhotoItem[], options: { reanalyze?: boolean } = {}) {
+    requested = photosOnly(requested);
     if (aiBatchProgress || requested.length === 0) return;
     if (ollamaStatus && !ollamaStatus.running) {
       setError('Ollama is not running: click "Start Ollama" in the header first.');

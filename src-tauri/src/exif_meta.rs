@@ -113,7 +113,7 @@ pub fn date_from_filename(name: &str) -> Option<(String, Option<String>)> {
 }
 
 // File times are UTC; photo dates (EXIF) are local wall-clock time
-fn system_time_local_iso(st: std::time::SystemTime) -> String {
+pub fn system_time_local_iso(st: std::time::SystemTime) -> String {
     #[cfg(windows)]
     {
         use windows::Win32::Foundation::FILETIME;
@@ -298,6 +298,9 @@ pub struct FullExifPass {
     pub shutter_speed: Option<String>,
     pub iso: Option<String>,
     pub lens_model: Option<String>,
+    // Videos only: length and codec from the container
+    pub duration_ms: Option<u64>,
+    pub video_codec: Option<String>,
 }
 
 // Single-Pass Header & EXIF Reader: extracts dimensions, orientation, GPS, date & telemetry
@@ -308,6 +311,9 @@ pub fn extract_all_exif_single_pass(file_path: &Path) -> FullExifPass {
 // Same, but parses from `head` (the file's first bytes, already read for hashing) when that is enough;
 // only falls back to reading the file for formats whose header/EXIF lies beyond the head (some RAW/HEIC).
 pub fn extract_all_exif_with_head(file_path: &Path, head: Option<&[u8]>) -> FullExifPass {
+    if crate::video_meta::is_video_path(file_path) {
+        return crate::video_meta::extract_video_pass(file_path);
+    }
     let mut width = 0u32;
     let mut height = 0u32;
     let mut orientation = 1u32;
@@ -514,6 +520,8 @@ pub fn extract_all_exif_with_head(file_path: &Path, head: Option<&[u8]>) -> Full
         shutter_speed: shutter,
         iso,
         lens_model: lens,
+        duration_ms: None,
+        video_codec: None,
     }
 }
 

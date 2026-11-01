@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { PersonItem, FaceScanProgress, FaceMatchEvent, FaceInstance, FaceModelDownloadProgress, FaceQualityProgress } from "../../types/lumina";
 import { diskPathOf } from "../../utils/rawPairs";
+import { isVideo, photosOnly } from "../../utils/media";
 import { removeFromExpr, renameInExpr } from "../../utils/peopleQuery";
 import type { LibraryCore } from "./core";
 import type { FilterState } from "./useFilterState";
@@ -192,7 +193,7 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
   }, [folder, addLog]);
 
   async function handleDetectFacesSingleOnnx() {
-    if (!activePhoto || isDetectingSingleFace) return;
+    if (!activePhoto || isVideo(activePhoto) || isDetectingSingleFace) return;
     try {
       setIsDetectingSingleFace(true);
       const detected = await invoke<FaceInstance[]>("detect_faces_in_photo", {
@@ -245,10 +246,11 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
   }
 
   async function handleBatchScanFacesOnnx() {
-    if (photos.length === 0) return;
+    const stills = photosOnly(photos);
+    if (stills.length === 0) return;
     await startFaceScan(
-      photos.map((p) => p.hash),
-      `Started face scan on ${photos.length} photos`
+      stills.map((p) => p.hash),
+      `Started face scan on ${stills.length} photos`
     );
   }
 

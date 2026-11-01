@@ -8,10 +8,11 @@ use std::time::Duration;
 
 static WATCHER: Mutex<Option<Debouncer<RecommendedWatcher>>> = Mutex::new(None);
 
-// Photo files only: Lumina's own .part files, sidecars and caches don't need a rescan
+// Photos and videos only: Lumina's own .part files, sidecars and caches don't need a rescan
 pub fn is_library_photo(path: &Path) -> bool {
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
-    PHOTO_EXTENSIONS.contains(&ext.as_str()) && !path.components().any(|c| c.as_os_str() == ".triage_cache")
+    (PHOTO_EXTENSIONS.contains(&ext.as_str()) || crate::video_meta::is_video_ext(&ext))
+        && !path.components().any(|c| c.as_os_str() == ".triage_cache")
 }
 
 // Starts watching `root` (stopping the previous watch); None just stops

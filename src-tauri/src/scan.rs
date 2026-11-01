@@ -257,6 +257,8 @@ pub struct CachedRow {
     pub lens_model: Option<String>,
     pub damaged: bool,
     pub thumb_edge: u32,
+    pub duration_ms: Option<u64>,
+    pub video_codec: Option<String>,
 }
 
 // Tags the scan sets from the file itself (name, folder), kept on a copy that gets its own hash
@@ -309,8 +311,8 @@ fn save_indexed(
                 continue;
             }
             let _ = tx.execute(
-                "INSERT INTO photos (hash, current_path, subfolder, file_size, modified_time, width, height, rating, flag, color_label, rotation, ai_caption, ocr_text, captured_at, camera_model, location, latitude, longitude, dhash, sharpness, staged_target, exif_checked, focal_length, aperture, shutter_speed, iso, lens_model)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, 1, ?22, ?23, ?24, ?25, ?26)
+                "INSERT INTO photos (hash, current_path, subfolder, file_size, modified_time, width, height, rating, flag, color_label, rotation, ai_caption, ocr_text, captured_at, camera_model, location, latitude, longitude, dhash, sharpness, staged_target, exif_checked, focal_length, aperture, shutter_speed, iso, lens_model, media_type, duration_ms, video_codec)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, 1, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29)
                  ON CONFLICT(hash) DO UPDATE SET
                     current_path = excluded.current_path,
                     subfolder = excluded.subfolder,
@@ -329,13 +331,17 @@ fn save_indexed(
                     shutter_speed = COALESCE(excluded.shutter_speed, photos.shutter_speed),
                     iso = COALESCE(excluded.iso, photos.iso),
                     lens_model = COALESCE(excluded.lens_model, photos.lens_model),
+                    media_type = excluded.media_type,
+                    duration_ms = COALESCE(excluded.duration_ms, photos.duration_ms),
+                    video_codec = COALESCE(excluded.video_codec, photos.video_codec),
                     exif_checked = 1",
                 params![
                     p.hash, orig_disk_path, p.subfolder, size_bytes, mtime, p.width, p.height, p.rating,
                     p.flag, p.color_label, p.rotation,
                     p.ai_caption, p.ocr_text, p.captured_at, p.camera_model,
                     p.location, p.latitude, p.longitude, p.dhash, p.sharpness,
-                    p.staged_target, p.focal_length, p.aperture, p.shutter_speed, p.iso, p.lens_model
+                    p.staged_target, p.focal_length, p.aperture, p.shutter_speed, p.iso, p.lens_model,
+                    p.media_type, p.duration_ms, p.video_codec
                 ],
             );
 
@@ -409,7 +415,7 @@ pub async fn scan_folder(
                             COALESCE(exif_checked, 0), flag, color_label, COALESCE(rotation, 0), COALESCE(in_basket, 0),
                             COALESCE(width, 0), COALESCE(height, 0),
                             focal_length, aperture, shutter_speed, iso, lens_model,
-                            COALESCE(damaged, 0), COALESCE(thumb_edge, 0)
+                            COALESCE(damaged, 0), COALESCE(thumb_edge, 0), duration_ms, video_codec
                      FROM photos WHERE current_path LIKE ?1 ESCAPE '!'",
                 )
                 .map_err(|e| e.to_string())?;
@@ -446,6 +452,8 @@ pub async fn scan_folder(
                             lens_model: row.get(26).ok().flatten(),
                             damaged: row.get::<_, i32>(27).unwrap_or(0) != 0,
                             thumb_edge: row.get::<_, u32>(28).unwrap_or(0),
+                            duration_ms: row.get(29).ok().flatten(),
+                            video_codec: row.get(30).ok().flatten(),
                         },
                     ))
                 })
@@ -549,7 +557,7 @@ pub async fn scan_folder(
                 }
                 let p = entry.into_path();
                 let ext = p.extension()?.to_str()?.to_lowercase();
-                if PHOTO_EXTENSIONS.contains(&ext.as_str()) {
+                if PHOTO_EXTENSIONS.contains(&ext.as_str()) || video_meta::is_video_ext(&ext) {
                     Some(p)
                 } else {
                     None
@@ -594,6 +602,7 @@ pub async fn scan_folder(
                 .unwrap_or_default();
 
             let mut needs_db_upsert = true;
+            let is_video = video_meta::is_video_ext(&ext_lower);
 
             let (
                 hash,
@@ -619,13 +628,15 @@ pub async fn scan_folder(
                 shutter_speed,
                 iso,
                 lens_model,
+                (duration_ms, video_codec),
             ) = if let Some(c) = cache_map.get(&orig_path_str) {
                 if !force
                     && c.exif_checked == 1
                     && !c.captured_at.is_empty()
                     && c.size == size_bytes
                     && c.mtime == modified_time
-                    && !is_old_creation_time_date(&file_path, &c.captured_at, &metadata)
+                    // A video's recording date can equal its file time (both set by the camera): not a fallback
+                    && (is_video || !is_old_creation_time_date(&file_path, &c.captured_at, &metadata))
                 {
                     needs_db_upsert = false;
                     (
@@ -652,6 +663,7 @@ pub async fn scan_folder(
                         c.shutter_speed.clone(),
                         c.iso.clone(),
                         c.lens_model.clone(),
+                        (c.duration_ms, c.video_codec.clone()),
                     )
                 } else {
                     let (h, head) = if c.size == size_bytes {
@@ -690,6 +702,7 @@ pub async fn scan_folder(
                         ex.shutter_speed.or_else(|| c.shutter_speed.clone()),
                         ex.iso.or_else(|| c.iso.clone()),
                         ex.lens_model.or_else(|| c.lens_model.clone()),
+                        (ex.duration_ms.or(c.duration_ms), ex.video_codec.or_else(|| c.video_codec.clone())),
                     )
                 }
             } else {
@@ -720,6 +733,7 @@ pub async fn scan_folder(
                     ex.shutter_speed,
                     ex.iso,
                     ex.lens_model,
+                    (ex.duration_ms, ex.video_codec),
                 )
             };
 
@@ -744,7 +758,8 @@ pub async fn scan_folder(
             let subfolder = get_relative_subfolder(&root_path, &file_path);
             let mut tags = tags_map.get(&hash).cloned().unwrap_or_default();
 
-            if is_likely_screenshot(&file_path, &camera_model, None, None)
+            if !is_video
+                && is_likely_screenshot(&file_path, &camera_model, None, None)
                 && !tags.iter().any(|t| t == "screenshot")
             {
                 tags.push("screenshot".to_string());
@@ -825,6 +840,9 @@ pub async fn scan_folder(
                         .get(&orig_path_str)
                         .map(|c| c.damaged && c.size == size_bytes && c.mtime == modified_time)
                         .unwrap_or(false),
+                    media_type: if is_video { "video" } else { "photo" }.to_string(),
+                    duration_ms,
+                    video_codec,
                 },
                 orig_path_str,
                 size_bytes,
@@ -1007,9 +1025,18 @@ pub async fn scan_folder(
                 .map(|p| p.hash.clone())
                 .collect()
         };
+        // A video has no dHash: it needs its frames instead
+        let frames_dir = video_frames::frames_dir(&app_dir);
         let needs_processing: Vec<PhotoItem> = photos
             .iter()
-            .filter(|p| force || !p.thumb_ready || p.dhash.is_empty() || upgrade.contains(&p.hash))
+            .filter(|p| {
+                let incomplete = if p.media_type == "video" {
+                    !video_frames::frame_path(&frames_dir, &p.hash, 0).exists()
+                } else {
+                    p.dhash.is_empty()
+                };
+                force || !p.thumb_ready || incomplete || upgrade.contains(&p.hash)
+            })
             .cloned()
             .collect();
 

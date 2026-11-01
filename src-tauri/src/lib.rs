@@ -47,6 +47,8 @@ mod gallery;
 mod backup;
 mod duplicates;
 mod recycle;
+mod video_meta;
+mod video_frames;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -168,6 +170,10 @@ pub struct PhotoItem {
     pub lens_model: Option<String>,
     pub pair_raw_path: Option<String>,
     pub damaged: bool,
+    // "photo" or "video"; a video's length and codec (fourcc) when its container states them
+    pub media_type: String,
+    pub duration_ms: Option<u64>,
+    pub video_codec: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -202,6 +208,8 @@ pub struct ThumbBatchItem {
     pub damaged: bool,
     // Size the thumbnail file was written at (0 = existing file reused); stored as photos.thumb_edge
     pub thumb_edge: u32,
+    // Videos: length and size found by the frame pass (MTS/AVI/MPEG files don't state them in a header)
+    pub duration_ms: Option<u64>,
 }
 
 #[derive(Serialize, Clone)]

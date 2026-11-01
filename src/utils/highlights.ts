@@ -15,6 +15,8 @@ export interface HighlightPhoto extends CullingPhoto {
   staged_target?: string | null;
   damaged?: boolean;
   duplicate_group?: number | null;
+  // "video" for videos: never a highlight
+  media_type?: string;
 }
 
 export interface HighlightCandidate {
@@ -56,6 +58,8 @@ function focusBonus(p: HighlightPhoto, focus: HighlightFocus): number {
 // The app's own judgement of a photo, or null when it shouldn't be a highlight at all (rejected, on its way
 // to _Trash, damaged, a screenshot)
 export function highlightScore(p: HighlightPhoto, culling: CullingSettings, focus?: HighlightFocus): number | null {
+  // Highlights and Best of are photo collections
+  if (p.media_type === "video") return null;
   if (p.flag === "reject" || p.staged_target === "_Trash" || p.subfolder === "_Trash" || p.subfolder.startsWith("_Trash / "))
     return null;
   if (p.damaged || p.tags.includes("screenshot")) return null;

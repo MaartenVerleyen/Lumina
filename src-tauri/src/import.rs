@@ -5,7 +5,7 @@ use std::time::{Duration, UNIX_EPOCH};
 // Importing photos from a memory card, USB drive or any folder into the library: dated folders, duplicates
 // skipped, RAW+JPEG pairs and sidecars kept together, every copy verified before it counts.
 
-pub const VIDEO_EXTENSIONS: &[&str] = &["mp4", "mov", "m4v", "avi", "mts", "m2ts", "3gp"];
+use crate::video_meta::VIDEO_EXTENSIONS;
 const SIDECAR_EXTENSIONS: &[&str] = &["xmp", "aae", "thm"];
 pub const IMPORT_CANCELLED: &str = "Import cancelled";
 
@@ -221,11 +221,8 @@ pub(crate) fn plan(conn: &Connection, source: &Path, progress: &dyn Fn(usize)) -
         } else {
             match hash_and_read_head(&path, size) {
                 Ok((hash, head)) => {
-                    let day = if kind == FileKind::Photo {
-                        day_of(&extract_all_exif_with_head(&path, Some(&head)).captured_at)
-                    } else {
-                        None
-                    };
+                    // A video's recording date comes from its container (the same pass reads it)
+                    let day = day_of(&extract_all_exif_with_head(&path, Some(&head)).captured_at);
                     (Some(hash), day.or_else(|| modified_day(&path)))
                 }
                 Err(_) => (None, modified_day(&path)),
@@ -412,7 +409,7 @@ fn run_import(app: &AppHandle, options: &ImportOptions) -> Result<ImportResult, 
                     if f.kind != FileKind::Sidecar {
                         result.copied += 1;
                     }
-                    if f.kind == FileKind::Photo {
+                    if f.kind != FileKind::Sidecar {
                         result.new_paths.push(dst.to_string_lossy().into_owned());
                     }
                     copied_sources.push(f.src.clone());

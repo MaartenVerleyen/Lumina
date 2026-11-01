@@ -1617,3 +1617,201 @@ fn screen_sized_jpeg_is_not_a_screenshot() {
     assert!(is_likely_screenshot(Path::new("IMG_5107.PNG"), "", Some(&img), dims));
     assert!(is_likely_screenshot(Path::new("Screenshot_20180320-155259.jpg"), "", Some(&img), dims));
 }
+
+// ----------------- VIDEO CONTAINERS -----------------
+
+fn mp4_box(kind: &[u8; 4], body: &[u8]) -> Vec<u8> {
+    let mut b = ((body.len() + 8) as u32).to_be_bytes().to_vec();
+    b.extend_from_slice(kind);
+    b.extend_from_slice(body);
+    b
+}
+
+fn test_mvhd(version: u8, created_1904: u64, timescale: u32, duration: u64) -> Vec<u8> {
+    let mut b = vec![version, 0, 0, 0];
+    if version == 1 {
+        b.extend_from_slice(&created_1904.to_be_bytes());
+        b.extend_from_slice(&created_1904.to_be_bytes());
+        b.extend_from_slice(&timescale.to_be_bytes());
+        b.extend_from_slice(&duration.to_be_bytes());
+    } else {
+        b.extend_from_slice(&(created_1904 as u32).to_be_bytes());
+        b.extend_from_slice(&(created_1904 as u32).to_be_bytes());
+        b.extend_from_slice(&timescale.to_be_bytes());
+        b.extend_from_slice(&(duration as u32).to_be_bytes());
+    }
+    b.extend_from_slice(&[0u8; 80]);
+    mp4_box(b"mvhd", &b)
+}
+
+// A video track: tkhd with the rotation matrix of `a, b` (16.16) and a size, hdlr 'vide', stsd with `codec`
+fn test_video_trak(a: i32, b: i32, width: u32, height: u32, codec: &[u8; 4]) -> Vec<u8> {
+    let mut tkhd = vec![0u8; 40];
+    tkhd.extend_from_slice(&a.to_be_bytes());
+    tkhd.extend_from_slice(&b.to_be_bytes());
+    tkhd.extend_from_slice(&[0u8; 28]);
+    tkhd.extend_from_slice(&(width << 16).to_be_bytes());
+    tkhd.extend_from_slice(&(height << 16).to_be_bytes());
+    let mut hdlr = vec![0u8; 8];
+    hdlr.extend_from_slice(b"vide");
+    hdlr.extend_from_slice(&[0u8; 12]);
+    let mut stsd = vec![0, 0, 0, 0, 0, 0, 0, 1];
+    stsd.extend_from_slice(&86u32.to_be_bytes());
+    stsd.extend_from_slice(codec);
+    stsd.extend_from_slice(&[0u8; 78]);
+    let stbl = mp4_box(b"stbl", &mp4_box(b"stsd", &stsd));
+    let mdia = [mp4_box(b"hdlr", &hdlr), mp4_box(b"minf", &stbl)].concat();
+    mp4_box(b"trak", &[mp4_box(b"tkhd", &tkhd), mp4_box(b"mdia", &mdia)].concat())
+}
+
+// QuickTime metadata as iPhones write it: keys + ilst with UTF-8 values
+fn test_apple_meta(entries: &[(&str, &str)]) -> Vec<u8> {
+    let mut keys = vec![0u8, 0, 0, 0];
+    keys.extend_from_slice(&(entries.len() as u32).to_be_bytes());
+    let mut ilst = Vec::new();
+    for (i, (name, value)) in entries.iter().enumerate() {
+        keys.extend_from_slice(&((name.len() + 8) as u32).to_be_bytes());
+        keys.extend_from_slice(b"mdta");
+        keys.extend_from_slice(name.as_bytes());
+        let mut data = vec![0, 0, 0, 1, 0, 0, 0, 0];
+        data.extend_from_slice(value.as_bytes());
+        ilst.extend(mp4_box(&((i + 1) as u32).to_be_bytes(), &mp4_box(b"data", &data)));
+    }
+    let hdlr = mp4_box(b"hdlr", &[0u8; 24]);
+    mp4_box(b"meta", &[hdlr, mp4_box(b"keys", &keys), mp4_box(b"ilst", &ilst)].concat())
+}
+
+#[test]
+fn video_meta_reads_an_iphone_movie() {
+    // 2024-04-05 15:34:38 UTC, 12.5 s, portrait (rotated 90), HEVC, Ghent, recorded at 17:34:38 local time
+    let created = 1_712_331_278u64 + 2_082_844_800;
+    let moov = [
+        test_mvhd(0, created, 600, 7500),
+        test_video_trak(0, 0x10000, 1920, 1080, b"hvc1"),
+        test_apple_meta(&[
+            ("com.apple.quicktime.location.ISO6709", "+51.0543+003.7174+012.000/"),
+            ("com.apple.quicktime.make", "Apple"),
+            ("com.apple.quicktime.model", "iPhone 13"),
+            ("com.apple.quicktime.creationdate", "2024-04-05T17:34:38+0200"),
+        ]),
+    ]
+    .concat();
+    let m = video_meta::parse_moov(&moov);
+    assert_eq!(m.duration_ms, Some(12_500));
+    assert_eq!(m.created_utc, Some(1_712_331_278));
+    assert_eq!(m.rotation, 90);
+    assert_eq!((m.width, m.height), (1080, 1920));
+    assert_eq!(m.codec.as_deref(), Some("hvc1"));
+    assert_eq!((m.lat, m.lon), (Some(51.0543), Some(3.7174)));
+    assert_eq!((m.make.as_deref(), m.model.as_deref()), (Some("Apple"), Some("iPhone 13")));
+    assert_eq!(m.local_created.as_deref(), Some("2024-04-05 17:34:38"));
+}
+
+#[test]
+fn video_meta_reads_version_1_headers_and_android_location() {
+    let created = 1_600_000_000u64 + 2_082_844_800;
+    let mut xyz = (18u16).to_be_bytes().to_vec();
+    xyz.extend_from_slice(&[0x15, 0xc7]);
+    xyz.extend_from_slice(b"-33.8688+151.2093/");
+    let udta = mp4_box(b"udta", &mp4_box(&[0xA9, b'x', b'y', b'z'], &xyz));
+    let moov = [test_mvhd(1, created, 90_000, 90_000 * 3), test_video_trak(0x10000, 0, 3840, 2160, b"avc1"), udta].concat();
+    let m = video_meta::parse_moov(&moov);
+    assert_eq!(m.duration_ms, Some(3000));
+    assert_eq!(m.created_utc, Some(1_600_000_000));
+    assert_eq!((m.rotation, m.width, m.height), (0, 3840, 2160));
+    assert_eq!((m.lat, m.lon), (Some(-33.8688), Some(151.2093)));
+    assert_eq!(m.local_created, None);
+}
+
+#[test]
+fn video_meta_treats_a_zero_date_as_unknown() {
+    let m = video_meta::parse_moov(&[test_mvhd(0, 0, 1000, 500), test_video_trak(-0x10000, 0, 640, 480, b"mp4v")].concat());
+    assert_eq!(m.created_utc, None);
+    assert_eq!((m.rotation, m.width, m.height), (180, 640, 480));
+}
+
+#[test]
+fn iso6709_locations() {
+    assert_eq!(video_meta::parse_iso6709("+51.0543+003.7174+012.000/"), Some((51.0543, 3.7174)));
+    assert_eq!(video_meta::parse_iso6709("-33.8688+151.2093/"), Some((-33.8688, 151.2093)));
+    assert_eq!(video_meta::parse_iso6709("+00.0000+000.0000/"), None);
+    assert_eq!(video_meta::parse_iso6709("garbage"), None);
+}
+
+#[test]
+fn video_meta_finds_moov_after_the_media_data() {
+    let dir = std::env::temp_dir().join("lumina_video_meta_test");
+    let _ = fs::create_dir_all(&dir);
+    let file = dir.join("clip.mp4");
+    let moov = mp4_box(b"moov", &[test_mvhd(0, 3_800_000_000, 1000, 4200), test_video_trak(0x10000, 0, 1280, 720, b"avc1")].concat());
+    let data = [mp4_box(b"ftyp", b"isom\0\0\0\0"), mp4_box(b"mdat", &vec![7u8; 100_000]), moov].concat();
+    fs::write(&file, data).unwrap();
+    let m = video_meta::read_video_meta(&file);
+    assert_eq!(m.duration_ms, Some(4200));
+    assert_eq!((m.width, m.height), (1280, 720));
+    let _ = fs::remove_dir_all(&dir);
+}
+
+// Reads every video in LUMINA_DIAG_DIR (dates, codecs, places) and grabs frames for a sample of each type
+// into LUMINA_DIAG_OUT, with timings
+#[test]
+#[ignore]
+fn videos_in_library() {
+    let (Ok(dir), Ok(out)) = (std::env::var("LUMINA_DIAG_DIR"), std::env::var("LUMINA_DIAG_OUT")) else {
+        eprintln!("Set LUMINA_DIAG_DIR and LUMINA_DIAG_OUT");
+        return;
+    };
+    let files: Vec<PathBuf> = WalkDir::new(&dir)
+        .into_iter()
+        .flatten()
+        .map(|e| e.into_path())
+        .filter(|p| video_meta::is_video_path(p))
+        .collect();
+    let started = Instant::now();
+    let mut codecs: HashMap<String, usize> = HashMap::new();
+    let (mut dated, mut placed, mut rotated, mut camera) = (0, 0, 0, 0);
+    let mut by_type: HashMap<String, Vec<PathBuf>> = HashMap::new();
+    for f in &files {
+        let pass = video_meta::extract_video_pass(f);
+        let meta = video_meta::read_video_meta(f);
+        *codecs.entry(meta.codec.clone().unwrap_or_else(|| "-".into())).or_default() += 1;
+        dated += (meta.local_created.is_some() || meta.created_utc.is_some()) as usize;
+        placed += pass.lat.is_some() as usize;
+        rotated += (meta.rotation != 0) as usize;
+        camera += (!pass.camera_model.is_empty()) as usize;
+        let ext = f.extension().unwrap().to_string_lossy().to_lowercase();
+        by_type.entry(format!("{ext}/{}", meta.codec.unwrap_or_default())).or_default().push(f.clone());
+    }
+    eprintln!(
+        "{} videos in {} ms: container date {dated}, place {placed}, rotated {rotated}, camera {camera}",
+        files.len(),
+        started.elapsed().as_millis()
+    );
+    eprintln!("codecs: {codecs:?}");
+    let out = PathBuf::from(out);
+    let _ = fs::create_dir_all(&out);
+    for (kind, list) in by_type {
+        for f in list.iter().take(3) {
+            let t = Instant::now();
+            let rotation = video_meta::read_video_meta(f).rotation;
+            match video_frames::grab_frames(f, rotation) {
+                Some(g) => {
+                    let stem = f.file_stem().unwrap().to_string_lossy().to_string();
+                    for (n, img) in g.frames.iter().enumerate() {
+                        let _ = img.to_rgb8().save(out.join(format!("{stem}_{n}.jpg")));
+                    }
+                    eprintln!(
+                        "{kind:12} {:40} {} frames {}x{} {} ms long, grabbed in {} ms",
+                        f.file_name().unwrap().to_string_lossy(),
+                        g.frames.len(),
+                        g.width,
+                        g.height,
+                        g.duration_ms,
+                        t.elapsed().as_millis()
+                    );
+                }
+                None => eprintln!("{kind:12} {:40} NO FRAMES ({} ms)", f.file_name().unwrap().to_string_lossy(), t.elapsed().as_millis()),
+            }
+        }
+    }
+}

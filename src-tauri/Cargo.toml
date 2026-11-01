@@ -62,6 +62,10 @@ windows = { version = "0.62", features = [
     "Win32_Graphics_Imaging",
     "Win32_System_Registry",
     "Win32_UI_Shell",
+    # Video frames through Windows' own codecs (Media Foundation source reader)
+    "Win32_Media_MediaFoundation",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Variant",
 ] }
 # The `#[implement]` macro (Recycle Bin progress sink) expands to `::windows_core` paths
 windows-core = "0.62"

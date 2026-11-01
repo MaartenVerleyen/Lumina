@@ -3,11 +3,13 @@ import { FolderTreeNode, PhotoItem, SmartFilter } from "../../types/lumina";
 import {
   BrainCircuit,
   Camera,
+  ImageIcon,
   ChevronDown,
   ChevronRight,
   EyeOff,
   Focus,
   FileText,
+  Film,
   Flag,
   Folder,
   Layers,
@@ -45,6 +47,7 @@ interface LeftSidebarProps {
   stagedPhotosCount: number;
   eyesClosedCount: number;
   softFocusCount: number;
+  videosCount: number;
   folderTree: { rootCount: number; nodes: FolderTreeNode[] };
   expandedFolders: Set<string>;
   setExpandedFolders: React.Dispatch<React.SetStateAction<Set<string>>>;
@@ -87,6 +90,7 @@ function LeftSidebar({
   stagedPhotosCount,
   eyesClosedCount,
   softFocusCount,
+  videosCount,
   folderTree,
   expandedFolders,
   setExpandedFolders,
@@ -228,11 +232,29 @@ function LeftSidebar({
   const filterItems = [
     {
       id: "ALL",
-      label: "All Photos",
+      label: videosCount > 0 ? "All" : "All Photos",
       count: photos.length,
       icon: <Camera className="w-3.5 h-3.5 text-emerald-400" />,
       hideInSimple: false,
     },
+    ...(videosCount > 0
+      ? [
+          {
+            id: "PHOTOS",
+            label: "Photos",
+            count: photos.length - videosCount,
+            icon: <ImageIcon className="w-3.5 h-3.5 text-sky-400" />,
+            hideInSimple: false,
+          },
+          {
+            id: "VIDEOS",
+            label: "Videos",
+            count: videosCount,
+            icon: <Film className="w-3.5 h-3.5 text-sky-400" />,
+            hideInSimple: false,
+          },
+        ]
+      : []),
     {
       id: "PICKS",
       label: simpleMode ? "Kept Photos (P)" : "Picks (P)",

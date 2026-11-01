@@ -575,6 +575,7 @@ export default function App() {
               stagedPhotosCount={lib.stagedPhotos.length}
               eyesClosedCount={lib.eyesClosedCount}
               softFocusCount={lib.softFocusCount}
+              videosCount={lib.videosCount}
               folderTree={lib.folderTree}
               expandedFolders={lib.expandedFolders}
               setExpandedFolders={lib.setExpandedFolders}

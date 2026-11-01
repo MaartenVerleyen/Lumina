@@ -5,6 +5,7 @@ import { GridLayout, LayoutRow } from "../../utils/gridLayout";
 import { thumbSrc } from "../../utils/photoHelpers";
 import DateScrubber from "./DateScrubber";
 import { hasClosedEyes, isSoftFocus, type CullingSettings } from "../../utils/culling";
+import { formatDuration, isVideo } from "../../utils/media";
 import {
   Crosshair,
   Flag,
@@ -20,6 +21,8 @@ import {
   ImageOff,
   EyeOff,
   Focus,
+  Film,
+  Play,
 } from "lucide-react";
 
 export type { GridStyle, CardDetails } from "../../settings";
@@ -257,6 +260,7 @@ const PhotoCard = memo(function PhotoCard({
   const imageHeight = justified ? height : height - SQUARE_FOOTER_HEIGHT;
   const hasAiData = photo.tags.length > 0 || Boolean(photo.ai_caption);
   const quarterTurn = photo.rotation === 90 || photo.rotation === 270;
+  const video = isVideo(photo);
   // "On hover" card details: secondary badges appear on hover, and always on the selected/active photo
   const secondary =
     cardDetails === "hover" && !isSelected && !isActive
@@ -351,9 +355,29 @@ const PhotoCard = memo(function PhotoCard({
             }
             className={`object-cover select-none ${quarterTurn ? "" : "w-full h-full"}`}
           />
+        ) : video ? (
+          // A video without a frame yet (or one Windows can't decode): a still placeholder, not a skeleton
+          <span className="flex flex-col items-center gap-1 text-[11px] text-zinc-600">
+            <Film className="w-6 h-6" />
+          </span>
         ) : (
           // Skeleton while the thumbnail is being made
           <div className="absolute inset-0 bg-gradient-to-br from-zinc-900 via-zinc-800/60 to-zinc-900 animate-pulse" />
+        )}
+
+        {video && (
+          <>
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <span className="w-9 h-9 rounded-full bg-black/55 border border-white/25 backdrop-blur-sm flex items-center justify-center shadow">
+                <Play className="w-4 h-4 text-white fill-white ml-0.5" />
+              </span>
+            </div>
+            {photo.duration_ms != null && (
+              <span className="absolute bottom-2 right-2 z-20 px-1.5 py-0.5 rounded bg-black/75 text-white text-[11px] font-mono font-semibold backdrop-blur-md pointer-events-none">
+                {formatDuration(photo.duration_ms)}
+              </span>
+            )}
+          </>
         )}
 
         {isAnalyzing && (
@@ -485,7 +509,7 @@ const PhotoCard = memo(function PhotoCard({
         {/* Justified style: name, place and tags fade in over the bottom of the photo */}
         {justified && (
           <div
-            className={`absolute inset-x-0 bottom-0 px-2.5 pt-6 pb-1.5 bg-gradient-to-t from-black/85 via-black/45 to-transparent text-[11px] flex items-end justify-between gap-2 pointer-events-none z-10 ${secondary}`}
+            className={`absolute inset-x-0 bottom-0 px-2.5 pt-6 pb-1.5 bg-gradient-to-t from-black/85 via-black/45 to-transparent text-[11px] flex items-end justify-between gap-2 pointer-events-none z-10 ${video ? "pr-14" : ""} ${secondary}`}
           >
             <span className="truncate font-medium text-zinc-100">{photo.name}</span>
             <span className="flex items-center gap-1 shrink-0 text-zinc-300">

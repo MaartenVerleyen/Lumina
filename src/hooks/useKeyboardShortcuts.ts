@@ -99,7 +99,12 @@ export function useKeyboardShortcuts(params: UseKeyboardShortcutsParams) {
         // Let Space activate a focused button as usual
         if (isActivatableTarget(e.target)) return;
         e.preventDefault();
-        if (p.activeHash) p.setIsLoupeOpen((prev) => !prev);
+        // On a video in the Loupe, Space plays and pauses (Esc closes)
+        const player = p.isLoupeOpen ? document.querySelector<HTMLVideoElement>("video[data-loupe-video]") : null;
+        if (player) {
+          if (player.paused) void player.play();
+          else player.pause();
+        } else if (p.activeHash) p.setIsLoupeOpen((prev) => !prev);
       } else if (e.key === "Escape") {
         p.setIsLoupeOpen(false);
         p.setIsDrawingFace(false);

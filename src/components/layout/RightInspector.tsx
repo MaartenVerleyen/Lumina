@@ -1,4 +1,5 @@
 import { thumbSrc } from "../../utils/photoHelpers";
+import { codecLabel, formatDuration, isVideo } from "../../utils/media";
 import { memo, useEffect, useRef } from "react";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import {
@@ -21,7 +22,9 @@ import {
   Loader2,
   MapPin,
   Maximize2,
+  Film,
   Pencil,
+  Play,
   RefreshCw,
   RotateCcw as RotateLeft,
   RotateCw,
@@ -289,7 +292,9 @@ function RightInspector({
 
 
 
-  const previewSrc = activePhoto.thumb_ready ? thumbSrc(activePhoto) : convertFileSrc(activePhoto.path);
+  const video = isVideo(activePhoto);
+  // A video's file can't be shown as an image: only its thumbnail frame, once made
+  const previewSrc = activePhoto.thumb_ready ? thumbSrc(activePhoto) : video ? "" : convertFileSrc(activePhoto.path);
 
   return (
     <aside
@@ -309,16 +314,22 @@ function RightInspector({
               isDrawingFace ? "cursor-crosshair ring-2 ring-indigo-500 rounded" : ""
             }`}
           >
-            <img
-              src={previewSrc}
-              alt={activePhoto.name}
-              decoding="async"
-              draggable={false}
-              className="block max-w-full w-auto h-auto max-h-[44vh] object-contain rounded select-none pointer-events-none"
-            />
+            {previewSrc ? (
+              <img
+                src={previewSrc}
+                alt={activePhoto.name}
+                decoding="async"
+                draggable={false}
+                className="block max-w-full w-auto h-auto max-h-[44vh] object-contain rounded select-none pointer-events-none"
+              />
+            ) : (
+              <div className="w-56 h-36 flex items-center justify-center text-zinc-700">
+                <Film className="w-8 h-8" />
+              </div>
+            )}
 
-            {/* Face Boxes */}
-            {activePhoto.faces.map((face, idx) => {
+            {/* Face Boxes (a video's faces come from other frames than the one shown) */}
+            {!video && activePhoto.faces.map((face, idx) => {
               const isSelected = selectedFaceId === face.face_id;
               return (
                 <div
@@ -374,22 +385,35 @@ function RightInspector({
             )}
           </div>
 
-          {/* Draw Face Button */}
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              setIsDrawingFace((p) => !p);
-              setSelectedFaceId(null);
-            }}
-            className={`absolute top-2.5 left-2.5 px-2.5 py-1 rounded-md text-[11px] font-semibold flex items-center gap-1 transition backdrop-blur shadow ${
-              isDrawingFace
-                ? "bg-indigo-600 text-white"
-                : "bg-black/70 hover:bg-zinc-800 text-zinc-200 border border-white/10"
-            }`}
-          >
-            <Crosshair className="w-3 h-3" />
-            <span>{isDrawingFace ? "Drag over a face..." : "Draw Face Box"}</span>
-          </button>
+          {video && (
+            <button
+              onClick={() => setIsLoupeOpen(true)}
+              className="absolute inset-0 m-auto w-12 h-12 rounded-full bg-black/60 hover:bg-black/80 border border-white/25 backdrop-blur-sm flex items-center justify-center shadow transition"
+              title="Play (Space)"
+              aria-label="Play video"
+            >
+              <Play className="w-5 h-5 text-white fill-white ml-0.5" />
+            </button>
+          )}
+
+          {/* Draw Face Button (photos only) */}
+          {!video && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setIsDrawingFace((p) => !p);
+                setSelectedFaceId(null);
+              }}
+              className={`absolute top-2.5 left-2.5 px-2.5 py-1 rounded-md text-[11px] font-semibold flex items-center gap-1 transition backdrop-blur shadow ${
+                isDrawingFace
+                  ? "bg-indigo-600 text-white"
+                  : "bg-black/70 hover:bg-zinc-800 text-zinc-200 border border-white/10"
+              }`}
+            >
+              <Crosshair className="w-3 h-3" />
+              <span>{isDrawingFace ? "Drag over a face..." : "Draw Face Box"}</span>
+            </button>
+          )}
 
           <button
             onClick={() => setIsLoupeOpen(true)}
@@ -401,7 +425,7 @@ function RightInspector({
         </div>
 
         {/* Phase 6: Live RGB + Luminance Histogram (Pro Mode) */}
-        {!simpleMode && (
+        {!simpleMode && previewSrc && (
           <HistogramCanvas imageSrc={previewSrc} />
         )}
 
@@ -797,28 +821,47 @@ function RightInspector({
                   </span>
                 </>
               )}
-              {!simpleMode && (
+              {video ? (
                 <>
-                  <span>•</span>
-                  <span className="font-mono text-emerald-400">
-                    Score: {activePhoto.sharpness}
-                  </span>
+                  {activePhoto.duration_ms != null && (
+                    <>
+                      <span>•</span>
+                      <span className="font-mono text-sky-400">{formatDuration(activePhoto.duration_ms)}</span>
+                    </>
+                  )}
+                  {codecLabel(activePhoto.video_codec) && (
+                    <>
+                      <span>•</span>
+                      <span className="font-mono text-zinc-400">{codecLabel(activePhoto.video_codec)}</span>
+                    </>
+                  )}
                 </>
+              ) : (
+                !simpleMode && (
+                  <>
+                    <span>•</span>
+                    <span className="font-mono text-emerald-400">
+                      Score: {activePhoto.sharpness}
+                    </span>
+                  </>
+                )
               )}
             </div>
           </div>
-          <button
-            onClick={handleAiAnalyzeSingle}
-            disabled={analyzingHashes.has(activePhoto.hash)}
-            className="flex items-center gap-1 px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-700 text-white rounded-lg text-xs font-medium shrink-0 shadow-sm"
-          >
-            {analyzingHashes.has(activePhoto.hash) ? (
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            ) : (
-              <Sparkles className="w-3.5 h-3.5" />
-            )}
-            <span>{analyzingHashes.has(activePhoto.hash) ? "Tagging..." : "AI (A)"}</span>
-          </button>
+          {!video && (
+            <button
+              onClick={handleAiAnalyzeSingle}
+              disabled={analyzingHashes.has(activePhoto.hash)}
+              className="flex items-center gap-1 px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-700 text-white rounded-lg text-xs font-medium shrink-0 shadow-sm"
+            >
+              {analyzingHashes.has(activePhoto.hash) ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Sparkles className="w-3.5 h-3.5" />
+              )}
+              <span>{analyzingHashes.has(activePhoto.hash) ? "Tagging..." : "AI (A)"}</span>
+            </button>
+          )}
         </div>
 
         {/* Metadata & Interactive GPS / City Search */}

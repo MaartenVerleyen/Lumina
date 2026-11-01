@@ -2,6 +2,7 @@ import { thumbSrc } from "../../utils/photoHelpers";
 import { useState, useRef, useEffect } from "react";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { diskPathOf } from "../../utils/rawPairs";
+import { isPlayableInWebView, isVideo } from "../../utils/media";
 import { useDialogFocus } from "../../hooks/useDialogFocus";
 import { useWheel } from "../../hooks/useWheel";
 import { PhotoItem } from "../../types/lumina";
@@ -10,6 +11,7 @@ import {
   ChevronRight,
   ExternalLink,
   Eye,
+  Film,
   Flag,
   Folder,
   Pin,
@@ -71,6 +73,7 @@ export default function LoupeModal({
   // A drag that ends over the backdrop fires a click there: it must not close the Loupe
   const didPanRef = useRef<boolean>(false);
   const isVisible = isOpen && Boolean(activePhoto);
+  const video = activePhoto ? isVideo(activePhoto) : false;
   const dialogRef = useDialogFocus<HTMLDivElement>(isVisible);
   useWheel(
     dialogRef,
@@ -82,7 +85,8 @@ export default function LoupeModal({
         return next;
       });
     },
-    isVisible
+    // A video keeps the wheel for its own controls (volume); zoom is for photos
+    isVisible && !video
   );
 
   useEffect(() => {
@@ -149,7 +153,7 @@ export default function LoupeModal({
       }}
       onMouseDown={(e) => {
         didPanRef.current = false;
-        if (loupeZoom <= 1) return;
+        if (loupeZoom <= 1 || video) return;
         isPanningRef.current = true;
         panStartRef.current = {
           x: e.clientX - loupePan.x,
@@ -189,7 +193,7 @@ export default function LoupeModal({
               {activePhoto.captured_at.split(" ")[0].replace(/:/g, "-")}
             </span>
           )}
-          {activePhoto.focal_length && (
+          {!video && activePhoto.focal_length && (
             <span className="text-emerald-400 font-mono border-l border-zinc-800 pl-2.5">
               {activePhoto.focal_length} {activePhoto.aperture || ""}{" "}
               {activePhoto.shutter_speed || ""} {activePhoto.iso || ""}
@@ -218,8 +222,12 @@ export default function LoupeModal({
             </button>
           </div>
 
-          {/* Zoom Controls */}
-          <div className="flex items-center gap-1.5 bg-zinc-900/90 border border-zinc-800 px-2.5 py-1 rounded-xl text-xs">
+          {/* Zoom Controls (photos only: a video has its own player controls) */}
+          <div
+            className={`flex items-center gap-1.5 bg-zinc-900/90 border border-zinc-800 px-2.5 py-1 rounded-xl text-xs ${
+              video ? "hidden" : ""
+            }`}
+          >
             <button
               onClick={() => {
                 setLoupeZoom((z) => {
@@ -280,28 +288,68 @@ export default function LoupeModal({
           <ChevronLeft className="w-6 h-6" />
         </button>
 
-        <img
-          onClick={(e) => e.stopPropagation()}
-          onDoubleClick={(e) => {
-            e.stopPropagation();
-            if (loupeZoom > 1) {
-              setLoupeZoom(1);
-              setLoupePan({ x: 0, y: 0 });
-            } else {
-              setLoupeZoom(2.5);
-            }
-          }}
-          src={convertFileSrc(activePhoto.path)}
-          alt={activePhoto.name}
-          draggable={false}
-          style={{
-            transform: `translate(${loupePan.x}px, ${loupePan.y}px) scale(${loupeZoom}) rotate(${activePhoto.rotation}deg)`,
-            transformOrigin: "center center",
-          }}
-          className={`max-w-full max-h-full object-contain rounded-xl shadow-2xl transition-transform duration-75 ${
-            loupeZoom > 1 ? "cursor-grab active:cursor-grabbing" : "cursor-zoom-in"
-          }`}
-        />
+        {video ? (
+          isPlayableInWebView(activePhoto) ? (
+            <video
+              key={activePhoto.hash}
+              data-loupe-video
+              src={convertFileSrc(activePhoto.path)}
+              poster={activePhoto.thumb_ready ? thumbSrc(activePhoto) : undefined}
+              controls
+              autoPlay
+              onClick={(e) => e.stopPropagation()}
+              className="max-w-full max-h-full rounded-xl shadow-2xl bg-black"
+            />
+          ) : (
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="relative max-w-full max-h-full flex flex-col items-center justify-center gap-3"
+            >
+              {activePhoto.thumb_ready ? (
+                <img
+                  src={thumbSrc(activePhoto)}
+                  alt={activePhoto.name}
+                  draggable={false}
+                  className="max-w-full max-h-[60vh] object-contain rounded-xl shadow-2xl opacity-60"
+                />
+              ) : (
+                <Film className="w-16 h-16 text-zinc-700" />
+              )}
+              <div className="bg-zinc-900/90 border border-zinc-800 rounded-xl px-4 py-3 text-xs text-zinc-300 flex items-center gap-3">
+                <span>This video's format doesn't play inside Lumina.</span>
+                <button
+                  onClick={() => invoke("open_in_default_app", { path: diskPathOf(activePhoto) })}
+                  className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium"
+                >
+                  Open in player
+                </button>
+              </div>
+            </div>
+          )
+        ) : (
+          <img
+            onClick={(e) => e.stopPropagation()}
+            onDoubleClick={(e) => {
+              e.stopPropagation();
+              if (loupeZoom > 1) {
+                setLoupeZoom(1);
+                setLoupePan({ x: 0, y: 0 });
+              } else {
+                setLoupeZoom(2.5);
+              }
+            }}
+            src={convertFileSrc(activePhoto.path)}
+            alt={activePhoto.name}
+            draggable={false}
+            style={{
+              transform: `translate(${loupePan.x}px, ${loupePan.y}px) scale(${loupeZoom}) rotate(${activePhoto.rotation}deg)`,
+              transformOrigin: "center center",
+            }}
+            className={`max-w-full max-h-full object-contain rounded-xl shadow-2xl transition-transform duration-75 ${
+              loupeZoom > 1 ? "cursor-grab active:cursor-grabbing" : "cursor-zoom-in"
+            }`}
+          />
+        )}
 
         <button
           onClick={(e) => {
@@ -496,33 +544,37 @@ export default function LoupeModal({
             </button>
           </div>
 
-          {/* Rotation in Loupe */}
-          <div className="flex items-center gap-1 border-l border-zinc-700 pl-3">
-            <button
-              onClick={() => handleRotateSelection(-90)}
-              className="p-1 hover:bg-zinc-800 rounded text-zinc-400 hover:text-white"
-              title="Rotate Left ([)"
-            >
-              <RotateLeft className="w-3.5 h-3.5" />
-            </button>
-            <button
-              onClick={() => handleRotateSelection(90)}
-              className="p-1 hover:bg-zinc-800 rounded text-zinc-400 hover:text-white"
-              title="Rotate Right (])"
-            >
-              <RotateCw className="w-3.5 h-3.5" />
-            </button>
-          </div>
+          {/* Rotation and AI in Loupe (photos only) */}
+          {!video && (
+            <>
+              <div className="flex items-center gap-1 border-l border-zinc-700 pl-3">
+                <button
+                  onClick={() => handleRotateSelection(-90)}
+                  className="p-1 hover:bg-zinc-800 rounded text-zinc-400 hover:text-white"
+                  title="Rotate Left ([)"
+                >
+                  <RotateLeft className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  onClick={() => handleRotateSelection(90)}
+                  className="p-1 hover:bg-zinc-800 rounded text-zinc-400 hover:text-white"
+                  title="Rotate Right (])"
+                >
+                  <RotateCw className="w-3.5 h-3.5" />
+                </button>
+              </div>
 
-          {/* AI Analyze in Loupe */}
-          <button
-            onClick={handleAiAnalyzeSingle}
-            className="flex items-center gap-1 px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-white font-medium shadow"
-            title="Run Local AI Vision Analysis (A)"
-          >
-            <Sparkles className="w-3.5 h-3.5" />
-            <span>AI Tag (A)</span>
-          </button>
+              {/* AI Analyze in Loupe */}
+              <button
+                onClick={handleAiAnalyzeSingle}
+                className="flex items-center gap-1 px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-white font-medium shadow"
+                title="Run Local AI Vision Analysis (A)"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>AI Tag (A)</span>
+              </button>
+            </>
+          )}
         </div>
 
         {/* Bottom Filmstrip Scrubber (when visiblePhotos are provided) */}
@@ -543,11 +595,15 @@ export default function LoupeModal({
                       : "border-transparent opacity-60 hover:opacity-100"
                   }`}
                 >
-                  <img
-                    src={fp.thumb_ready ? thumbSrc(fp) : convertFileSrc(fp.path)}
-                    alt={fp.name}
-                    className="w-full h-full object-cover"
-                  />
+                  {fp.thumb_ready ? (
+                    <img src={thumbSrc(fp)} alt={fp.name} className="w-full h-full object-cover" />
+                  ) : isVideo(fp) ? (
+                    <span className="w-full h-full flex items-center justify-center bg-zinc-900">
+                      <Film className="w-4 h-4 text-zinc-600" />
+                    </span>
+                  ) : (
+                    <img src={convertFileSrc(fp.path)} alt={fp.name} className="w-full h-full object-cover" />
+                  )}
                 </button>
               );
             })}

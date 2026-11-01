@@ -97,12 +97,18 @@ fn exif_for(src: &ExportSource, strip_gps: bool) -> Metadata {
     md
 }
 
-// "IMG_0001.CR3" -> "IMG_0001.jpg", then "IMG_0001_2.jpg", ... if that name is taken (on disk or in this run)
+// "IMG_0001.CR3" -> "IMG_0001.jpg", then "IMG_0001_2.jpg", ... if that name is taken (on disk or in this run).
+// A video keeps its own extension.
 fn unique_target(dir: &Path, name: &str, taken: &Mutex<HashSet<String>>) -> PathBuf {
     let stem = Path::new(name).file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "photo".into());
+    let ext = if crate::video_meta::is_video_path(Path::new(name)) {
+        Path::new(name).extension().map(|e| e.to_string_lossy().to_string()).unwrap_or_default()
+    } else {
+        "jpg".to_string()
+    };
     let mut taken = taken.lock().unwrap_or_else(|e| e.into_inner());
     for n in 1.. {
-        let candidate = if n == 1 { format!("{stem}.jpg") } else { format!("{stem}_{n}.jpg") };
+        let candidate = if n == 1 { format!("{stem}.{ext}") } else { format!("{stem}_{n}.{ext}") };
         let path = dir.join(&candidate);
         if !path.exists() && taken.insert(candidate.to_lowercase()) {
             return path;
@@ -112,6 +118,15 @@ fn unique_target(dir: &Path, name: &str, taken: &Mutex<HashSet<String>>) -> Path
 }
 
 fn export_one(src: &ExportSource, target: &Path, opts: &ExportOptions) -> Result<(), String> {
+    // Videos are copied as they are (no resizing, and their location stays in the file)
+    if crate::video_meta::is_video_path(Path::new(&src.disk_path)) {
+        let part = target.with_extension("part");
+        fs::copy(&src.disk_path, &part).map_err(|e| e.to_string())?;
+        return fs::rename(&part, target).map_err(|e| {
+            let _ = fs::remove_file(&part);
+            e.to_string()
+        });
+    }
     // Full size asks the decoders for everything they have; otherwise just enough for the long edge
     let wanted = if opts.long_edge == 0 { 100_000 } else { opts.long_edge };
     let mut img = open_and_orient_image_sized(Path::new(&src.disk_path), wanted)?;

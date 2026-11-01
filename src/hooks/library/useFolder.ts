@@ -154,6 +154,7 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
             thumb_ready: hit.thumb_ok,
             damaged: hit.damaged,
             duplicate_group: nextDup,
+            duration_ms: hit.duration_ms ?? p.duration_ms,
           };
         })
       );

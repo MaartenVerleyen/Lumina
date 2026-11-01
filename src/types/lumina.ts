@@ -87,6 +87,10 @@ export interface PhotoItem {
   damaged: boolean;
   // Bumped when the thumbnail file was replaced (cache-busts the grid image)
   thumb_rev?: number;
+  // "video" for videos (missing or "photo" otherwise); a video's length and the codec its container names
+  media_type?: string;
+  duration_ms?: number | null;
+  video_codec?: string | null;
 }
 
 export interface PersonItem {
@@ -112,6 +116,8 @@ export interface ThumbBatchItem {
   damaged: boolean;
   // Long edge the thumbnail file was (re)written at; 0 when the existing file was reused
   thumb_edge: number;
+  // Videos: length found by the frame pass
+  duration_ms?: number | null;
 }
 
 export interface ThumbBatchProgress {
@@ -295,7 +301,9 @@ export type SmartFilter =
   | "HAS_GPS"
   | "STAGED"
   | "EYES_CLOSED"
-  | "SOFT_FOCUS";
+  | "SOFT_FOCUS"
+  | "PHOTOS"
+  | "VIDEOS";
 
 export type OrientationFilter = "ALL" | "LANDSCAPE" | "PORTRAIT" | "SQUARE";
 

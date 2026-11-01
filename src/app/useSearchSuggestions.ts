@@ -31,7 +31,7 @@ export function useSearchSuggestions(lib: LibraryState) {
       flag: ["pick", "reject", "none"],
       label: ["red", "yellow", "green", "blue", "none"],
       has: ["gps", "faces", "people", "caption", "ocr", "tags", "location"],
-      is: ["raw", "paired", "screenshot", "whatsapp", "damaged", "staged", "basket", "pick", "reject", "blinking", "blurry"],
+      is: ["video", "photo", "raw", "paired", "screenshot", "whatsapp", "damaged", "staged", "basket", "pick", "reject", "blinking", "blurry"],
     };
     const values =
       fixed[key] ??

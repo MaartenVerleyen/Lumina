@@ -381,6 +381,15 @@ fn ensure_clip_cache(conn: &Connection) {
     CLIP_CACHE_LOADED.store(true, Ordering::Release);
 }
 
+// Removed photos leave smart search at once (their rows go with the photo, in the caller's transaction)
+pub fn forget_vectors(hashes: &[String]) {
+    if let Ok(mut cache) = CLIP_CACHE.lock() {
+        for h in hashes {
+            cache.remove(h);
+        }
+    }
+}
+
 // Error text the UI recognises as "the user stopped it"
 pub const SEMANTIC_CANCELLED: &str = "Smart search indexing cancelled";
 static SEMANTIC_CANCEL: AtomicU64 = AtomicU64::new(0);

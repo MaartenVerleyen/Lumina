@@ -2,6 +2,7 @@ import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { TimestampShiftResult, PhotoActionSnapshot } from "../../types/lumina";
 import { expandWithRawPairs } from "../../utils/rawPairs";
+import { isVideo } from "../../utils/media";
 import { captureSnapshots } from "./undo";
 import type { LibraryView } from "./useLibraryView";
 import type { LibraryCore } from "./core";
@@ -156,7 +157,9 @@ export function useTriage(core: LibraryCore, view: LibraryView) {
   }
 
   async function handleRotateSelection(deltaDegrees: number, targetHashes?: string[]) {
-    const hashes = resolveTargets(targetHashes);
+    // Videos play the way their file says; turning them is for a video editor
+    const videoHashes = new Set(photos.filter(isVideo).map((p) => p.hash));
+    const hashes = resolveTargets(targetHashes).filter((h) => !videoHashes.has(h));
     if (hashes.length === 0) return;
     try {
       const hashSet = new Set(hashes);

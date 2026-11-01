@@ -14,6 +14,8 @@ pub const THUMB_EDGE: u32 = 480;
 // dHash and focus scores are measured at 360 px, the size they were tuned on, whatever the thumbnail size
 const METRICS_EDGE: u32 = 360;
 const UI_BATCH_MAX_WAIT: Duration = Duration::from_millis(250);
+// Videos decode a few frames each (up to 4K HEVC): two at a time leaves the rest of the machine free
+const VIDEO_THREADS: usize = 2;
 
 // The photo's own file on disk. For RAW/HEIC `path` is the cached preview and the original is in
 // `pair_raw_path`; for a JPEG `pair_raw_path` is its RAW partner, so the JPEG itself is `path`.
@@ -89,12 +91,15 @@ fn run_thumbnail_pass(
         batch_decode_heic_thumbs_windows(&jobs);
     }
 
+    // Photos first, through the decode pipeline; videos after them, a few frames each
+    let (videos, photos): (Vec<PhotoItem>, Vec<PhotoItem>) = items.iter().cloned().partition(|p| p.media_type == "video");
+
     // Collector: stream finished thumbnails to the DB and the UI in small batches
     let mut conn = open_global_db(app).ok();
     let mut batch: Vec<ThumbBatchItem> = Vec::with_capacity(UI_BATCH_SIZE);
     let mut last_flush = Instant::now();
     let mut completed = 0usize;
-    let (reused, heic) = run_decode_pipeline(items, io_threads, force, upgrade, is_superseded, |event| {
+    let mut collect = |event: PipelineEvent| {
         let finished = match event {
             PipelineEvent::Item(item) => {
                 batch.push(item);
@@ -109,7 +114,15 @@ fn run_thumbnail_pass(
             flush_batch(app, conn.as_mut(), std::mem::take(&mut batch), &folder, completed, total, &mut stats);
             last_flush = Instant::now();
         }
-    });
+    };
+    let (reused, heic) = run_decode_pipeline(&photos, io_threads, force, upgrade, is_superseded, &mut collect);
+    let video_started = Instant::now();
+    if !videos.is_empty() && !is_superseded() {
+        let frames_dir = video_frames::frames_dir(&get_app_storage_dir(app));
+        let _ = fs::create_dir_all(&frames_dir);
+        run_video_pass(&videos, &frames_dir, force, is_superseded, &mut collect);
+    }
+    let video_ms = elapsed_ms(video_started);
     stats.reused = reused;
     stats.heic = heic;
 
@@ -140,7 +153,7 @@ fn run_thumbnail_pass(
         started,
         total,
         format!(
-            "{}/s · {} readers ({}) + {} decoders · {} reused cached thumbs · HEIC {} via WIC{} · db {} ms · {} failed · {} damaged",
+            "{}/s · {} readers ({}) + {} decoders · {} reused cached thumbs · HEIC {} via WIC{} · {} videos in {} ms · db {} ms · {} failed · {} damaged",
             per_second(total, total_ms),
             io_threads,
             drive_kind,
@@ -148,6 +161,8 @@ fn run_thumbnail_pass(
             stats.reused,
             stats.heic,
             if powershell_heic > 0 { format!(" ({powershell_heic} via PowerShell)") } else { String::new() },
+            videos.len(),
+            video_ms,
             stats.db_ms,
             stats.failed,
             stats.damaged
@@ -267,6 +282,7 @@ fn process_one(photo: &PhotoItem, input: ThumbInput, force: bool) -> ThumbBatchI
         // Unreadable unless decoding succeeds below
         damaged: true,
         thumb_edge: 0,
+        duration_ms: None,
     };
 
     if let Ok((img, damaged)) = decoded {
@@ -304,6 +320,91 @@ fn process_one(photo: &PhotoItem, input: ThumbInput, force: bool) -> ThumbBatchI
     item
 }
 
+// Videos: frames and a thumbnail from each, on VIDEO_THREADS threads of their own; `on_event` runs on the
+// calling thread like the photo pipeline's
+pub fn run_video_pass(
+    videos: &[PhotoItem],
+    frames_dir: &Path,
+    force: bool,
+    is_superseded: impl Fn() -> bool + Copy + Send + Sync,
+    mut on_event: impl FnMut(PipelineEvent),
+) {
+    let (tx, rx) = channel::<ThumbBatchItem>();
+    let next = AtomicUsize::new(0);
+    std::thread::scope(|s| {
+        for _ in 0..VIDEO_THREADS.min(videos.len()) {
+            let (tx, next) = (tx.clone(), &next);
+            s.spawn(move || {
+                lower_current_thread_priority();
+                loop {
+                    let idx = next.fetch_add(1, Ordering::Relaxed);
+                    if idx >= videos.len() || is_superseded() {
+                        break;
+                    }
+                    if tx.send(process_video(&videos[idx], frames_dir, force)).is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+        drop(tx);
+        loop {
+            match rx.recv_timeout(Duration::from_millis(100)) {
+                Ok(item) => on_event(PipelineEvent::Item(item)),
+                Err(RecvTimeoutError::Timeout) => on_event(PipelineEvent::Idle),
+                Err(RecvTimeoutError::Disconnected) => {
+                    on_event(PipelineEvent::Finished);
+                    break;
+                }
+            }
+        }
+    });
+}
+
+fn process_video(video: &PhotoItem, frames_dir: &Path, force: bool) -> ThumbBatchItem {
+    let thumb_file = Path::new(&video.thumb_path);
+    let mut item = ThumbBatchItem {
+        hash: video.hash.clone(),
+        thumb_path: video.thumb_path.clone(),
+        dhash: String::new(),
+        sharpness: 0.0,
+        width: video.width,
+        height: video.height,
+        auto_tags: Vec::new(),
+        thumb_ok: false,
+        damaged: false,
+        thumb_edge: 0,
+        duration_ms: video.duration_ms,
+    };
+    let have_frames = video_frames::frame_path(frames_dir, &video.hash, 0).exists();
+    if force || !have_frames || !thumb_file.exists() {
+        let source = PathBuf::from(&video.path);
+        let rotation = video_meta::read_video_meta(&source).rotation;
+        // Without a codec for it (or a broken file) the grid shows a placeholder; the frames come later
+        // from ffmpeg when it is installed
+        if let Some(grabbed) = video_frames::grab_frames(&source, rotation) {
+            video_frames::delete_frames(frames_dir, &video.hash);
+            for (n, frame) in grabbed.frames.iter().enumerate() {
+                write_thumbnail(frame, &video_frames::frame_path(frames_dir, &video.hash, n));
+            }
+            if let Some(frame) = video_frames::thumbnail_frame(&grabbed.frames) {
+                if write_thumbnail(&frame.thumbnail(THUMB_EDGE, THUMB_EDGE), thumb_file) {
+                    item.thumb_edge = THUMB_EDGE;
+                }
+            }
+            if item.width == 0 || item.height == 0 {
+                item.width = grabbed.width;
+                item.height = grabbed.height;
+            }
+            if item.duration_ms.is_none() && grabbed.duration_ms > 0 {
+                item.duration_ms = Some(grabbed.duration_ms);
+            }
+        }
+    }
+    item.thumb_ok = thumb_file.exists();
+    item
+}
+
 // Written next to the target and renamed, so the grid never loads a half-written file while an older
 // thumbnail is being replaced
 fn write_thumbnail(img: &DynamicImage, target: &Path) -> bool {
@@ -335,6 +436,9 @@ fn flush_batch(
                     "UPDATE photos SET dhash = ?1, sharpness = ?2, width = CASE WHEN ?3 > 0 THEN ?3 ELSE width END, height = CASE WHEN ?4 > 0 THEN ?4 ELSE height END, damaged = ?6 WHERE hash = ?5",
                     params![item.dhash, item.sharpness, item.width, item.height, item.hash, item.damaged],
                 );
+                if let Some(ms) = item.duration_ms {
+                    let _ = tx.execute("UPDATE photos SET duration_ms = ?1 WHERE hash = ?2", params![ms, item.hash]);
+                }
                 if item.thumb_edge > 0 {
                     let _ = tx.execute(
                         "UPDATE photos SET thumb_edge = ?1 WHERE hash = ?2",

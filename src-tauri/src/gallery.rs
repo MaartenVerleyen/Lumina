@@ -160,6 +160,10 @@ pub async fn export_gallery(app: AppHandle, options: GalleryOptions) -> Result<G
                 }) else {
                     continue;
                 };
+                // The gallery is a page of photos: videos are left out
+                if crate::video_meta::is_video_path(Path::new(&src.disk_path)) {
+                    continue;
+                }
                 if options.people {
                     src.people = people_stmt
                         .query_map(params![hash], |r| r.get::<_, String>(0))

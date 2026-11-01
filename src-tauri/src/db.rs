@@ -122,6 +122,10 @@ pub fn open_global_db(app: &AppHandle) -> Result<Connection, String> {
     // Culling: eye opening and focus per face (NULL until measured)
     let _ = conn.execute("ALTER TABLE photo_faces ADD COLUMN eyes_open REAL", []);
     let _ = conn.execute("ALTER TABLE photo_faces ADD COLUMN face_sharpness REAL", []);
+    // Videos live in the same table: 'video' rows have a length (ms) and the codec named in their container
+    let _ = conn.execute("ALTER TABLE photos ADD COLUMN media_type TEXT DEFAULT 'photo'", []);
+    let _ = conn.execute("ALTER TABLE photos ADD COLUMN duration_ms INTEGER", []);
+    let _ = conn.execute("ALTER TABLE photos ADD COLUMN video_codec TEXT", []);
 
     albums::ensure_album_tables(&conn);
     // Hidden people: kept on their photos, left out of the people bar and of suggestions
@@ -168,7 +172,8 @@ pub fn open_global_db(app: &AppHandle) -> Result<Connection, String> {
          CREATE INDEX IF NOT EXISTS idx_tags_tag ON photo_tags(tag);
          CREATE INDEX IF NOT EXISTS idx_tags_hash ON photo_tags(hash);
          CREATE INDEX IF NOT EXISTS idx_people_hash ON photo_people(hash);
-         CREATE INDEX IF NOT EXISTS idx_faces_hash ON photo_faces(hash);",
+         CREATE INDEX IF NOT EXISTS idx_faces_hash ON photo_faces(hash);
+         CREATE INDEX IF NOT EXISTS idx_photos_media ON photos(media_type);",
     );
 
     DB_SCHEMA_READY.store(true, Ordering::Release);
