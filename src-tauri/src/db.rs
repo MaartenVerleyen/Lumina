@@ -162,6 +162,12 @@ pub fn open_global_db(app: &AppHandle) -> Result<Connection, String> {
         "CREATE TABLE IF NOT EXISTS photo_clip (hash TEXT PRIMARY KEY, embedding BLOB NOT NULL, model TEXT NOT NULL)",
         [],
     );
+    // Videos: one vector per stored frame (search scores a video by its best frame; photo_clip holds their mean)
+    let _ = conn.execute(
+        "CREATE TABLE IF NOT EXISTS photo_clip_frames (hash TEXT NOT NULL, frame INTEGER NOT NULL, embedding BLOB NOT NULL,
+            model TEXT NOT NULL, PRIMARY KEY (hash, frame))",
+        [],
+    );
 
     // Phase 2: Create high-speed covering indexes for folder-scoped & hash lookups
     let _ = conn.execute_batch(

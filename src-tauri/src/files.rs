@@ -970,6 +970,7 @@ fn forget_deleted_photos(app: &AppHandle, conn: &mut Connection, hashes: &[Strin
             let _ = tx.execute("DELETE FROM photo_people WHERE hash = ?1", params![h]);
             let _ = tx.execute("DELETE FROM photo_faces WHERE hash = ?1", params![h]);
             let _ = tx.execute("DELETE FROM photo_clip WHERE hash = ?1", params![h]);
+            let _ = tx.execute("DELETE FROM photo_clip_frames WHERE hash = ?1", params![h]);
         }
         let _ = tx.commit();
     }

@@ -1858,3 +1858,51 @@ fn date_seconds_counts_days_across_months() {
     assert_eq!(b - a, 86_400 + 1);
     assert_eq!(video_meta::date_seconds("1970-01-01 00:00:00"), Some(0));
 }
+
+#[test]
+fn video_faces_remember_their_frame() {
+    let id = video_frames::face_frame_id("ab12cd34ef56ab78", 3, (0.25, 0.4, 0.1, 0.1));
+    assert_eq!(id, "ab12cd34ef56ab78_f3_25_40");
+    assert_eq!(video_frames::frame_of_face(&id), Some(3));
+    // A photo's face id has no frame
+    assert_eq!(video_frames::frame_of_face("ab12cd34ef56ab78_25_40"), None);
+}
+
+// Faces in the stored frames of the library's videos (read-only): how many each frame has, and how many
+// people are kept per video. Face crops go to LUMINA_DIAG_OUT.
+// PowerShell: $env:LUMINA_DIAG_OUT="<folder>"; cargo test --release --lib video_faces_in_library -- --ignored --nocapture
+#[test]
+#[ignore]
+fn video_faces_in_library() {
+    let Ok(out) = std::env::var("LUMINA_DIAG_OUT") else {
+        eprintln!("Set LUMINA_DIAG_OUT");
+        return;
+    };
+    let app_dir = PathBuf::from(std::env::var("LOCALAPPDATA").unwrap()).join("com.amazhr.lumina");
+    let models = FaceModels::load(&app_dir.join("models")).expect("face models");
+    let frames_dir = video_frames::frames_dir(&app_dir);
+    let conn = Connection::open_with_flags(app_dir.join("library.db"), rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    let hashes: Vec<String> = conn
+        .prepare("SELECT hash FROM photos WHERE media_type = 'video' AND COALESCE(duration_ms, 0) > 4000 ORDER BY captured_at DESC LIMIT 40")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .flatten()
+        .collect();
+    let out = PathBuf::from(out);
+    let _ = fs::create_dir_all(&out);
+    let started = Instant::now();
+    let (mut detections, mut kept) = (0, 0);
+    for h in &hashes {
+        let per_frame: Vec<usize> = video_frames::frame_paths(&frames_dir, h)
+            .iter()
+            .filter_map(|p| image::open(p).ok())
+            .map(|img| models.analyze(&img).unwrap_or_default().iter().filter(|f| face_scan::is_usable_face(&img, f.detection.bbox)).count())
+            .collect();
+        let faces = face_scan::video_faces(&models, h, &frames_dir, &out, &[]);
+        detections += per_frame.iter().sum::<usize>();
+        kept += faces.len();
+        eprintln!("{h}: faces per frame {per_frame:?} -> {} kept {:?}", faces.len(), faces.iter().map(|f| &f.face.face_id).collect::<Vec<_>>());
+    }
+    eprintln!("{} videos in {} ms: {detections} detections, {kept} faces kept", hashes.len(), started.elapsed().as_millis());
+}

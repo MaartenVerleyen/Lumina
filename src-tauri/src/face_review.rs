@@ -79,6 +79,7 @@ pub struct SimilarFaceCandidate {
 }
 
 pub fn format_display_photo_path(
+    face_id: &str,
     photo_path: String,
     hash: &str,
     previews_dir: &Path,
@@ -93,7 +94,12 @@ pub fn format_display_photo_path(
         .extension()
         .map(|e| e.to_string_lossy().to_lowercase())
         .unwrap_or_default();
-    let display_photo_path = if is_raw_or_heic_ext(&ext) {
+    let video_frame = crate::video_frames::frame_of_face(face_id)
+        .filter(|_| crate::video_meta::is_video_ext(&ext))
+        .map(|n| crate::video_frames::frame_path(&previews_dir.with_file_name("frames"), hash, n));
+    let display_photo_path = if let Some(frame) = video_frame {
+        frame.to_string_lossy().to_string()
+    } else if is_raw_or_heic_ext(&ext) {
         let prev = previews_dir.join(format!("{}_preview.jpg", hash));
         let th = thumbs_dir.join(format!("{}.jpg", hash));
         if prev.exists() {
@@ -273,7 +279,7 @@ pub fn compute_face_suggestions(
     for ((_, person), (i, score)) in best_per_photo {
         let u = &unassigned[i];
         let (photo_name, display_photo_path) =
-            format_display_photo_path(u.photo_path.clone(), &u.hash, &previews_dir, &thumbs_dir);
+            format_display_photo_path(&u.face_id, u.photo_path.clone(), &u.hash, &previews_dir, &thumbs_dir);
         out.entry(person_names[person].clone()).or_default().push(SimilarFaceCandidate {
             face_id: u.face_id.clone(),
             hash: u.hash.clone(),
@@ -386,7 +392,7 @@ pub async fn get_confirmed_faces_for_person(
         let mut out = Vec::new();
         for (face_id, hash, face_thumb, cur_person, photo_path, bx, by, bw, bh) in rows.flatten() {
             let (photo_name, display_photo_path) =
-                format_display_photo_path(photo_path, &hash, &previews_dir, &thumbs_dir);
+                format_display_photo_path(&face_id, photo_path, &hash, &previews_dir, &thumbs_dir);
             out.push(SimilarFaceCandidate {
                 face_id,
                 hash,
@@ -452,7 +458,7 @@ pub async fn get_rejected_faces_for_person(
         let mut out = Vec::new();
         for (face_id, hash, face_thumb, cur_person, photo_path, bx, by, bw, bh) in rows.flatten() {
             let (photo_name, display_photo_path) =
-                format_display_photo_path(photo_path, &hash, &previews_dir, &thumbs_dir);
+                format_display_photo_path(&face_id, photo_path, &hash, &previews_dir, &thumbs_dir);
             out.push(SimilarFaceCandidate {
                 face_id,
                 hash,
@@ -749,11 +755,12 @@ pub async fn get_unknown_face_clusters(app: AppHandle, root_folder: Option<Strin
             .query_map(
                 params![FACE_ENGINE_V2, MIN_CLUSTER_FACE_CONFIDENCE, prefix, MAX_FACES_TO_CLUSTER as i64],
                 |r| {
+                    let face_id: String = r.get(0)?;
                     let hash: String = r.get(1)?;
                     let (photo_name, photo_path) =
-                        format_display_photo_path(r.get(3)?, &hash, &previews_dir, &thumbs_dir);
+                        format_display_photo_path(&face_id, r.get(3)?, &hash, &previews_dir, &thumbs_dir);
                     Ok(SimilarFaceCandidate {
-                        face_id: r.get(0)?,
+                        face_id,
                         hash,
                         face_thumb: r.get(2)?,
                         photo_name,

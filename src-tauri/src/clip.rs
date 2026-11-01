@@ -357,6 +357,8 @@ pub fn clip_models_if_present(dir: &Path) -> Option<Arc<ClipModels>> {
 // Image vectors of the current model, kept in memory for searching
 static CLIP_CACHE: LazyLock<Mutex<HashMap<String, Vec<f32>>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 static CLIP_CACHE_LOADED: AtomicBool = AtomicBool::new(false);
+// Videos: the vector of each frame, in frame order
+static FRAME_CACHE: LazyLock<Mutex<HashMap<String, Vec<Vec<f32>>>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
 fn ensure_clip_cache(conn: &Connection) {
     if CLIP_CACHE_LOADED.load(Ordering::Acquire) {
@@ -378,12 +380,33 @@ fn ensure_clip_cache(conn: &Connection) {
             cache.entry(k).or_insert(v);
         }
     }
+    let mut frames: HashMap<String, Vec<Vec<f32>>> = HashMap::new();
+    if let Ok(mut stmt) = conn.prepare("SELECT hash, embedding FROM photo_clip_frames WHERE model = ?1 ORDER BY hash, frame") {
+        if let Ok(rows) = stmt.query_map(params![CLIP_MODEL_ID], |r| Ok((r.get::<_, String>(0)?, r.get::<_, Vec<u8>>(1)?))) {
+            for (hash, blob) in rows.flatten() {
+                let v = blob_to_embedding(&blob);
+                if v.len() == EMBED_DIM {
+                    frames.entry(hash).or_default().push(v);
+                }
+            }
+        }
+    }
+    if let Ok(mut cache) = FRAME_CACHE.lock() {
+        for (k, v) in frames {
+            cache.entry(k).or_insert(v);
+        }
+    }
     CLIP_CACHE_LOADED.store(true, Ordering::Release);
 }
 
 // Removed photos leave smart search at once (their rows go with the photo, in the caller's transaction)
 pub fn forget_vectors(hashes: &[String]) {
     if let Ok(mut cache) = CLIP_CACHE.lock() {
+        for h in hashes {
+            cache.remove(h);
+        }
+    }
+    if let Ok(mut cache) = FRAME_CACHE.lock() {
         for h in hashes {
             cache.remove(h);
         }
@@ -457,15 +480,30 @@ async fn run_semantic_index(app: AppHandle, root_folder: String) -> Result<usize
     let conn = open_global_db(&app)?;
     ensure_clip_cache(&conn);
     let prefix = make_folder_prefix(Some(&root_folder));
-    let thumbs_dir = get_app_storage_dir(&app).join("thumbnails");
-    let todo: Vec<String> = {
+    let app_dir = get_app_storage_dir(&app);
+    let thumbs_dir = app_dir.join("thumbnails");
+    let frames_dir = crate::video_frames::frames_dir(&app_dir);
+    // (hash, images to embed, is a video): a photo's thumbnail, or a video's frames (videos indexed from their
+    // thumbnail alone, before frames were searched, are done again)
+    let todo: Vec<(String, Vec<PathBuf>, bool)> = {
         let cache = CLIP_CACHE.lock().map_err(|_| "cache lock poisoned")?;
+        let frame_cache = FRAME_CACHE.lock().map_err(|_| "cache lock poisoned")?;
         let mut stmt = conn
-            .prepare("SELECT hash FROM photos WHERE current_path LIKE ?1 ESCAPE '!'")
+            .prepare("SELECT hash, COALESCE(media_type, 'photo') = 'video' FROM photos WHERE current_path LIKE ?1 ESCAPE '!'")
             .map_err(|e| e.to_string())?;
-        let rows = stmt.query_map(params![prefix], |r| r.get::<_, String>(0)).map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params![prefix], |r| Ok((r.get::<_, String>(0)?, r.get::<_, bool>(1)?)))
+            .map_err(|e| e.to_string())?;
         rows.flatten()
-            .filter(|h| !cache.contains_key(h) && thumbs_dir.join(format!("{h}.jpg")).exists())
+            .filter_map(|(h, is_video)| {
+                if is_video {
+                    let frames = crate::video_frames::frame_paths(&frames_dir, &h);
+                    (!frame_cache.contains_key(&h) && !frames.is_empty()).then_some((h, frames, true))
+                } else {
+                    let thumb = thumbs_dir.join(format!("{h}.jpg"));
+                    (!cache.contains_key(&h) && thumb.exists()).then_some((h, vec![thumb], false))
+                }
+            })
             .collect()
     };
     let total = todo.len();
@@ -486,20 +524,36 @@ async fn run_semantic_index(app: AppHandle, root_folder: String) -> Result<usize
                 break;
             }
             // Decoding + preprocessing in parallel at low priority, then the GPU one image at a time
-            let inputs: Vec<(String, Option<Vec<f32>>)> = BG_POOL.install(|| {
+            let inputs: Vec<(String, bool, Vec<Vec<f32>>)> = BG_POOL.install(|| {
                 chunk
                     .par_iter()
-                    .map(|h| {
-                        let input = image::open(thumbs_dir.join(format!("{h}.jpg"))).ok().map(|img| clip_image_input(&img));
-                        (h.clone(), input)
+                    .map(|(h, images, is_video)| {
+                        let inputs = images.iter().filter_map(|p| image::open(p).ok().map(|img| clip_image_input(&img))).collect();
+                        (h.clone(), *is_video, inputs)
                     })
                     .collect()
             });
             let mut vectors: Vec<(String, Vec<f32>)> = Vec::with_capacity(inputs.len());
-            for (hash, input) in inputs {
-                if let Some(v) = input.and_then(|i| models.embed_image_input(&i).ok()) {
-                    vectors.push((hash, v));
+            let mut video_frames: Vec<(String, Vec<Vec<f32>>)> = Vec::new();
+            for (hash, is_video, images) in inputs {
+                let embedded: Vec<Vec<f32>> = images.iter().filter_map(|i| models.embed_image_input(i).ok()).collect();
+                if embedded.is_empty() {
+                    continue;
                 }
+                if !is_video {
+                    vectors.push((hash, embedded.into_iter().next().unwrap_or_default()));
+                    continue;
+                }
+                // A video's own vector (similar shots, highlights, "find similar") is the mean of its frames
+                let mut mean = vec![0f32; EMBED_DIM];
+                for v in &embedded {
+                    for (m, x) in mean.iter_mut().zip(v) {
+                        *m += x;
+                    }
+                }
+                l2_normalize(&mut mean);
+                vectors.push((hash.clone(), mean));
+                video_frames.push((hash, embedded));
             }
             if let Some(conn) = conn.as_mut() {
                 if let Ok(tx) = conn.transaction() {
@@ -509,11 +563,23 @@ async fn run_semantic_index(app: AppHandle, root_folder: String) -> Result<usize
                             params![hash, embedding_to_blob(v), CLIP_MODEL_ID],
                         );
                     }
+                    for (hash, frames) in &video_frames {
+                        let _ = tx.execute("DELETE FROM photo_clip_frames WHERE hash = ?1", params![hash]);
+                        for (n, v) in frames.iter().enumerate() {
+                            let _ = tx.execute(
+                                "INSERT INTO photo_clip_frames (hash, frame, embedding, model) VALUES (?1, ?2, ?3, ?4)",
+                                params![hash, n as i64, embedding_to_blob(v), CLIP_MODEL_ID],
+                            );
+                        }
+                    }
                     let _ = tx.commit();
                 }
             }
             if let Ok(mut cache) = CLIP_CACHE.lock() {
                 cache.extend(vectors);
+            }
+            if let Ok(mut cache) = FRAME_CACHE.lock() {
+                cache.extend(video_frames);
             }
             completed += chunk.len();
             emit_semantic(
@@ -568,10 +634,16 @@ const MAX_SCORED: usize = 20_000;
 
 fn rank(query: &[f32], exclude: Option<&str>, cut: bool) -> Vec<SemanticHit> {
     let Ok(cache) = CLIP_CACHE.lock() else { return Vec::new() };
+    let Ok(frames) = FRAME_CACHE.lock() else { return Vec::new() };
+    // A video scores by its best frame: what appears in one part of it is found too
     let mut hits: Vec<SemanticHit> = cache
         .iter()
         .filter(|(h, _)| Some(h.as_str()) != exclude)
-        .map(|(h, v)| SemanticHit { hash: h.clone(), score: face_match::dot(query, v) })
+        .map(|(h, v)| {
+            let own = face_match::dot(query, v);
+            let score = frames.get(h).into_iter().flatten().map(|f| face_match::dot(query, f)).fold(own, f32::max);
+            SemanticHit { hash: h.clone(), score }
+        })
         .collect();
     hits.sort_by(|a, b| b.score.total_cmp(&a.score));
     if !cut {

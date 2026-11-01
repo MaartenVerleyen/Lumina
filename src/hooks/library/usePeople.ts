@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { PersonItem, FaceScanProgress, FaceMatchEvent, FaceInstance, FaceModelDownloadProgress, FaceQualityProgress } from "../../types/lumina";
 import { diskPathOf } from "../../utils/rawPairs";
-import { isVideo, photosOnly } from "../../utils/media";
+import { isVideo } from "../../utils/media";
 import { removeFromExpr, renameInExpr } from "../../utils/peopleQuery";
 import type { LibraryCore } from "./core";
 import type { FilterState } from "./useFilterState";
@@ -246,11 +246,11 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
   }
 
   async function handleBatchScanFacesOnnx() {
-    const stills = photosOnly(photos);
-    if (stills.length === 0) return;
+    if (photos.length === 0) return;
+    // Videos are scanned on their stored frames (a few per video), each person once
     await startFaceScan(
-      stills.map((p) => p.hash),
-      `Started face scan on ${stills.length} photos`
+      photos.map((p) => p.hash),
+      `Started face scan on ${photos.length} photos and videos`
     );
   }
 

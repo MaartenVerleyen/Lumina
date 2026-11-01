@@ -31,6 +31,16 @@ pub fn frame_paths(frames_dir: &Path, hash: &str) -> Vec<PathBuf> {
     (0..FRAME_POSITIONS.len()).map(|n| frame_path(frames_dir, hash, n)).take_while(|p| p.exists()).collect()
 }
 
+// A face found in a video carries its frame in its id: "{hash}_f{frame}_{x}_{y}"
+pub fn face_frame_id(hash: &str, frame: usize, bbox: (f64, f64, f64, f64)) -> String {
+    format!("{hash}_f{frame}_{}_{}", (bbox.0 * 100.0).round() as i32, (bbox.1 * 100.0).round() as i32)
+}
+
+pub fn frame_of_face(face_id: &str) -> Option<usize> {
+    let rest = face_id.split_once("_f")?.1;
+    rest.split('_').next()?.parse().ok()
+}
+
 pub fn delete_frames(frames_dir: &Path, hash: &str) {
     for n in 0..FRAME_POSITIONS.len() {
         let _ = fs::remove_file(frame_path(frames_dir, hash, n));

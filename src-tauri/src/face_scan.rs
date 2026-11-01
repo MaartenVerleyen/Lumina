@@ -223,7 +223,24 @@ fn run_face_scan(app_clone: &AppHandle, hashes: Vec<String>, models: Arc<FaceMod
         let app_dir = get_app_storage_dir(&app_clone);
         let previews_dir = app_dir.join("previews");
         let faces_dir = app_dir.join("faces");
+        let frames_dir = crate::video_frames::frames_dir(&app_dir);
         let _ = fs::create_dir_all(&faces_dir);
+
+        // Named faces already on the videos being scanned: a new detection of the same person adds nothing
+        let mut named_video_faces: HashMap<String, Vec<Vec<f32>>> = HashMap::new();
+        if let Ok(mut stmt) = conn.prepare(
+            "SELECT pf.hash, pf.embedding_blob FROM photo_faces pf JOIN photos p ON p.hash = pf.hash
+             WHERE p.media_type = 'video' AND pf.person_name IS NOT NULL AND pf.person_name != '' AND pf.engine = ?1",
+        ) {
+            let wanted: std::collections::HashSet<&String> = hashes.iter().collect();
+            if let Ok(rows) = stmt.query_map(params![FACE_ENGINE_V2], |r| Ok((r.get::<_, String>(0)?, r.get::<_, Vec<u8>>(1)?))) {
+                for (h, blob) in rows.flatten() {
+                    if wanted.contains(&h) {
+                        named_video_faces.entry(h).or_default().push(blob_to_embedding(&blob));
+                    }
+                }
+            }
+        }
 
         let total = hashes.len();
         let mut completed_count = 0usize;
@@ -245,6 +262,11 @@ fn run_face_scan(app_clone: &AppHandle, hashes: Vec<String>, models: Arc<FaceMod
                     .par_iter()
                     .filter_map(|h| {
                         let orig_path = path_map.get(h)?;
+                        if crate::video_meta::is_video_path(Path::new(orig_path)) {
+                            let known = named_video_faces.get(h).map(Vec::as_slice).unwrap_or_default();
+                            let writes = video_faces(&models, h, &frames_dir, &faces_dir, known);
+                            return Some((h.clone(), writes, Vec::new()));
+                        }
                         let preview_path = previews_dir.join(format!("{}_preview.jpg", h));
                         let load_path = if preview_path.exists() {
                             preview_path.to_string_lossy().to_string()
@@ -312,6 +334,8 @@ fn run_face_scan(app_clone: &AppHandle, hashes: Vec<String>, models: Arc<FaceMod
                 if !chunk_results.is_empty() {
                     if let Ok(tx) = conn.transaction() {
                         for (h, writes, reembeds) in &chunk_results {
+                            // A video's faces come from different frames: boxes are never compared across them
+                            let is_video = path_map.get(h).is_some_and(|p| crate::video_meta::is_video_path(Path::new(p)));
                             let _ = tx.execute(
                                 "DELETE FROM photo_faces WHERE hash = ?1 AND (person_name IS NULL OR person_name = '')",
                                 params![h],
@@ -323,9 +347,12 @@ fn run_face_scan(app_clone: &AppHandle, hashes: Vec<String>, models: Arc<FaceMod
                                 let f = &item.face;
 
                                 // Check if this ONNX box overlaps an existing (e.g. already-named) face on this photo
-                                let (target_face_id, target_person) = if let Some((existing_id, existing_name)) =
+                                let overlapping = if is_video {
+                                    None
+                                } else {
                                     find_overlapping_face_id(&tx, h, (f.bbox_x, f.bbox_y, f.bbox_w, f.bbox_h), Some(&claimed_ids))
-                                {
+                                };
+                                let (target_face_id, target_person) = if let Some((existing_id, existing_name)) = overlapping {
                                     claimed_ids.insert(existing_id.clone());
                                     (existing_id, existing_name.or_else(|| f.person_name.clone()))
                                 } else {
@@ -387,7 +414,17 @@ fn run_face_scan(app_clone: &AppHandle, hashes: Vec<String>, models: Arc<FaceMod
                                 inserted.push((target_face_id, (f.bbox_x, f.bbox_y, f.bbox_w, f.bbox_h)));
                             }
                             if let Some(old) = old_rejected.get(h) {
-                                carry_over_rejections(&tx, old, &inserted);
+                                if is_video {
+                                    // Only within the same frame
+                                    let frame = |id: &String| crate::video_frames::frame_of_face(id);
+                                    for (old_id, old_box) in old {
+                                        let same: Vec<(String, (f64, f64, f64, f64))> =
+                                            inserted.iter().filter(|(id, _)| frame(id) == frame(old_id)).cloned().collect();
+                                        carry_over_rejections(&tx, &[(old_id.clone(), *old_box)], &same);
+                                    }
+                                } else {
+                                    carry_over_rejections(&tx, old, &inserted);
+                                }
                             }
                             for (fid, embedding) in reembeds {
                                 let _ = tx.execute(
@@ -457,6 +494,73 @@ fn run_face_scan(app_clone: &AppHandle, hashes: Vec<String>, models: Arc<FaceMod
             cancelled,
         }
     }
+}
+
+// Two faces in different frames of one video are one person at FACE_MATCH_MIN_SIMILARITY. When both frames
+// show a single face, or the face sits at the same spot, the looser clustering threshold is enough: a child
+// in profile in one frame and facing the camera in the next scores about 0.4-0.5 (measured on 40 videos
+// of the library, 2026-11-01), and in such frames there is no second person to confuse them with.
+fn same_person_in_video(a: (&[f32], usize, (f64, f64, f64, f64)), b: (&[f32], usize, (f64, f64, f64, f64)), faces_in_frame: &[usize]) -> bool {
+    let similarity = face_match::dot(a.0, b.0);
+    let alone = faces_in_frame.get(a.1) == Some(&1) && faces_in_frame.get(b.1) == Some(&1);
+    similarity >= FACE_MATCH_MIN_SIMILARITY || (similarity >= CLUSTER_SIMILARITY && (alone || bbox_iou(a.2, b.2) >= 0.3))
+}
+
+// The faces in a video's stored frames, each person once: detections are taken best first (largest, most
+// certain) and one that looks like a face already kept from another frame, or a face already named on this
+// video (`known`), is dropped. Boxes are relative to the frame the face was found in.
+pub(crate) fn video_faces(models: &FaceModels, hash: &str, frames_dir: &Path, faces_dir: &Path, known: &[Vec<f32>]) -> Vec<PendingFaceWrite> {
+    let frames: Vec<DynamicImage> = crate::video_frames::frame_paths(frames_dir, hash)
+        .iter()
+        .filter_map(|p| image::open(p).ok())
+        .collect();
+    let mut found: Vec<(usize, FaceV2)> = Vec::new();
+    let mut faces_in_frame = vec![0usize; frames.len()];
+    for (n, img) in frames.iter().enumerate() {
+        for face in models.analyze(img).unwrap_or_default() {
+            if is_usable_face(img, face.detection.bbox) {
+                faces_in_frame[n] += 1;
+                found.push((n, face));
+            }
+        }
+    }
+    let weight = |f: &FaceV2| f.detection.score as f64 * f.detection.bbox.2 * f.detection.bbox.3;
+    found.sort_by(|a, b| weight(&b.1).total_cmp(&weight(&a.1)));
+    let mut kept: Vec<(usize, Vec<f32>, (f64, f64, f64, f64))> = Vec::new();
+    let mut writes = Vec::new();
+    for (n, face) in found {
+        let img = &frames[n];
+        let this = (face.embedding.as_slice(), n, face.detection.bbox);
+        let named_already = known.iter().any(|e| face_match::dot(e, &face.embedding) >= FACE_MATCH_MIN_SIMILARITY);
+        let seen = kept
+            .iter()
+            .any(|(kn, e, b)| *kn != n && same_person_in_video((e.as_slice(), *kn, *b), this, &faces_in_frame));
+        if named_already || seen {
+            continue;
+        }
+        let (bx, by, bw, bh) = face.detection.bbox;
+        let face_id = crate::video_frames::face_frame_id(hash, n, face.detection.bbox);
+        let face_thumb_path = faces_dir.join(format!("{face_id}.jpg"));
+        let _ = face_thumbnail(img, face.detection.bbox).save(&face_thumb_path);
+        kept.push((n, face.embedding.clone(), face.detection.bbox));
+        writes.push(PendingFaceWrite {
+            face: FaceInstance {
+                face_id,
+                hash: hash.to_string(),
+                bbox_x: bx,
+                bbox_y: by,
+                bbox_w: bw,
+                bbox_h: bh,
+                person_name: None,
+                face_thumb: face_thumb_path.to_string_lossy().to_string(),
+                confidence: face.detection.score as f64,
+                eyes_open: face.quality.eyes_open.map(f64::from),
+                face_sharpness: face.quality.sharpness.map(f64::from),
+            },
+            embedding: face.embedding,
+        });
+    }
+    writes
 }
 
 // Photos in the folder that still have faces from an older face engine (they need re-detecting so their

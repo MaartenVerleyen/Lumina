@@ -36,7 +36,7 @@ async fn start_measuring(app: AppHandle, root_folder: String) -> Result<usize, S
         let mut stmt = conn
             .prepare(
                 "SELECT DISTINCT pf.hash, p.current_path FROM photo_faces pf JOIN photos p ON p.hash = pf.hash
-                 WHERE p.current_path LIKE ?1 ESCAPE '!' AND pf.engine = ?2
+                 WHERE p.current_path LIKE ?1 ESCAPE '!' AND pf.engine = ?2 AND COALESCE(p.media_type, 'photo') != 'video'
                    AND (pf.face_sharpness IS NULL OR (?3 AND pf.eyes_open IS NULL))",
             )
             .map_err(|e| e.to_string())?;

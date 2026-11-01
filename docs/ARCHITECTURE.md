@@ -21,11 +21,18 @@ the first and last 64 KB). Identical copies get a path-salted hash, so each copy
 | `photo_faces` | face boxes, crops, embeddings (little-endian f32 blobs) tagged with the engine that made them, names |
 | `face_rejections` | "this face is not that person" decisions, used as negative examples |
 | `people` | names, profile picture, hidden flag |
-| `photo_clip` | one smart-search image vector per photo |
+| `photo_clip` | one smart-search image vector per photo (for a video: the mean of its frames) |
+| `photo_clip_frames` | videos: one smart-search vector per stored frame |
 | `albums`, `album_photos`, `saved_searches`, `trip_names` | collections |
 
 Thumbnails (480 px) and RAW/HEIC previews are cached as JPEG files next to the database, with face crops in
-`faces/`. Thumbnails and previews rebuild when missing; face crops don't, so backups include them.
+`faces/`, a few frames per video in `frames/` and playable copies of videos in `transcodes/`. Thumbnails,
+previews and frames rebuild when missing; face crops don't, so backups include them.
+
+**Videos** are rows of `photos` too (`media_type = 'video'`, with `duration_ms` and `video_codec`). A Live
+Photo's clip is linked to its photo at every scan (same name, recorded within seconds) and hidden behind it.
+A video's faces carry their frame in their id (`{hash}_f{frame}_{x}_{y}`), so their boxes are never compared
+with boxes from another frame.
 
 **Backups** (`backup.rs`) are zip files: `manifest.json` (format, version, library folders, counts), a
 `VACUUM INTO` copy of the database, the frontend's settings and the face crops. A restore never swaps the
@@ -47,6 +54,9 @@ localStorage, read anywhere with `useSettings()`.
 | `storage.rs` | drive-aware I/O: few readers in folder order on a hard drive, full parallelism on an SSD |
 | `imaging.rs`, `exif_meta.rs` | content hash, dHash, sharpness, screenshot and WhatsApp detection; EXIF parsing and the date fallback (file name, Google Takeout JSON, folder year, file time) |
 | `duplicates.rs` | exact copies (proved from the path-salted hashes, no file reads) and the same photo in another file (same second, dHash and CLIP; file names that don't tie two files to one shot also need their thumbnails' edges to match, so bursts stay out); merging metadata onto the copy that is kept |
+| `video_meta.rs` | video containers: date, length, size, rotation, codec, place and camera from the MP4/QuickTime boxes; Live Photo pairing |
+| `video_frames.rs` | a few frames per video through Media Foundation (Windows' own codecs): the thumbnail, and the frames smart search and the face scan look at |
+| `ffmpeg.rs` | playable H.264 copies of videos WebView2 can't play, with ffmpeg downloaded once from a pinned, checksummed release |
 | `recycle.rs` | the Windows Recycle Bin: its size limit per drive, and an `IFileOperation` whose progress sink refuses any delete Windows would make permanent |
 | `decode.rs`, `fastdecode.rs` | RAW embedded previews, orientation, scaled JPEG decoding, in-process WIC for HEIC |
 | `thumbs.rs` | the background thumbnail pipeline (readers, then a bounded queue, decoders on `BG_POOL`, a collector that writes to the DB and sends batches to the UI) |

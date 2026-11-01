@@ -237,6 +237,7 @@ pub fn retire_replaced_row(conn: &Connection, old: &str, new: &str) -> rusqlite:
     conn.execute("UPDATE photo_faces SET hash = ?2 WHERE hash = ?1", params![old, new])?;
     // The image changed: its smart-search vector is recomputed for the new row
     conn.execute("DELETE FROM photo_clip WHERE hash = ?1", params![old])?;
+    let _ = conn.execute("DELETE FROM photo_clip_frames WHERE hash = ?1", params![old]);
     conn.execute("DELETE FROM photos WHERE hash = ?1", params![old])?;
     Ok(())
 }
