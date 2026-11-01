@@ -137,6 +137,32 @@ function Status({ ok, children }: { ok: boolean; children: ReactNode }) {
   );
 }
 
+// Playable copies of videos the app converted (MTS, AVI, ...): how much room they take, and a way to free it
+function VideoCacheRow() {
+  const [info, setInfo] = useState<{ bytes: number; files: number; ffmpeg_installed: boolean } | null>(null);
+  const load = () => invoke<{ bytes: number; files: number; ffmpeg_installed: boolean }>("video_cache_info").then(setInfo).catch(() => {});
+  useEffect(() => {
+    load();
+  }, []);
+  const size = info ? (info.bytes >= 1024 ** 3 ? `${(info.bytes / 1024 ** 3).toFixed(1)} GB` : `${Math.round(info.bytes / 1024 ** 2)} MB`) : "";
+  return (
+    <Row
+      label="Playable copies"
+      hint={
+        info
+          ? `${info.files} converted video${info.files === 1 ? "" : "s"} (${size}, at most 10 GB; the oldest go first). ${
+              info.ffmpeg_installed ? "ffmpeg is installed." : "ffmpeg is downloaded the first time a copy is needed."
+            }`
+          : "Videos in formats Lumina can't play are converted on request."
+      }
+    >
+      <Button disabled={!info || info.files === 0} onClick={() => invoke("clear_video_cache").then(load).catch(() => {})}>
+        Clear
+      </Button>
+    </Row>
+  );
+}
+
 // ---------- the dialog ----------
 
 interface SettingsModalProps {
@@ -462,6 +488,9 @@ export default function SettingsModal({
                   <Row label="Clean up the cache" hint="Removes thumbnails and previews of photos that no longer exist.">
                     <Button onClick={lib.handlePruneCache}>Clean up</Button>
                   </Row>
+                </Group>
+                <Group title="Videos">
+                  <VideoCacheRow />
                 </Group>
               </>
             )}

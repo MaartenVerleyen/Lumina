@@ -120,7 +120,8 @@ fn run_thumbnail_pass(
     if !videos.is_empty() && !is_superseded() {
         let frames_dir = video_frames::frames_dir(&get_app_storage_dir(app));
         let _ = fs::create_dir_all(&frames_dir);
-        run_video_pass(&videos, &frames_dir, force, is_superseded, &mut collect);
+        let ffmpeg = crate::ffmpeg::installed_ffmpeg(app);
+        run_video_pass(&videos, &frames_dir, ffmpeg.as_deref(), force, is_superseded, &mut collect);
     }
     let video_ms = elapsed_ms(video_started);
     stats.reused = reused;
@@ -325,6 +326,7 @@ fn process_one(photo: &PhotoItem, input: ThumbInput, force: bool) -> ThumbBatchI
 pub fn run_video_pass(
     videos: &[PhotoItem],
     frames_dir: &Path,
+    ffmpeg: Option<&Path>,
     force: bool,
     is_superseded: impl Fn() -> bool + Copy + Send + Sync,
     mut on_event: impl FnMut(PipelineEvent),
@@ -341,7 +343,7 @@ pub fn run_video_pass(
                     if idx >= videos.len() || is_superseded() {
                         break;
                     }
-                    if tx.send(process_video(&videos[idx], frames_dir, force)).is_err() {
+                    if tx.send(process_video(&videos[idx], frames_dir, ffmpeg, force)).is_err() {
                         break;
                     }
                 }
@@ -361,7 +363,7 @@ pub fn run_video_pass(
     });
 }
 
-fn process_video(video: &PhotoItem, frames_dir: &Path, force: bool) -> ThumbBatchItem {
+fn process_video(video: &PhotoItem, frames_dir: &Path, ffmpeg: Option<&Path>, force: bool) -> ThumbBatchItem {
     let thumb_file = Path::new(&video.thumb_path);
     let mut item = ThumbBatchItem {
         hash: video.hash.clone(),
@@ -380,9 +382,15 @@ fn process_video(video: &PhotoItem, frames_dir: &Path, force: bool) -> ThumbBatc
     if force || !have_frames || !thumb_file.exists() {
         let source = PathBuf::from(&video.path);
         let rotation = video_meta::read_video_meta(&source).rotation;
-        // Without a codec for it (or a broken file) the grid shows a placeholder; the frames come later
-        // from ffmpeg when it is installed
-        if let Some(grabbed) = video_frames::grab_frames(&source, rotation) {
+        // Without a codec for it (or a broken file) ffmpeg makes one frame when it is installed; otherwise the
+        // grid shows a placeholder
+        let grabbed = video_frames::grab_frames(&source, rotation).or_else(|| {
+            let frame0 = video_frames::frame_path(frames_dir, &video.hash, 0);
+            let img = crate::ffmpeg::grab_frame_with_ffmpeg(ffmpeg?, &source, &frame0)?;
+            let (width, height) = img.dimensions();
+            Some(video_frames::GrabbedFrames { frames: vec![img], width, height, duration_ms: 0 })
+        });
+        if let Some(grabbed) = grabbed {
             video_frames::delete_frames(frames_dir, &video.hash);
             for (n, frame) in grabbed.frames.iter().enumerate() {
                 write_thumbnail(frame, &video_frames::frame_path(frames_dir, &video.hash, n));

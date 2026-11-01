@@ -648,9 +648,10 @@ fn prune_orphaned_cache_blocking(app: AppHandle) -> Result<usize, String> {
     let thumbs_dir = app_dir.join("thumbnails");
     let faces_dir = app_dir.join("faces");
     let frames_dir = crate::video_frames::frames_dir(&app_dir);
+    let transcodes_dir = crate::ffmpeg::transcodes_dir(&app_dir);
 
     let mut removed = 0usize;
-    for dir in [&thumbs_dir, &faces_dir, &frames_dir] {
+    for dir in [&thumbs_dir, &faces_dir, &frames_dir, &transcodes_dir] {
         if let Ok(entries) = fs::read_dir(dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
@@ -982,6 +983,7 @@ fn forget_deleted_photos(app: &AppHandle, conn: &mut Connection, hashes: &[Strin
         let _ = fs::remove_file(app_dir.join("thumbnails").join(format!("{h}.jpg")));
         let _ = fs::remove_file(app_dir.join("previews").join(format!("{h}_preview.jpg")));
         crate::video_frames::delete_frames(&frames_dir, h);
+        let _ = fs::remove_file(crate::ffmpeg::transcode_path(&app_dir, h));
     }
     for thumb in face_thumbs {
         let _ = fs::remove_file(thumb);

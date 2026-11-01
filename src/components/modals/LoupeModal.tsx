@@ -2,7 +2,8 @@ import { thumbSrc } from "../../utils/photoHelpers";
 import { useState, useRef, useEffect } from "react";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { diskPathOf } from "../../utils/rawPairs";
-import { isPlayableInWebView, isVideo } from "../../utils/media";
+import { isVideo } from "../../utils/media";
+import LoupeVideo from "./LoupeVideo";
 import { useDialogFocus } from "../../hooks/useDialogFocus";
 import { useWheel } from "../../hooks/useWheel";
 import { PhotoItem } from "../../types/lumina";
@@ -289,43 +290,7 @@ export default function LoupeModal({
         </button>
 
         {video ? (
-          isPlayableInWebView(activePhoto) ? (
-            <video
-              key={activePhoto.hash}
-              data-loupe-video
-              src={convertFileSrc(activePhoto.path)}
-              poster={activePhoto.thumb_ready ? thumbSrc(activePhoto) : undefined}
-              controls
-              autoPlay
-              onClick={(e) => e.stopPropagation()}
-              className="max-w-full max-h-full rounded-xl shadow-2xl bg-black"
-            />
-          ) : (
-            <div
-              onClick={(e) => e.stopPropagation()}
-              className="relative max-w-full max-h-full flex flex-col items-center justify-center gap-3"
-            >
-              {activePhoto.thumb_ready ? (
-                <img
-                  src={thumbSrc(activePhoto)}
-                  alt={activePhoto.name}
-                  draggable={false}
-                  className="max-w-full max-h-[60vh] object-contain rounded-xl shadow-2xl opacity-60"
-                />
-              ) : (
-                <Film className="w-16 h-16 text-zinc-700" />
-              )}
-              <div className="bg-zinc-900/90 border border-zinc-800 rounded-xl px-4 py-3 text-xs text-zinc-300 flex items-center gap-3">
-                <span>This video's format doesn't play inside Lumina.</span>
-                <button
-                  onClick={() => invoke("open_in_default_app", { path: diskPathOf(activePhoto) })}
-                  className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium"
-                >
-                  Open in player
-                </button>
-              </div>
-            </div>
-          )
+          <LoupeVideo photo={activePhoto} />
         ) : (
           <img
             onClick={(e) => e.stopPropagation()}

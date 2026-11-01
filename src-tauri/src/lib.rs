@@ -49,6 +49,7 @@ mod duplicates;
 mod recycle;
 mod video_meta;
 mod video_frames;
+mod ffmpeg;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -375,6 +376,11 @@ pub fn run() {
             library::stage_photo_move,
             library::stage_photos_move,
             duplicates::find_duplicates,
+            ffmpeg::existing_playable_copy,
+            ffmpeg::make_playable_copy,
+            ffmpeg::cancel_playable_copy,
+            ffmpeg::video_cache_info,
+            ffmpeg::clear_video_cache,
             duplicates::stage_duplicate_extras,
             library::clear_all_staged,
             library::get_staged_operations,
