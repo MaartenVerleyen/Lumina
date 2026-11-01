@@ -1,9 +1,11 @@
 import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { PersonItem, FaceScanProgress, FaceMatchEvent, FaceInstance, FaceModelDownloadProgress, FaceQualityProgress } from "../../types/lumina";
+import { PhotoItem, PersonItem, FaceScanProgress, FaceMatchEvent, FaceInstance, FaceModelDownloadProgress, FaceQualityProgress } from "../../types/lumina";
 import { diskPathOf } from "../../utils/rawPairs";
-import { isVideo } from "../../utils/media";
+import { isLiveClip, isVideo } from "../../utils/media";
+
+export type FaceScanScope = "all" | "photos" | "videos" | "visible";
 import { removeFromExpr, renameInExpr } from "../../utils/peopleQuery";
 import type { LibraryCore } from "./core";
 import type { FilterState } from "./useFilterState";
@@ -245,12 +247,21 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
     }
   }
 
-  async function handleBatchScanFacesOnnx() {
-    if (photos.length === 0) return;
-    // Videos are scanned on their stored frames (a few per video), each person once
+  // Scan Faces over everything, only photos, only videos, or what the grid shows (`visible`). Videos are
+  // scanned on their stored frames, each person once; a Live Photo's clip is left to its photo.
+  async function handleBatchScanFacesOnnx(scope: FaceScanScope = "all", visible: PhotoItem[] = []) {
+    const pool = (scope === "visible" ? visible : photos).filter((p) => !isLiveClip(p));
+    const targets = scope === "photos" ? pool.filter((p) => !isVideo(p)) : scope === "videos" ? pool.filter(isVideo) : pool;
+    if (targets.length === 0) {
+      setAutoMatchNotice(scope === "videos" ? "There are no videos to scan." : "There is nothing to scan.");
+      return;
+    }
+    const videos = targets.filter(isVideo).length;
+    const stills = targets.length - videos;
+    const what = [stills ? `${stills} photos` : "", videos ? `${videos} videos` : ""].filter(Boolean).join(" and ");
     await startFaceScan(
-      photos.map((p) => p.hash),
-      `Started face scan on ${photos.length} photos and videos`
+      targets.map((p) => p.hash),
+      `Started face scan on ${what}${scope === "visible" ? " (visible)" : ""}`
     );
   }
 

@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import luminaMark from "../../assets/lumina-mark.svg";
 import type { GridStyle, CardDetails } from "../views/VirtualPhotoGrid";
 import { completeTerm, termBeingTyped, TermKey } from "../../utils/searchQuery";
+import type { FaceScanScope } from "../../hooks/library/usePeople";
 
 const SEARCH_HINTS = ["rating:>=4", "flag:pick", "person:", "tag:", "date:2024-06", "place:", "camera:", "has:gps", "is:raw", "album:", "-flag:reject"];
 import {
@@ -95,7 +96,7 @@ interface TopHeaderBarProps {
   handleOpenHealthDashboard: () => Promise<void>;
   setIsCommitModalOpen: React.Dispatch<React.SetStateAction<boolean>>;
   handleDismissAllStaged: () => Promise<void>;
-  handleBatchScanFacesOnnx: () => Promise<void>;
+  handleBatchScanFacesOnnx: (scope?: FaceScanScope, visible?: PhotoItem[]) => Promise<void>;
   handleCancelFaceScan: () => Promise<void>;
   runBatchAiOnList: (targets: PhotoItem[], options?: { reanalyze?: boolean }) => Promise<void>;
   simpleMode?: boolean;
@@ -623,9 +624,9 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                 </span>
               ) : (
                 <button
-                  onClick={handleBatchScanFacesOnnx}
+                  onClick={() => handleBatchScanFacesOnnx("all")}
                   className="flex items-center gap-1.5 px-2.5 py-1.5 hover:bg-indigo-900/80 text-indigo-200 text-xs font-medium transition border-r border-indigo-500/30"
-                  title="Scan every photo in this folder with the ONNX face detector & match against confirmed people"
+                  title="Find the faces in every photo and video of the library and match them with the people you named (only photos, only videos or only the visible ones: in the menu on the right)"
                 >
                   <ScanFace className="w-3.5 h-3.5 text-indigo-400" />
                   <span>Scan Faces</span>
@@ -726,6 +727,32 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                     )}
                   </button>
                 )}
+
+                <div className="flex flex-col gap-1">
+                  <span className="text-[11px] text-zinc-500 uppercase font-bold">Scan faces in</span>
+                  <div className="grid grid-cols-2 gap-1">
+                    {(
+                      [
+                        ["all", "Everything"],
+                        ["photos", "Photos only"],
+                        ["videos", "Videos only"],
+                        ["visible", `Visible (${visiblePhotos.length})`],
+                      ] as const
+                    ).map(([scope, label]) => (
+                      <button
+                        key={scope}
+                        disabled={Boolean(faceScanProgress) || (scope === "visible" && visiblePhotos.length === 0)}
+                        onClick={() => {
+                          setIsAiMenuOpen(false);
+                          handleBatchScanFacesOnnx(scope, visiblePhotos);
+                        }}
+                        className="px-2 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-200 text-left disabled:opacity-40"
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
 
                 <div className="h-[1px] bg-zinc-800/80" />
 

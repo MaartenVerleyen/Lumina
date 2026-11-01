@@ -568,7 +568,7 @@ export default function SettingsModal({
                     {lib.faceScanProgress ? (
                       <Button onClick={lib.handleCancelFaceScan}>Stop scan</Button>
                     ) : (
-                      <Button primary disabled={!hasPhotos} onClick={then(lib.handleBatchScanFacesOnnx)}>
+                      <Button primary disabled={!hasPhotos} onClick={then(() => lib.handleBatchScanFacesOnnx("all"))}>
                         Scan faces
                       </Button>
                     )}
