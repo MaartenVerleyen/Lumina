@@ -385,6 +385,9 @@ export default function SettingsModal({
                   <Row label="On this day" hint="Photos taken on today's date in earlier years, above the grid.">
                     <Switch checked={settings.onThisDay} onChange={(v) => updateSettings({ onThisDay: v })} label="On this day" />
                   </Row>
+                  <Row label="Live Photo clips" hint="Show the short clip of each Live Photo as a video of its own. Normally it plays from its photo.">
+                    <Switch checked={settings.showLiveClips} onChange={(v) => updateSettings({ showLiveClips: v })} label="Live Photo clips" />
+                  </Row>
                 </Group>
                 <Group title="Help">
                   <Row label="Welcome tour" hint="The short introduction from the first start.">

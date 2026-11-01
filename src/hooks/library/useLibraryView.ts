@@ -7,7 +7,7 @@ import { matchesTerms } from "../../utils/searchQuery";
 import { matchesPeopleExpr } from "../../utils/peopleQuery";
 import { NAME_COLLATOR, TEXT_COLLATOR, compareStrings, searchTextOf } from "./shared";
 import { cullScore, hasClosedEyes, isSoftFocus } from "../../utils/culling";
-import { isVideo } from "../../utils/media";
+import { isLiveClip, isVideo } from "../../utils/media";
 import { semanticCutoff, SEMANTIC_MAX_HITS } from "../../utils/semanticCutoff";
 import { cullingOf, useSettings } from "../../settings";
 import type { Collections } from "./useCollections";
@@ -101,6 +101,8 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
     eyesClosedCount,
     softFocusCount,
     videosCount,
+    stillsCount,
+    shownCount,
   } = useMemo(() => {
     const staged: PhotoItem[] = [];
     let gps = 0;
@@ -113,6 +115,9 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
     let eyesClosed = 0;
     let soft = 0;
     let videos = 0;
+    let stills = 0;
+    // Everything the grid can show: Live clips hide behind their photo unless shown as videos
+    let shown = 0;
     // The best photo of each burst: open eyes, then a sharp main face, then overall sharpness
     const best = new Map<number, { hash: string; sharpness: number }>();
     const counts = new Map<number, number>();
@@ -128,7 +133,10 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
       if (p.in_basket) basket++;
       if (hasClosedEyes(p, culling)) eyesClosed++;
       if (isSoftFocus(p, culling)) soft++;
-      if (isVideo(p)) videos++;
+      const hiddenClip = !settings.showLiveClips && isLiveClip(p);
+      if (!hiddenClip) shown++;
+      if (!isVideo(p)) stills++;
+      else if (!hiddenClip) videos++;
 
       if (p.duplicate_group && p.subfolder !== "_Trash") {
         dupCount++;
@@ -156,8 +164,10 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
       eyesClosedCount: eyesClosed,
       softFocusCount: soft,
       videosCount: videos,
+      stillsCount: stills,
+      shownCount: shown,
     };
-  }, [photos, culling]);
+  }, [photos, culling, settings.showLiveClips]);
 
   // The filtered, sorted photos. Kept apart from the burst stacking below, so opening or collapsing bursts
   // doesn't filter and sort the whole library again (about a second at 175k photos)
@@ -166,6 +176,8 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
     const terms = parsedSearch.terms;
     const albumFilter = activeAlbumId !== null ? albumSets.get(activeAlbumId) ?? new Set<string>() : null;
     const filtered = photos.filter((p) => {
+      // A Live Photo's clip plays from its photo
+      if (!settings.showLiveClips && isLiveClip(p)) return false;
       if (smartFilter === "PICKS" && p.flag !== "pick") return false;
       if (smartFilter === "REJECTS" && p.flag !== "reject") return false;
       if (smartFilter === "BASKET" && !p.in_basket) return false;
@@ -303,6 +315,7 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
     sortBy,
     semanticScores,
     semanticCut,
+    settings.showLiveClips,
   ]);
 
   // The map shows every photo where it was taken. Only this boolean matters here, not the tab itself:
@@ -483,6 +496,8 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
     eyesClosedCount,
     softFocusCount,
     videosCount,
+    stillsCount,
+    shownCount,
     culling,
     visiblePhotos,
     compareCandidateCount,

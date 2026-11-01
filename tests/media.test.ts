@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { codecLabel, formatDuration, isPlayableInWebView, isVideo, photosOnly } from "../src/utils/media.ts";
+import { codecLabel, expandWithLivePairs, formatDuration, isLiveClip, isPlayableInWebView, isVideo, photosOnly } from "../src/utils/media.ts";
 
 test("videos are told apart by media type, or by name for rows from before videos", () => {
   assert.equal(isVideo({ media_type: "video", name: "IMG_1.MOV" }), true);
@@ -38,4 +38,17 @@ test("photo-only features skip videos", () => {
     { hash: "b", name: "b.mov", media_type: "video" },
   ];
   assert.deepEqual(photosOnly(items).map((p) => p.hash), ["a"]);
+});
+
+test("a Live Photo's photo and clip go together", () => {
+  const items = [
+    { hash: "photo", live_video_hash: "clip", live_photo_hash: null },
+    { hash: "clip", live_video_hash: null, live_photo_hash: "photo" },
+    { hash: "other", live_video_hash: null, live_photo_hash: null },
+  ];
+  assert.deepEqual(expandWithLivePairs(["photo"], items).sort(), ["clip", "photo"]);
+  assert.deepEqual(expandWithLivePairs(["clip"], items).sort(), ["clip", "photo"]);
+  assert.deepEqual(expandWithLivePairs(["other"], items), ["other"]);
+  assert.equal(isLiveClip(items[1]), true);
+  assert.equal(isLiveClip(items[0]), false);
 });

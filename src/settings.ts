@@ -26,6 +26,8 @@ export interface Settings {
   focusCheck: CheckLevel;
   // "On this day" strip above the grid
   onThisDay: boolean;
+  // Live Photo clips as videos of their own (normally they hide behind their photo)
+  showLiveClips: boolean;
   // Library backups: automatic schedule, folder ("" = Documents/Lumina Backups) and when the last one was made
   autoBackup: AutoBackup;
   backupDir: string;
@@ -45,6 +47,7 @@ export const DEFAULT_SETTINGS: Settings = {
   eyesCheck: "normal",
   focusCheck: "normal",
   onThisDay: true,
+  showLiveClips: false,
   autoBackup: "off",
   backupDir: "",
   lastBackupAt: 0,
@@ -75,6 +78,7 @@ const VALIDATORS: { [K in keyof Settings]: (v: unknown) => v is Settings[K] } = 
   eyesCheck: oneOf("off", "normal", "high"),
   focusCheck: oneOf("off", "normal", "high"),
   onThisDay: isBool,
+  showLiveClips: isBool,
   autoBackup: oneOf("off", "daily", "weekly"),
   backupDir: isString,
   lastBackupAt: isTime,

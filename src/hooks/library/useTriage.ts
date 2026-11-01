@@ -2,7 +2,7 @@ import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { TimestampShiftResult, PhotoActionSnapshot } from "../../types/lumina";
 import { expandWithRawPairs } from "../../utils/rawPairs";
-import { isVideo } from "../../utils/media";
+import { expandWithLivePairs, isVideo } from "../../utils/media";
 import { captureSnapshots } from "./undo";
 import type { LibraryView } from "./useLibraryView";
 import type { LibraryCore } from "./core";
@@ -90,9 +90,9 @@ export function useTriage(core: LibraryCore, view: LibraryView) {
 
   // Compare view "Keep This & Trash Rest": pick one, reject + stage the others, as ONE undo step
   async function handleKeepAndTrashRest(keepHash: string, otherHashes: string[]) {
-    const keep = expandWithRawPairs([keepHash], photos);
+    const keep = expandWithLivePairs(expandWithRawPairs([keepHash], photos), photos);
     const keepSet = new Set(keep);
-    const rest = expandWithRawPairs(otherHashes, photos).filter((h) => !keepSet.has(h));
+    const rest = expandWithLivePairs(expandWithRawPairs(otherHashes, photos), photos).filter((h) => !keepSet.has(h));
     const restSet = new Set(rest);
     try {
       const before = captureSnapshots(photos, [...keep, ...rest]);
@@ -213,7 +213,7 @@ export function useTriage(core: LibraryCore, view: LibraryView) {
   async function handleBatchAddTag(tag: string) {
     if (!tag.trim() || selectedHashes.size === 0) return;
     try {
-      const hashes = expandWithRawPairs(Array.from(selectedHashes), photos);
+      const hashes = expandWithLivePairs(expandWithRawPairs(Array.from(selectedHashes), photos), photos);
       const clean = await invoke<string>("add_tag_batch", { hashes, tag });
       // Undo removes the tag only from photos that didn't have it before
       const added = hashes.filter((h) => !photoByHash.get(h)?.tags.includes(clean));

@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { confirmDialog, type ConfirmKind } from "../../confirm";
 import { PhotoItem, SessionLogEntry, BulkPopover, PhotoActionSnapshot, ViewMode } from "../../types/lumina";
 import { expandWithRawPairs } from "../../utils/rawPairs";
+import { expandWithLivePairs } from "../../utils/media";
 import { MAX_TOASTS, Toast } from "./shared";
 import { useUndoStack } from "./undo";
 
@@ -127,7 +128,7 @@ export function useLibraryCore() {
   // current selection. Undo entries are recorded only after the backend accepted the change.
   function resolveTargets(targetHashes?: string[]): string[] {
     const base = targetHashes ?? Array.from(selectedHashes);
-    return base.length === 0 ? [] : expandWithRawPairs(base, photos);
+    return base.length === 0 ? [] : expandWithLivePairs(expandWithRawPairs(base, photos), photos);
   }
 
   // Undo step for changes the photo snapshots can't express: the caller supplies undo and redo

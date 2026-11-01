@@ -68,6 +68,8 @@ export default function LoupeModal({
   const [moveTargetInput, setMoveTargetInput] = useState<string>("");
   const [localColor, setLocalColor] = useState<"red" | "yellow" | "green" | "blue" | null>(null);
   const [localBasket, setLocalBasket] = useState<boolean>(false);
+  // A Live Photo's clip plays over the photo while LIVE is hovered or L is held
+  const [livePlaying, setLivePlaying] = useState<boolean>(false);
 
   const isPanningRef = useRef<boolean>(false);
   const panStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -90,7 +92,25 @@ export default function LoupeModal({
     isVisible && !video
   );
 
+  const liveClip = activePhoto?.live_video_path ?? null;
   useEffect(() => {
+    if (!isVisible || !liveClip) return;
+    const down = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() === "l" && !e.repeat) setLivePlaying(true);
+    };
+    const up = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() === "l") setLivePlaying(false);
+    };
+    window.addEventListener("keydown", down);
+    window.addEventListener("keyup", up);
+    return () => {
+      window.removeEventListener("keydown", down);
+      window.removeEventListener("keyup", up);
+    };
+  }, [isVisible, liveClip]);
+
+  useEffect(() => {
+    setLivePlaying(false);
     setLoupeZoom(1);
     setLoupePan({ x: 0, y: 0 });
     setIsMovePopoverOpen(false);
@@ -289,8 +309,31 @@ export default function LoupeModal({
           <ChevronLeft className="w-6 h-6" />
         </button>
 
+        {liveClip && !video && (
+          <button
+            onClick={(e) => e.stopPropagation()}
+            onMouseEnter={() => setLivePlaying(true)}
+            onMouseLeave={() => setLivePlaying(false)}
+            className={`absolute top-3 left-1/2 -translate-x-1/2 z-40 px-3 py-1 rounded-full text-[11px] font-bold tracking-widest border backdrop-blur transition ${
+              livePlaying ? "bg-white text-black border-white" : "bg-black/60 text-white border-white/30 hover:bg-black/80"
+            }`}
+            title="Hover (or hold L) to play the Live Photo"
+          >
+            LIVE
+          </button>
+        )}
         {video ? (
           <LoupeVideo photo={activePhoto} />
+        ) : liveClip && livePlaying ? (
+          <video
+            src={convertFileSrc(liveClip)}
+            autoPlay
+            muted
+            loop
+            onClick={(e) => e.stopPropagation()}
+            style={{ transform: `rotate(${activePhoto.rotation}deg)` }}
+            className="max-w-full max-h-full object-contain rounded-xl shadow-2xl"
+          />
         ) : (
           <img
             onClick={(e) => e.stopPropagation()}

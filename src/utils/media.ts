@@ -50,6 +50,27 @@ export function codecLabel(codec: string | null | undefined): string {
   }
 }
 
+// A Live Photo's clip: it hides behind its photo
+export function isLiveClip(p: Pick<PhotoItem, "live_photo_hash">): boolean {
+  return Boolean(p.live_photo_hash);
+}
+
+// Adds the other half of every Live Photo among `hashes`, so trashing, moving or rating the photo takes its
+// clip along (and the other way round)
+export function expandWithLivePairs(
+  hashes: string[],
+  photos: Pick<PhotoItem, "hash" | "live_video_hash" | "live_photo_hash">[]
+): string[] {
+  const result = new Set(hashes);
+  const wanted = new Set(hashes);
+  for (const p of photos) {
+    if (!wanted.has(p.hash)) continue;
+    if (p.live_video_hash) result.add(p.live_video_hash);
+    if (p.live_photo_hash) result.add(p.live_photo_hash);
+  }
+  return Array.from(result);
+}
+
 // Features that only make sense for still photos (they read pixels a video doesn't offer as a file)
 export function photosOnly<T extends Pick<PhotoItem, "media_type" | "name">>(items: T[]): T[] {
   return items.filter((p) => !isVideo(p));

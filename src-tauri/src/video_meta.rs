@@ -306,3 +306,75 @@ pub fn extract_video_pass(file_path: &Path) -> FullExifPass {
         video_codec: meta.codec,
     }
 }
+
+// ----------------- LIVE PHOTOS -----------------
+
+// An iPhone Live Photo is a photo and a clip of a few seconds with the same name (IMG_4368.HEIC +
+// IMG_4368.MOV), often in different folders once exported. The clip belongs to the photo when it is short
+// and was recorded within a few seconds of it. Clips whose container gives UTC time may be off by whole
+// hours (time zone and summer time at the moment of shooting aren't known), so those offsets count too.
+pub const LIVE_CLIP_MAX_MS: u64 = 4_000;
+const LIVE_MAX_SECONDS_APART: i64 = 3;
+const LIVE_MAX_ZONE_HOURS: i64 = 14;
+
+pub struct LiveCandidate<'a> {
+    pub stem: String,
+    pub captured_at: &'a str,
+    pub is_video: bool,
+    // Videos: length; photos: whether the type can be a Live Photo (HEIC/JPEG)
+    pub duration_ms: Option<u64>,
+    pub still: bool,
+}
+
+// "2024-06-15 18:30:00" -> seconds since 1970 (as if UTC; only differences are used)
+pub fn date_seconds(s: &str) -> Option<i64> {
+    let b = s.as_bytes();
+    let num = |r: std::ops::Range<usize>| -> Option<i64> { std::str::from_utf8(b.get(r)?).ok()?.parse().ok() };
+    let (y, m, d) = (num(0..4)?, num(5..7)?, num(8..10)?);
+    let (hh, mm, ss) = (num(11..13).unwrap_or(0), num(14..16).unwrap_or(0), num(17..19).unwrap_or(0));
+    // Days from civil (Howard Hinnant)
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let doy = (153 * (m + if m > 2 { -3 } else { 9 }) + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    Some((era * 146_097 + doe - 719_468) * 86_400 + hh * 3600 + mm * 60 + ss)
+}
+
+fn seconds_apart(a: i64, b: i64) -> Option<i64> {
+    let d = (a - b).abs();
+    let off_zone = (d - ((d + 1800) / 3600) * 3600).abs();
+    (d <= LIVE_MAX_SECONDS_APART || (d <= LIVE_MAX_ZONE_HOURS * 3600 + LIVE_MAX_SECONDS_APART && off_zone <= LIVE_MAX_SECONDS_APART))
+        .then_some(d)
+}
+
+// Pairs (photo index, clip index): each clip with the closest-in-time photo of its name, each photo once
+pub fn pair_live_photos(items: &[LiveCandidate]) -> Vec<(usize, usize)> {
+    let mut stills: HashMap<&str, Vec<(usize, i64)>> = HashMap::new();
+    for (i, it) in items.iter().enumerate() {
+        if it.still && !it.is_video {
+            if let Some(t) = date_seconds(it.captured_at) {
+                stills.entry(it.stem.as_str()).or_default().push((i, t));
+            }
+        }
+    }
+    let mut options: Vec<(i64, usize, usize)> = Vec::new();
+    for (i, it) in items.iter().enumerate() {
+        if !it.is_video || !it.duration_ms.is_some_and(|ms| ms <= LIVE_CLIP_MAX_MS) {
+            continue;
+        }
+        let Some(t) = date_seconds(it.captured_at) else { continue };
+        for &(p, pt) in stills.get(it.stem.as_str()).into_iter().flatten() {
+            if let Some(d) = seconds_apart(t, pt) {
+                options.push((d, p, i));
+            }
+        }
+    }
+    options.sort();
+    let (mut used_photo, mut used_clip) = (HashSet::new(), HashSet::new());
+    options
+        .into_iter()
+        .filter(|&(_, p, c)| !used_photo.contains(&p) && !used_clip.contains(&c) && used_photo.insert(p) && used_clip.insert(c))
+        .map(|(_, p, c)| (p, c))
+        .collect()
+}

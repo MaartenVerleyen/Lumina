@@ -433,6 +433,15 @@ const PhotoCard = memo(function PhotoCard({
             </span>
           )}
 
+          {photo.live_video_hash && (
+            <span
+              className={`px-1.5 py-0.5 rounded bg-black/70 border border-white/30 text-white text-[11px] font-bold tracking-wide backdrop-blur-md ${secondary}`}
+              title="Live Photo: open it and hover LIVE (or hold L) to play its clip"
+            >
+              LIVE
+            </span>
+          )}
+
           {eyesClosed && (
             <span
               className="p-1 rounded bg-rose-950/90 border border-rose-400/60 text-rose-300 backdrop-blur shadow"

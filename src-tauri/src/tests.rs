@@ -1815,3 +1815,46 @@ fn videos_in_library() {
         }
     }
 }
+
+// ----------------- LIVE PHOTOS -----------------
+
+fn live(stem: &str, at: &'static str, video_ms: Option<u64>) -> video_meta::LiveCandidate<'static> {
+    video_meta::LiveCandidate { stem: stem.to_string(), captured_at: at, is_video: video_ms.is_some(), duration_ms: video_ms, still: video_ms.is_none() }
+}
+
+#[test]
+fn live_photo_clips_pair_with_their_photo() {
+    let items = [
+        live("img_4368", "2025-09-12 15:25:44", None),
+        live("img_4368", "2025-09-12 15:25:43", Some(2_800)),
+        // Same name a year earlier (the counter wrapped): another photo
+        live("img_4368", "2024-06-01 10:00:00", None),
+    ];
+    assert_eq!(video_meta::pair_live_photos(&items), vec![(0, 1)]);
+}
+
+#[test]
+fn live_photo_needs_a_short_clip_close_in_time() {
+    // A real video with the same name, or a clip minutes later, is not the photo's
+    assert!(video_meta::pair_live_photos(&[live("img_1", "2025-01-01 10:00:00", None), live("img_1", "2025-01-01 10:00:01", Some(45_000))]).is_empty());
+    assert!(video_meta::pair_live_photos(&[live("img_1", "2025-01-01 10:00:00", None), live("img_1", "2025-01-01 10:05:00", Some(3_000))]).is_empty());
+    assert!(video_meta::pair_live_photos(&[live("img_1", "2025-01-01 10:00:00", None), live("img_2", "2025-01-01 10:00:00", Some(3_000))]).is_empty());
+}
+
+#[test]
+fn live_photo_clip_in_utc_still_pairs() {
+    // The clip's time came from UTC: two hours (summer time) off, to the second
+    let items = [live("img_9", "2024-07-10 14:00:02", None), live("img_9", "2024-07-10 12:00:00", Some(3_000))];
+    assert_eq!(video_meta::pair_live_photos(&items), vec![(0, 1)]);
+    // Two hours and five minutes off is something else
+    let items = [live("img_9", "2024-07-10 14:05:00", None), live("img_9", "2024-07-10 12:00:00", Some(3_000))];
+    assert!(video_meta::pair_live_photos(&items).is_empty());
+}
+
+#[test]
+fn date_seconds_counts_days_across_months() {
+    let a = video_meta::date_seconds("2024-02-28 23:59:59").unwrap();
+    let b = video_meta::date_seconds("2024-03-01 00:00:00").unwrap();
+    assert_eq!(b - a, 86_400 + 1);
+    assert_eq!(video_meta::date_seconds("1970-01-01 00:00:00"), Some(0));
+}

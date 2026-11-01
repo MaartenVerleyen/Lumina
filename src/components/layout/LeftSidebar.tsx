@@ -48,6 +48,8 @@ interface LeftSidebarProps {
   eyesClosedCount: number;
   softFocusCount: number;
   videosCount: number;
+  stillsCount: number;
+  shownCount: number;
   folderTree: { rootCount: number; nodes: FolderTreeNode[] };
   expandedFolders: Set<string>;
   setExpandedFolders: React.Dispatch<React.SetStateAction<Set<string>>>;
@@ -91,6 +93,8 @@ function LeftSidebar({
   eyesClosedCount,
   softFocusCount,
   videosCount,
+  stillsCount,
+  shownCount,
   folderTree,
   expandedFolders,
   setExpandedFolders,
@@ -233,7 +237,7 @@ function LeftSidebar({
     {
       id: "ALL",
       label: videosCount > 0 ? "All" : "All Photos",
-      count: photos.length,
+      count: shownCount,
       icon: <Camera className="w-3.5 h-3.5 text-emerald-400" />,
       hideInSimple: false,
     },
@@ -242,7 +246,7 @@ function LeftSidebar({
           {
             id: "PHOTOS",
             label: "Photos",
-            count: photos.length - videosCount,
+            count: stillsCount,
             icon: <ImageIcon className="w-3.5 h-3.5 text-sky-400" />,
             hideInSimple: false,
           },

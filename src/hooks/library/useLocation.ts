@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { CitySearchResult } from "../../types/lumina";
 import { expandWithRawPairs } from "../../utils/rawPairs";
+import { expandWithLivePairs } from "../../utils/media";
 import { LocationValue } from "./shared";
 import type { LibraryCore } from "./core";
 
@@ -171,7 +172,7 @@ export function useLocation(core: LibraryCore) {
   async function handleMapPickCoordinates(lat: number, lon: number) {
     if (selectedHashes.size === 0) return;
     try {
-      const hashes = expandWithRawPairs(Array.from(selectedHashes), photos);
+      const hashes = expandWithLivePairs(expandWithRawPairs(Array.from(selectedHashes), photos), photos);
       const hashSet = new Set(hashes);
       const location = await invoke<string>("set_manual_location", {
         hashes,

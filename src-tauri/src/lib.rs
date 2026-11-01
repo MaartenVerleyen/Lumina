@@ -175,6 +175,10 @@ pub struct PhotoItem {
     pub media_type: String,
     pub duration_ms: Option<u64>,
     pub video_codec: Option<String>,
+    // Live Photos: on the photo its clip (hash and file), on the clip its photo
+    pub live_video_hash: Option<String>,
+    pub live_video_path: Option<String>,
+    pub live_photo_hash: Option<String>,
 }
 
 #[derive(Serialize, Clone)]

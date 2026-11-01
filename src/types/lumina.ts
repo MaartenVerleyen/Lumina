@@ -91,6 +91,10 @@ export interface PhotoItem {
   media_type?: string;
   duration_ms?: number | null;
   video_codec?: string | null;
+  // Live Photos: the photo knows its clip (hash and file), the clip its photo
+  live_video_hash?: string | null;
+  live_video_path?: string | null;
+  live_photo_hash?: string | null;
 }
 
 export interface PersonItem {

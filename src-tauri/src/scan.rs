@@ -130,6 +130,33 @@ pub fn compute_db_duplicate_groups(conn: &Connection, root_folder: Option<&str>)
     map
 }
 
+// Ties each Live Photo's clip to its photo (see video_meta::pair_live_photos)
+pub fn link_live_photos(photos: &mut [PhotoItem]) {
+    let pairs = {
+        let candidates: Vec<video_meta::LiveCandidate> = photos
+            .iter()
+            .map(|p| {
+                let path = Path::new(&p.name);
+                let ext = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+                video_meta::LiveCandidate {
+                    stem: path.file_stem().map(|s| s.to_string_lossy().to_lowercase()).unwrap_or_default(),
+                    captured_at: &p.captured_at,
+                    is_video: p.media_type == "video",
+                    duration_ms: p.duration_ms,
+                    still: matches!(ext.as_str(), "heic" | "heif" | "jpg" | "jpeg"),
+                }
+            })
+            .collect();
+        video_meta::pair_live_photos(&candidates)
+    };
+    for (photo, clip) in pairs {
+        let (clip_hash, clip_path, photo_hash) = (photos[clip].hash.clone(), photos[clip].path.clone(), photos[photo].hash.clone());
+        photos[photo].live_video_hash = Some(clip_hash);
+        photos[photo].live_video_path = Some(clip_path);
+        photos[clip].live_photo_hash = Some(photo_hash);
+    }
+}
+
 pub static SCAN_GENERATION: AtomicU64 = AtomicU64::new(0);
 
 // Error text the UI recognises as "the user cancelled the folder scan" (not a failure to report)
@@ -843,6 +870,7 @@ pub async fn scan_folder(
                     media_type: if is_video { "video" } else { "photo" }.to_string(),
                     duration_ms,
                     video_codec,
+                    ..Default::default()
                 },
                 orig_path_str,
                 size_bytes,
@@ -1007,6 +1035,7 @@ pub async fn scan_folder(
         );
 
         photos.sort_by(|a, b| a.subfolder.cmp(&b.subfolder).then(a.name.cmp(&b.name)));
+        link_live_photos(&mut photos);
         let hashes: Vec<String> = photos.iter().map(|p| p.hash.clone()).collect();
         assign_duplicate_groups(&mut photos, &clip::clip_vectors(&conn, &hashes));
 
