@@ -53,12 +53,18 @@ step "System packages"
 PACKAGES=(
   base-devel git curl wget unzip pkgconf openssl   # building (rusqlite, ort and reqwest need a C toolchain and OpenSSL)
   rustup                                           # Rust toolchains (the workspace uses edition 2024)
-  nodejs npm                                       # the frontend (Vite, React, TypeScript) and its tests
-  ffmpeg                                           # video frames, HEIC and playable copies on Linux
+  ffmpeg                                          # video frames, HEIC and playable copies on Linux
   python                                           # scripts/test-library
   github-cli                                       # cloning the private repository, releases
   sqlite                                           # inspecting library.db by hand
 )
+# The frontend (Vite, React, TypeScript) needs Node 22.12+. An installed Node is kept as it is: the
+# nodejs-lts-* packages conflict with nodejs, and Node 22 LTS is fine.
+if have node; then
+  have npm || PACKAGES+=(npm)
+else
+  PACKAGES+=(nodejs npm)
+fi
 if [[ $WITH_DESKTOP -eq 1 ]]; then
   # Tauri v2 on Linux: WebKitGTK 4.1 and friends (https://v2.tauri.app/start/prerequisites/)
   PACKAGES+=(webkit2gtk-4.1 gtk3 libappindicator-gtk3 librsvg xdotool file appmenu-gtk-module)
