@@ -239,7 +239,7 @@ pub async fn ensure_clip_models_in(
     cancelled: &(dyn Fn() -> bool + Send + Sync),
 ) -> Result<(), String> {
     let check_dir = dir.to_path_buf();
-    let missing: Vec<usize> = tauri::async_runtime::spawn_blocking(move || {
+    let missing: Vec<usize> = tokio::task::spawn_blocking(move || {
         (0..CLIP_FILES.len())
             .filter(|&i| !face_ort::sha256_hex(&check_dir.join(CLIP_FILES[i].0)).is_some_and(|h| h == CLIP_FILES[i].2))
             .collect()
@@ -275,7 +275,7 @@ pub async fn ensure_clip_models_in(
             }
             drop(file);
             let (part_check, sha_owned) = (part.clone(), sha.to_string());
-            let ok = tauri::async_runtime::spawn_blocking(move || face_ort::sha256_hex(&part_check).is_some_and(|h| h == sha_owned))
+            let ok = tokio::task::spawn_blocking(move || face_ort::sha256_hex(&part_check).is_some_and(|h| h == sha_owned))
                 .await
                 .unwrap_or(false);
             if !ok {
@@ -329,7 +329,7 @@ async fn clip_models(app: &dyn Host) -> Result<Arc<ClipModels>, String> {
     }
     let dir = ensure_clip_models(app).await?;
     let loaded = Arc::new(
-        tauri::async_runtime::spawn_blocking(move || ClipModels::load(&dir))
+        tokio::task::spawn_blocking(move || ClipModels::load(&dir))
             .await
             .map_err(|e| e.to_string())??,
     );
@@ -425,7 +425,6 @@ pub const SEMANTIC_CANCELLED: &str = "Smart search indexing cancelled";
 static SEMANTIC_CANCEL: AtomicU64 = AtomicU64::new(0);
 static SEMANTIC_RUNNING: AtomicBool = AtomicBool::new(false);
 
-#[tauri::command]
 pub fn cancel_semantic_index() {
     SEMANTIC_CANCEL.fetch_add(1, Ordering::AcqRel);
 }
@@ -439,9 +438,8 @@ pub struct SemanticStatus {
 }
 
 // Whether smart search can be used without a download, and how much of the folder is indexed
-#[tauri::command]
-pub async fn semantic_status(app: AppHandle, root_folder: Option<String>) -> Result<SemanticStatus, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+pub async fn semantic_status(app: SharedHost, root_folder: Option<String>) -> Result<SemanticStatus, String> {
+    tokio::task::spawn_blocking(move || {
         let conn = open_global_db(&app)?;
         let prefix = make_folder_prefix(root_folder.as_deref());
         let total: usize = conn
@@ -468,8 +466,7 @@ pub async fn semantic_status(app: AppHandle, root_folder: Option<String>) -> Res
 
 // Indexes every photo of the folder that has no vector yet (downloading the models first if needed).
 // Runs in the background; progress arrives as `semantic-progress` events. Returns how many will be indexed.
-#[tauri::command]
-pub async fn start_semantic_index(app: AppHandle, root_folder: String) -> Result<usize, String> {
+pub async fn start_semantic_index(app: SharedHost, root_folder: String) -> Result<usize, String> {
     if SEMANTIC_RUNNING.swap(true, Ordering::AcqRel) {
         return Ok(0);
     }
@@ -489,7 +486,7 @@ async fn run_semantic_index(app: SharedHost, root_folder: String) -> Result<usiz
     let prefix = make_folder_prefix(Some(&root_folder));
     let app_dir = get_app_storage_dir(&app);
     let thumbs_dir = app_dir.join("thumbnails");
-    let frames_dir = crate::video_frames::frames_dir(&app_dir);
+    let frames_dir = video_frames::frames_dir(&app_dir);
     // (hash, images to embed, is a video): a photo's thumbnail, or a video's frames (videos indexed from their
     // thumbnail alone, before frames were searched, are done again)
     let todo: Vec<(String, Vec<PathBuf>, bool)> = {
@@ -504,7 +501,7 @@ async fn run_semantic_index(app: SharedHost, root_folder: String) -> Result<usiz
         rows.flatten()
             .filter_map(|(h, is_video)| {
                 if is_video {
-                    let frames = crate::video_frames::frame_paths(&frames_dir, &h);
+                    let frames = video_frames::frame_paths(&frames_dir, &h);
                     (!frame_cache.contains_key(&h) && !frames.is_empty()).then_some((h, frames, true))
                 } else {
                     let thumb = thumbs_dir.join(format!("{h}.jpg"));
@@ -664,10 +661,9 @@ fn rank(query: &[f32], exclude: Option<&str>, cut: bool) -> Vec<SemanticHit> {
     hits
 }
 
-#[tauri::command]
-pub async fn semantic_search(app: AppHandle, query: String) -> Result<Vec<SemanticHit>, String> {
+pub async fn semantic_search(app: SharedHost, query: String) -> Result<Vec<SemanticHit>, String> {
     let models = clip_models(&app).await?;
-    tauri::async_runtime::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         if let Ok(conn) = open_global_db(&app) {
             ensure_clip_cache(&conn);
         }
@@ -679,9 +675,8 @@ pub async fn semantic_search(app: AppHandle, query: String) -> Result<Vec<Semant
 }
 
 // "Find similar": the photo's own image vector is the query
-#[tauri::command]
-pub async fn find_similar_photos(app: AppHandle, hash: String) -> Result<Vec<SemanticHit>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+pub async fn find_similar_photos(app: SharedHost, hash: String) -> Result<Vec<SemanticHit>, String> {
+    tokio::task::spawn_blocking(move || {
         let conn = open_global_db(&app)?;
         ensure_clip_cache(&conn);
         let query = CLIP_CACHE.lock().ok().and_then(|c| c.get(&hash).cloned());

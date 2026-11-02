@@ -58,7 +58,7 @@ pub struct FfmpegDownloadProgress {
 async fn ensure_ffmpeg(app: &dyn Host) -> Result<PathBuf, String> {
     let target = ffmpeg_path(app);
     let check = target.clone();
-    if tauri::async_runtime::spawn_blocking(move || ffmpeg_ready(&check)).await.unwrap_or(false) {
+    if tokio::task::spawn_blocking(move || ffmpeg_ready(&check)).await.unwrap_or(false) {
         return Ok(target);
     }
     let dir = get_models_dir(app);
@@ -95,7 +95,7 @@ async fn ensure_ffmpeg(app: &dyn Host) -> Result<PathBuf, String> {
     drop(file);
 
     let target_clone = target.clone();
-    let installed = tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+    let installed = tokio::task::spawn_blocking(move || -> Result<(), String> {
         let result = (|| {
             if sha256_hex(&zip_part).as_deref() != Some(FFMPEG_ZIP_SHA256) {
                 return Err("The downloaded ffmpeg package failed its checksum. Please try again.".to_string());
@@ -219,8 +219,7 @@ fn prune_cache(dir: &Path, keep: &Path) {
 }
 
 // The playable copy of a video, if one was made before (marked as just used, for the cache's order)
-#[tauri::command]
-pub fn existing_playable_copy(app: AppHandle, hash: String) -> Option<String> {
+pub fn existing_playable_copy(app: SharedHost, hash: String) -> Option<String> {
     let path = transcode_path(&get_app_storage_dir(&app), &hash);
     let file = File::options().write(true).open(&path).ok()?;
     let _ = file.set_modified(std::time::SystemTime::now());
@@ -228,8 +227,7 @@ pub fn existing_playable_copy(app: AppHandle, hash: String) -> Option<String> {
 }
 
 // Converts the video to an H.264 MP4 the app can play (downloading ffmpeg first if needed) and returns its path
-#[tauri::command]
-pub async fn make_playable_copy(app: AppHandle, hash: String) -> Result<String, String> {
+pub async fn make_playable_copy(app: SharedHost, hash: String) -> Result<String, String> {
     if let Some(existing) = existing_playable_copy(app.clone(), hash.clone()) {
         return Ok(existing);
     }
@@ -245,7 +243,7 @@ pub async fn make_playable_copy(app: AppHandle, hash: String) -> Result<String, 
     if TRANSCODE_CANCEL.load(Ordering::Acquire) != generation {
         return Err(TRANSCODE_CANCELLED.to_string());
     }
-    tauri::async_runtime::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         let app_dir = get_app_storage_dir(&app);
         let dir = transcodes_dir(&app_dir);
         fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -282,7 +280,6 @@ pub async fn make_playable_copy(app: AppHandle, hash: String) -> Result<String, 
     .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
 pub fn cancel_playable_copy() {
     TRANSCODE_CANCEL.fetch_add(1, Ordering::AcqRel);
 }
@@ -294,8 +291,7 @@ pub struct VideoCacheInfo {
     pub ffmpeg_installed: bool,
 }
 
-#[tauri::command]
-pub fn video_cache_info(app: AppHandle) -> VideoCacheInfo {
+pub fn video_cache_info(app: SharedHost) -> VideoCacheInfo {
     let dir = transcodes_dir(&get_app_storage_dir(&app));
     let sizes: Vec<u64> = fs::read_dir(dir)
         .into_iter()
@@ -306,8 +302,7 @@ pub fn video_cache_info(app: AppHandle) -> VideoCacheInfo {
     VideoCacheInfo { bytes: sizes.iter().sum(), files: sizes.len(), ffmpeg_installed: ffmpeg_path(&app).exists() }
 }
 
-#[tauri::command]
-pub fn clear_video_cache(app: AppHandle) -> usize {
+pub fn clear_video_cache(app: SharedHost) -> usize {
     let dir = transcodes_dir(&get_app_storage_dir(&app));
     fs::read_dir(dir)
         .into_iter()

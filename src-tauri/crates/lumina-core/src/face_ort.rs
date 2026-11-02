@@ -254,7 +254,6 @@ impl FaceModels {
         FaceQuality { eyes_open, sharpness: Some(face_sharpness(aligned)) }
     }
 
-    #[cfg(test)]
     pub fn can_judge_eyes(&self) -> bool {
         self.eye_scorer().is_some()
     }
@@ -405,7 +404,7 @@ pub type DownloadProgress<'a> = &'a (dyn Fn(u64, u64) + Send + Sync);
 pub async fn ensure_face_models_in(dir: &Path, progress: DownloadProgress<'_>) -> Result<bool, String> {
     let (det, emb) = (dir.join(DETECTOR_FILE), dir.join(EMBEDDER_FILE));
     let check_dir = dir.to_path_buf();
-    let present = tauri::async_runtime::spawn_blocking(move || {
+    let present = tokio::task::spawn_blocking(move || {
         model_file_ok(&check_dir.join(DETECTOR_FILE), DETECTOR_SHA256) && model_file_ok(&check_dir.join(EMBEDDER_FILE), EMBEDDER_SHA256)
     })
     .await
@@ -486,7 +485,7 @@ async fn download_buffalo_l(dir: &Path, progress: DownloadProgress<'_>) -> Resul
     drop(file);
 
     let dir = dir.to_path_buf();
-    let extracted = tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+    let extracted = tokio::task::spawn_blocking(move || -> Result<(), String> {
         let archive_file = File::open(&zip_part).map_err(|e| e.to_string())?;
         let mut archive = zip::ZipArchive::new(BufReader::new(archive_file)).map_err(|e| format!("Corrupt face model package: {e}"))?;
         for (name, sha) in [(DETECTOR_FILE, DETECTOR_SHA256), (EMBEDDER_FILE, EMBEDDER_SHA256)] {
@@ -522,7 +521,7 @@ pub async fn face_models_v2(app: &dyn Host) -> Result<Arc<FaceModels>, String> {
         return Ok(models);
     }
     let dir = ensure_face_models_v2(app).await?;
-    let loaded = tauri::async_runtime::spawn_blocking(move || FaceModels::load(&dir))
+    let loaded = tokio::task::spawn_blocking(move || FaceModels::load(&dir))
         .await
         .map_err(|e| e.to_string())??;
     let loaded = Arc::new(loaded);

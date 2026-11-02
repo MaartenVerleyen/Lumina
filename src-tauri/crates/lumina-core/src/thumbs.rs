@@ -118,7 +118,7 @@ fn run_thumbnail_pass(
     if !videos.is_empty() && !is_superseded() {
         let frames_dir = video_frames::frames_dir(&get_app_storage_dir(app));
         let _ = fs::create_dir_all(&frames_dir);
-        let ffmpeg = crate::ffmpeg::installed_ffmpeg(app);
+        let ffmpeg = ffmpeg::installed_ffmpeg(app);
         run_video_pass(&videos, &frames_dir, ffmpeg.as_deref(), force, is_superseded, &mut collect);
     }
     let video_ms = elapsed_ms(video_started);
@@ -384,7 +384,7 @@ fn process_video(video: &PhotoItem, frames_dir: &Path, ffmpeg: Option<&Path>, fo
         // grid shows a placeholder
         let grabbed = video_frames::grab_frames(&source, rotation).or_else(|| {
             let frame0 = video_frames::frame_path(frames_dir, &video.hash, 0);
-            let img = crate::ffmpeg::grab_frame_with_ffmpeg(ffmpeg?, &source, &frame0)?;
+            let img = ffmpeg::grab_frame_with_ffmpeg(ffmpeg?, &source, &frame0)?;
             let (width, height) = img.dimensions();
             Some(video_frames::GrabbedFrames { frames: vec![img], width, height, duration_ms: 0 })
         });

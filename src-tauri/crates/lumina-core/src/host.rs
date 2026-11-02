@@ -9,6 +9,8 @@ pub type SharedHost = Arc<dyn Host>;
 pub trait Host: Send + Sync {
     fn data_dir(&self) -> PathBuf;
     fn emit_value(&self, event: &str, payload: JsonValue);
+    // A library folder was opened: the desktop lets its webview load files from it; other hosts need nothing
+    fn allow_media_dir(&self, _dir: &Path) {}
 }
 
 #[cfg(feature = "tauri")]
@@ -25,6 +27,11 @@ impl Host for tauri::AppHandle {
     fn emit_value(&self, event: &str, payload: JsonValue) {
         let _ = tauri::Emitter::emit(self, event, payload);
     }
+
+    fn allow_media_dir(&self, dir: &Path) {
+        use tauri::Manager;
+        let _ = self.asset_protocol_scope().allow_directory(dir, true);
+    }
 }
 
 impl<T: Host + ?Sized> Host for &T {
@@ -35,6 +42,10 @@ impl<T: Host + ?Sized> Host for &T {
     fn emit_value(&self, event: &str, payload: JsonValue) {
         (**self).emit_value(event, payload)
     }
+
+    fn allow_media_dir(&self, dir: &Path) {
+        (**self).allow_media_dir(dir)
+    }
 }
 
 impl<T: Host + ?Sized> Host for Arc<T> {
@@ -44,6 +55,10 @@ impl<T: Host + ?Sized> Host for Arc<T> {
 
     fn emit_value(&self, event: &str, payload: JsonValue) {
         (**self).emit_value(event, payload)
+    }
+
+    fn allow_media_dir(&self, dir: &Path) {
+        (**self).allow_media_dir(dir)
     }
 }
 

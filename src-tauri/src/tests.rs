@@ -1,5 +1,7 @@
 use crate::ai::parse_resilient_ai_json;
 use crate::*;
+use crate::fastdecode::*;
+use crate::thumbs::*;
 use crate::face_scan::carry_over_rejections;
 use image::{GrayImage, Luma};
 use std::io::{Seek, SeekFrom};

@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value as JsonValue};
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
-use std::io::{BufReader, Cursor, Read};
+use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
@@ -14,10 +14,9 @@ use std::time::Instant;
 use tauri::{AppHandle, Manager};
 use walkdir::WalkDir;
 
-pub use lumina_core::{db, decode, exif_meta, face_engine, fastdecode, face_match, host, imaging, perf, recycle, storage, types, video_frames, video_meta, GEOCODER};
+pub use lumina_core::{clip, db, decode, exif_meta, face_engine, face_ort, fastdecode, ffmpeg, face_match, host, imaging, perf, recycle, scan, storage, thumbs, types, video_frames, video_meta, GEOCODER};
 pub use types::*;
 mod engine_commands;
-mod scan;
 mod library;
 mod files;
 mod face_scan;
@@ -25,9 +24,6 @@ mod face_review;
 mod people;
 mod ai;
 mod system;
-mod thumbs;
-mod face_ort;
-mod clip;
 mod albums;
 mod export;
 mod prepare;
@@ -38,7 +34,6 @@ mod highlights;
 mod gallery;
 mod backup;
 mod duplicates;
-mod ffmpeg;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -53,8 +48,6 @@ use decode::*;
 use library::*;
 use perf::*;
 use storage::*;
-use fastdecode::*;
-use thumbs::*;
 use face_ort::*;
 use face_match::*;
 use host::*;
@@ -102,7 +95,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            scan::scan_folder,
+            engine_commands::scan_folder,
             library::set_photos_rating,
             library::add_tag_batch,
             library::remove_tag,
@@ -111,17 +104,17 @@ pub fn run() {
             library::set_photo_color_label,
             library::set_photo_rotation,
             library::set_photos_rotation_exact,
-            scan::rescan_exif_batch,
+            engine_commands::rescan_exif_batch,
             library::search_cities_offline,
             library::set_manual_location,
             library::stage_photo_move,
             library::stage_photos_move,
             duplicates::find_duplicates,
-            ffmpeg::existing_playable_copy,
-            ffmpeg::make_playable_copy,
-            ffmpeg::cancel_playable_copy,
-            ffmpeg::video_cache_info,
-            ffmpeg::clear_video_cache,
+            engine_commands::existing_playable_copy,
+            engine_commands::make_playable_copy,
+            engine_commands::cancel_playable_copy,
+            engine_commands::video_cache_info,
+            engine_commands::clear_video_cache,
             duplicates::stage_duplicate_extras,
             library::clear_all_staged,
             library::get_staged_operations,
@@ -153,7 +146,7 @@ pub fn run() {
             face_scan::detect_faces_in_photo,
             face_scan::scan_library_faces_batch,
             face_scan::cancel_face_scan,
-            scan::cancel_folder_scan,
+            engine_commands::cancel_folder_scan,
             export::export_photos,
             export::cancel_export,
             albums::get_albums,
@@ -165,12 +158,12 @@ pub fn run() {
             albums::get_saved_searches,
             albums::save_search,
             albums::delete_saved_search,
-            clip::semantic_status,
-            clip::start_semantic_index,
-            clip::cancel_semantic_index,
-            clip::semantic_search,
-            clip::find_similar_photos,
-            scan::cancel_thumbnail_pass,
+            engine_commands::semantic_status,
+            engine_commands::start_semantic_index,
+            engine_commands::cancel_semantic_index,
+            engine_commands::semantic_search,
+            engine_commands::find_similar_photos,
+            engine_commands::cancel_thumbnail_pass,
             ai::cancel_ollama_pull,
             face_scan::get_outdated_face_photos,
             face_review::get_unknown_face_clusters,

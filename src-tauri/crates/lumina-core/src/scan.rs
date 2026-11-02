@@ -163,14 +163,12 @@ pub static SCAN_GENERATION: AtomicU64 = AtomicU64::new(0);
 pub const SCAN_CANCELLED: &str = "Folder scan cancelled";
 
 // Cancel button of the folder scan dialog: the running index pass (and its thumbnail pass) stop early
-#[tauri::command]
 pub fn cancel_folder_scan() {
     SCAN_GENERATION.fetch_add(1, Ordering::AcqRel);
 }
 
 // Jobs panel: stops the background thumbnail pass only. Same mechanism: the pass sees a newer generation;
 // photos it didn't reach are picked up by the next scan.
-#[tauri::command]
 pub fn cancel_thumbnail_pass() {
     SCAN_GENERATION.fetch_add(1, Ordering::AcqRel);
 }
@@ -382,16 +380,11 @@ fn save_indexed(
     upsert_count
 }
 
-#[tauri::command]
-pub async fn scan_folder(
-    app: AppHandle,
-    folder_path: String,
-    force_reprocess: Option<bool>,
-) -> Result<Vec<PhotoItem>, String> {
+pub async fn scan_folder(app: SharedHost, folder_path: String, force_reprocess: Option<bool>) -> Result<Vec<PhotoItem>, String> {
     let force = force_reprocess.unwrap_or(false);
     // Every scan supersedes any background thumbnail pass still running from an earlier scan
     let generation = SCAN_GENERATION.fetch_add(1, Ordering::AcqRel) + 1;
-    tauri::async_runtime::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         let scan_started = Instant::now();
         let input_path = PathBuf::from(&folder_path);
         let root_path = if input_path.is_file() {
@@ -407,7 +400,7 @@ pub async fn scan_folder(
             return Err(format!("Folder does not exist: {}", root_path.display()));
         }
         // The webview may only load files from the app's own data folder and from libraries the user opened
-        let _ = app.asset_protocol_scope().allow_directory(&root_path, true);
+        app.allow_media_dir(&root_path);
         let is_cancelled = || SCAN_GENERATION.load(Ordering::Acquire) != generation;
 
         let app_dir = get_app_storage_dir(&app);
@@ -1075,7 +1068,7 @@ pub async fn scan_folder(
             .collect();
 
         if !needs_processing.is_empty() {
-            spawn_thumbnail_pass(Arc::new(app.clone()), needs_processing, root_path.clone(), generation, force, upgrade);
+            spawn_thumbnail_pass(app.clone(), needs_processing, root_path.clone(), generation, force, upgrade);
         }
 
         Ok(photos)
@@ -1086,9 +1079,8 @@ pub async fn scan_folder(
 
 // ----------------- FORCE EXIF RESCAN (INDIVIDUAL & BATCH) -----------------
 
-#[tauri::command]
-pub async fn rescan_exif_batch(app: AppHandle, hashes: Vec<String>) -> Result<Vec<ExifRefreshResult>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+pub async fn rescan_exif_batch(app: SharedHost, hashes: Vec<String>) -> Result<Vec<ExifRefreshResult>, String> {
+    tokio::task::spawn_blocking(move || {
         let mut conn = open_global_db(&app)?;
         let mut results = Vec::new();
 
