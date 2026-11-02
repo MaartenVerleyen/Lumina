@@ -6,7 +6,7 @@ use std::time::Duration;
 // Watches the open library folder: photos added, changed or removed outside Lumina (Explorer, a sync app, a
 // camera tool) make the app rescan quietly after 2 s without changes.
 
-static WATCHER: Mutex<Option<Debouncer<RecommendedWatcher>>> = Mutex::new(None);
+static WATCHERS: Mutex<Vec<Debouncer<RecommendedWatcher>>> = Mutex::new(Vec::new());
 
 // Photos and videos only: Lumina's own .part files, sidecars and caches don't need a rescan
 pub fn is_library_photo(path: &Path) -> bool {
@@ -17,22 +17,30 @@ pub fn is_library_photo(path: &Path) -> bool {
 
 // Starts watching `root` (stopping the previous watch); None just stops
 pub fn watch_library(app: SharedHost, root: Option<String>) -> Result<(), String> {
-    let mut slot = WATCHER.lock().map_err(|e| e.to_string())?;
-    *slot = None;
-    let Some(root) = root else { return Ok(()) };
-    let folder = root.clone();
-    let mut debouncer = new_debouncer(Duration::from_secs(2), move |res: DebounceEventResult| {
-        if let Ok(events) = res {
-            if events.iter().any(|e| is_library_photo(&e.path)) {
-                let _ = emit_to(&app, "library-files-changed", folder.clone());
+    watch_libraries(app, root.into_iter().collect())
+}
+
+// Watches every folder in `roots` (a server's libraries), replacing what was watched before. Each change
+// sends "library-files-changed" with the root it happened in.
+pub fn watch_libraries(app: SharedHost, roots: Vec<String>) -> Result<(), String> {
+    let mut slot = WATCHERS.lock().map_err(|e| e.to_string())?;
+    slot.clear();
+    for root in roots {
+        let folder = root.clone();
+        let host = app.clone();
+        let mut debouncer = new_debouncer(Duration::from_secs(2), move |res: DebounceEventResult| {
+            if let Ok(events) = res {
+                if events.iter().any(|e| is_library_photo(&e.path)) {
+                    let _ = emit_to(&host, "library-files-changed", folder.clone());
+                }
             }
-        }
-    })
-    .map_err(|e| e.to_string())?;
-    debouncer
-        .watcher()
-        .watch(Path::new(&root), RecursiveMode::Recursive)
-        .map_err(|e| format!("Can't watch {root}: {e}"))?;
-    *slot = Some(debouncer);
+        })
+        .map_err(|e| e.to_string())?;
+        debouncer
+            .watcher()
+            .watch(Path::new(&root), RecursiveMode::Recursive)
+            .map_err(|e| format!("Can't watch {root}: {e}"))?;
+        slot.push(debouncer);
+    }
     Ok(())
 }

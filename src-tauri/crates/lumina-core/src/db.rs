@@ -190,6 +190,15 @@ pub fn migrate(conn: &Connection) -> Result<(), String> {
     // Library folders and each photo's path inside its library (Lumina 4.3)
     crate::libraries::migrate(conn)?;
 
+    // The face engine that last scanned the photo, faces found or not (NULL: never scanned by the current one)
+    if conn.execute("ALTER TABLE photos ADD COLUMN faces_engine TEXT", []).is_ok() {
+        // Photos with faces from the current engine were scanned by it; those without faces will be scanned again
+        let _ = conn.execute(
+            "UPDATE photos SET faces_engine = ?1 WHERE hash IN (SELECT hash FROM photo_faces WHERE engine = ?1)",
+            params![crate::face_engine::FACE_ENGINE_V2],
+        );
+    }
+
     Ok(())
 }
 

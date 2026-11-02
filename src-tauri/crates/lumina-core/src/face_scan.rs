@@ -329,6 +329,8 @@ fn run_face_scan(app_clone: &dyn Host, hashes: Vec<String>, models: Arc<FaceMode
                                 "DELETE FROM photo_faces WHERE hash = ?1 AND (person_name IS NULL OR person_name = '')",
                                 params![h],
                             );
+                            // Scanned by this engine, faces or not (the server's backlog leaves it out)
+                            let _ = tx.execute("UPDATE photos SET faces_engine = ?2 WHERE hash = ?1", params![h, FACE_ENGINE_V2]);
                             let mut claimed_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
                             let mut inserted: Vec<(String, (f64, f64, f64, f64))> = Vec::new();
                             for item in writes {

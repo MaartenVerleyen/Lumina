@@ -1,9 +1,26 @@
 use crate::*;
 
+// Where Ollama listens: this PC unless the server's configuration (or LUMINA_OLLAMA_URL) names another
+static OLLAMA_URL: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+pub fn set_ollama_url(url: &str) {
+    let _ = OLLAMA_URL.set(url.trim().trim_end_matches('/').to_string());
+}
+
+pub fn ollama_url() -> &'static str {
+    OLLAMA_URL.get_or_init(|| {
+        std::env::var("LUMINA_OLLAMA_URL")
+            .ok()
+            .map(|u| u.trim().trim_end_matches('/').to_string())
+            .filter(|u| !u.is_empty())
+            .unwrap_or_else(|| "http://127.0.0.1:11434".to_string())
+    })
+}
+
 // ----------------- OLLAMA LIFECYCLE -----------------
 
 pub async fn check_ollama_status() -> Result<OllamaStatus, String> {
-    let res = FAST_STATUS_CLIENT.get("http://127.0.0.1:11434/api/tags").send().await;
+    let res = FAST_STATUS_CLIENT.get(format!("{}/api/tags", ollama_url())).send().await;
 
     if res.is_err() {
         return Ok(OllamaStatus {
@@ -28,7 +45,7 @@ pub async fn check_ollama_status() -> Result<OllamaStatus, String> {
     }
 
     let mut active_vram_model = None;
-    if let Ok(ps_res) = FAST_STATUS_CLIENT.get("http://127.0.0.1:11434/api/ps").send().await {
+    if let Ok(ps_res) = FAST_STATUS_CLIENT.get(format!("{}/api/ps", ollama_url())).send().await {
         if let Ok(ps_val) = ps_res.json::<serde_json::Value>().await {
             if let Some(active_arr) = ps_val["models"].as_array() {
                 if let Some(first) = active_arr.first() {
@@ -143,7 +160,7 @@ pub async fn enable_ollama_flash_attention() -> Result<(), String> {
     // Wait until Ollama answers again (it takes a few seconds)
     for _ in 0..40 {
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-        if FAST_STATUS_CLIENT.get("http://127.0.0.1:11434/api/version").send().await.is_ok() {
+        if FAST_STATUS_CLIENT.get(format!("{}/api/version", ollama_url())).send().await.is_ok() {
             return Ok(());
         }
     }
@@ -158,7 +175,7 @@ pub async fn preload_ollama_vram(model_name: String) -> Result<String, String> {
     });
 
     let _ = HTTP_CLIENT
-        .post("http://127.0.0.1:11434/api/generate")
+        .post(format!("{}/api/generate", ollama_url()))
         .json(&payload)
         .send()
         .await
@@ -174,7 +191,7 @@ pub async fn unload_ollama_vram(model_name: String) -> Result<String, String> {
     });
 
     let _ = HTTP_CLIENT
-        .post("http://127.0.0.1:11434/api/generate")
+        .post(format!("{}/api/generate", ollama_url()))
         .json(&payload)
         .send()
         .await
@@ -212,7 +229,7 @@ pub async fn pull_ollama_model(app: SharedHost, model_name: String) -> Result<St
     });
 
     let mut res = client
-        .post("http://127.0.0.1:11434/api/pull")
+        .post(format!("{}/api/pull", ollama_url()))
         .json(&payload)
         .send()
         .await
@@ -352,7 +369,7 @@ const AI_MIN_CTX: u64 = 4096;
 async fn ai_context_size(model: &str) -> u64 {
     let loaded = async {
         let ps: JsonValue = FAST_STATUS_CLIENT
-            .get("http://127.0.0.1:11434/api/ps")
+            .get(format!("{}/api/ps", ollama_url()))
             .send()
             .await
             .ok()?
@@ -684,7 +701,7 @@ pub async fn ai_analyze_photo(app: SharedHost, hash: String, image_path_for_ai: 
     let request_started = Instant::now();
     let request = async {
         let res = HTTP_CLIENT
-            .post("http://127.0.0.1:11434/api/chat")
+            .post(format!("{}/api/chat", ollama_url()))
             .json(&payload)
             .send()
             .await

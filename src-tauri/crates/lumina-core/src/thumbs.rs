@@ -54,7 +54,18 @@ pub fn spawn_thumbnail_pass(
     force: bool,
     upgrade: HashSet<String>,
 ) {
-    std::thread::spawn(move || run_thumbnail_pass(&app, &items, &root, generation, force, &upgrade));
+    THUMB_PASSES.fetch_add(1, Ordering::AcqRel);
+    std::thread::spawn(move || {
+        run_thumbnail_pass(&app, &items, &root, generation, force, &upgrade);
+        THUMB_PASSES.fetch_sub(1, Ordering::AcqRel);
+    });
+}
+
+// Thumbnail passes running now (a headless server waits for them before scanning faces)
+pub static THUMB_PASSES: AtomicUsize = AtomicUsize::new(0);
+
+pub fn thumbnail_passes_running() -> bool {
+    THUMB_PASSES.load(Ordering::Acquire) > 0
 }
 
 fn run_thumbnail_pass(
