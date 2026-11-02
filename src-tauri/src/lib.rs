@@ -33,6 +33,9 @@ pub fn run() {
             // A restore chosen in Settings is moved in before anything opens the database
             backup::apply_pending_restore(&get_app_storage_dir(app.handle()));
             let _ = open_global_db(app.handle());
+            // Thumbnails, previews and face crops: the scope covers the usual data folder, this adds one set
+            // with LUMINA_DATA_DIR (a test library)
+            host::Host::allow_media_dir(app.handle(), &get_app_storage_dir(app.handle()));
             // Warm up lazily-built resources off the UI thread, so the first scan doesn't stall on them:
             // the offline geocoder's city index (first photo with GPS) and the background thread pool
             std::thread::spawn(|| {
