@@ -125,7 +125,8 @@ scan means the models did not run.
   (`ai::run_caption_batch`) in the engine; frontend transport layer `src/api/`.
 - **Phase 1 (on `lumina-5`, partly untested):** Linux counterparts (table above), `lumina-server`,
   `server/Dockerfile` + `docker-compose.yml`.
-- **Phase 2 (next):** HTTP API in the server (axum): `POST /api/rpc/{command}` with the existing command
+- **Phase 2 (next, on the Linux machine; the full brief with milestones is `docs/plans/phase-2-server.md`):**
+  HTTP API in the server (axum), HTTPS through `tailscale serve`, accounts from the start: `POST /api/rpc/{command}` with the existing command
   names, WebSocket events, `/media/{thumb|original|preview|face}/…` (the kinds of `MediaRef` in
   `src/api/transport.ts`), accounts with roles (viewer, uploader, editor, admin) and shared albums, a jobs
   table, the web client served from `/`, restore of a `.luminabackup` in the admin UI.
