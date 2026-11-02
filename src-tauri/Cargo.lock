@@ -12,6 +12,7 @@ dependencies = [
  "jpeg-decoder",
  "kamadak-exif",
  "little_exif",
+ "lumina-core",
  "notify-debouncer-mini",
  "ort",
  "rayon",
@@ -2976,6 +2977,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0fae87c125b03c1d2c0150c90365d7d6bcc53fb73a9acaef207d2d065860f062"
 dependencies = [
  "imgref",
+]
+
+[[package]]
+name = "lumina-core"
+version = "4.2.0"
+dependencies = [
+ "blake3",
+ "image",
+ "kamadak-exif",
+ "reverse_geocoder",
+ "serde",
+ "serde_json",
+ "tauri",
+ "windows",
 ]
 
 [[package]]

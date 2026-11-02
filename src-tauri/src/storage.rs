@@ -2,10 +2,6 @@ use crate::*;
 
 // ----------------- DRIVE-AWARE I/O PARALLELISM -----------------
 
-// Head bytes read once per new/changed file: covers the content hash (first 64 KB) and, for JPEG/PNG and
-// most phone HEICs, the header dimensions and the complete EXIF block.
-pub const FILE_HEAD_BYTES: usize = 192 * 1024;
-
 #[cfg(windows)]
 fn drive_letter(path: &Path) -> Option<char> {
     match path.components().next()? {
@@ -120,18 +116,4 @@ pub static BG_POOL: LazyLock<rayon::ThreadPool> = LazyLock::new(|| {
         .expect("failed to start the background thread pool")
 });
 
-// Reads up to FILE_HEAD_BYTES from the start of the file (looping: a single read() may return less)
-pub fn read_file_head(file: &mut File, file_size: u64) -> std::io::Result<Vec<u8>> {
-    let want = (file_size as usize).min(FILE_HEAD_BYTES);
-    let mut head = vec![0u8; want];
-    let mut filled = 0;
-    while filled < want {
-        let n = file.read(&mut head[filled..])?;
-        if n == 0 {
-            break;
-        }
-        filled += n;
-    }
-    head.truncate(filled);
-    Ok(head)
-}
+

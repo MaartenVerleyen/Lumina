@@ -17,7 +17,11 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+[workspace]
+members = ["crates/lumina-core"]
+
 [dependencies]
+lumina-core = { path = "crates/lumina-core", features = ["tauri"] }
 tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"

@@ -1,5 +1,25 @@
 use crate::*;
 
+// Head bytes read once per new/changed file: covers the content hash (first 64 KB) and, for JPEG/PNG and
+// most phone HEICs, the header dimensions and the complete EXIF block.
+pub const FILE_HEAD_BYTES: usize = 192 * 1024;
+
+// Reads up to FILE_HEAD_BYTES from the start of the file (looping: a single read() may return less)
+pub fn read_file_head(file: &mut File, file_size: u64) -> std::io::Result<Vec<u8>> {
+    let want = (file_size as usize).min(FILE_HEAD_BYTES);
+    let mut head = vec![0u8; want];
+    let mut filled = 0;
+    while filled < want {
+        let n = file.read(&mut head[filled..])?;
+        if n == 0 {
+            break;
+        }
+        filled += n;
+    }
+    head.truncate(filled);
+    Ok(head)
+}
+
 // Identical hash to compute_fast_hash (size + first 64 KB + last 64 KB: existing DB rows stay matched),
 // but also returns the file head so EXIF and dimensions can be parsed without reading the file again.
 pub fn hash_and_read_head(path: &Path, file_size: u64) -> Result<(String, Vec<u8>), String> {

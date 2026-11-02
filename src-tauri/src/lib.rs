@@ -1,26 +1,24 @@
 use base64::{engine::general_purpose, Engine as _};
-use exif::{Reader, Tag, Value};
+use exif::{Reader, Tag};
 use image::{imageops::FilterType, DynamicImage, GenericImageView, ImageFormat};
 use rayon::prelude::*;
-use reverse_geocoder::ReverseGeocoder;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value as JsonValue};
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
-use std::io::{BufReader, Cursor, Read, Seek, SeekFrom};
+use std::io::{BufReader, Cursor, Read};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Instant;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Manager};
 use walkdir::WalkDir;
 
+pub use lumina_core::{exif_meta, host, imaging, perf, video_meta, GEOCODER};
 mod db;
-mod imaging;
 mod face_engine;
 mod scan;
-mod exif_meta;
 mod decode;
 mod library;
 mod files;
@@ -29,7 +27,6 @@ mod face_review;
 mod people;
 mod ai;
 mod system;
-mod perf;
 mod storage;
 mod fastdecode;
 mod thumbs;
@@ -47,10 +44,8 @@ mod gallery;
 mod backup;
 mod duplicates;
 mod recycle;
-mod video_meta;
 mod video_frames;
 mod ffmpeg;
-mod host;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -72,7 +67,6 @@ use face_ort::*;
 use face_match::*;
 use host::*;
 
-static GEOCODER: LazyLock<ReverseGeocoder> = LazyLock::new(ReverseGeocoder::new);
 static DB_SCHEMA_READY: AtomicBool = AtomicBool::new(false);
 static SPLASH_CLOSED: AtomicBool = AtomicBool::new(false);
 static WIC_COUNTER: AtomicUsize = AtomicUsize::new(1);
