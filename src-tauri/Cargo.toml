@@ -25,54 +25,8 @@ lumina-core = { path = "crates/lumina-core", features = ["tauri"] }
 tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-image = "0.25"
-blake3 = "1.5"
-rayon = "1.10"
-walkdir = "2.5"
-rusqlite = { version = "0.32", features = ["bundled"] }
-reqwest = { version = "0.12", features = ["json"] }
-base64 = "0.22"
-kamadak-exif = "0.5"
-reverse_geocoder = "4.1"
-# ONNX Runtime for the face engine (SCRFD + ArcFace): DirectML on the GPU, CPU as fallback.
-# Pinned: the 2.0 API still changes between release candidates.
-ort = { version = "=2.0.0-rc.15", features = ["directml"] }
-# BERT WordPiece tokenizer for the multilingual CLIP text encoder (pure Rust: no Oniguruma / C++ deps)
-little_exif = "=0.6.23"
-tokenizers = { version = "=0.22.2", default-features = false, features = ["fancy-regex"] }
-# Face models come from InsightFace's official buffalo_l package: unzip two files, verify their SHA-256
-zip = { version = "9", default-features = false, features = ["deflate"] }
-sha2 = "0.10"
-trash = "5"
-# Already in the tree via Tauri; `select!`/`Notify` let a Stop abort an in-flight AI request
-tokio = { version = "1", features = ["sync", "macros", "time"] }
-# DCT-domain downscaled JPEG decoding (1/2, 1/4, 1/8) for thumbnails, previews and face/AI input
-jpeg-decoder = { version = "0.3", default-features = false }
 tauri-plugin-updater = "2"
-notify-debouncer-mini = "0.7.0"
-
-# Same version Tauri already uses (no second copy to compile): drive type detection, in-process WIC, thread priority
-[target.'cfg(windows)'.dependencies]
-windows = { version = "0.62", features = [
-    "Win32_Foundation",
-    "Win32_Security",
-    "Win32_Storage_FileSystem",
-    "Win32_System_IO",
-    "Win32_System_Ioctl",
-    "Win32_System_Threading",
-    "Win32_System_Com",
-    "Win32_Graphics_Imaging",
-    "Win32_System_Registry",
-    "Win32_UI_Shell",
-    # Video frames through Windows' own codecs (Media Foundation source reader)
-    "Win32_Media_MediaFoundation",
-    "Win32_System_Com_StructuredStorage",
-    "Win32_System_Variant",
-] }
-# The `#[implement]` macro (Recycle Bin progress sink) expands to `::windows_core` paths
-windows-core = "0.62"
+serde_json = "1"
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]

@@ -6,34 +6,13 @@ version = 4
 name = "Lumina"
 version = "4.2.0"
 dependencies = [
- "base64 0.22.1",
- "blake3",
- "image",
- "jpeg-decoder",
- "kamadak-exif",
- "little_exif",
  "lumina-core",
- "notify-debouncer-mini",
- "ort",
- "rayon",
- "reqwest 0.12.28",
- "reverse_geocoder",
- "rusqlite",
- "serde",
  "serde_json",
- "sha2",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
  "tauri-plugin-opener",
  "tauri-plugin-updater",
- "tokenizers",
- "tokio",
- "trash",
- "walkdir",
- "windows",
- "windows-core",
- "zip 9.1.1",
 ]
 
 [[package]]
