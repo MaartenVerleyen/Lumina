@@ -1,0 +1,49 @@
+# Lumina server and Ollama on one machine with an NVIDIA card (needs the NVIDIA Container Toolkit).
+#   docker compose -f server/docker-compose.yml up -d --build
+# Then follow it with `docker compose -f server/docker-compose.yml logs -f lumina`.
+services:
+  lumina:
+    build:
+      context: ..
+      dockerfile: server/Dockerfile
+    restart: unless-stopped
+    environment:
+      # Photo dates taken from file times are shown in this time zone
+      TZ: Europe/Brussels
+      LUMINA_OLLAMA_URL: http://ollama:11434
+      # Uncomment to caption new photos automatically (the model must be pulled in Ollama first)
+      # LUMINA_CAPTION_MODEL: qwen3-vl:8b
+    volumes:
+      # The photo library (read-write: moves, renames and _Trash happen here)
+      - /srv/photos:/photos
+      # Database, thumbnails, video frames, face crops and AI models
+      - lumina-data:/data
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    depends_on:
+      - ollama
+
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    environment:
+      # The GPU is shared with Lumina's face and smart search models: let Ollama unload when idle
+      OLLAMA_KEEP_ALIVE: 5m
+    volumes:
+      - ollama:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+volumes:
+  lumina-data:
+  ollama:

@@ -1,0 +1,5 @@
+# Only src-tauri is needed to build the server image
+node_modules
+dist
+src-tauri/target
+.git
