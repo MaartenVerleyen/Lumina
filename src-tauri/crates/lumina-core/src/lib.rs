@@ -40,6 +40,7 @@ pub mod highlights;
 pub mod host;
 pub mod imaging;
 pub mod import;
+pub mod libraries;
 pub mod library;
 pub mod people;
 pub mod perf;

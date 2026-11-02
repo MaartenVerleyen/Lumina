@@ -1901,3 +1901,174 @@ fn video_faces_in_library() {
     }
     eprintln!("{} videos in {} ms: {detections} detections, {kept} faces kept", hashes.len(), started.elapsed().as_millis());
 }
+
+// ----------------- LIBRARIES -----------------
+
+fn library_of(conn: &Connection, hash: &str) -> (Option<String>, Option<String>) {
+    conn.query_row(
+        "SELECT l.root, p.rel_path FROM photos p LEFT JOIN libraries l ON l.id = p.library_id WHERE p.hash = ?1",
+        params![hash],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )
+    .unwrap()
+}
+
+fn add_photo(conn: &Connection, hash: &str, path: &str) {
+    conn.execute("INSERT INTO photos (hash, current_path) VALUES (?1, ?2)", params![hash, path]).unwrap();
+}
+
+#[test]
+fn libraries_are_worked_out_for_an_older_database() {
+    let conn = Connection::open_in_memory().unwrap();
+    conn.execute_batch(
+        r"CREATE TABLE photos (hash TEXT PRIMARY KEY, current_path TEXT, subfolder TEXT);
+         INSERT INTO photos VALUES ('a', 'D:\04_Media\Photos\2023\a.jpg', '2023'), ('b', 'D:\04_Media\Photos\b.jpg', ''),
+                                   ('c', 'E:\Phone\DCIM\c.jpg', 'DCIM'), ('v', 'D:\04_Media\Videos\v.mp4', ''),
+                                   ('w', 'F:\Work\w.jpg', ''), ('x', 'F:\Other\x.jpg', '');
+         PRAGMA user_version = 1;",
+    )
+    .unwrap();
+    db::migrate(&conn).unwrap();
+    let roots: Vec<String> = libraries::list(&conn).unwrap().into_iter().map(|l| l.root).collect();
+    // Photos and Videos are folded into their shared parent; folders on a drive root stay apart
+    assert_eq!(roots, vec![r"D:\04_Media", r"E:\Phone\DCIM", r"F:\Other", r"F:\Work"]);
+    assert_eq!(library_of(&conn, "a"), (Some(r"D:\04_Media".into()), Some("Photos/2023/a.jpg".into())));
+    assert_eq!(library_of(&conn, "v").1.as_deref(), Some("Videos/v.mp4"));
+    assert_eq!(library_of(&conn, "c"), (Some(r"E:\Phone\DCIM".into()), Some("c.jpg".into())));
+    // Running it again changes nothing
+    db::migrate(&conn).unwrap();
+    assert_eq!(libraries::list(&conn).unwrap().len(), 4);
+}
+
+#[test]
+fn new_photos_are_filed_under_their_library() {
+    let conn = Connection::open_in_memory().unwrap();
+    db::migrate(&conn).unwrap();
+    libraries::open(&conn, r"D:\Photos\").unwrap();
+    add_photo(&conn, "a", r"D:\Photos\2024\Summer\a.jpg");
+    add_photo(&conn, "b", "d:/photos/b.jpg");
+    add_photo(&conn, "c", r"D:\Photos2\c.jpg");
+    assert_eq!(library_of(&conn, "a"), (Some(r"D:\Photos".into()), Some("2024/Summer/a.jpg".into())));
+    assert_eq!(library_of(&conn, "b").1.as_deref(), Some("b.jpg"));
+    assert_eq!(library_of(&conn, "c"), (None, None));
+    // A move inside the library (or out of it) is followed by the trigger
+    conn.execute(r"UPDATE photos SET current_path = 'D:\Photos\Sorted\a.jpg' WHERE hash = 'a'", []).unwrap();
+    assert_eq!(library_of(&conn, "a").1.as_deref(), Some("Sorted/a.jpg"));
+    conn.execute(r"UPDATE photos SET current_path = 'C:\Elsewhere\a.jpg' WHERE hash = 'a'", []).unwrap();
+    assert_eq!(library_of(&conn, "a"), (None, None));
+}
+
+#[test]
+fn opening_a_folder_views_or_takes_in_libraries() {
+    let conn = Connection::open_in_memory().unwrap();
+    db::migrate(&conn).unwrap();
+    let photos = libraries::open(&conn, r"D:\Media\Photos").unwrap();
+    add_photo(&conn, "a", r"D:\Media\Photos\a.jpg");
+    add_photo(&conn, "v", r"D:\Media\Videos\v.mp4");
+    // A folder inside a library is a view of it
+    assert_eq!(libraries::open(&conn, r"D:\Media\Photos\2024").unwrap(), photos);
+    assert_eq!(libraries::open(&conn, "D:/media/photos/").unwrap(), photos);
+    assert_eq!(libraries::list(&conn).unwrap().len(), 1);
+    // The parent folder becomes the library and takes the inner one in
+    let media = libraries::open(&conn, r"D:\Media").unwrap();
+    let all = libraries::list(&conn).unwrap();
+    assert_eq!(all, vec![libraries::Library { id: media, root: r"D:\Media".into(), name: String::new(), photos: 2 }]);
+    assert_eq!(library_of(&conn, "a").1.as_deref(), Some("Photos/a.jpg"));
+    assert_eq!(library_of(&conn, "v").1.as_deref(), Some("Videos/v.mp4"));
+}
+
+#[test]
+fn a_relocated_library_takes_its_photos_along() {
+    let mut conn = Connection::open_in_memory().unwrap();
+    db::migrate(&conn).unwrap();
+    let id = libraries::open(&conn, r"D:\Photos").unwrap();
+    add_photo(&conn, "a", r"D:\Photos\2024\a.jpg");
+    add_photo(&conn, "x", r"C:\Other\x.jpg");
+    assert_eq!(libraries::relocate(&mut conn, id, "/photos").unwrap(), 1);
+    let path: String = conn.query_row("SELECT current_path FROM photos WHERE hash = 'a'", [], |r| r.get(0)).unwrap();
+    assert_eq!(path, "/photos/2024/a.jpg");
+    assert_eq!(library_of(&conn, "a"), (Some("/photos".into()), Some("2024/a.jpg".into())));
+    assert_eq!(libraries::relocate(&mut conn, id, r"E:\Photos").unwrap(), 1);
+    let path: String = conn.query_row("SELECT current_path FROM photos WHERE hash = 'a'", [], |r| r.get(0)).unwrap();
+    assert_eq!(path, r"E:\Photos\2024\a.jpg");
+    let other: String = conn.query_row("SELECT current_path FROM photos WHERE hash = 'x'", [], |r| r.get(0)).unwrap();
+    assert_eq!(other, r"C:\Other\x.jpg");
+}
+
+#[test]
+fn a_restore_moves_library_roots_with_the_photos() {
+    let mut conn = Connection::open_in_memory().unwrap();
+    db::migrate(&conn).unwrap();
+    libraries::open(&conn, r"D:\Photos").unwrap();
+    add_photo(&conn, "a", r"D:\Photos\2024\a.jpg");
+    let remaps = vec![(r"D:\Photos".to_string(), r"F:\Restored\Photos".to_string())];
+    assert_eq!(crate::backup::rewrite_paths(&mut conn, &remaps).unwrap(), 1);
+    assert_eq!(library_of(&conn, "a"), (Some(r"F:\Restored\Photos".into()), Some("2024/a.jpg".into())));
+}
+
+#[test]
+fn library_roots_have_one_spelling() {
+    if cfg!(windows) {
+        assert_eq!(libraries::normalize_root("C:/LuminaTest/Library/"), r"C:\LuminaTest\Library");
+        assert_eq!(libraries::normalize_root(r" D:\ "), r"D:\");
+        assert_eq!(libraries::normalize_root("D:"), r"D:\");
+    }
+    assert_eq!(libraries::normalize_root("/"), "/");
+}
+
+// Runs the libraries migration on a copy of a real library database and checks that nothing else changed.
+//   set LUMINA_DB_COPY=<copy of library.db>   cargo test --lib migrate_db_copy -- --ignored --nocapture
+// Never point it at the live database: it migrates the file it is given.
+#[test]
+#[ignore]
+fn migrate_db_copy() {
+    let path = std::env::var("LUMINA_DB_COPY").expect("LUMINA_DB_COPY");
+    let conn = Connection::open(&path).unwrap();
+    let counts = |conn: &Connection| -> Vec<(&'static str, i64)> {
+        [
+            ("photos", "SELECT COUNT(*) FROM photos"),
+            ("rated", "SELECT COUNT(*) FROM photos WHERE rating > 0"),
+            ("flagged", "SELECT COUNT(*) FROM photos WHERE flag IS NOT NULL"),
+            ("staged", "SELECT COUNT(*) FROM photos WHERE staged_target IS NOT NULL"),
+            ("tags", "SELECT COUNT(*) FROM photo_tags"),
+            ("people", "SELECT COUNT(*) FROM people"),
+            ("photo_people", "SELECT COUNT(*) FROM photo_people"),
+            ("faces", "SELECT COUNT(*) FROM photo_faces"),
+            ("named faces", "SELECT COUNT(*) FROM photo_faces WHERE person_name IS NOT NULL"),
+            ("rejections", "SELECT COUNT(*) FROM face_rejections"),
+            ("albums", "SELECT COUNT(*) FROM albums"),
+            ("album photos", "SELECT COUNT(*) FROM album_photos"),
+            ("clip", "SELECT COUNT(*) FROM photo_clip"),
+            ("paths", "SELECT COUNT(DISTINCT current_path) FROM photos"),
+            ("path checksum", "SELECT SUM(length(current_path)) FROM photos"),
+        ]
+        .into_iter()
+        .map(|(name, sql)| (name, conn.query_row(sql, [], |r| r.get(0)).unwrap_or(-1)))
+        .collect()
+    };
+    let before = counts(&conn);
+    let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+    let started = Instant::now();
+    db::migrate(&conn).unwrap();
+    eprintln!("migrated from version {version} in {} ms", started.elapsed().as_millis());
+    let after = counts(&conn);
+    for (b, a) in before.iter().zip(&after) {
+        eprintln!("{:>14}: {:>8} -> {:>8}", b.0, b.1, a.1);
+    }
+    assert_eq!(before, after);
+    for l in libraries::list(&conn).unwrap() {
+        eprintln!("library {:>3}: {:>7} photos  {}", l.id, l.photos, l.root);
+    }
+    let unfiled: i64 = conn.query_row("SELECT COUNT(*) FROM photos WHERE library_id IS NULL", [], |r| r.get(0)).unwrap();
+    eprintln!("not in a library: {unfiled}");
+    // Every filed photo's full path is its library root plus its relative path
+    let mismatched: i64 = conn
+        .query_row(
+            r"SELECT COUNT(*) FROM photos p JOIN libraries l ON l.id = p.library_id
+             WHERE lower(replace(p.current_path, '\', '/')) != lower(rtrim(replace(l.root, '\', '/'), '/') || '/' || p.rel_path)",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(mismatched, 0);
+}

@@ -88,7 +88,7 @@ fn trim_seps(p: &str) -> &str {
 }
 
 // Whether `path` is `root` or inside it (Windows paths: case-insensitive, either separator)
-fn under_root(path: &str, root: &str) -> bool {
+pub(crate) fn under_root(path: &str, root: &str) -> bool {
     let root = root.trim_end_matches(is_sep);
     if root.is_empty() || path.len() < root.len() || !path.is_char_boundary(root.len()) {
         return false;
@@ -352,6 +352,21 @@ pub async fn inspect_backup(path: String) -> Result<BackupManifest, String> {
 pub fn rewrite_paths(conn: &mut Connection, remaps: &[(String, String)]) -> Result<usize, String> {
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     let mut moved = 0;
+    // Library roots first: the triggers file each moved photo under its library by the new root.
+    // (Backups from before 4.3 have no libraries table; the next open works the libraries out.)
+    let roots: Vec<(i64, String)> = match tx.prepare("SELECT id, root FROM libraries") {
+        Ok(mut stmt) => stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map(|rows| rows.flatten().collect())
+            .unwrap_or_default(),
+        Err(_) => Vec::new(),
+    };
+    for (id, root) in roots {
+        if let Some(new_root) = remap_path(&root, remaps) {
+            tx.execute("UPDATE libraries SET root = ?2 WHERE id = ?1", params![id, new_root])
+                .map_err(|e| e.to_string())?;
+        }
+    }
     {
         let rows: Vec<(String, Option<String>, Option<String>)> = {
             let mut stmt = tx

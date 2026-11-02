@@ -386,7 +386,8 @@ pub async fn scan_folder(app: SharedHost, folder_path: String, force_reprocess: 
     let generation = SCAN_GENERATION.fetch_add(1, Ordering::AcqRel) + 1;
     tokio::task::spawn_blocking(move || {
         let scan_started = Instant::now();
-        let input_path = PathBuf::from(&folder_path);
+        // One spelling per folder (C:/Photos and C:\Photos are the same library)
+        let input_path = PathBuf::from(libraries::normalize_root(&folder_path));
         let root_path = if input_path.is_file() {
             input_path
                 .parent()
@@ -422,6 +423,7 @@ pub async fn scan_folder(app: SharedHost, folder_path: String, force_reprocess: 
         );
 
         let mut conn = open_global_db(&app)?;
+        libraries::open(&conn, &root_path.to_string_lossy())?;
         let folder_prefix = make_folder_prefix(Some(&root_path.to_string_lossy()));
 
         let mut cache_map: HashMap<String, CachedRow> = HashMap::new();

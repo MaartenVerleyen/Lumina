@@ -25,11 +25,16 @@ pub fn open_global_db<H: Host + ?Sized>(app: &H) -> Result<Connection, String> {
     )
     .map_err(|e| e.to_string())?;
 
-    if DB_SCHEMA_READY.load(Ordering::Acquire) {
-        return Ok(conn);
+    if !DB_SCHEMA_READY.load(Ordering::Acquire) {
+        migrate(&conn)?;
+        DB_SCHEMA_READY.store(true, Ordering::Release);
     }
+    Ok(conn)
+}
 
-        conn.execute_batch(
+// Creates the tables and brings an older database up to date; safe to run on every open
+pub fn migrate(conn: &Connection) -> Result<(), String> {
+    conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS photos (
             hash TEXT PRIMARY KEY,
             current_path TEXT,
@@ -127,7 +132,7 @@ pub fn open_global_db<H: Host + ?Sized>(app: &H) -> Result<Connection, String> {
     let _ = conn.execute("ALTER TABLE photos ADD COLUMN duration_ms INTEGER", []);
     let _ = conn.execute("ALTER TABLE photos ADD COLUMN video_codec TEXT", []);
 
-    ensure_album_tables(&conn);
+    ensure_album_tables(conn);
     // Hidden people: kept on their photos, left out of the people bar and of suggestions
     let _ = conn.execute("ALTER TABLE people ADD COLUMN hidden INTEGER DEFAULT 0", []);
     // Starred people: Best of favours photos with them
@@ -182,9 +187,10 @@ pub fn open_global_db<H: Host + ?Sized>(app: &H) -> Result<Connection, String> {
          CREATE INDEX IF NOT EXISTS idx_photos_media ON photos(media_type);",
     );
 
-    DB_SCHEMA_READY.store(true, Ordering::Release);
+    // Library folders and each photo's path inside its library (Lumina 4.3)
+    crate::libraries::migrate(conn)?;
 
-    Ok(conn)
+    Ok(())
 }
 
 // LIKE pattern matching only files inside `root_folder` (never a sibling such as `Photos2` for `Photos`).
