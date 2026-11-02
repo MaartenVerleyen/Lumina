@@ -2175,3 +2175,55 @@ fn ffmpeg_heic_matches_wic() {
     assert_eq!(wic.dimensions(), ff.dimensions());
     assert!(diff < 4.0);
 }
+
+// ----------------- FOLDER WATCH -----------------
+
+#[test]
+fn reading_a_photo_is_not_a_change() {
+    use notify_debouncer_full::notify::event::{AccessKind, AccessMode, CreateKind, EventKind, ModifyKind};
+    assert!(!watch::is_change(&EventKind::Access(AccessKind::Open(AccessMode::Any))));
+    assert!(!watch::is_change(&EventKind::Access(AccessKind::Close(AccessMode::Read))));
+    // A copy that has finished writing, a new file, an edit: all changes
+    assert!(watch::is_change(&EventKind::Access(AccessKind::Close(AccessMode::Write))));
+    assert!(watch::is_change(&EventKind::Create(CreateKind::File)));
+    assert!(watch::is_change(&EventKind::Modify(ModifyKind::Any)));
+}
+
+// The real watcher on a folder: reading its photo sends nothing (on Linux inotify reports every open), a
+// photo copied in sends "library-files-changed". About 6 s: the watcher waits 2 s for quiet.
+#[test]
+fn watcher_ignores_reads_and_sees_a_new_photo() {
+    use std::time::Duration;
+    struct Events(Mutex<Vec<String>>);
+    impl Host for Events {
+        fn data_dir(&self) -> PathBuf {
+            std::env::temp_dir()
+        }
+        fn emit_value(&self, event: &str, _payload: JsonValue) {
+            self.0.lock().unwrap().push(event.to_string());
+        }
+    }
+    let changes = |e: &Events| e.0.lock().unwrap().iter().filter(|n| *n == "library-files-changed").count();
+
+    let dir = std::env::temp_dir().join(format!("lumina_watch_test_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    let photo = dir.join("a.jpg");
+    fs::write(&photo, b"not really a jpeg").unwrap();
+    let events = Arc::new(Events(Mutex::new(Vec::new())));
+    watch::watch_libraries(events.clone(), vec![dir.to_string_lossy().to_string()]).unwrap();
+    std::thread::sleep(Duration::from_millis(300));
+
+    for _ in 0..5 {
+        let _ = fs::read(&photo).unwrap();
+    }
+    std::thread::sleep(Duration::from_millis(2800));
+    assert_eq!(changes(&events), 0, "reading a photo was taken for a change");
+
+    fs::write(dir.join("b.jpg"), b"not really a jpeg either").unwrap();
+    std::thread::sleep(Duration::from_millis(2800));
+    assert!(changes(&events) > 0, "a new photo was not noticed");
+
+    watch::watch_libraries(events, Vec::new()).unwrap();
+    let _ = fs::remove_dir_all(&dir);
+}
