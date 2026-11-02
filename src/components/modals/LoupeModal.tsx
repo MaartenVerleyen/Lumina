@@ -1,6 +1,6 @@
 import { thumbSrc } from "../../utils/photoHelpers";
 import { useState, useRef, useEffect } from "react";
-import { invoke, convertFileSrc } from "@tauri-apps/api/core";
+import { call, mediaUrl } from "../../api";
 import { diskPathOf } from "../../utils/rawPairs";
 import { isVideo } from "../../utils/media";
 import LoupeVideo from "./LoupeVideo";
@@ -137,7 +137,7 @@ export default function LoupeModal({
     if (handleSetColorLabel) {
       await handleSetColorLabel(nextColor);
     } else {
-      await invoke("set_photo_color_label", {
+      await call("set_photo_color_label", {
         hashes: [activePhoto.hash],
         color: nextColor,
       });
@@ -151,7 +151,7 @@ export default function LoupeModal({
     if (handleToggleBasketSelection) {
       await handleToggleBasketSelection();
     } else {
-      await invoke("set_photo_basket", {
+      await call("set_photo_basket", {
         hashes: [activePhoto.hash],
         inBasket: nextBasket,
       });
@@ -226,7 +226,7 @@ export default function LoupeModal({
           {/* Open External & Reveal in Explorer */}
           <div className="flex items-center gap-1 bg-zinc-900/90 border border-zinc-800 px-2 py-1 rounded-xl text-xs">
             <button
-              onClick={() => invoke("open_in_default_app", { path: diskPathOf(activePhoto) })}
+              onClick={() => call("open_in_default_app", { path: diskPathOf(activePhoto) })}
               className="px-2 py-0.5 hover:bg-zinc-800 rounded text-zinc-300 hover:text-white flex items-center gap-1 transition"
               title="Open in Default OS Photo Viewer / Editor"
             >
@@ -234,7 +234,7 @@ export default function LoupeModal({
               <span>Open External</span>
             </button>
             <button
-              onClick={() => invoke("reveal_in_file_manager", { path: diskPathOf(activePhoto) })}
+              onClick={() => call("reveal_in_file_manager", { path: diskPathOf(activePhoto) })}
               className="px-2 py-0.5 hover:bg-zinc-800 rounded text-zinc-300 hover:text-white flex items-center gap-1 transition"
               title="Reveal File in Windows Explorer / Finder"
             >
@@ -326,7 +326,7 @@ export default function LoupeModal({
           <LoupeVideo photo={activePhoto} />
         ) : liveClip && livePlaying ? (
           <video
-            src={convertFileSrc(liveClip)}
+            src={mediaUrl({ kind: "original", hash: activePhoto.live_video_hash ?? "", path: liveClip })}
             autoPlay
             muted
             loop
@@ -346,7 +346,7 @@ export default function LoupeModal({
                 setLoupeZoom(2.5);
               }
             }}
-            src={convertFileSrc(activePhoto.path)}
+            src={mediaUrl({ kind: "original", hash: activePhoto.hash, path: activePhoto.path })}
             alt={activePhoto.name}
             draggable={false}
             style={{
@@ -610,7 +610,7 @@ export default function LoupeModal({
                       <Film className="w-4 h-4 text-zinc-600" />
                     </span>
                   ) : (
-                    <img src={convertFileSrc(fp.path)} alt={fp.name} className="w-full h-full object-cover" />
+                    <img src={mediaUrl({ kind: "original", hash: fp.hash, path: fp.path })} alt={fp.name} className="w-full h-full object-cover" />
                   )}
                 </button>
               );

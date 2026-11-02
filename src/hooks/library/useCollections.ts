@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { call } from "../../api";
 import { Album, SavedSearch } from "../../types/lumina";
 import { MatchContext } from "../../utils/searchQuery";
 import { computeTrips, tripLabel } from "../../utils/trips";
@@ -27,7 +27,7 @@ export function useCollections(core: LibraryCore, filters: FilterState) {
   // Events & trips found from capture time and GPS (newest first); `activeEvent` holds a trip id
   const [tripNames, setTripNames] = useState<Record<string, string>>({});
   useEffect(() => {
-    invoke<Record<string, string>>("get_trip_names").then(setTripNames).catch(() => {});
+    call<Record<string, string>>("get_trip_names").then(setTripNames).catch(() => {});
   }, []);
   const trips = useMemo(() => computeTrips(photos), [photos]);
   const tripOfHash = useMemo(() => {
@@ -45,7 +45,7 @@ export function useCollections(core: LibraryCore, filters: FilterState) {
 
   async function handleRenameTrip(id: string, name: string) {
     try {
-      await invoke("set_trip_name", { tripId: id, name });
+      await call("set_trip_name", { tripId: id, name });
       setTripNames((prev) => {
         const next = { ...prev };
         if (name.trim()) next[id] = name.trim();
@@ -67,8 +67,8 @@ export function useCollections(core: LibraryCore, filters: FilterState) {
   const refreshAlbums = useCallback(async () => {
     try {
       const [a, s] = await Promise.all([
-        invoke<Album[]>("get_albums"),
-        invoke<SavedSearch[]>("get_saved_searches"),
+        call<Album[]>("get_albums"),
+        call<SavedSearch[]>("get_saved_searches"),
       ]);
       setAlbums(a);
       setSavedSearches(s);
@@ -104,7 +104,7 @@ export function useCollections(core: LibraryCore, filters: FilterState) {
 
   async function handleCreateAlbum(name: string, addHashes?: string[]) {
     try {
-      const id = await invoke<number>("create_album", { name });
+      const id = await call<number>("create_album", { name });
       setAlbums((prev) => [...prev, { id, name: name.trim(), hashes: [] }]);
       addLog("LIBRARY", `Created album "${name.trim()}"`);
       if (addHashes && addHashes.length > 0) await handleAddToAlbum(id, addHashes, name.trim());
@@ -117,7 +117,7 @@ export function useCollections(core: LibraryCore, filters: FilterState) {
 
   async function handleRenameAlbum(id: number, name: string) {
     try {
-      await invoke("rename_album", { id, name });
+      await call("rename_album", { id, name });
       setAlbums((prev) => prev.map((a) => (a.id === id ? { ...a, name: name.trim() } : a)));
     } catch (err) {
       setError(String(err));
@@ -134,7 +134,7 @@ export function useCollections(core: LibraryCore, filters: FilterState) {
     );
     if (!ok) return;
     try {
-      await invoke("delete_album", { id });
+      await call("delete_album", { id });
       setAlbums((prev) => prev.filter((a) => a.id !== id));
       if (activeAlbumId === id) setActiveAlbumId(null);
       addLog("LIBRARY", `Deleted album "${album.name}"`);
@@ -148,18 +148,18 @@ export function useCollections(core: LibraryCore, filters: FilterState) {
     const name = albumName ?? albums.find((a) => a.id === id)?.name ?? "album";
     if (hashes.length === 0) return;
     try {
-      const added = await invoke<string[]>("add_to_album", { id, hashes });
+      const added = await call<string[]>("add_to_album", { id, hashes });
       patchAlbumHashes(id, added, []);
       if (added.length > 0) {
         pushCustomUndo(
           `Add ${added.length} photo(s) to album "${name}"`,
           hashes,
           async () => {
-            await invoke("remove_from_album", { id, hashes: added });
+            await call("remove_from_album", { id, hashes: added });
             patchAlbumHashes(id, [], added);
           },
           async () => {
-            await invoke("add_to_album", { id, hashes: added });
+            await call("add_to_album", { id, hashes: added });
             patchAlbumHashes(id, added, []);
           }
         );
@@ -176,18 +176,18 @@ export function useCollections(core: LibraryCore, filters: FilterState) {
     const name = albums.find((a) => a.id === id)?.name ?? "album";
     if (hashes.length === 0) return;
     try {
-      const removed = await invoke<string[]>("remove_from_album", { id, hashes });
+      const removed = await call<string[]>("remove_from_album", { id, hashes });
       patchAlbumHashes(id, [], removed);
       if (removed.length > 0) {
         pushCustomUndo(
           `Remove ${removed.length} photo(s) from album "${name}"`,
           hashes,
           async () => {
-            await invoke("add_to_album", { id, hashes: removed });
+            await call("add_to_album", { id, hashes: removed });
             patchAlbumHashes(id, removed, []);
           },
           async () => {
-            await invoke("remove_from_album", { id, hashes: removed });
+            await call("remove_from_album", { id, hashes: removed });
             patchAlbumHashes(id, [], removed);
           }
         );
@@ -200,7 +200,7 @@ export function useCollections(core: LibraryCore, filters: FilterState) {
 
   async function handleSaveSearch(name: string) {
     try {
-      const id = await invoke<number>("save_search", { name, query: searchQuery });
+      const id = await call<number>("save_search", { name, query: searchQuery });
       setSavedSearches((prev) => [...prev, { id, name: name.trim(), query: searchQuery.trim() }]);
       setAutoMatchNotice(`Saved smart album "${name.trim()}": it updates by itself as your photos change.`);
       return true;
@@ -212,7 +212,7 @@ export function useCollections(core: LibraryCore, filters: FilterState) {
 
   async function handleDeleteSavedSearch(id: number) {
     try {
-      await invoke("delete_saved_search", { id });
+      await call("delete_saved_search", { id });
       setSavedSearches((prev) => prev.filter((s) => s.id !== id));
     } catch (err) {
       setError(String(err));

@@ -1,6 +1,6 @@
 import { thumbSrc } from "../../utils/photoHelpers";
 import { useDialogFocus } from "../../hooks/useDialogFocus";
-import { invoke } from "@tauri-apps/api/core";
+import { call } from "../../api";
 import { PhotoItem } from "../../types/lumina";
 import { ArrowRight, CheckCircle, Folder, Sparkles, X } from "lucide-react";
 
@@ -92,7 +92,7 @@ export default function CommitModal({
                 </span>
                 <button
                   onClick={async () => {
-                    await invoke("stage_photo_move", {
+                    await call("stage_photo_move", {
                       hash: p.hash,
                       targetSubfolder: null,
                     });

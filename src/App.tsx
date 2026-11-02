@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { call } from "./api";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useLibraryState } from "./hooks/useLibraryState";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
@@ -872,7 +872,7 @@ export default function App() {
         onCopyFullImage={async () => {
           if (!contextPhoto) return;
           try {
-            await invoke("copy_image_to_clipboard", { path: contextPhoto.path });
+            await call("copy_image_to_clipboard", { path: contextPhoto.path });
             lib.addLog(
               "LIBRARY",
               `Copied full-res image to clipboard: ${contextPhoto.name}`

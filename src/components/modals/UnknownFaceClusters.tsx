@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { invoke, convertFileSrc } from "@tauri-apps/api/core";
+import { call, mediaUrl } from "../../api";
 import { FaceCluster, FaceInstance, PhotoItem } from "../../types/lumina";
 import { Check, EyeOff, Loader2, RefreshCw, Undo2, Users, X } from "lucide-react";
 
@@ -30,7 +30,7 @@ export default function UnknownFaceClusters({
     setIsLoading(true);
     setError("");
     try {
-      setClusters(await invoke<FaceCluster[]>("get_unknown_face_clusters", { rootFolder: folder || null }));
+      setClusters(await call<FaceCluster[]>("get_unknown_face_clusters", { rootFolder: folder || null }));
       setNames({});
     } catch (err) {
       setError(`Could not group unknown faces: ${String(err)}`);
@@ -50,7 +50,7 @@ export default function UnknownFaceClusters({
     setBusy(index);
     setError("");
     try {
-      const updated = await invoke<Record<string, FaceInstance[]>>("assign_faces_to_person_batch", {
+      const updated = await call<Record<string, FaceInstance[]>>("assign_faces_to_person_batch", {
         faceIds: cluster.face_ids,
         personName: name,
       });
@@ -77,7 +77,7 @@ export default function UnknownFaceClusters({
   async function ignoreFaces(index: number, faceIds: string[]) {
     setError("");
     try {
-      await invoke<number>("ignore_faces", { faceIds, ignore: true });
+      await call<number>("ignore_faces", { faceIds, ignore: true });
       const ignored = new Set(faceIds);
       setClusters((prev) =>
         prev
@@ -103,7 +103,7 @@ export default function UnknownFaceClusters({
   async function undoIgnore() {
     if (!lastIgnored) return;
     try {
-      await invoke<number>("ignore_faces", { faceIds: lastIgnored, ignore: false });
+      await call<number>("ignore_faces", { faceIds: lastIgnored, ignore: false });
       setLastIgnored(null);
       await load();
     } catch (err) {
@@ -174,7 +174,7 @@ export default function UnknownFaceClusters({
                 {cluster.samples.map((face) => (
                   <div key={face.face_id} className="relative group">
                     <img
-                      src={convertFileSrc(face.face_thumb)}
+                      src={mediaUrl({ kind: "face", path: face.face_thumb })}
                       alt=""
                       title={face.photo_name}
                       loading="lazy"

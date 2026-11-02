@@ -1,5 +1,5 @@
 import { useState, useRef } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { call } from "../../api";
 import { PhotoItem, AutoStagePreset, CommitResult, PhotoActionSnapshot } from "../../types/lumina";
 import { computePresetTargetFolder } from "../../utils/photoHelpers";
 import { captureSnapshots } from "./undo";
@@ -48,7 +48,7 @@ export function useStaging(
         hash,
         target_subfolder: targetSub,
       }));
-      await invoke("stage_photos_move", { ops });
+      await call("stage_photos_move", { ops });
       undo.pushUndoEntry({
         description: `Stage move (${targetSub || "clear"}) on ${hashes.length} photo(s)`,
         previousActiveHash: activeHash,
@@ -71,7 +71,7 @@ export function useStaging(
     try {
       const staged = photos.filter((p) => p.staged_target);
       const before = captureSnapshots(staged, staged.map((p) => p.hash));
-      const count = await invoke<number>("clear_all_staged", { rootFolder: folder || null });
+      const count = await call<number>("clear_all_staged", { rootFolder: folder || null });
       pushSnapshotUndo(
         `Dismiss ${before.length} staged move(s)`,
         before,
@@ -110,7 +110,7 @@ export function useStaging(
       );
       if (!ok) return;
       const before = captureSnapshots(photos, Array.from(updates.keys()));
-      await invoke("stage_photos_move", { ops });
+      await call("stage_photos_move", { ops });
       pushSnapshotUndo(
         `Auto-stage ${ops.length} photo(s)`,
         before,
@@ -133,12 +133,12 @@ export function useStaging(
     watchQuietUntilRef.current = Number.POSITIVE_INFINITY;
     try {
       setProgressTitle("Committing changes to disk");
-      const result = await invoke<CommitResult>("commit_staged_operations", {
+      const result = await call<CommitResult>("commit_staged_operations", {
         rootFolder: folder,
         smartRename: smartRenameOnCommit,
       });
       setProgressTitle(null);
-      const res = await invoke<PhotoItem[]>("scan_folder", {
+      const res = await call<PhotoItem[]>("scan_folder", {
         folderPath: folder,
         forceReprocess: false,
       });

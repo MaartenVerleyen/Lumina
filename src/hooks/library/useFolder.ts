@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
-import { open } from "@tauri-apps/plugin-dialog";
+import { call, subscribe } from "../../api";
+import { open } from "../../api/platform";
 import { PhotoItem, ThumbBatchProgress, ThumbBatchItem, ExifRefreshResult, PerfLogEvent, TrashResult, TrashSummary, ScanProgressEvent } from "../../types/lumina";
 import { formatBytes } from "../../utils/photoHelpers";
 import { RAW_OR_HEIC_NAME } from "../../utils/rawPairs";
@@ -67,7 +66,7 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
   useEffect(() => {
     let latest: ScanProgressEvent | null = null;
     let frame = 0;
-    const unlisten = listen<ScanProgressEvent>("scan-progress", (event) => {
+    const unlisten = subscribe<ScanProgressEvent>("scan-progress", (event) => {
       const prog = event.payload;
       if (silentScanRef.current) return;
       latest = prog.done ? null : prog;
@@ -86,7 +85,7 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
 
   // Listen for backend performance timings (scan, thumbnails, face scan, previews)
   useEffect(() => {
-    const unlisten = listen<PerfLogEvent>("perf-log", (event) => {
+    const unlisten = subscribe<PerfLogEvent>("perf-log", (event) => {
       const { label, millis, count, details } = event.payload;
       const items = count === 1 ? "" : ` for ${count} items`;
       addLog("PERF", `${label}: ${(millis / 1000).toFixed(2)} s${items}`, details);
@@ -118,7 +117,7 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
   }, [folder]);
 
   useEffect(() => {
-    const unlisten = listen<ThumbBatchProgress>("thumb-batch-ready", (event) => {
+    const unlisten = subscribe<ThumbBatchProgress>("thumb-batch-ready", (event) => {
       const { items, duplicate_groups, completed, total, folder: batchFolder } = event.payload;
       // A batch from a folder we've since left would overwrite this folder's duplicate groups
       if (!isSameFolder(batchFolder, folderRef.current)) return;
@@ -194,7 +193,7 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
         percent: 0,
         done: false,
       });
-      const res = await invoke<PhotoItem[]>("scan_folder", {
+      const res = await call<PhotoItem[]>("scan_folder", {
         folderPath: targetPath,
         forceReprocess: false,
       });
@@ -238,7 +237,7 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
     if (!folder) return;
     let summary: TrashSummary;
     try {
-      summary = await invoke<TrashSummary>("trash_summary", { rootFolder: folder });
+      summary = await call<TrashSummary>("trash_summary", { rootFolder: folder });
     } catch (err) {
       setError(String(err));
       return;
@@ -284,7 +283,7 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
     watchQuietUntilRef.current = Number.POSITIVE_INFINITY;
     setProgressTitle("Emptying _Trash");
     try {
-      const result = await invoke<TrashResult>("empty_library_trash_to_os", { rootFolder: folder, permanent });
+      const result = await call<TrashResult>("empty_library_trash_to_os", { rootFolder: folder, permanent });
       const removed = new Set(result.removed_hashes);
       if (removed.size > 0) setPhotos((prev) => prev.filter((p) => !removed.has(p.hash)));
       for (const f of result.failures) {
@@ -325,7 +324,7 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
         percent: 0,
         done: false,
       });
-      const res = await invoke<PhotoItem[]>("scan_folder", {
+      const res = await call<PhotoItem[]>("scan_folder", {
         folderPath: folder,
         forceReprocess: false,
       });
@@ -362,7 +361,7 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
         percent: 0,
         done: false,
       });
-      const res = await invoke<PhotoItem[]>("scan_folder", {
+      const res = await call<PhotoItem[]>("scan_folder", {
         folderPath: folder,
         forceReprocess: true,
       });
@@ -386,7 +385,7 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
         : [];
     if (targets.length === 0) return;
     try {
-      const results = await invoke<ExifRefreshResult[]>("rescan_exif_batch", {
+      const results = await call<ExifRefreshResult[]>("rescan_exif_batch", {
         hashes: targets,
       });
       const map = new Map(results.map((r) => [r.hash, r]));
@@ -426,7 +425,7 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
   // Jobs panel: stop making thumbnails (the rest is picked up the next time the folder is opened)
   async function handleCancelThumbnails() {
     try {
-      await invoke("cancel_thumbnail_pass");
+      await call("cancel_thumbnail_pass");
       setProgress(null);
       addLog("LIBRARY", "Stopped making thumbnails; the rest follows the next time this folder is opened");
     } catch (err) {
@@ -437,7 +436,7 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
   // Native OS Context Menu Actions
   async function handleOpenInDefaultViewer(path: string) {
     try {
-      await invoke("open_in_default_app", { path });
+      await call("open_in_default_app", { path });
       addLog("LIBRARY", `Opened in default viewer: ${path.split(/[\\/]/).pop()}`);
     } catch (err) {
       setError(String(err));
@@ -446,7 +445,7 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
 
   async function handleRevealInFileManager(path: string) {
     try {
-      await invoke("reveal_in_file_manager", { path });
+      await call("reveal_in_file_manager", { path });
       addLog("LIBRARY", `Revealed in file manager: ${path}`);
     } catch (err) {
       setError(String(err));
@@ -456,7 +455,7 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
   async function handleCreateSubfolder(relativePath: string) {
     if (!folder || !relativePath.trim()) return;
     try {
-      const created = await invoke<string>("create_library_subfolder", {
+      const created = await call<string>("create_library_subfolder", {
         rootFolder: folder,
         relativePath: relativePath.trim(),
       });
@@ -474,7 +473,7 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
     if (!target || isScanningFolder || silentScanRef.current) return null;
     silentScanRef.current = true;
     try {
-      const res = await invoke<PhotoItem[]>("scan_folder", { folderPath: target, forceReprocess: false });
+      const res = await call<PhotoItem[]>("scan_folder", { folderPath: target, forceReprocess: false });
       if (!isSameFolder(target, folderRef.current)) return null;
       setPhotos(res);
       return res;
@@ -487,7 +486,7 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
 
   // Watch the open library for photos added, changed or removed outside Lumina (Settings → Library)
   useEffect(() => {
-    invoke("watch_library", { root: watchLibrary && folder ? folder : null }).catch((err) =>
+    call("watch_library", { root: watchLibrary && folder ? folder : null }).catch((err) =>
       addLog("LIBRARY", "Could not watch the library folder for changes", String(err))
     );
   }, [folder, watchLibrary]);
@@ -495,7 +494,7 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
   const silentRescanRef = useRef(silentRescan);
   silentRescanRef.current = silentRescan;
   useEffect(() => {
-    const unlisten = listen<string>("library-files-changed", (event) => {
+    const unlisten = subscribe<string>("library-files-changed", (event) => {
       if (!isSameFolder(event.payload, folderRef.current) || Date.now() < watchQuietUntilRef.current) return;
       silentRescanRef.current().then((res) => {
         if (res) addLog("LIBRARY", `Picked up changes made outside Lumina (${res.length} items)`);

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { call } from "../../api";
 import { CitySearchResult } from "../../types/lumina";
 import { expandWithRawPairs } from "../../utils/rawPairs";
 import { expandWithLivePairs } from "../../utils/media";
@@ -68,12 +68,12 @@ export function useLocation(core: LibraryCore) {
           groups.set(key, g);
         }
         for (const g of groups.values()) {
-          await invoke("set_manual_location", { hashes: g.hashes, ...g.value });
+          await call("set_manual_location", { hashes: g.hashes, ...g.value });
         }
         applyLocal(before);
       },
       async () => {
-        await invoke("set_manual_location", { hashes: targets, ...redoArgs });
+        await call("set_manual_location", { hashes: targets, ...redoArgs });
         applyLocal(new Map(targets.map((h) => [h, next(before.get(h)!)])));
       }
     );
@@ -92,7 +92,7 @@ export function useLocation(core: LibraryCore) {
     }
     citySearchTimerRef.current = window.setTimeout(async () => {
       try {
-        const matches = await invoke<CitySearchResult[]>("search_cities_offline", { query: q });
+        const matches = await call<CitySearchResult[]>("search_cities_offline", { query: q });
         if (seq === citySearchSeqRef.current) setCitySearchResults(matches);
       } catch {}
     }, 150);
@@ -112,7 +112,7 @@ export function useLocation(core: LibraryCore) {
         latitude: c.latitude,
         longitude: c.longitude,
       };
-      await invoke("set_manual_location", { hashes: targets, ...value });
+      await call("set_manual_location", { hashes: targets, ...value });
       pushLocationUndo(`Location "${value.location}" on ${targets.length} photo(s)`, targets, () => value, value);
       const targetSet = new Set(targets);
       setPhotos((prev) => prev.map((p) => (targetSet.has(p.hash) ? { ...p, ...value } : p)));
@@ -144,7 +144,7 @@ export function useLocation(core: LibraryCore) {
     });
     try {
       const redoArgs = { location: clean, latitude: null, longitude: null };
-      await invoke("set_manual_location", { hashes: targets, ...redoArgs });
+      await call("set_manual_location", { hashes: targets, ...redoArgs });
       pushLocationUndo(
         clean ? `Location "${clean}" on ${targets.length} photo(s)` : `Clear location on ${targets.length} photo(s)`,
         targets,
@@ -174,7 +174,7 @@ export function useLocation(core: LibraryCore) {
     try {
       const hashes = expandWithLivePairs(expandWithRawPairs(Array.from(selectedHashes), photos), photos);
       const hashSet = new Set(hashes);
-      const location = await invoke<string>("set_manual_location", {
+      const location = await call<string>("set_manual_location", {
         hashes,
         location: "",
         latitude: lat,

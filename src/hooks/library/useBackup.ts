@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { open, save } from "@tauri-apps/plugin-dialog";
-import { documentDir, join } from "@tauri-apps/api/path";
+import { call } from "../../api";
+import { open, save, documentDir, join } from "../../api/platform";
 import { getSettings, updateSettings, useSettings } from "../../settings";
 import {
   AUTO_BACKUP_KEEP,
@@ -51,7 +50,7 @@ export function useBackup(core: LibraryCore, recentFolders: string[]) {
     setBackupBusy("backup");
     try {
       const destDir = getSettings().backupDir || (await defaultBackupDir());
-      const result = await invoke<BackupResult>("backup_library", {
+      const result = await call<BackupResult>("backup_library", {
         destDir,
         name: backupName(kind),
         knownRoots: knownRootsRef.current,
@@ -98,7 +97,7 @@ export function useBackup(core: LibraryCore, recentFolders: string[]) {
     });
     if (typeof picked !== "string") return;
     try {
-      const manifest = await invoke<BackupManifest>("inspect_backup", { path: picked });
+      const manifest = await call<BackupManifest>("inspect_backup", { path: picked });
       setRestoreTarget({ path: picked, manifest });
     } catch (err) {
       setError(String(err));
@@ -117,7 +116,7 @@ export function useBackup(core: LibraryCore, recentFolders: string[]) {
     busyRef.current = true;
     setBackupBusy("restore");
     try {
-      const result = await invoke<RestoreResult>("restore_library", { path: restoreTarget.path, remaps });
+      const result = await call<RestoreResult>("restore_library", { path: restoreTarget.path, remaps });
       if (result.settings) {
         try {
           const saved = remapSettings(JSON.parse(result.settings), remaps);
@@ -129,7 +128,7 @@ export function useBackup(core: LibraryCore, recentFolders: string[]) {
         } catch {}
       }
       addLog("DISK", `Restored ${result.photos} photo(s) from a backup; restarting`, restoreTarget.path);
-      await invoke("restart_app");
+      await call("restart_app");
     } catch (err) {
       setError(`Restore failed: ${String(err)}`);
       busyRef.current = false;
@@ -146,7 +145,7 @@ export function useBackup(core: LibraryCore, recentFolders: string[]) {
     if (!dest) return;
     setBackupBusy("csv");
     try {
-      const rows = await invoke<number>("export_library_csv", { destPath: dest, rootFolder: folder || null });
+      const rows = await call<number>("export_library_csv", { destPath: dest, rootFolder: folder || null });
       setAutoMatchNotice(`${rows.toLocaleString()} photo(s) listed in ${dest}`);
     } catch (err) {
       setError(`CSV export failed: ${String(err)}`);

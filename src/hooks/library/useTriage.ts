@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { call } from "../../api";
 import { TimestampShiftResult, PhotoActionSnapshot } from "../../types/lumina";
 import { expandWithRawPairs } from "../../utils/rawPairs";
 import { expandWithLivePairs, isVideo } from "../../utils/media";
@@ -39,7 +39,7 @@ export function useTriage(core: LibraryCore, view: LibraryView) {
       const hashSet = new Set(hashes);
       const before = captureSnapshots(photos, hashSet);
       const after = before.map((s: PhotoActionSnapshot) => ({ ...s, flag }));
-      await invoke("set_photo_flag", { hashes, flag });
+      await call("set_photo_flag", { hashes, flag });
       undo.pushUndoEntry({
         description: `Flag (${flag || "unflag"}) on ${hashes.length} photo(s)`,
         previousActiveHash: activeHash,
@@ -66,8 +66,8 @@ export function useTriage(core: LibraryCore, view: LibraryView) {
         flag: "reject" as const,
         staged_target: "_Trash",
       }));
-      await invoke("set_photo_flag", { hashes, flag: "reject" });
-      await invoke("stage_photos_move", {
+      await call("set_photo_flag", { hashes, flag: "reject" });
+      await call("stage_photos_move", {
         ops: hashes.map((hash) => ({ hash, target_subfolder: "_Trash" })),
       });
       undo.pushUndoEntry({
@@ -101,10 +101,10 @@ export function useTriage(core: LibraryCore, view: LibraryView) {
           ? { ...s, flag: "pick" as const }
           : { ...s, flag: "reject" as const, staged_target: "_Trash" }
       );
-      await invoke("set_photo_flag", { hashes: keep, flag: "pick" });
+      await call("set_photo_flag", { hashes: keep, flag: "pick" });
       if (rest.length > 0) {
-        await invoke("set_photo_flag", { hashes: rest, flag: "reject" });
-        await invoke("stage_photos_move", {
+        await call("set_photo_flag", { hashes: rest, flag: "reject" });
+        await call("stage_photos_move", {
           ops: rest.map((hash) => ({ hash, target_subfolder: "_Trash" })),
         });
       }
@@ -139,7 +139,7 @@ export function useTriage(core: LibraryCore, view: LibraryView) {
       const hashSet = new Set(hashes);
       const before = captureSnapshots(photos, hashSet);
       const after = before.map((s: PhotoActionSnapshot) => ({ ...s, color_label: color }));
-      await invoke("set_photo_color_label", { hashes, color });
+      await call("set_photo_color_label", { hashes, color });
       undo.pushUndoEntry({
         description: `Color label (${color || "clear"}) on ${hashes.length} photo(s)`,
         previousActiveHash: activeHash,
@@ -164,7 +164,7 @@ export function useTriage(core: LibraryCore, view: LibraryView) {
     try {
       const hashSet = new Set(hashes);
       const before = captureSnapshots(photos, hashSet);
-      const res = await invoke<Record<string, number>>("set_photo_rotation", {
+      const res = await call<Record<string, number>>("set_photo_rotation", {
         hashes,
         deltaDegrees,
       });
@@ -195,7 +195,7 @@ export function useTriage(core: LibraryCore, view: LibraryView) {
       const hashSet = new Set(hashes);
       const before = captureSnapshots(photos, hashSet);
       const after = before.map((s: PhotoActionSnapshot) => ({ ...s, rating }));
-      await invoke("set_photos_rating", { hashes, rating });
+      await call("set_photos_rating", { hashes, rating });
       undo.pushUndoEntry({
         description: `Rating (${rating}★) on ${hashes.length} photo(s)`,
         previousActiveHash: activeHash,
@@ -214,7 +214,7 @@ export function useTriage(core: LibraryCore, view: LibraryView) {
     if (!tag.trim() || selectedHashes.size === 0) return;
     try {
       const hashes = expandWithLivePairs(expandWithRawPairs(Array.from(selectedHashes), photos), photos);
-      const clean = await invoke<string>("add_tag_batch", { hashes, tag });
+      const clean = await call<string>("add_tag_batch", { hashes, tag });
       // Undo removes the tag only from photos that didn't have it before
       const added = hashes.filter((h) => !photoByHash.get(h)?.tags.includes(clean));
       const addedSet = new Set(added);
@@ -232,11 +232,11 @@ export function useTriage(core: LibraryCore, view: LibraryView) {
           `Tag #${clean} on ${added.length} photo(s)`,
           hashes,
           async () => {
-            await invoke("remove_tag_batch", { hashes: added, tag: clean });
+            await call("remove_tag_batch", { hashes: added, tag: clean });
             applyTag(false);
           },
           async () => {
-            await invoke("add_tag_batch", { hashes: added, tag: clean });
+            await call("add_tag_batch", { hashes: added, tag: clean });
             applyTag(true);
           }
         );
@@ -258,7 +258,7 @@ export function useTriage(core: LibraryCore, view: LibraryView) {
       const hashSet = new Set(hashes);
       const anyNotInBasket = pin ?? photos.some((p) => hashSet.has(p.hash) && !p.in_basket);
       const before = captureSnapshots(photos, hashSet);
-      await invoke("set_photo_basket", { hashes, inBasket: anyNotInBasket });
+      await call("set_photo_basket", { hashes, inBasket: anyNotInBasket });
       pushSnapshotUndo(
         `${anyNotInBasket ? "Pin" : "Unpin"} ${hashes.length} photo(s) ${anyNotInBasket ? "to" : "from"} Basket`,
         before,
@@ -293,7 +293,7 @@ export function useTriage(core: LibraryCore, view: LibraryView) {
     };
     try {
       const hashes = Array.from(selectedHashes);
-      const shifted = await invoke<TimestampShiftResult[]>("shift_capture_timestamps", {
+      const shifted = await call<TimestampShiftResult[]>("shift_capture_timestamps", {
         hashes,
         offsetMinutes: totalMinutes,
       });
@@ -306,14 +306,14 @@ export function useTriage(core: LibraryCore, view: LibraryView) {
           shiftedHashes,
           async () =>
             applyShift(
-              await invoke<TimestampShiftResult[]>("shift_capture_timestamps", {
+              await call<TimestampShiftResult[]>("shift_capture_timestamps", {
                 hashes: shiftedHashes,
                 offsetMinutes: -totalMinutes,
               })
             ),
           async () =>
             applyShift(
-              await invoke<TimestampShiftResult[]>("shift_capture_timestamps", {
+              await call<TimestampShiftResult[]>("shift_capture_timestamps", {
                 hashes: shiftedHashes,
                 offsetMinutes: totalMinutes,
               })
@@ -346,7 +346,7 @@ export function useTriage(core: LibraryCore, view: LibraryView) {
       const trashHashes = new Set(toTrash.map((p) => p.hash));
       const before = captureSnapshots(photos, trashHashes);
       const ops = toTrash.map((p) => ({ hash: p.hash, target_subfolder: "_Trash" }));
-      await invoke("stage_photos_move", { ops });
+      await call("stage_photos_move", { ops });
       pushSnapshotUndo(
         `Keep best: stage ${toTrash.length} photo(s) for _Trash`,
         before,

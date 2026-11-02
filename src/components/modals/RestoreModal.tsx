@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { open } from "@tauri-apps/plugin-dialog";
+import { open } from "../../api/platform";
 import { ArchiveRestore, ArrowRight, CheckCircle2, AlertTriangle, Loader2, X } from "lucide-react";
 import { useDialogFocus } from "../../hooks/useDialogFocus";
 import type { BackupManifest } from "../../types/lumina";

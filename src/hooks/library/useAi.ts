@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { call, subscribe } from "../../api";
 import { confirmDialog } from "../../confirm";
 import { PhotoItem, OllamaStatus, AiAnalysisResult, AiPerf, OllamaPullProgress, AiFailureItem, AiBatchReport, AiBatchProgressEvent, AiBatchSummary } from "../../types/lumina";
 import { diskPathOf } from "../../utils/rawPairs";
@@ -32,7 +31,7 @@ export function useAi(core: LibraryCore) {
 
   // Listen for Ollama Pull Progress Events
   useEffect(() => {
-    const unlisten = listen<OllamaPullProgress>("ollama-pull-progress", (event) => {
+    const unlisten = subscribe<OllamaPullProgress>("ollama-pull-progress", (event) => {
       const prog = event.payload;
       if (prog.done) {
         setOllamaPullProgress(null);
@@ -52,7 +51,7 @@ export function useAi(core: LibraryCore) {
     let mounted = true;
     async function checkStatus() {
       try {
-        const s = await invoke<OllamaStatus>("check_ollama_status");
+        const s = await call<OllamaStatus>("check_ollama_status");
         if (!mounted) return;
         setOllamaStatus((prev) => {
           if (
@@ -92,8 +91,8 @@ export function useAi(core: LibraryCore) {
     if (ollamaPullProgress) return;
     try {
       addLog("AI", `Started downloading Ollama model: ${modelToPull}`);
-      await invoke<string>("pull_ollama_model", { modelName: modelToPull });
-      const s = await invoke<OllamaStatus>("check_ollama_status");
+      await call<string>("pull_ollama_model", { modelName: modelToPull });
+      const s = await call<OllamaStatus>("check_ollama_status");
       setOllamaStatus(s);
       setAiModel(modelToPull);
     } catch (err) {
@@ -110,7 +109,7 @@ export function useAi(core: LibraryCore) {
   // Cancel button of the progress dialog: stops a model download or the folder scan, whichever is running
   async function handleCancelOperation() {
     try {
-      await invoke(ollamaPullProgress ? "cancel_ollama_pull" : "cancel_folder_scan");
+      await call(ollamaPullProgress ? "cancel_ollama_pull" : "cancel_folder_scan");
     } catch (err) {
       setError(String(err));
     }
@@ -150,7 +149,7 @@ export function useAi(core: LibraryCore) {
     const photo = activePhoto;
     try {
       setAnalyzingHashes((prev) => new Set(prev).add(photo.hash));
-      const res = await invoke<AiAnalysisResult>("ai_analyze_photo", {
+      const res = await call<AiAnalysisResult>("ai_analyze_photo", {
         hash: photo.hash,
         imagePathForAi: diskPathOf(photo),
         modelName: aiModel,
@@ -177,7 +176,7 @@ export function useAi(core: LibraryCore) {
     cancelBatchRef.current = true;
     setAiBatchProgress((p) => (p ? { ...p, stopping: true } : p));
     try {
-      await invoke("cancel_ai_analysis");
+      await call("cancel_ai_analysis");
     } catch {}
   }
 
@@ -228,7 +227,7 @@ Choose "Only new photos" to analyse just the ${fresh} photo(s) without results.`
     addLog("AI", `Started Batch AI on ${targets.length} photo(s) using ${aiModel}`);
 
     const batchPerfs: AiPerf[] = [];
-    const unlisten = await listen<AiBatchProgressEvent>("ai-batch-progress", (event) => {
+    const unlisten = await subscribe<AiBatchProgressEvent>("ai-batch-progress", (event) => {
       const prog = event.payload;
       if (prog.results.length > 0) {
         for (const item of prog.results) batchPerfs.push(item.result.perf);
@@ -250,7 +249,7 @@ Choose "Only new photos" to analyse just the ${fresh} photo(s) without results.`
 
     let summary: AiBatchSummary | null = null;
     try {
-      summary = await invoke<AiBatchSummary>("run_caption_batch", {
+      summary = await call<AiBatchSummary>("run_caption_batch", {
         hashes: targets.map((p) => p.hash),
         modelName: aiModel,
       });

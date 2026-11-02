@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
-import { invoke, convertFileSrc } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { call, mediaUrl, subscribe } from "../../api";
 import { Film, Loader2 } from "lucide-react";
 import { PhotoItem } from "../../types/lumina";
 import { thumbSrc } from "../../utils/photoHelpers";
@@ -27,7 +26,7 @@ export default function LoupeVideo({ photo }: { photo: PhotoItem }) {
     setConversion({ state: "idle" });
     if (direct) return;
     let stale = false;
-    invoke<string | null>("existing_playable_copy", { hash: photo.hash })
+    call<string | null>("existing_playable_copy", { hash: photo.hash })
       .then((p) => {
         if (!stale && p) setCopyPath(p);
       })
@@ -39,10 +38,10 @@ export default function LoupeVideo({ photo }: { photo: PhotoItem }) {
 
   useEffect(() => {
     if (direct) return;
-    const offDownload = listen<{ percent: number; total_mb: number; done: boolean }>("ffmpeg-download", (e) => {
+    const offDownload = subscribe<{ percent: number; total_mb: number; done: boolean }>("ffmpeg-download", (e) => {
       if (!e.payload.done) setConversion({ state: "downloading", percent: e.payload.percent, totalMb: e.payload.total_mb });
     });
-    const offConvert = listen<{ hash: string; percent: number; done: boolean }>("transcode-progress", (e) => {
+    const offConvert = subscribe<{ hash: string; percent: number; done: boolean }>("transcode-progress", (e) => {
       if (e.payload.hash === photo.hash && !e.payload.done) setConversion({ state: "converting", percent: e.payload.percent });
     });
     return () => {
@@ -54,14 +53,14 @@ export default function LoupeVideo({ photo }: { photo: PhotoItem }) {
   // Leaving the video (or the Loupe) stops a conversion still running
   useEffect(() => {
     return () => {
-      if (!direct) invoke("cancel_playable_copy").catch(() => {});
+      if (!direct) call("cancel_playable_copy").catch(() => {});
     };
   }, [photo.hash, direct]);
 
   async function convert() {
     setConversion({ state: "converting", percent: 0 });
     try {
-      const path = await invoke<string>("make_playable_copy", { hash: photo.hash });
+      const path = await call<string>("make_playable_copy", { hash: photo.hash });
       setCopyPath(path);
       setConversion({ state: "idle" });
     } catch (err) {
@@ -70,7 +69,11 @@ export default function LoupeVideo({ photo }: { photo: PhotoItem }) {
     }
   }
 
-  const src = direct ? convertFileSrc(photo.path) : copyPath ? convertFileSrc(copyPath) : null;
+  const src = direct
+    ? mediaUrl({ kind: "original", hash: photo.hash, path: photo.path })
+    : copyPath
+      ? mediaUrl({ kind: "preview", hash: photo.hash, path: copyPath })
+      : null;
   if (src) {
     return (
       <video
@@ -115,7 +118,7 @@ export default function LoupeVideo({ photo }: { photo: PhotoItem }) {
               <div className="h-full bg-emerald-500 transition-all" style={{ width: `${conversion.percent}%` }} />
             </div>
             <button
-              onClick={() => invoke("cancel_playable_copy").catch(() => {})}
+              onClick={() => call("cancel_playable_copy").catch(() => {})}
               className="px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300"
             >
               Cancel
@@ -136,7 +139,7 @@ export default function LoupeVideo({ photo }: { photo: PhotoItem }) {
                 {conversion.state === "failed" ? "Try again" : "Make playable copy"}
               </button>
               <button
-                onClick={() => invoke("open_in_default_app", { path: diskPathOf(photo) })}
+                onClick={() => call("open_in_default_app", { path: diskPathOf(photo) })}
                 className="px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300"
               >
                 Open in player

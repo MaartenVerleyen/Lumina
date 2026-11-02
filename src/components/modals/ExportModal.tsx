@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { open } from "@tauri-apps/plugin-dialog";
+import { open } from "../../api/platform";
 import { Download, FolderOpen, X } from "lucide-react";
 import { useDialogFocus } from "../../hooks/useDialogFocus";
 

@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, RefObject } from "react";
 import { confirmDialog } from "../../confirm";
-import { invoke } from "@tauri-apps/api/core";
+import { call } from "../../api";
 import luminaMark from "../../assets/lumina-mark.svg";
 import type { GridStyle, CardDetails } from "../views/VirtualPhotoGrid";
 import { completeTerm, termBeingTyped, TermKey } from "../../utils/searchQuery";
@@ -181,7 +181,7 @@ export default function TopHeaderBar({
   const [tuningError, setTuningError] = useState("");
   useEffect(() => {
     if (!isAiMenuOpen) return;
-    invoke<{ flash_attention: string | null; can_enable: boolean }>("ollama_tuning_status")
+    call<{ flash_attention: string | null; can_enable: boolean }>("ollama_tuning_status")
       .then((s) => setFlashAttention({ value: s.flash_attention, canEnable: s.can_enable }))
       .catch(() => {});
   }, [isAiMenuOpen]);
@@ -197,9 +197,9 @@ export default function TopHeaderBar({
     setTuningState("working");
     setTuningError("");
     try {
-      await invoke("enable_ollama_flash_attention");
+      await call("enable_ollama_flash_attention");
       setFlashAttention((f) => (f ? { ...f, value: "1" } : f));
-      setOllamaStatus(await invoke<OllamaStatus>("check_ollama_status"));
+      setOllamaStatus(await call<OllamaStatus>("check_ollama_status"));
       setTuningState("done");
     } catch (err) {
       setTuningError(String(err));
@@ -242,12 +242,12 @@ export default function TopHeaderBar({
   async function startOllama() {
     setIsStartingOllama(true);
     try {
-      await invoke("start_ollama_service");
+      await call("start_ollama_service");
       // Ollama needs a moment before it answers
       for (let i = 0; i < 10; i++) {
         await new Promise((r) => setTimeout(r, 800));
         try {
-          const s = await invoke<OllamaStatus>("check_ollama_status");
+          const s = await call<OllamaStatus>("check_ollama_status");
           if (s.running) {
             setOllamaStatus(s);
             break;
@@ -272,8 +272,8 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
     if (handlePullDefaultAiModel) {
       await handlePullDefaultAiModel(model);
     } else {
-      await invoke("pull_ollama_model", { modelName: model });
-      const s = await invoke<OllamaStatus>("check_ollama_status");
+      await call("pull_ollama_model", { modelName: model });
+      const s = await call<OllamaStatus>("check_ollama_status");
       setOllamaStatus(s);
       setAiModel(model);
     }
@@ -836,10 +836,10 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                           <button
                             onClick={async () => {
                               if (ollamaStatus.active_vram_model) {
-                                await invoke("unload_ollama_vram", {
+                                await call("unload_ollama_vram", {
                                   modelName: ollamaStatus.active_vram_model,
                                 });
-                                const s = await invoke<OllamaStatus>("check_ollama_status");
+                                const s = await call<OllamaStatus>("check_ollama_status");
                                 setOllamaStatus(s);
                               }
                             }}
@@ -853,8 +853,8 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                             onClick={async () => {
                               setIsLoadingVram(true);
                               try {
-                                await invoke("preload_ollama_vram", { modelName: aiModel });
-                                const s = await invoke<OllamaStatus>("check_ollama_status");
+                                await call("preload_ollama_vram", { modelName: aiModel });
+                                const s = await call<OllamaStatus>("check_ollama_status");
                                 setOllamaStatus(s);
                               } catch (err) {
                                 console.error("Warm up VRAM failed:", err);

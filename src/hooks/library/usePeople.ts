@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { call, subscribe } from "../../api";
 import { PhotoItem, PersonItem, FaceScanProgress, FaceMatchEvent, FaceInstance, FaceModelDownloadProgress, FaceQualityProgress } from "../../types/lumina";
 import { diskPathOf } from "../../utils/rawPairs";
 import { isLiveClip, isVideo } from "../../utils/media";
@@ -56,7 +55,7 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
   // One-time face model download progress (shown in the header while a face scan waits for it)
   const [faceModelDownload, setFaceModelDownload] = useState<FaceModelDownloadProgress | null>(null);
   useEffect(() => {
-    const unlisten = listen<FaceModelDownloadProgress>("face-model-download", (event) => {
+    const unlisten = subscribe<FaceModelDownloadProgress>("face-model-download", (event) => {
       const prog = event.payload;
       if (prog.done) {
         setFaceModelDownload(null);
@@ -73,14 +72,14 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
   async function refreshPeople(currentFolder = folder, skipPendingScan = false) {
     try {
       // 1. Immediately load & render the Top People Carousel (<2ms) without waiting on biometric matching!
-      const res = await invoke<PersonItem[]>("get_people", {
+      const res = await call<PersonItem[]>("get_people", {
         rootFolder: currentFolder || null,
       });
       setPeople(res);
 
       // 2. Asynchronously compute & cache pending face match counts in the background
       if (!skipPendingScan) {
-        invoke<Record<string, number>>("get_pending_face_match_counts", {
+        call<Record<string, number>>("get_pending_face_match_counts", {
           rootFolder: currentFolder || null,
         })
           .then((pending) => {
@@ -109,7 +108,7 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
   }, [photos.length, folder]);
 
   useEffect(() => {
-    const unlisten = listen<FaceMatchEvent>("face-automatch-complete", (event) => {
+    const unlisten = subscribe<FaceMatchEvent>("face-automatch-complete", (event) => {
       const { person_name, matched_hashes, total_matched } = event.payload;
       if (total_matched > 0) {
         const matchedSet = new Set(matched_hashes);
@@ -137,7 +136,7 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
   }, [addLog]);
 
   useEffect(() => {
-    const unlisten = listen<FaceScanProgress>("face-scan-progress", (event) => {
+    const unlisten = subscribe<FaceScanProgress>("face-scan-progress", (event) => {
       const prog = event.payload;
 
       if (prog.batch_faces && Object.keys(prog.batch_faces).length > 0) {
@@ -198,7 +197,7 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
     if (!activePhoto || isVideo(activePhoto) || isDetectingSingleFace) return;
     try {
       setIsDetectingSingleFace(true);
-      const detected = await invoke<FaceInstance[]>("detect_faces_in_photo", {
+      const detected = await call<FaceInstance[]>("detect_faces_in_photo", {
         hash: activePhoto.hash,
         imagePath: diskPathOf(activePhoto),
         forceOnnx: true,
@@ -239,7 +238,7 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
       });
       addLog("FACE", logMessage);
       // The first call downloads (288 MB, once) and loads the face models before the scan starts
-      await invoke<number>("scan_library_faces_batch", { hashes });
+      await call<number>("scan_library_faces_batch", { hashes });
     } catch (err) {
       setFaceScanProgress(null);
       setFaceModelDownload(null);
@@ -277,7 +276,7 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
       if (faceScanProgressRef.current) return;
       faceUpgradeCheckedRef.current.add(folder);
       try {
-        const outdated = await invoke<string[]>("get_outdated_face_photos", { rootFolder: folder });
+        const outdated = await call<string[]>("get_outdated_face_photos", { rootFolder: folder });
         if (outdated.length > 0) {
           await startFaceScan(
             outdated,
@@ -293,7 +292,7 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
   // folder (also picks up closed eyes once the smart search models that judge them are installed)
   const [faceQualityProgress, setFaceQualityProgress] = useState<{ completed: number; total: number } | null>(null);
   useEffect(() => {
-    const unlisten = listen<FaceQualityProgress>("face-quality-progress", (event) => {
+    const unlisten = subscribe<FaceQualityProgress>("face-quality-progress", (event) => {
       const { batch, done, completed, total } = event.payload;
       setPhotos((prev) => prev.map((p) => (p.hash in batch ? { ...p, faces: batch[p.hash] } : p)));
       setFaceQualityProgress(done ? null : { completed, total });
@@ -307,7 +306,7 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
   async function measureFaceQuality(root = folder) {
     if (!root) return;
     try {
-      const total = await invoke<number>("measure_face_quality", { rootFolder: root });
+      const total = await call<number>("measure_face_quality", { rootFolder: root });
       if (total > 0) setFaceQualityProgress({ completed: 0, total });
     } catch {}
   }
@@ -325,7 +324,7 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
 
   async function handleCancelFaceScan() {
     try {
-      await invoke("cancel_face_scan");
+      await call("cancel_face_scan");
       addLog("FACE", "Stopping face scan after the current batch...");
     } catch (err) {
       setError(String(err));
@@ -377,7 +376,7 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
 
     try {
       setAutoMatchNotice(`Saving "${cleanName}" & matching against verified faces...`);
-      const updatedFaces = await invoke<FaceInstance[]>("assign_face_region_and_automatch", {
+      const updatedFaces = await call<FaceInstance[]>("assign_face_region_and_automatch", {
         hash: activePhoto.hash,
         imagePath: diskPathOf(activePhoto),
         bboxX: targetBbox.x,
@@ -437,19 +436,19 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
             return p.people.includes(clean) ? p : { ...p, people: [...p.people, clean].sort() };
           })
         );
-      await invoke<number>("add_person_to_photos", { hashes, name: clean });
+      await call<number>("add_person_to_photos", { hashes, name: clean });
       applyPerson(true);
       if (added.length > 0) {
         pushCustomUndo(
           `Person "${clean}" on ${added.length} photo(s)`,
           hashes,
           async () => {
-            await invoke("remove_person_from_photos", { hashes: added, name: clean });
+            await call("remove_person_from_photos", { hashes: added, name: clean });
             applyPerson(false);
             refreshPeople();
           },
           async () => {
-            await invoke<number>("add_person_to_photos", { hashes: added, name: clean });
+            await call<number>("add_person_to_photos", { hashes: added, name: clean });
             applyPerson(true);
             refreshPeople();
           }
@@ -480,7 +479,7 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
       if (!ok) return null;
     }
     try {
-      const finalName = await invoke<string>("rename_person", { oldName, newName: target });
+      const finalName = await call<string>("rename_person", { oldName, newName: target });
       const old = oldName.toLowerCase();
       setPhotos((prev) =>
         prev.map((p) => {
@@ -505,7 +504,7 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
 
   async function handleSetPersonHidden(name: string, hidden: boolean) {
     try {
-      await invoke("set_person_hidden", { name, hidden });
+      await call("set_person_hidden", { name, hidden });
       if (hidden) setPeopleFilter((prev) => removeFromExpr(prev, name));
       addLog("FACE", `${hidden ? "Hid" : "Unhid"} "${name}"`);
       await refreshPeople();
@@ -516,7 +515,7 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
 
   async function handleSetPersonStarred(name: string, starred: boolean) {
     try {
-      await invoke("set_person_starred", { name, starred });
+      await call("set_person_starred", { name, starred });
       setPeople((prev) => prev.map((p) => (p.name === name ? { ...p, starred } : p)));
       addLog("FACE", `${starred ? "Starred" : "Unstarred"} "${name}"`);
     } catch (err) {
@@ -526,7 +525,7 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
 
   async function handleSetPersonCover(name: string, faceId: string) {
     try {
-      await invoke("set_person_cover", { name, faceId });
+      await call("set_person_cover", { name, faceId });
       addLog("FACE", `New profile picture for "${name}"`);
       await refreshPeople(undefined, true);
     } catch (err) {

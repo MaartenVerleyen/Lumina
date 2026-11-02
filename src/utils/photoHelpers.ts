@@ -1,4 +1,4 @@
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { mediaUrl } from "../api";
 import { PhotoItem, FolderTreeNode, AutoStagePreset } from "../types/lumina";
 
 export function buildFolderTree(photos: PhotoItem[]): { rootCount: number; nodes: FolderTreeNode[] } {
@@ -104,8 +104,8 @@ export function computePresetTargetFolder(
 }
 
 // Thumbnail URL; `thumb_rev` changes when the thumbnail file is replaced, so the webview reloads it
-export function thumbSrc(photo: Pick<PhotoItem, "thumb_path" | "thumb_rev">): string {
-  const src = convertFileSrc(photo.thumb_path);
+export function thumbSrc(photo: Pick<PhotoItem, "hash" | "thumb_path" | "thumb_rev">): string {
+  const src = mediaUrl({ kind: "thumb", hash: photo.hash, path: photo.thumb_path });
   return photo.thumb_rev ? `${src}?v=${photo.thumb_rev}` : src;
 }
 

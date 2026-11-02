@@ -1,7 +1,7 @@
 import { thumbSrc } from "../../utils/photoHelpers";
 import { codecLabel, formatDuration, isVideo } from "../../utils/media";
 import { memo, useEffect, useRef } from "react";
-import { invoke, convertFileSrc } from "@tauri-apps/api/core";
+import { call, mediaUrl } from "../../api";
 import {
   CitySearchResult,
   FaceInstance,
@@ -294,7 +294,7 @@ function RightInspector({
 
   const video = isVideo(activePhoto);
   // A video's file can't be shown as an image: only its thumbnail frame, once made
-  const previewSrc = activePhoto.thumb_ready ? thumbSrc(activePhoto) : video ? "" : convertFileSrc(activePhoto.path);
+  const previewSrc = activePhoto.thumb_ready ? thumbSrc(activePhoto) : video ? "" : mediaUrl({ kind: "original", hash: activePhoto.hash, path: activePhoto.path });
 
   return (
     <aside
@@ -528,7 +528,7 @@ function RightInspector({
                     }`}
                   >
                     <img
-                      src={convertFileSrc(f.face_thumb)}
+                      src={mediaUrl({ kind: "face", path: f.face_thumb })}
                       alt="face"
                       className="w-6 h-6 rounded-full object-cover"
                     />
@@ -539,7 +539,7 @@ function RightInspector({
                       onClick={async (e) => {
                         e.stopPropagation();
                         const removedPerson = f.person_name;
-                        const rem = await invoke<FaceInstance[]>("remove_face_box", {
+                        const rem = await call<FaceInstance[]>("remove_face_box", {
                           faceId: f.face_id,
                           hash: activePhoto.hash,
                         });
@@ -622,7 +622,7 @@ function RightInspector({
                     type="button"
                     onClick={async (e) => {
                       e.stopPropagation();
-                      const updatedPeople = await invoke<string[]>(
+                      const updatedPeople = await call<string[]>(
                         "remove_person_from_photo",
                         {
                           hash: activePhoto.hash,
@@ -1041,7 +1041,7 @@ function RightInspector({
                 #{t}
                 <button
                   onClick={async () => {
-                    await invoke("remove_tag", { hash: activePhoto.hash, tag: t });
+                    await call("remove_tag", { hash: activePhoto.hash, tag: t });
                     setPhotos((prev) =>
                       prev.map((p) =>
                         p.hash === activePhoto.hash

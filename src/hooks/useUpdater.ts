@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { check, Update } from "@tauri-apps/plugin-updater";
+import { check, type Update } from "../api/platform";
 
 // Updates come from the latest GitHub release (latest.json, signed with Lumina's update key). Lumina checks
 // by itself a little after starting, at most about once a day, unless that is switched off in Settings.

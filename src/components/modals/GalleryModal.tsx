@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
-import { open } from "@tauri-apps/plugin-dialog";
-import { pictureDir, join } from "@tauri-apps/api/path";
+import { open, pictureDir, join } from "../../api/platform";
 import { Globe, X } from "lucide-react";
 import { useDialogFocus } from "../../hooks/useDialogFocus";
 

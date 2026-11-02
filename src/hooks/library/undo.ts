@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { call } from "../../api";
 import { PhotoItem, PhotoActionSnapshot, UndoHistoryEntry } from "../../types/lumina";
 import { MAX_UNDO_STEPS } from "./shared";
 
@@ -87,30 +87,30 @@ async function applySnapshotsToBackend(
 
   if (fields.has("flag")) {
     for (const [flag, hashes] of byFlag.entries()) {
-      await invoke("set_photo_flag", { hashes, flag });
+      await call("set_photo_flag", { hashes, flag });
     }
   }
   if (fields.has("rating")) {
     for (const [rating, hashes] of byRating.entries()) {
-      await invoke("set_photos_rating", { hashes, rating });
+      await call("set_photos_rating", { hashes, rating });
     }
   }
   if (fields.has("color_label")) {
     for (const [color, hashes] of byColor.entries()) {
-      await invoke("set_photo_color_label", { hashes, color });
+      await call("set_photo_color_label", { hashes, color });
     }
   }
   if (fields.has("in_basket")) {
     for (const [inBasket, hashes] of byBasket.entries()) {
-      await invoke("set_photo_basket", { hashes, inBasket });
+      await call("set_photo_basket", { hashes, inBasket });
     }
   }
   if (fields.has("staged_target") && stageOps.length > 0) {
-    await invoke("stage_photos_move", { ops: stageOps });
+    await call("stage_photos_move", { ops: stageOps });
   }
   if (fields.has("rotation")) {
     const rotOps = snapshots.map((s) => ({ hash: s.hash, rotation: s.rotation }));
-    await invoke("set_photos_rotation_exact", { ops: rotOps });
+    await call("set_photos_rotation_exact", { ops: rotOps });
   }
 
   const snapMap = new Map(snapshots.map((s: PhotoActionSnapshot) => [s.hash, s]));

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { invoke, convertFileSrc } from "@tauri-apps/api/core";
+import { call, mediaUrl } from "../../api";
 import { Loader2, UserCircle, X } from "lucide-react";
 import { useDialogFocus } from "../../hooks/useDialogFocus";
 import { SimilarFaceCandidate } from "../../types/lumina";
@@ -26,7 +26,7 @@ export default function ProfilePicturePicker({ person, currentCover, onPick, onC
     let stale = false;
     setFaces(null);
     setError("");
-    invoke<SimilarFaceCandidate[]>("get_confirmed_faces_for_person", { personName: person })
+    call<SimilarFaceCandidate[]>("get_confirmed_faces_for_person", { personName: person })
       .then((res) => !stale && setFaces(res.filter((f) => f.face_thumb)))
       .catch((err) => !stale && setError(String(err)));
     return () => {
@@ -102,7 +102,7 @@ export default function ProfilePicturePicker({ person, currentCover, onPick, onC
                       current ? "border-emerald-400" : "border-zinc-800 hover:border-emerald-500/60"
                     }`}
                   >
-                    <img src={convertFileSrc(f.face_thumb)} alt="" loading="lazy" className="w-full h-full object-cover" />
+                    <img src={mediaUrl({ kind: "face", path: f.face_thumb })} alt="" loading="lazy" className="w-full h-full object-cover" />
                     {saving === f.face_id && (
                       <span className="absolute inset-0 bg-black/50 flex items-center justify-center">
                         <Loader2 className="w-5 h-5 animate-spin text-white" />

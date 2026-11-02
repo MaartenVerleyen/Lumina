@@ -1,9 +1,7 @@
 import { useEffect, useState, ReactNode } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { getVersion } from "@tauri-apps/api/app";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { call } from "../../api";
+import { getVersion, open as openDialog, openUrl } from "../../api/platform";
 import { confirmDialog } from "../../confirm";
-import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   Brain,
   FolderOpen,
@@ -140,7 +138,7 @@ function Status({ ok, children }: { ok: boolean; children: ReactNode }) {
 // Playable copies of videos the app converted (MTS, AVI, ...): how much room they take, and a way to free it
 function VideoCacheRow() {
   const [info, setInfo] = useState<{ bytes: number; files: number; ffmpeg_installed: boolean } | null>(null);
-  const load = () => invoke<{ bytes: number; files: number; ffmpeg_installed: boolean }>("video_cache_info").then(setInfo).catch(() => {});
+  const load = () => call<{ bytes: number; files: number; ffmpeg_installed: boolean }>("video_cache_info").then(setInfo).catch(() => {});
   useEffect(() => {
     load();
   }, []);
@@ -156,7 +154,7 @@ function VideoCacheRow() {
           : "Videos in formats Lumina can't play are converted on request."
       }
     >
-      <Button disabled={!info || info.files === 0} onClick={() => invoke("clear_video_cache").then(load).catch(() => {})}>
+      <Button disabled={!info || info.files === 0} onClick={() => call("clear_video_cache").then(load).catch(() => {})}>
         Clear
       </Button>
     </Row>
@@ -196,13 +194,13 @@ export default function SettingsModal({
     if (!isOpen) return;
     setSection(initialSection);
     getVersion().then(setVersion).catch(() => {});
-    invoke<string>("get_app_data_dir").then(setDataDir).catch(() => {});
+    call<string>("get_app_data_dir").then(setDataDir).catch(() => {});
     defaultBackupDir().then(setBackupDefault).catch(() => {});
   }, [isOpen]);
 
   useEffect(() => {
     if (!isOpen || section !== "ai") return;
-    invoke<{ flash_attention: string | null; can_enable: boolean }>("ollama_tuning_status")
+    call<{ flash_attention: string | null; can_enable: boolean }>("ollama_tuning_status")
       .then((s) => setFlash({ on: ["1", "true"].includes((s.flash_attention || "").toLowerCase()), canEnable: s.can_enable }))
       .catch(() => setFlash(null));
   }, [isOpen, section]);
@@ -222,10 +220,10 @@ export default function SettingsModal({
   async function startOllama() {
     setAiBusy("starting");
     try {
-      await invoke("start_ollama_service");
+      await call("start_ollama_service");
       for (let i = 0; i < 12; i++) {
         await new Promise((r) => setTimeout(r, 800));
-        const s = await invoke<OllamaStatus>("check_ollama_status").catch(() => null);
+        const s = await call<OllamaStatus>("check_ollama_status").catch(() => null);
         if (s?.running) {
           lib.setOllamaStatus(s);
           break;
@@ -246,9 +244,9 @@ export default function SettingsModal({
     if (!ok) return;
     setAiBusy("flash");
     try {
-      await invoke("enable_ollama_flash_attention");
+      await call("enable_ollama_flash_attention");
       setFlash((f) => (f ? { ...f, on: true } : f));
-      lib.setOllamaStatus(await invoke<OllamaStatus>("check_ollama_status"));
+      lib.setOllamaStatus(await call<OllamaStatus>("check_ollama_status"));
     } catch (err) {
       lib.setError(String(err));
     } finally {

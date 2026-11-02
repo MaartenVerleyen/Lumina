@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import UnknownFaceClusters from "./UnknownFaceClusters";
-import { invoke, convertFileSrc } from "@tauri-apps/api/core";
+import { call, mediaUrl } from "../../api";
 import { confirmDialog, isConfirmOpen } from "../../confirm";
 import { useDialogFocus } from "../../hooks/useDialogFocus";
 import {
@@ -149,7 +149,7 @@ export default function FaceMatchReviewModal({
       setLoadFailed(false);
       try {
         if (tab === "pending") {
-          const res = await invoke<SimilarFaceCandidate[]>("find_similar_faces", {
+          const res = await call<SimilarFaceCandidate[]>("find_similar_faces", {
             personName: clean,
             rootFolder: folder || null,
             forceRefresh,
@@ -161,7 +161,7 @@ export default function FaceMatchReviewModal({
           setSelectedIds(new Set(res.filter((c) => c.similarity >= strongMatchPercent).map((c) => c.face_id)));
           setSpotlightIndex(0);
         } else if (tab === "confirmed") {
-          const res = await invoke<SimilarFaceCandidate[]>(
+          const res = await call<SimilarFaceCandidate[]>(
             "get_confirmed_faces_for_person",
             { personName: clean }
           );
@@ -169,7 +169,7 @@ export default function FaceMatchReviewModal({
           setConfirmedFaces(res);
           setSelectedIds(new Set());
         } else if (tab === "denied") {
-          const res = await invoke<SimilarFaceCandidate[]>(
+          const res = await call<SimilarFaceCandidate[]>(
             "get_rejected_faces_for_person",
             { personName: clean }
           );
@@ -196,7 +196,7 @@ export default function FaceMatchReviewModal({
 
   useEffect(() => {
     if (!isOpen) return;
-    invoke<{ min_similarity_percent: number; strong_similarity_percent: number }>(
+    call<{ min_similarity_percent: number; strong_similarity_percent: number }>(
       "get_face_match_config"
     )
       .then((cfg) => setStrongMatchPercent(cfg.strong_similarity_percent))
@@ -253,7 +253,7 @@ export default function FaceMatchReviewModal({
       });
 
       try {
-        const updatedFacesMap = await invoke<Record<string, FaceInstance[]>>(
+        const updatedFacesMap = await call<Record<string, FaceInstance[]>>(
           "assign_faces_to_person_batch",
           {
             faceIds,
@@ -297,7 +297,7 @@ export default function FaceMatchReviewModal({
       });
 
       try {
-        await invoke<number>("reject_face_candidates_batch", {
+        await call<number>("reject_face_candidates_batch", {
           faceIds,
           personName: person,
         });
@@ -344,7 +344,7 @@ export default function FaceMatchReviewModal({
 
     try {
       if (last.action === "accept") {
-        const updatedMap = await invoke<Record<string, FaceInstance[]>>(
+        const updatedMap = await call<Record<string, FaceInstance[]>>(
           "unassign_faces_batch",
           {
             faceIds,
@@ -353,7 +353,7 @@ export default function FaceMatchReviewModal({
         );
         syncUpdatedFacesToPhotos(updatedMap);
       } else {
-        await invoke<number>("unreject_face_candidates_batch", {
+        await call<number>("unreject_face_candidates_batch", {
           faceIds,
           personName: last.person,
         });
@@ -389,7 +389,7 @@ export default function FaceMatchReviewModal({
         return next;
       });
       try {
-        const updatedMap = await invoke<Record<string, FaceInstance[]>>(
+        const updatedMap = await call<Record<string, FaceInstance[]>>(
           "unassign_faces_batch",
           {
             faceIds,
@@ -420,12 +420,12 @@ export default function FaceMatchReviewModal({
         return next;
       });
       try {
-        await invoke<number>("unreject_face_candidates_batch", {
+        await call<number>("unreject_face_candidates_batch", {
           faceIds,
           personName: person,
         });
         if (alsoAccept) {
-          const updatedMap = await invoke<Record<string, FaceInstance[]>>(
+          const updatedMap = await call<Record<string, FaceInstance[]>>(
             "assign_faces_to_person_batch",
             {
               faceIds,
@@ -718,7 +718,7 @@ export default function FaceMatchReviewModal({
                     >
                       {p.cover_thumb ? (
                         <img
-                          src={convertFileSrc(p.cover_thumb)}
+                          src={mediaUrl({ kind: "face", path: p.cover_thumb })}
                           alt={p.name}
                           className="w-8 h-8 rounded-full object-cover border border-zinc-700 shrink-0"
                         />
@@ -867,7 +867,7 @@ export default function FaceMatchReviewModal({
               <div className="flex items-center gap-3">
                 {activePersonObj?.cover_thumb && (
                   <img
-                    src={convertFileSrc(activePersonObj.cover_thumb)}
+                    src={mediaUrl({ kind: "face", path: activePersonObj.cover_thumb })}
                     alt={activePerson}
                     className="w-7 h-7 rounded-full object-cover border border-emerald-500/50"
                   />
@@ -1107,7 +1107,7 @@ export default function FaceMatchReviewModal({
                           className="relative w-full shrink-0 bg-zinc-950 overflow-hidden"
                         >
                           <img
-                            src={convertFileSrc(cand.face_thumb)}
+                            src={mediaUrl({ kind: "face", path: cand.face_thumb })}
                             alt={cand.photo_name}
                             decoding="async"
                             loading="lazy"
@@ -1249,10 +1249,10 @@ export default function FaceMatchReviewModal({
                     <div className="relative inline-block max-w-full max-h-full">
                       {nextSpotlight && (
                         // Loads the next candidate's photo in the background so Y/N feels instant
-                        <img src={convertFileSrc(nextSpotlight.photo_path)} alt="" aria-hidden className="hidden" />
+                        <img src={mediaUrl({ kind: "original", hash: nextSpotlight.hash, path: nextSpotlight.photo_path })} alt="" aria-hidden className="hidden" />
                       )}
                       <img
-                        src={convertFileSrc(currentSpotlight.photo_path)}
+                        src={mediaUrl({ kind: "original", hash: currentSpotlight.hash, path: currentSpotlight.photo_path })}
                         alt={currentSpotlight.photo_name}
                         decoding="async"
                         className="block max-w-full max-h-[62vh] w-auto h-auto object-contain rounded-lg select-none"
@@ -1305,7 +1305,7 @@ export default function FaceMatchReviewModal({
                       </div>
 
                       <img
-                        src={convertFileSrc(currentSpotlight.face_thumb)}
+                        src={mediaUrl({ kind: "face", path: currentSpotlight.face_thumb })}
                         alt="Candidate face"
                         className="w-44 h-44 rounded-2xl object-cover border-2 border-indigo-500/50 shadow-xl mt-2"
                       />

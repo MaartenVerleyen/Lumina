@@ -1,6 +1,6 @@
 import { useRef, useMemo } from "react";
 import { useWheel } from "../../hooks/useWheel";
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { mediaUrl } from "../../api";
 import { PhotoItem, ViewMode } from "../../types/lumina";
 import { cullScore, hasClosedEyes, isSoftFocus, DEFAULT_CULLING, type CullingSettings } from "../../utils/culling";
 import {
@@ -234,7 +234,7 @@ export default function CompareView({
             >
               <div className="flex-1 relative overflow-hidden flex items-center justify-center">
                 <img
-                  src={convertFileSrc(cp.path)}
+                  src={mediaUrl({ kind: "original", hash: cp.hash, path: cp.path })}
                   alt={cp.name}
                   draggable={false}
                   style={{

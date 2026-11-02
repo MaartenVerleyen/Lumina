@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { getCurrentWebview } from "../api/platform";
 
 // A folder (or file) dropped on the window from Explorer opens as the library; `isDraggingOverWindow`
 // drives the full-window drop overlay.

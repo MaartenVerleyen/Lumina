@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { getVersion } from "@tauri-apps/api/app";
+import { getVersion } from "../api/platform";
 import { notesSince, previousVersionOf, shouldShowWelcome, ReleaseNotes } from "../utils/welcome";
 
 const LAST_VERSION_KEY = "lumina_last_version";

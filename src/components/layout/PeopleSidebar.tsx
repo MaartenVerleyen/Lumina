@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { mediaUrl } from "../../api";
 import { ChevronDown, ChevronRight, Search, Star, User, Users, X } from "lucide-react";
 import { PersonItem } from "../../types/lumina";
 import {
@@ -144,7 +144,7 @@ export default function PeopleSidebar({
   const avatar = (p: PersonItem, size = "w-9 h-9") =>
     p.cover_thumb ? (
       <img
-        src={convertFileSrc(p.cover_thumb)}
+        src={mediaUrl({ kind: "face", path: p.cover_thumb })}
         alt=""
         loading="lazy"
         className={`${size} rounded-full object-cover border border-zinc-700 shrink-0`}

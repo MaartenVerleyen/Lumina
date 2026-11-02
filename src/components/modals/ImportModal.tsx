@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { open } from "@tauri-apps/plugin-dialog";
+import { call } from "../../api";
+import { open } from "../../api/platform";
 import { confirmDialog } from "../../confirm";
 import { FolderInput, FolderOpen, HardDrive, Loader2, RefreshCw, MemoryStick, X } from "lucide-react";
 import { useDialogFocus } from "../../hooks/useDialogFocus";
@@ -51,7 +51,7 @@ export default function ImportModal({ isOpen, initialSource, defaultDest, onClos
   const [previewError, setPreviewError] = useState("");
 
   const loadDrives = () =>
-    invoke<ImportSource[]>("list_import_sources")
+    call<ImportSource[]>("list_import_sources")
       .then(setDrives)
       .catch(() => setDrives([]));
 
@@ -77,7 +77,7 @@ export default function ImportModal({ isOpen, initialSource, defaultDest, onClos
     let stale = false;
     setPreviewState("loading");
     setPreview(null);
-    invoke<ImportPreview>("preview_import", { source, pattern: settings.importPattern })
+    call<ImportPreview>("preview_import", { source, pattern: settings.importPattern })
       .then((p) => {
         if (stale) return;
         setPreview(p);

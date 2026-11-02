@@ -1,6 +1,5 @@
 import { useState, useEffect } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { call, subscribe } from "../../api";
 import { ExportProgress, ExportResult } from "../../types/lumina";
 import type { ExportSettings } from "../../components/modals/ExportModal";
 import type { GallerySettings } from "../../components/modals/GalleryModal";
@@ -17,7 +16,7 @@ export function useExport(core: LibraryCore) {
   const [galleryTarget, setGalleryTarget] = useState<{ hashes: string[]; title: string } | null>(null);
 
   useEffect(() => {
-    const unlisten = listen<ExportProgress>("export-progress", (event) => {
+    const unlisten = subscribe<ExportProgress>("export-progress", (event) => {
       setExportProgress(event.payload.done ? null : event.payload);
     });
     return () => {
@@ -40,7 +39,7 @@ export function useExport(core: LibraryCore) {
     if (hashes.length === 0) return;
     setExportProgress({ completed: 0, total: hashes.length, done: false, cancelled: false });
     try {
-      const result = await invoke<ExportResult>("export_photos", {
+      const result = await call<ExportResult>("export_photos", {
         options: {
           hashes,
           dest_dir: settings.destDir,
@@ -79,7 +78,7 @@ export function useExport(core: LibraryCore) {
     if (hashes.length === 0) return;
     setExportProgress({ completed: 0, total: hashes.length, done: false, cancelled: false });
     try {
-      const result = await invoke<{ folder: string; index: string; exported: number; failures: { file: string; error: string }[]; cancelled: boolean }>(
+      const result = await call<{ folder: string; index: string; exported: number; failures: { file: string; error: string }[]; cancelled: boolean }>(
         "export_gallery",
         {
           options: {
@@ -98,7 +97,7 @@ export function useExport(core: LibraryCore) {
       if (result.failures.length > 0) setError(`${result.failures.length} photo(s) could not be added. See the Session Log.`);
       notify(`${result.cancelled ? "Gallery stopped: " : "Gallery ready: "}${result.exported} photo(s) in ${result.folder}`, "info", {
         label: "Open the gallery",
-        run: () => invoke("open_in_default_app", { path: result.index }).catch((e) => setError(String(e))),
+        run: () => call("open_in_default_app", { path: result.index }).catch((e) => setError(String(e))),
       });
     } catch (err) {
       setError(`Gallery failed: ${String(err)}`);
@@ -109,7 +108,7 @@ export function useExport(core: LibraryCore) {
 
   async function handleCancelExport() {
     try {
-      await invoke("cancel_export");
+      await call("cancel_export");
     } catch {}
   }
 

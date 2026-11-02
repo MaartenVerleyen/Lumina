@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { call, subscribe } from "../../api";
 import { ImportOptions, ImportProgress, ImportResult, ImportSource } from "../../types/lumina";
 import { diskPathOf } from "../../utils/rawPairs";
 import { getSettings } from "../../settings";
@@ -25,7 +24,7 @@ export function useImport(core: LibraryCore, filters: FilterState, folderHook: R
   const openImport = (source = "") => setImportSource(source);
 
   useEffect(() => {
-    const unlisten = listen<ImportProgress>("import-progress", (event) => {
+    const unlisten = subscribe<ImportProgress>("import-progress", (event) => {
       setImportProgress(event.payload.done ? null : event.payload);
     });
     return () => {
@@ -36,7 +35,7 @@ export function useImport(core: LibraryCore, filters: FilterState, folderHook: R
   const openImportRef = useRef(openImport);
   openImportRef.current = openImport;
   useEffect(() => {
-    const unlisten = listen<ImportSource>("removable-drive-arrived", (event) => {
+    const unlisten = subscribe<ImportSource>("removable-drive-arrived", (event) => {
       if (!getSettings().offerImportOnCard) return;
       const d = event.payload;
       notify(`${d.label} (${d.path.replace(/\\$/, "")}) is connected.`, "info", {
@@ -56,7 +55,7 @@ export function useImport(core: LibraryCore, filters: FilterState, folderHook: R
     setImportProgress({ stage: "Reading", completed: 0, total: 0, copied: 0, skipped: 0, failed: 0, current: "", done: false });
     addLog("DISK", `Started importing from ${options.source}`, `into ${options.dest_root}`);
     try {
-      const result = await invoke<ImportResult>("start_import", { options });
+      const result = await call<ImportResult>("start_import", { options });
       for (const f of result.failures) addLog("DISK", `Could not import ${f.file}`, f.error);
       const parts = [
         `${result.copied} photo${result.copied === 1 ? "" : "s"} imported`,
@@ -97,7 +96,7 @@ export function useImport(core: LibraryCore, filters: FilterState, folderHook: R
 
   async function handleCancelImport() {
     try {
-      await invoke("cancel_import");
+      await call("cancel_import");
     } catch {}
   }
 

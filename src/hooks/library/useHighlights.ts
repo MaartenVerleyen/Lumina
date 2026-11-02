@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { call } from "../../api";
 import { PhotoItem } from "../../types/lumina";
 import { highlightCandidates, type HighlightFocus } from "../../utils/highlights";
 import type { LibraryCore } from "./core";
@@ -28,7 +28,7 @@ export function useHighlights(core: LibraryCore, filters: FilterState, view: Lib
   // The picks are chosen one at a time, best first, so the best 4 of a set are also the first 4 of its best 25:
   // a cover made from pickHighlights(source, 4) shows photos that are in the set's highlights
   const pickHighlights = (source: PhotoItem[], count: number, focus?: HighlightFocus) =>
-    invoke<string[]>("pick_highlights", { candidates: highlightCandidates(source, culling, focus), count });
+    call<string[]>("pick_highlights", { candidates: highlightCandidates(source, culling, focus), count });
 
   async function choose(title: string, source: PhotoItem[], count: number, focus?: HighlightFocus) {
     setHighlights({ title, source, count, focus, hashes: null });

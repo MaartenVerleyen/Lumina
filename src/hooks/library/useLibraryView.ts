@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { call } from "../../api";
 import { PhotoItem, TimelineBucket } from "../../types/lumina";
 import { buildFolderTree } from "../../utils/photoHelpers";
 import { diskPathOf, RAW_OR_HEIC_NAME } from "../../utils/rawPairs";
@@ -408,7 +408,7 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
       if (!isRawOrHeic || item.path.endsWith("_preview.jpg")) continue;
       const rawDiskPath = diskPathOf(item);
       const targetHash = item.hash;
-      invoke<string>("ensure_high_res_preview", {
+      call<string>("ensure_high_res_preview", {
         hash: targetHash,
         sourcePath: rawDiskPath,
       })

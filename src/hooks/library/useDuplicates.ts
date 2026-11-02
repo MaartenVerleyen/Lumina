@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { call } from "../../api";
 import { PhotoItem } from "../../types/lumina";
 import { captureSnapshots } from "./undo";
 import { mergeIntoKeeper } from "../../utils/duplicates";
@@ -26,7 +26,7 @@ export function useDuplicates(core: LibraryCore) {
   async function openDuplicates() {
     setDuplicates({ sets: null });
     try {
-      const sets = await invoke<DuplicateSet[]>("find_duplicates", { rootFolder: folder || null });
+      const sets = await call<DuplicateSet[]>("find_duplicates", { rootFolder: folder || null });
       setDuplicates((d) => (d ? { sets } : d));
     } catch (err) {
       setDuplicates(null);
@@ -40,7 +40,7 @@ export function useDuplicates(core: LibraryCore) {
     try {
       const touched = new Set([...extras, ...stages.map((s) => s.keep)]);
       const before = captureSnapshots(photos, touched);
-      await invoke<number>("stage_duplicate_extras", { sets: stages });
+      await call<number>("stage_duplicate_extras", { sets: stages });
 
       const byHash = new Map(photos.map((p) => [p.hash, p]));
       const merged = new Map<string, PhotoItem>();

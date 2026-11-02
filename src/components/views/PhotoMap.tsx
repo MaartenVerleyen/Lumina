@@ -4,7 +4,7 @@ import L from "leaflet";
 import "leaflet.markercluster";
 import "leaflet.markercluster/dist/MarkerCluster.css";
 import "leaflet.markercluster/dist/MarkerCluster.Default.css";
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { mediaUrl } from "../../api";
 import { WifiOff } from "lucide-react";
 
 // Inline SVG pin (no marker image files to load)
@@ -49,7 +49,7 @@ function escapeHtml(text: string): string {
 function popupHtml(p: GpsPhoto): string {
   const date = p.captured_at ? p.captured_at.split(" ")[0].replace(/:/g, "-") : "";
   return `<div style="width:160px;font-size:12px;color:#0f172a;display:flex;flex-direction:column;gap:4px">
-    <img src="${escapeHtml(convertFileSrc(p.thumb_ready ? p.thumb_path : p.path))}" alt="" style="width:100%;height:96px;object-fit:cover;border-radius:4px"/>
+    <img src="${escapeHtml(p.thumb_ready ? mediaUrl({ kind: "thumb", hash: p.hash, path: p.thumb_path }) : mediaUrl({ kind: "original", hash: p.hash, path: p.path }))}" alt="" style="width:100%;height:96px;object-fit:cover;border-radius:4px"/>
     <div style="font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(p.name)}</div>
     ${p.location ? `<div style="font-size:11px;color:#047857">${escapeHtml(p.location)}</div>` : ""}
     ${date ? `<div style="font-size:10px;color:#64748b">${escapeHtml(date)}</div>` : ""}

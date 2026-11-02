@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { call } from "../../api";
 import { LibraryHealthStats, XmpExportResult } from "../../types/lumina";
 import type { LibraryCore } from "./core";
 
@@ -14,7 +14,7 @@ export function useHealth(core: LibraryCore) {
   async function handleOpenHealthDashboard() {
     try {
       setIsHealthModalOpen(true);
-      const stats = await invoke<LibraryHealthStats>("get_library_health_stats", {
+      const stats = await call<LibraryHealthStats>("get_library_health_stats", {
         rootFolder: folder || null,
       });
       setHealthStats(stats);
@@ -28,7 +28,7 @@ export function useHealth(core: LibraryCore) {
       setIsExportingXmp(true);
       const hashes =
         onlySelected && selectedHashes.size > 0 ? Array.from(selectedHashes) : null;
-      const res = await invoke<XmpExportResult>("export_xmp_sidecars", {
+      const res = await call<XmpExportResult>("export_xmp_sidecars", {
         hashes,
         rootFolder: folder || null,
       });
@@ -50,8 +50,8 @@ export function useHealth(core: LibraryCore) {
 
   async function handlePruneCache() {
     try {
-      const removed = await invoke<number>("prune_orphaned_cache");
-      const stats = await invoke<LibraryHealthStats>("get_library_health_stats", {
+      const removed = await call<number>("prune_orphaned_cache");
+      const stats = await call<LibraryHealthStats>("get_library_health_stats", {
         rootFolder: folder || null,
       });
       setHealthStats(stats);

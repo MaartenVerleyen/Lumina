@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { call, subscribe } from "../../api";
 import { confirmDialog } from "../../confirm";
 import { PhotoItem, SemanticStatus, SemanticProgress, SemanticHit } from "../../types/lumina";
 import { SEMANTIC_CANCELLED } from "./shared";
@@ -31,7 +30,7 @@ export function useSmartSearch(core: LibraryCore, filters: FilterState, thumbnai
   const refreshSemanticStatus = useCallback(async (currentFolder: string) => {
     if (!currentFolder) return null;
     try {
-      const status = await invoke<SemanticStatus>("semantic_status", { rootFolder: currentFolder });
+      const status = await call<SemanticStatus>("semantic_status", { rootFolder: currentFolder });
       setSemanticStatus(status);
       return status;
     } catch {
@@ -40,7 +39,7 @@ export function useSmartSearch(core: LibraryCore, filters: FilterState, thumbnai
   }, []);
 
   useEffect(() => {
-    const unlisten = listen<SemanticProgress>("semantic-progress", (event) => {
+    const unlisten = subscribe<SemanticProgress>("semantic-progress", (event) => {
       const prog = event.payload;
       if (prog.done) {
         setSemanticProgress(null);
@@ -60,7 +59,7 @@ export function useSmartSearch(core: LibraryCore, filters: FilterState, thumbnai
   async function startSemanticIndex(currentFolder = folder) {
     if (!currentFolder) return;
     try {
-      await invoke<number>("start_semantic_index", { rootFolder: currentFolder });
+      await call<number>("start_semantic_index", { rootFolder: currentFolder });
     } catch (err) {
       setSemanticProgress(null);
       if (!String(err).includes(SEMANTIC_CANCELLED)) setError(`Smart search: ${String(err)}`);
@@ -108,7 +107,7 @@ export function useSmartSearch(core: LibraryCore, filters: FilterState, thumbnai
     const seq = ++semanticSeqRef.current;
     const timer = setTimeout(async () => {
       try {
-        const hits = await invoke<SemanticHit[]>("semantic_search", { query });
+        const hits = await call<SemanticHit[]>("semantic_search", { query });
         if (seq !== semanticSeqRef.current) return;
         setSemanticResult({
           source: { kind: "text", query },
@@ -123,7 +122,7 @@ export function useSmartSearch(core: LibraryCore, filters: FilterState, thumbnai
 
   async function handleFindSimilar(photo: PhotoItem) {
     try {
-      const hits = await invoke<SemanticHit[]>("find_similar_photos", { hash: photo.hash });
+      const hits = await call<SemanticHit[]>("find_similar_photos", { hash: photo.hash });
       ++semanticSeqRef.current;
       setSemanticResult({
         source: { kind: "similar", hash: photo.hash, name: photo.name },
@@ -146,7 +145,7 @@ export function useSmartSearch(core: LibraryCore, filters: FilterState, thumbnai
 
   async function handleCancelSemanticIndex() {
     try {
-      await invoke("cancel_semantic_index");
+      await call("cancel_semantic_index");
     } catch (err) {
       setError(String(err));
     }
