@@ -21,14 +21,14 @@ pub async fn measure_face_quality(app: AppHandle, root_folder: String) -> Result
     if QUALITY_RUNNING.swap(true, Ordering::SeqCst) {
         return Ok(0);
     }
-    let started = start_measuring(app, root_folder).await;
+    let started = start_measuring(Arc::new(app), root_folder).await;
     if !matches!(started, Ok(n) if n > 0) {
         QUALITY_RUNNING.store(false, Ordering::SeqCst);
     }
     started
 }
 
-async fn start_measuring(app: AppHandle, root_folder: String) -> Result<usize, String> {
+async fn start_measuring(app: SharedHost, root_folder: String) -> Result<usize, String> {
     let eyes_possible = clip::clip_models_present(&get_models_dir(&app));
     let conn = open_global_db(&app)?;
     let mut targets: Vec<(String, String)> = Vec::new();
@@ -62,7 +62,7 @@ async fn start_measuring(app: AppHandle, root_folder: String) -> Result<usize, S
     Ok(total)
 }
 
-fn measure(app: &AppHandle, models: &Arc<FaceModels>, targets: &[(String, String)]) -> usize {
+fn measure(app: &dyn Host, models: &Arc<FaceModels>, targets: &[(String, String)]) -> usize {
     let Ok(conn) = open_global_db(app) else { return 0 };
     let previews_dir = get_app_storage_dir(app).join("previews");
     let mut measured = 0;
@@ -101,7 +101,7 @@ fn measure(app: &AppHandle, models: &Arc<FaceModels>, targets: &[(String, String
             batch.insert(hash.clone(), get_faces_for_hash(&conn, hash));
         }
         completed += chunk.len();
-        let _ = app.emit(
+        let _ = emit_to(&app, 
             "face-quality-progress",
             FaceQualityProgress { completed, total: targets.len(), done: completed >= targets.len(), batch },
         );

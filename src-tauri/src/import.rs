@@ -318,9 +318,9 @@ fn eject_drive(_root: &str) -> bool {
     false
 }
 
-fn run_import(app: &AppHandle, options: &ImportOptions) -> Result<ImportResult, String> {
+fn run_import(app: &dyn Host, options: &ImportOptions) -> Result<ImportResult, String> {
     let emit = |p: ImportProgress| {
-        let _ = app.emit("import-progress", p);
+        let _ = emit_to(&app, "import-progress", p);
     };
     let conn = open_global_db(app)?;
     let source = Path::new(&options.source);
@@ -522,7 +522,7 @@ pub fn start_drive_watch(app: AppHandle) {
             let now = removable_drives();
             for d in &now {
                 if !known.contains(&d.path) && d.has_dcim {
-                    let _ = app.emit("removable-drive-arrived", d.clone());
+                    let _ = emit_to(&app, "removable-drive-arrived", d.clone());
                 }
             }
             known = now.into_iter().map(|d| d.path).collect();

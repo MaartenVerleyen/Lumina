@@ -50,6 +50,7 @@ mod recycle;
 mod video_meta;
 mod video_frames;
 mod ffmpeg;
+mod host;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -69,6 +70,7 @@ use fastdecode::*;
 use thumbs::*;
 use face_ort::*;
 use face_match::*;
+use host::*;
 
 static GEOCODER: LazyLock<ReverseGeocoder> = LazyLock::new(ReverseGeocoder::new);
 static DB_SCHEMA_READY: AtomicBool = AtomicBool::new(false);

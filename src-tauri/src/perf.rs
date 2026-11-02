@@ -21,10 +21,11 @@ pub fn per_second(count: usize, millis: u64) -> f64 {
     ((count as f64 * 1000.0 / millis as f64) * 10.0).round() / 10.0
 }
 
-pub fn emit_perf(app: &AppHandle, label: &str, started: Instant, count: usize, details: String) {
+pub fn emit_perf<H: Host + ?Sized>(app: &H, label: &str, started: Instant, count: usize, details: String) {
     let millis = elapsed_ms(started);
     eprintln!("[perf] {label}: {millis} ms, {count} items ({details})");
-    let _ = app.emit(
+    emit_to(
+        app,
         "perf-log",
         PerfLogEvent {
             label: label.to_string(),

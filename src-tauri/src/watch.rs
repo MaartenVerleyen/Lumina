@@ -25,7 +25,7 @@ pub fn watch_library(app: AppHandle, root: Option<String>) -> Result<(), String>
     let mut debouncer = new_debouncer(Duration::from_secs(2), move |res: DebounceEventResult| {
         if let Ok(events) = res {
             if events.iter().any(|e| is_library_photo(&e.path)) {
-                let _ = app.emit("library-files-changed", folder.clone());
+                let _ = emit_to(&app, "library-files-changed", folder.clone());
             }
         }
     })

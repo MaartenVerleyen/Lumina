@@ -88,7 +88,7 @@ pub async fn scan_library_faces_batch(
         let outcome = run_face_scan(&app_clone, hashes, models);
         // However the scan ended (finished, cancelled, DB error, empty list), the UI must get a final `done`
         if !outcome.done_sent {
-            let _ = app_clone.emit(
+            let _ = emit_to(&app_clone, 
                 "face-scan-progress",
                 FaceScanProgress {
                     completed: outcome.completed,
@@ -167,7 +167,7 @@ pub fn rejected_unnamed_faces(conn: &Connection, hash: &str) -> Vec<(String, (f6
         .unwrap_or_default()
 }
 
-fn run_face_scan(app_clone: &AppHandle, hashes: Vec<String>, models: Arc<FaceModels>) -> FaceScanOutcome {
+fn run_face_scan(app_clone: &dyn Host, hashes: Vec<String>, models: Arc<FaceModels>) -> FaceScanOutcome {
     {
         let face_scan_started = Instant::now();
         let Ok(mut conn) = open_global_db(app_clone) else {
@@ -454,7 +454,7 @@ fn run_face_scan(app_clone: &AppHandle, hashes: Vec<String>, models: Arc<FaceMod
                     }
                 }
 
-                let _ = app_clone.emit(
+                let _ = emit_to(&app_clone, 
                     "face-scan-progress",
                     FaceScanProgress {
                         completed: completed_count,

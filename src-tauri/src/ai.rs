@@ -196,7 +196,7 @@ pub async fn pull_ollama_model(app: AppHandle, model_name: String) -> Result<Str
         return Err("Model name cannot be empty".into());
     }
 
-    let _ = app.emit(
+    let _ = emit_to(&app, 
         "ollama-pull-progress",
         OllamaPullProgress {
             model: clean_model.clone(),
@@ -236,7 +236,7 @@ pub async fn pull_ollama_model(app: AppHandle, model_name: String) -> Result<Str
         let chunk = tokio::select! {
             c = res.chunk() => c,
             _ = wait_for_cancel(&PULL_CANCEL_GENERATION, &PULL_CANCEL_NOTIFY, cancel_generation) => {
-                let _ = app.emit(
+                let _ = emit_to(&app, 
                     "ollama-pull-progress",
                     OllamaPullProgress {
                         model: clean_model.clone(),
@@ -267,7 +267,7 @@ pub async fn pull_ollama_model(app: AppHandle, model_name: String) -> Result<Str
                 } else {
                     15
                 };
-                let _ = app.emit(
+                let _ = emit_to(&app, 
                     "ollama-pull-progress",
                     OllamaPullProgress {
                         model: clean_model.clone(),
@@ -282,7 +282,7 @@ pub async fn pull_ollama_model(app: AppHandle, model_name: String) -> Result<Str
         }
     }
 
-    let _ = app.emit(
+    let _ = emit_to(&app, 
         "ollama-pull-progress",
         OllamaPullProgress {
             model: clean_model.clone(),
@@ -310,7 +310,7 @@ const AI_IMAGE_CACHE_MAX: usize = 8;
 
 // Builds the 896px JPEG (q90) the model sees, from the best available source: the cached 1920px preview
 // for RAW/HEIC, otherwise the original (big JPEGs decode near the target size directly).
-pub fn encode_ai_image(app: &AppHandle, hash: &str, image_path: &str) -> Result<String, String> {
+pub fn encode_ai_image(app: &dyn Host, hash: &str, image_path: &str) -> Result<String, String> {
     let preview = get_app_storage_dir(app)
         .join("previews")
         .join(format!("{hash}_preview.jpg"));
@@ -767,7 +767,7 @@ pub fn ocr_repeats_caption(ocr: &str, caption: &str) -> bool {
     c.contains(&probe(&o)) || o.contains(&probe(&c))
 }
 
-fn store_ai_result(app: &AppHandle, hash: &str, ai_result: AiVisionResponse) -> Result<AiAnalysisResult, String> {
+fn store_ai_result(app: &dyn Host, hash: &str, ai_result: AiVisionResponse) -> Result<AiAnalysisResult, String> {
     let mut conn = open_global_db(app)?;
 
     let banned_placeholders = [

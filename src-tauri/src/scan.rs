@@ -416,7 +416,7 @@ pub async fn scan_folder(
         let _ = fs::create_dir_all(&thumbs_dir);
         let _ = fs::create_dir_all(&previews_dir);
 
-        let _ = app.emit(
+        let _ = emit_to(&app, 
             "scan-progress",
             ScanProgressEvent {
                 stage: "Loading SQLite index cache...".to_string(),
@@ -806,7 +806,7 @@ pub async fn scan_folder(
             let cur_done = scanned_counter.fetch_add(1, Ordering::Relaxed) + 1;
             if cur_done % 25 == 0 || cur_done == total_candidates {
                 let pct = ((cur_done * 100) / total_candidates.max(1)).min(99);
-                let _ = app_scan_progress.emit(
+                let _ = emit_to(&app_scan_progress, 
                     "scan-progress",
                     ScanProgressEvent {
                         stage: if force {
@@ -1005,7 +1005,7 @@ pub async fn scan_folder(
             }
         }
 
-        let _ = app.emit(
+        let _ = emit_to(&app, 
             "scan-progress",
             ScanProgressEvent {
                 stage: "Ready".to_string(),
@@ -1074,7 +1074,7 @@ pub async fn scan_folder(
             .collect();
 
         if !needs_processing.is_empty() {
-            spawn_thumbnail_pass(app.clone(), needs_processing, root_path.clone(), generation, force, upgrade);
+            spawn_thumbnail_pass(Arc::new(app.clone()), needs_processing, root_path.clone(), generation, force, upgrade);
         }
 
         Ok(photos)

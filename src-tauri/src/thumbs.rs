@@ -49,7 +49,7 @@ struct PassStats {
 }
 
 pub fn spawn_thumbnail_pass(
-    app: AppHandle,
+    app: SharedHost,
     items: Vec<PhotoItem>,
     root: PathBuf,
     generation: u64,
@@ -60,7 +60,7 @@ pub fn spawn_thumbnail_pass(
 }
 
 fn run_thumbnail_pass(
-    app: &AppHandle,
+    app: &dyn Host,
     items: &[PhotoItem],
     root: &Path,
     generation: u64,
@@ -135,7 +135,7 @@ fn run_thumbnail_pass(
     // Duplicate groups need every dHash, so they go out once, after the last batch
     if let Ok(conn) = open_global_db(app) {
         let dup_groups = compute_db_duplicate_groups(&conn, Some(&folder));
-        let _ = app.emit(
+        let _ = emit_to(&app, 
             "thumb-batch-ready",
             ThumbBatchProgress {
                 items: Vec::new(),
@@ -425,7 +425,7 @@ fn write_thumbnail(img: &DynamicImage, target: &Path) -> bool {
 }
 
 fn flush_batch(
-    app: &AppHandle,
+    app: &dyn Host,
     conn: Option<&mut Connection>,
     items: Vec<ThumbBatchItem>,
     folder: &str,
@@ -465,7 +465,7 @@ fn flush_batch(
     }
     stats.db_ms += elapsed_ms(db_started);
 
-    let _ = app.emit(
+    let _ = emit_to(&app, 
         "thumb-batch-ready",
         ThumbBatchProgress {
             items,

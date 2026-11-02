@@ -179,7 +179,7 @@ pub async fn export_gallery(app: AppHandle, options: GalleryOptions) -> Result<G
         let total = sources.len();
         let cancel_generation = export::export_cancel_generation();
         let completed = AtomicUsize::new(0);
-        let _ = app.emit("export-progress", export::ExportProgress { completed: 0, total, ..Default::default() });
+        let _ = emit_to(&app, "export-progress", export::ExportProgress { completed: 0, total, ..Default::default() });
         let rendered: Vec<Result<GalleryPhoto, FileOpFailure>> = BG_POOL.install(|| {
             sources
                 .par_iter()
@@ -192,7 +192,7 @@ pub async fn export_gallery(app: AppHandle, options: GalleryOptions) -> Result<G
                     let result = render(src, &folder.join(&full), &folder.join(&thumb));
                     let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
                     if done % 4 == 0 || done == total {
-                        let _ = app.emit("export-progress", export::ExportProgress { completed: done, total, ..Default::default() });
+                        let _ = emit_to(&app, "export-progress", export::ExportProgress { completed: done, total, ..Default::default() });
                     }
                     let (w, h) = result.map_err(|error| FileOpFailure { file: src.disk_path.clone(), error })?;
                     let place = (options.places && !src.place.is_empty()).then(|| src.place.clone());
@@ -235,7 +235,7 @@ pub async fn export_gallery(app: AppHandle, options: GalleryOptions) -> Result<G
         let html = TEMPLATE.replace("__TITLE__", &html_escape(&options.title)).replace("/*__DATA__*/null", &data);
         let index = folder.join("index.html");
         fs::write(&index, html).map_err(|e| e.to_string())?;
-        let _ = app.emit("export-progress", export::ExportProgress { completed: total, total, done: true, ..Default::default() });
+        let _ = emit_to(&app, "export-progress", export::ExportProgress { completed: total, total, done: true, ..Default::default() });
         emit_perf(&app, "Web gallery", started, photos.len(), folder.to_string_lossy().into_owned());
         Ok(GalleryResult {
             folder: folder.to_string_lossy().into_owned(),

@@ -423,7 +423,7 @@ pub async fn ensure_face_models_in(dir: &Path, progress: DownloadProgress<'_>) -
     Ok(true)
 }
 
-pub async fn ensure_face_models_v2(app: &AppHandle) -> Result<PathBuf, String> {
+pub async fn ensure_face_models_v2(app: &dyn Host) -> Result<PathBuf, String> {
     let dir = get_models_dir(app);
     if FACE_MODELS_V2_VERIFIED.load(Ordering::Acquire) {
         return Ok(dir);
@@ -432,7 +432,7 @@ pub async fn ensure_face_models_v2(app: &AppHandle) -> Result<PathBuf, String> {
     let emit_progress = |done: u64, total: u64| {
         let percent = (done * 100 / total.max(1)) as usize;
         if last_percent.swap(percent, Ordering::Relaxed) != percent {
-            let _ = app.emit(
+            let _ = emit_to(&app, 
                 "face-model-download",
                 FaceModelDownloadProgress {
                     downloaded_mb: (done as f64 / 1_048_576.0 * 10.0).round() / 10.0,
@@ -446,7 +446,7 @@ pub async fn ensure_face_models_v2(app: &AppHandle) -> Result<PathBuf, String> {
     };
     let result = ensure_face_models_in(&dir, &emit_progress).await;
     if result != Ok(false) {
-        let _ = app.emit(
+        let _ = emit_to(&app, 
             "face-model-download",
             FaceModelDownloadProgress {
                 downloaded_mb: 0.0,
@@ -520,7 +520,7 @@ async fn download_buffalo_l(dir: &Path, progress: DownloadProgress<'_>) -> Resul
 // Loaded once and shared by every face operation (sessions are internally locked)
 static FACE_MODELS_V2: LazyLock<Mutex<Option<Arc<FaceModels>>>> = LazyLock::new(|| Mutex::new(None));
 
-pub async fn face_models_v2(app: &AppHandle) -> Result<Arc<FaceModels>, String> {
+pub async fn face_models_v2(app: &dyn Host) -> Result<Arc<FaceModels>, String> {
     if let Some(models) = FACE_MODELS_V2.lock().ok().and_then(|g| g.clone()) {
         return Ok(models);
     }
@@ -605,7 +605,7 @@ impl FaceModels {
 // thumbnail, embedding and people links. Same rules as the original save_cropped_face_and_record.
 #[allow(clippy::too_many_arguments)]
 pub fn record_face_v2(
-    app: &AppHandle,
+    app: &dyn Host,
     conn: &Connection,
     hash: &str,
     img: &DynamicImage,

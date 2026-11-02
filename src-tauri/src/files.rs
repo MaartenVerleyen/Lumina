@@ -74,7 +74,7 @@ pub async fn commit_staged_operations(
 }
 
 fn commit_staged_blocking(
-    app: &AppHandle,
+    app: &dyn Host,
     root_folder: String,
     smart_rename: Option<bool>,
 ) -> Result<CommitResult, String> {
@@ -115,7 +115,7 @@ fn commit_staged_blocking(
             .map(|f| f.to_string_lossy().to_string())
             .unwrap_or_else(|| current_path.clone());
         if op_idx % 10 == 0 {
-            let _ = app.emit(
+            let _ = emit_to(&app, 
                 "scan-progress",
                 ScanProgressEvent {
                     stage: "Committing moves to disk...".to_string(),
@@ -249,7 +249,7 @@ fn commit_staged_blocking(
         result.moved += 1;
     }
 
-    let _ = app.emit(
+    let _ = emit_to(&app, 
         "scan-progress",
         ScanProgressEvent {
             stage: "Ready".to_string(),
@@ -401,7 +401,7 @@ pub async fn export_xmp_sidecars(
 }
 
 fn export_xmp_sidecars_blocking(
-    app: &AppHandle,
+    app: &dyn Host,
     hashes: Option<Vec<String>>,
     root_folder: Option<String>,
 ) -> Result<XmpExportResult, String> {
@@ -505,12 +505,12 @@ fn export_xmp_sidecars_blocking(
 
 #[tauri::command]
 pub async fn get_library_health_stats(app: AppHandle, root_folder: Option<String>) -> Result<LibraryHealthStats, String> {
-    tauri::async_runtime::spawn_blocking(move || get_library_health_stats_blocking(app, root_folder))
+    tauri::async_runtime::spawn_blocking(move || get_library_health_stats_blocking(&app, root_folder))
         .await
         .map_err(|e| e.to_string())?
 }
 
-fn get_library_health_stats_blocking(app: AppHandle, root_folder: Option<String>) -> Result<LibraryHealthStats, String> {
+fn get_library_health_stats_blocking(app: &dyn Host, root_folder: Option<String>) -> Result<LibraryHealthStats, String> {
     let conn = open_global_db(&app)?;
     let prefix = make_folder_prefix(root_folder.as_deref());
 
@@ -628,12 +628,12 @@ fn get_library_health_stats_blocking(app: AppHandle, root_folder: Option<String>
 
 #[tauri::command]
 pub async fn prune_orphaned_cache(app: AppHandle) -> Result<usize, String> {
-    tauri::async_runtime::spawn_blocking(move || prune_orphaned_cache_blocking(app))
+    tauri::async_runtime::spawn_blocking(move || prune_orphaned_cache_blocking(&app))
         .await
         .map_err(|e| e.to_string())?
 }
 
-fn prune_orphaned_cache_blocking(app: AppHandle) -> Result<usize, String> {
+fn prune_orphaned_cache_blocking(app: &dyn Host) -> Result<usize, String> {
     let conn = open_global_db(&app)?;
     let mut valid_hashes = std::collections::HashSet::new();
     if let Ok(mut stmt) = conn.prepare("SELECT hash FROM photos") {
@@ -844,7 +844,7 @@ fn to_failures(failed: Vec<(PathBuf, String)>) -> impl Iterator<Item = FileOpFai
     failed.into_iter().map(|(p, error)| FileOpFailure { file: p.to_string_lossy().to_string(), error })
 }
 
-fn empty_trash_blocking(app: &AppHandle, root_folder: String, permanent: bool) -> Result<TrashResult, String> {
+fn empty_trash_blocking(app: &dyn Host, root_folder: String, permanent: bool) -> Result<TrashResult, String> {
     let generation = crate::scan::SCAN_GENERATION.load(std::sync::atomic::Ordering::Acquire);
     let mut conn = open_global_db(app)?;
     let targets = trash_targets(&conn, &root_folder)?;
@@ -864,7 +864,7 @@ fn empty_trash_blocking(app: &AppHandle, root_folder: String, permanent: bool) -
     let is_cancelled = || crate::scan::SCAN_GENERATION.load(std::sync::atomic::Ordering::Acquire) != generation;
 
     let progress = |stage: &str, done: usize, file: &str, finished: bool| {
-        let _ = app.emit(
+        let _ = emit_to(&app, 
             "scan-progress",
             ScanProgressEvent {
                 stage: stage.to_string(),
@@ -947,7 +947,7 @@ fn remove_empty_dirs(dir: &Path) {
 }
 
 // Drops DB rows and every cached derivative (thumbnail, preview, face crops, embeddings) of removed photos
-fn forget_deleted_photos(app: &AppHandle, conn: &mut Connection, hashes: &[String]) {
+fn forget_deleted_photos(app: &dyn Host, conn: &mut Connection, hashes: &[String]) {
     if hashes.is_empty() {
         return;
     }

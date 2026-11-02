@@ -25,7 +25,7 @@ static FFMPEG_VERIFIED: AtomicBool = AtomicBool::new(false);
 static TRANSCODE_CANCEL: AtomicU64 = AtomicU64::new(0);
 pub const TRANSCODE_CANCELLED: &str = "Conversion cancelled";
 
-pub fn ffmpeg_path(app: &AppHandle) -> PathBuf {
+pub fn ffmpeg_path(app: &dyn Host) -> PathBuf {
     get_models_dir(app).join(FFMPEG_FILE)
 }
 
@@ -37,12 +37,12 @@ pub fn transcode_path(app_dir: &Path, hash: &str) -> PathBuf {
     transcodes_dir(app_dir).join(format!("{hash}.mp4"))
 }
 
-// ffmpeg is present and is the build that was checked (hashed once per run)
-fn ffmpeg_ready(app: &AppHandle) -> bool {
+// ffmpeg is present at `path` and is the build that was checked (hashed once per run)
+fn ffmpeg_ready(path: &Path) -> bool {
     if FFMPEG_VERIFIED.load(Ordering::Acquire) {
         return true;
     }
-    let ok = sha256_hex(&ffmpeg_path(app)).as_deref() == Some(FFMPEG_SHA256);
+    let ok = sha256_hex(path).as_deref() == Some(FFMPEG_SHA256);
     FFMPEG_VERIFIED.store(ok, Ordering::Release);
     ok
 }
@@ -55,9 +55,9 @@ pub struct FfmpegDownloadProgress {
     pub done: bool,
 }
 
-async fn ensure_ffmpeg(app: &AppHandle) -> Result<PathBuf, String> {
+async fn ensure_ffmpeg(app: &dyn Host) -> Result<PathBuf, String> {
     let target = ffmpeg_path(app);
-    let check = app.clone();
+    let check = target.clone();
     if tauri::async_runtime::spawn_blocking(move || ffmpeg_ready(&check)).await.unwrap_or(false) {
         return Ok(target);
     }
@@ -81,7 +81,7 @@ async fn ensure_ffmpeg(app: &AppHandle) -> Result<PathBuf, String> {
         let percent = (downloaded * 100 / total.max(1)) as usize;
         if percent != last_percent {
             last_percent = percent;
-            let _ = app.emit(
+            let _ = emit_to(&app, 
                 "ffmpeg-download",
                 FfmpegDownloadProgress {
                     downloaded_mb: (downloaded as f64 / 1_048_576.0 * 10.0).round() / 10.0,
@@ -119,7 +119,7 @@ async fn ensure_ffmpeg(app: &AppHandle) -> Result<PathBuf, String> {
     })
     .await
     .map_err(|e| e.to_string())?;
-    let _ = app.emit("ffmpeg-download", FfmpegDownloadProgress { percent: 100, done: true, ..Default::default() });
+    let _ = emit_to(&app, "ffmpeg-download", FfmpegDownloadProgress { percent: 100, done: true, ..Default::default() });
     installed?;
     FFMPEG_VERIFIED.store(true, Ordering::Release);
     Ok(target)
@@ -142,7 +142,7 @@ pub struct TranscodeProgress {
 
 // Runs one conversion; Ok(false) when the encoder isn't in this ffmpeg build (the caller tries another)
 fn run_conversion(
-    app: &AppHandle,
+    app: &dyn Host,
     ffmpeg: &Path,
     source: &Path,
     out: &Path,
@@ -179,7 +179,7 @@ fn run_conversion(
                 let percent = ((us / 1000) * 100 / duration_ms.max(1)).min(99) as usize;
                 if duration_ms > 0 && percent != last_percent {
                     last_percent = percent;
-                    let _ = app.emit("transcode-progress", TranscodeProgress { hash: hash.to_string(), percent, done: false });
+                    let _ = emit_to(&app, "transcode-progress", TranscodeProgress { hash: hash.to_string(), percent, done: false });
                 }
             }
         }
@@ -264,12 +264,12 @@ pub async fn make_playable_copy(app: AppHandle, hash: String) -> Result<String, 
                 Ok(false) => continue,
                 Err(e) => {
                     let _ = fs::remove_file(&part);
-                    let _ = app.emit("transcode-progress", TranscodeProgress { hash: hash.clone(), percent: 0, done: true });
+                    let _ = emit_to(&app, "transcode-progress", TranscodeProgress { hash: hash.clone(), percent: 0, done: true });
                     return Err(e);
                 }
             }
         }
-        let _ = app.emit("transcode-progress", TranscodeProgress { hash: hash.clone(), percent: 100, done: true });
+        let _ = emit_to(&app, "transcode-progress", TranscodeProgress { hash: hash.clone(), percent: 100, done: true });
         if !converted {
             let _ = fs::remove_file(&part);
             return Err("This ffmpeg has no H.264 encoder".to_string());
@@ -337,6 +337,7 @@ pub fn grab_frame_with_ffmpeg(ffmpeg: &Path, source: &Path, out: &Path) -> Optio
 }
 
 // The checked ffmpeg, if it is installed (for background work that must not start a download)
-pub fn installed_ffmpeg(app: &AppHandle) -> Option<PathBuf> {
-    ffmpeg_ready(app).then(|| ffmpeg_path(app))
+pub fn installed_ffmpeg(app: &dyn Host) -> Option<PathBuf> {
+    let path = ffmpeg_path(app);
+    ffmpeg_ready(&path).then_some(path)
 }

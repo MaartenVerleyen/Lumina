@@ -1,15 +1,12 @@
 use crate::*;
 
-pub fn get_app_storage_dir(app: &AppHandle) -> PathBuf {
-    let base = app
-        .path()
-        .app_local_data_dir()
-        .unwrap_or_else(|_| PathBuf::from("./phototriage_data"));
+pub fn get_app_storage_dir<H: Host + ?Sized>(app: &H) -> PathBuf {
+    let base = app.data_dir();
     let _ = fs::create_dir_all(&base);
     base
 }
 
-pub fn open_global_db(app: &AppHandle) -> Result<Connection, String> {
+pub fn open_global_db<H: Host + ?Sized>(app: &H) -> Result<Connection, String> {
     let app_dir = get_app_storage_dir(app);
     let db_path = app_dir.join("library.db");
     let conn = Connection::open(db_path).map_err(|e| e.to_string())?;

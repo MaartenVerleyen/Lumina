@@ -198,7 +198,7 @@ pub async fn export_photos(app: AppHandle, options: ExportOptions) -> Result<Exp
         let completed = AtomicUsize::new(0);
         let taken = Mutex::new(HashSet::new());
         let failures = Mutex::new(Vec::new());
-        let _ = app.emit("export-progress", ExportProgress { completed: 0, total, ..Default::default() });
+        let _ = emit_to(&app, "export-progress", ExportProgress { completed: 0, total, ..Default::default() });
 
         BG_POOL.install(|| {
             sources.par_iter().for_each(|src| {
@@ -213,7 +213,7 @@ pub async fn export_photos(app: AppHandle, options: ExportOptions) -> Result<Exp
                 }
                 let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
                 if done % 4 == 0 || done == total {
-                    let _ = app.emit("export-progress", ExportProgress { completed: done, total, ..Default::default() });
+                    let _ = emit_to(&app, "export-progress", ExportProgress { completed: done, total, ..Default::default() });
                 }
             });
         });
@@ -234,7 +234,7 @@ pub async fn export_photos(app: AppHandle, options: ExportOptions) -> Result<Exp
                 if options.strip_gps { "removed" } else { "kept" }
             ),
         );
-        let _ = app.emit("export-progress", ExportProgress { completed: done, total, done: true, cancelled });
+        let _ = emit_to(&app, "export-progress", ExportProgress { completed: done, total, done: true, cancelled });
         Ok(ExportResult { exported, failures, cancelled })
     })
     .await

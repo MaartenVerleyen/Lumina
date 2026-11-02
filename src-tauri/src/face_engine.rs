@@ -37,7 +37,7 @@ pub fn ensure_embedding_cache_loaded(conn: &Connection) {
 
 // ----------------- FACE MATCHING (the face engine itself lives in face_ort.rs) -----------------
 
-pub fn get_models_dir(app: &AppHandle) -> PathBuf {
+pub fn get_models_dir<H: Host + ?Sized>(app: &H) -> PathBuf {
     let dir = get_app_storage_dir(app).join("models");
     let _ = fs::create_dir_all(&dir);
     dir

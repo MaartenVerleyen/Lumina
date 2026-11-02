@@ -32,7 +32,7 @@ pub async fn assign_face_region_and_automatch(
 
         // Emit completion event without silently mutating other photos behind the user's back;
         // pending matches will surface via +N? badges for explicit confirmation in the Review Studio!
-        let _ = app.emit(
+        let _ = emit_to(&app, 
             "face-automatch-complete",
             FaceMatchEvent {
                 person_name: clean_name.clone(),
@@ -121,7 +121,7 @@ pub fn format_display_photo_path(
 // A person is suggested at most once per photo (the best-scoring face), and never on a photo they are
 // already confirmed in. The badge counts and the review modal both come from this, so they always agree.
 pub fn compute_face_suggestions(
-    app: &AppHandle,
+    app: &dyn Host,
     conn: &Connection,
     root_folder: Option<&str>,
 ) -> Result<HashMap<String, Vec<SimilarFaceCandidate>>, String> {
@@ -303,7 +303,7 @@ pub fn compute_face_suggestions(
 
 // Recomputes the folder's suggestions and stores them in the pending cache (keyed per person + folder)
 fn refresh_suggestion_cache(
-    app: &AppHandle,
+    app: &dyn Host,
     conn: &Connection,
     root_folder: Option<&str>,
 ) -> Result<HashMap<String, Vec<SimilarFaceCandidate>>, String> {

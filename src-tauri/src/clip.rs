@@ -214,11 +214,11 @@ pub struct SemanticProgress {
     pub cancelled: bool,
 }
 
-fn emit_semantic(app: &AppHandle, p: SemanticProgress) {
-    let _ = app.emit("semantic-progress", p);
+fn emit_semantic(app: &dyn Host, p: SemanticProgress) {
+    let _ = emit_to(&app, "semantic-progress", p);
 }
 
-pub fn clip_models_dir(app: &AppHandle) -> PathBuf {
+pub fn clip_models_dir(app: &dyn Host) -> PathBuf {
     get_models_dir(app)
 }
 
@@ -288,7 +288,7 @@ pub async fn ensure_clip_models_in(
     Ok(())
 }
 
-async fn ensure_clip_models(app: &AppHandle) -> Result<PathBuf, String> {
+async fn ensure_clip_models(app: &dyn Host) -> Result<PathBuf, String> {
     let dir = clip_models_dir(app);
     if CLIP_VERIFIED.load(Ordering::Acquire) {
         return Ok(dir);
@@ -323,7 +323,7 @@ async fn ensure_clip_models(app: &AppHandle) -> Result<PathBuf, String> {
 
 static CLIP_MODELS: LazyLock<Mutex<Option<Arc<ClipModels>>>> = LazyLock::new(|| Mutex::new(None));
 
-async fn clip_models(app: &AppHandle) -> Result<Arc<ClipModels>, String> {
+async fn clip_models(app: &dyn Host) -> Result<Arc<ClipModels>, String> {
     if let Some(m) = CLIP_MODELS.lock().ok().and_then(|g| g.clone()) {
         return Ok(m);
     }
@@ -473,14 +473,14 @@ pub async fn start_semantic_index(app: AppHandle, root_folder: String) -> Result
     if SEMANTIC_RUNNING.swap(true, Ordering::AcqRel) {
         return Ok(0);
     }
-    let result = run_semantic_index(app, root_folder).await;
+    let result = run_semantic_index(Arc::new(app), root_folder).await;
     if result.is_err() {
         SEMANTIC_RUNNING.store(false, Ordering::Release);
     }
     result
 }
 
-async fn run_semantic_index(app: AppHandle, root_folder: String) -> Result<usize, String> {
+async fn run_semantic_index(app: SharedHost, root_folder: String) -> Result<usize, String> {
     let models = clip_models(&app).await?;
     let cancel_generation = SEMANTIC_CANCEL.load(Ordering::Acquire);
 

@@ -199,7 +199,7 @@ fn build_manifest(conn: &Connection, known_roots: &[String], app_dir: &Path, fac
     })
 }
 
-fn write_backup(app: &AppHandle, dest_dir: &Path, stem: &str, known_roots: &[String], settings: &str) -> Result<(PathBuf, BackupManifest), String> {
+fn write_backup(app: &dyn Host, dest_dir: &Path, stem: &str, known_roots: &[String], settings: &str) -> Result<(PathBuf, BackupManifest), String> {
     let app_dir = get_app_storage_dir(app);
     fs::create_dir_all(dest_dir).map_err(|e| format!("Could not create {}: {e}", dest_dir.display()))?;
 
