@@ -1,6 +1,6 @@
 [package]
 name = "lumina-core"
-version = "4.2.0"
+version = "4.3.0"
 description = "Lumina's engine: indexing, metadata, thumbnails, faces and smart search, without any window"
 authors = ["Maarten"]
 edition = "2024"

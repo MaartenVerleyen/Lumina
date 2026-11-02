@@ -1,6 +1,6 @@
 [package]
 name = "lumina-server"
-version = "4.2.0"
+version = "4.3.0"
 description = "Lumina without a window: keeps libraries scanned, with thumbnails, faces and smart search, for clients"
 authors = ["Maarten"]
 edition = "2024"

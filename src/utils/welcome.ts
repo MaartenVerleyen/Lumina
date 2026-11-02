@@ -14,6 +14,14 @@ export interface ReleaseNotes {
 // Newest first. Add an entry for every release that should greet updating users with "What's new".
 export const RELEASE_NOTES: ReleaseNotes[] = [
   {
+    version: "4.3.0",
+    items: [
+      { title: "Getting ready for Lumina 5", text: "Lumina's engine was reorganised so it can also run on a home server, for Lumina 5. Nothing changes in how you use it. On first start Lumina notes which library each photo belongs to, once; your ratings, people, albums and faces stay as they are." },
+      { title: "Batch AI in the engine", text: "Batch AI now runs inside Lumina's engine instead of the window, so the window has less to do while captions come in." },
+      { title: "Fixes", text: "A folder opened as C:/Photos and as C:\\Photos is one library, no longer indexed twice." },
+    ],
+  },
+  {
     version: "4.2.0",
     items: [
       { title: "Videos", text: "Videos join your library: in the grid with their length, on the map and in trips, played in full screen with Space to pause. Lumina reads when and where they were recorded and which phone or camera made them. Switch between all, photos and videos on the Photos, People and Map tabs." },
