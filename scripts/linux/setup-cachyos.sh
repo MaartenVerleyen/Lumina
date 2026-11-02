@@ -96,7 +96,7 @@ fi
 if [[ $WITH_OLLAMA -eq 1 ]]; then
   step "Ollama"
   sudo systemctl enable --now ollama
-  note "Pull the caption model when you need it: ollama pull qwen3-vl:8b"
+  note "Pull the caption model when you need it: ollama pull qwen3-vl:8b-instruct"
 fi
 if [[ $WITH_TAILSCALE -eq 1 ]]; then
   step "Tailscale"

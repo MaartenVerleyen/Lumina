@@ -674,20 +674,15 @@ pub async fn ai_analyze_photo(app: SharedHost, hash: String, image_path_for_ai: 
 
     let num_ctx = ai_context_size(model_name.trim()).await;
 
-    // Closed-think prefill keeps hybrid reasoning models from spending tokens on <think>
+    // Instruct models (the default, qwen3-vl:8b-instruct) answer straight away. Hybrid reasoning models
+    // (qwen3-vl:8b) would think first: a closed-think prefill skips that.
+    let mut messages = vec![json!({ "role": "user", "content": prompt, "images": [base64_img] })];
+    if !model_name.contains("instruct") {
+        messages.push(json!({ "role": "assistant", "content": "<think>\n\n</think>\n\n" }));
+    }
     let payload = json!({
         "model": model_name.trim(),
-        "messages": [
-            {
-                "role": "user",
-                "content": prompt,
-                "images": [base64_img]
-            },
-            {
-                "role": "assistant",
-                "content": "<think>\n\n</think>\n\n"
-            }
-        ],
+        "messages": messages,
         "format": schema,
         "stream": false,
         "options": {

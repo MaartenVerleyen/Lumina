@@ -3,7 +3,7 @@
 //   data_dir = "/data"                     # database, thumbnails, frames, face crops, models
 //   libraries = ["/photos"]                # folders the server keeps scanned
 //   ollama_url = "http://ollama:11434"     # optional; captions need it
-//   caption_model = "qwen3-vl:8b"          # optional; set it to caption new photos automatically
+//   caption_model = "qwen3-vl:8b-instruct" # optional; set it to caption new photos automatically
 //
 // Environment variables override the file (handy in Docker): LUMINA_DATA_DIR, LUMINA_LIBRARIES (folders
 // separated by ";"), LUMINA_OLLAMA_URL and LUMINA_CAPTION_MODEL.

@@ -28,7 +28,7 @@ const APP_ID: &str = "com.amazhr.lumina";
 const UNINSTALL_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\Lumina";
 const OLLAMA_SETUP_URL: &str = "https://ollama.com/download/OllamaSetup.exe";
 const OLLAMA_API: &str = "http://127.0.0.1:11434";
-pub const AI_MODEL: &str = "qwen3-vl:8b";
+pub const AI_MODEL: &str = "qwen3-vl:8b-instruct";
 
 // Download sizes shown before installing (measured 2026-10-27; the real sizes come from the servers)
 const OLLAMA_BYTES: u64 = 1_662_012_016;

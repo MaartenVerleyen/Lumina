@@ -2,6 +2,10 @@ import { PhotoItem, AiPerf } from "../../types/lumina";
 
 // Constants and small helpers shared by the library hooks
 
+// The vision model Lumina suggests and downloads. The instruct variant answers straight away (no hidden
+// reasoning first) and read photos more accurately than the hybrid qwen3-vl:8b in tests (2026-11).
+export const DEFAULT_AI_MODEL = "qwen3-vl:8b-instruct";
+
 export const MAX_UNDO_STEPS = 20;
 export const MAX_TOASTS = 4;
 

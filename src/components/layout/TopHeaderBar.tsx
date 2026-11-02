@@ -5,6 +5,7 @@ import luminaMark from "../../assets/lumina-mark.svg";
 import type { GridStyle, CardDetails } from "../views/VirtualPhotoGrid";
 import { completeTerm, termBeingTyped, TermKey } from "../../utils/searchQuery";
 import type { FaceScanScope } from "../../hooks/library/usePeople";
+import { DEFAULT_AI_MODEL } from "../../hooks/library/shared";
 
 const SEARCH_HINTS = ["rating:>=4", "flag:pick", "person:", "tag:", "date:2024-06", "place:", "camera:", "has:gps", "is:raw", "album:", "-flag:reject"];
 import {
@@ -261,7 +262,7 @@ export default function TopHeaderBar({
     }
   }
 
-  async function triggerModelPull(model = "qwen3-vl:8b") {
+  async function triggerModelPull(model = DEFAULT_AI_MODEL) {
     const ok = await confirmDialog(
       `Batch AI needs a vision model. Download ${model} now?
 
@@ -668,7 +669,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                 </button>
               ) : ollamaStatus?.running && !hasVisionModel ? (
                 <button
-                  onClick={() => triggerModelPull("qwen3-vl:8b")}
+                  onClick={() => triggerModelPull(DEFAULT_AI_MODEL)}
                   className="flex items-center gap-1.5 px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold transition"
                   title="No vision model installed yet: download one to use Batch AI"
                 >
@@ -876,7 +877,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                     <button
                       onClick={() => {
                         setIsAiMenuOpen(false);
-                        triggerModelPull("qwen3-vl:8b");
+                        triggerModelPull(DEFAULT_AI_MODEL);
                       }}
                       className="w-full py-2 px-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-semibold flex items-center justify-center gap-1.5 shadow transition"
                     >

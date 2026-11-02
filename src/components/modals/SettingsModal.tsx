@@ -21,6 +21,7 @@ import luminaMark from "../../assets/lumina-mark.svg";
 import { useSettings, updateSettings } from "../../settings";
 import type { Updater } from "../../hooks/useUpdater";
 import { defaultBackupDir } from "../../hooks/library/useBackup";
+import { DEFAULT_AI_MODEL } from "../../hooks/library/shared";
 
 export type SettingsSection = "general" | "library" | "ai" | "faces" | "search" | "updates" | "about";
 
@@ -510,7 +511,7 @@ export default function SettingsModal({
                       </Button>
                     )}
                   </Row>
-                  <Row label="Vision model" hint={models.length === 0 ? "No model installed yet (qwen3-vl:8b is about 6 GB)." : "Used for Batch AI and the A key."}>
+                  <Row label="Vision model" hint={models.length === 0 ? `No model installed yet (${DEFAULT_AI_MODEL} is about 6 GB).` : "Used for Batch AI and the A key."}>
                     {models.length > 0 ? (
                       <select
                         value={lib.aiModel}
@@ -525,7 +526,7 @@ export default function SettingsModal({
                       </select>
                     ) : (
                       <Button primary disabled={!ollama?.running || Boolean(lib.ollamaPullProgress)} onClick={then(() => lib.handlePullDefaultAiModel())}>
-                        Download qwen3-vl:8b
+                        Download {DEFAULT_AI_MODEL}
                       </Button>
                     )}
                   </Row>

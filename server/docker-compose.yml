@@ -12,7 +12,7 @@ services:
       TZ: Europe/Brussels
       LUMINA_OLLAMA_URL: http://ollama:11434
       # Uncomment to caption new photos automatically (the model must be pulled in Ollama first)
-      # LUMINA_CAPTION_MODEL: qwen3-vl:8b
+      # LUMINA_CAPTION_MODEL: qwen3-vl:8b-instruct
     volumes:
       # The photo library (read-write: moves, renames and _Trash happen here)
       - /srv/photos:/photos

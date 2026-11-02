@@ -156,7 +156,7 @@ Videos: MP4, MOV, M4V, 3GP, AVI, MTS, M2TS and MPG.
   the Microsoft Store if HEIC files don't show). iPhone videos (HEVC) need *HEVC Video Extensions* from the
   Microsoft Store to show and play.
 - **[Ollama](https://ollama.com)** for captions, tags and OCR, with a vision model. Lumina can start Ollama
-  and download the default model (`qwen3-vl:8b`) for you. It also offers to switch on Ollama's flash
+  and download the default model (`qwen3-vl:8b-instruct`) for you. It also offers to switch on Ollama's flash
   attention, which is about 10–15% faster.
 - **A GPU is recommended**, not required. On an RTX 5070 Ti, Lumina captions about 50 photos a minute and
   answers a smart search in about 3 ms.

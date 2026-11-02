@@ -4,7 +4,7 @@ import { confirmDialog } from "../../confirm";
 import { PhotoItem, OllamaStatus, AiAnalysisResult, AiPerf, OllamaPullProgress, AiFailureItem, AiBatchReport, AiBatchProgressEvent, AiBatchSummary } from "../../types/lumina";
 import { diskPathOf } from "../../utils/rawPairs";
 import { isVideo, photosOnly } from "../../utils/media";
-import { AI_CANCELLED, PULL_CANCELLED, summarizeAiPerf, topLibraryTags } from "./shared";
+import { AI_CANCELLED, DEFAULT_AI_MODEL, PULL_CANCELLED, summarizeAiPerf, topLibraryTags } from "./shared";
 import type { LibraryCore } from "./core";
 
 // AI captions, tags and text through Ollama: status, model download, single and batch analysis
@@ -15,7 +15,7 @@ export function useAi(core: LibraryCore) {
   const [aiBatchReport, setAiBatchReport] = useState<AiBatchReport | null>(null);
   // Ollama & Progress States
   const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus | null>(null);
-  const [aiModel, setAiModel] = useState<string>("qwen3-vl:8b");
+  const [aiModel, setAiModel] = useState<string>(DEFAULT_AI_MODEL);
   const [analyzingHashes, setAnalyzingHashes] = useState<Set<string>>(new Set());
   const [isLoadingVram, setIsLoadingVram] = useState<boolean>(false);
   const [aiBatchProgress, setAiBatchProgress] = useState<{
@@ -87,7 +87,7 @@ export function useAi(core: LibraryCore) {
     };
   }, [aiModel]);
 
-  async function handlePullDefaultAiModel(modelToPull = "qwen3-vl:8b") {
+  async function handlePullDefaultAiModel(modelToPull = DEFAULT_AI_MODEL) {
     if (ollamaPullProgress) return;
     try {
       addLog("AI", `Started downloading Ollama model: ${modelToPull}`);
