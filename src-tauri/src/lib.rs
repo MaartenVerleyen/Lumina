@@ -15,8 +15,7 @@ use std::time::Instant;
 use tauri::{AppHandle, Manager};
 use walkdir::WalkDir;
 
-pub use lumina_core::{exif_meta, host, imaging, perf, video_meta, GEOCODER};
-mod db;
+pub use lumina_core::{db, exif_meta, host, imaging, perf, storage, video_meta, GEOCODER};
 mod face_engine;
 mod scan;
 mod decode;
@@ -27,7 +26,6 @@ mod face_review;
 mod people;
 mod ai;
 mod system;
-mod storage;
 mod fastdecode;
 mod thumbs;
 mod face_ort;
@@ -67,7 +65,6 @@ use face_ort::*;
 use face_match::*;
 use host::*;
 
-static DB_SCHEMA_READY: AtomicBool = AtomicBool::new(false);
 static SPLASH_CLOSED: AtomicBool = AtomicBool::new(false);
 static WIC_COUNTER: AtomicUsize = AtomicUsize::new(1);
 

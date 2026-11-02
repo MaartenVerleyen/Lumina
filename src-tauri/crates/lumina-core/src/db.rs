@@ -1,5 +1,8 @@
 use crate::*;
 
+// The schema is checked and migrated once per process, by the first open
+static DB_SCHEMA_READY: AtomicBool = AtomicBool::new(false);
+
 pub fn get_app_storage_dir<H: Host + ?Sized>(app: &H) -> PathBuf {
     let base = app.data_dir();
     let _ = fs::create_dir_all(&base);
@@ -124,7 +127,7 @@ pub fn open_global_db<H: Host + ?Sized>(app: &H) -> Result<Connection, String> {
     let _ = conn.execute("ALTER TABLE photos ADD COLUMN duration_ms INTEGER", []);
     let _ = conn.execute("ALTER TABLE photos ADD COLUMN video_codec TEXT", []);
 
-    albums::ensure_album_tables(&conn);
+    ensure_album_tables(&conn);
     // Hidden people: kept on their photos, left out of the people bar and of suggestions
     let _ = conn.execute("ALTER TABLE people ADD COLUMN hidden INTEGER DEFAULT 0", []);
     // Starred people: Best of favours photos with them
@@ -195,4 +198,32 @@ pub fn make_folder_prefix(root_folder: Option<&str>) -> String {
         }
         _ => "%".to_string(),
     }
+}
+
+// Albums, trips' names and saved searches
+pub fn ensure_album_tables(conn: &Connection) {
+    let _ = conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS albums (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+            created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+         );
+         CREATE TABLE IF NOT EXISTS album_photos (
+            album_id INTEGER NOT NULL,
+            hash TEXT NOT NULL,
+            added_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+            PRIMARY KEY (album_id, hash)
+         );
+         CREATE INDEX IF NOT EXISTS idx_album_photos_hash ON album_photos(hash);
+         CREATE TABLE IF NOT EXISTS trip_names (
+            trip_id TEXT PRIMARY KEY,
+            name TEXT NOT NULL
+         );
+         CREATE TABLE IF NOT EXISTS saved_searches (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+            query TEXT NOT NULL,
+            created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+         );",
+    );
 }

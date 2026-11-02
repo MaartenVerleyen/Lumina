@@ -17,6 +17,15 @@ image = "0.25"
 blake3 = "1.5"
 kamadak-exif = "0.5"
 reverse_geocoder = "4.1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+rayon = "1.10"
 
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_Ioctl",
+    "Win32_System_Threading",
+] }

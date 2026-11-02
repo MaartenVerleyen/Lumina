@@ -4,33 +4,6 @@ use crate::*;
 // Albums are named, hand-picked collections; they live in the global database, so one album can hold
 // photos from several library folders. Smart albums are saved searches (the query text is re-run live).
 
-pub fn ensure_album_tables(conn: &Connection) {
-    let _ = conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS albums (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL UNIQUE COLLATE NOCASE,
-            created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
-         );
-         CREATE TABLE IF NOT EXISTS album_photos (
-            album_id INTEGER NOT NULL,
-            hash TEXT NOT NULL,
-            added_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
-            PRIMARY KEY (album_id, hash)
-         );
-         CREATE INDEX IF NOT EXISTS idx_album_photos_hash ON album_photos(hash);
-         CREATE TABLE IF NOT EXISTS trip_names (
-            trip_id TEXT PRIMARY KEY,
-            name TEXT NOT NULL
-         );
-         CREATE TABLE IF NOT EXISTS saved_searches (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL UNIQUE COLLATE NOCASE,
-            query TEXT NOT NULL,
-            created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
-         );",
-    );
-}
-
 #[derive(Serialize)]
 pub struct Album {
     pub id: i64,
