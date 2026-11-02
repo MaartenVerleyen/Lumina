@@ -61,12 +61,6 @@
   },
   "bundle": {
     "active": true,
-    "resources": {
-      "target/release/DirectML.dll": "DirectML.dll"
-    },
-    "targets": [
-      "nsis"
-    ],
     "publisher": "amazHR",
     "shortDescription": "Sort, search and cull your photo library on your own PC",
     "icon": [

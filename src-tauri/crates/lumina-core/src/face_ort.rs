@@ -79,12 +79,12 @@ pub const GPU_DEVICE: &str = "GPU (DirectML)";
 pub const GPU_DEVICE: &str = "GPU (CUDA)";
 
 #[cfg(windows)]
-fn gpu_provider() -> ort::ep::ExecutionProviderDispatch {
+pub(crate) fn gpu_provider() -> ort::ep::ExecutionProviderDispatch {
     ort::ep::DirectML::default().build().error_on_failure()
 }
 
 #[cfg(not(windows))]
-fn gpu_provider() -> ort::ep::ExecutionProviderDispatch {
+pub(crate) fn gpu_provider() -> ort::ep::ExecutionProviderDispatch {
     ort::ep::CUDA::default().build().error_on_failure()
 }
 

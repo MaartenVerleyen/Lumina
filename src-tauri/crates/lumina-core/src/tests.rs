@@ -791,55 +791,68 @@ fn diagnose_thumbnail_failures() {
 
 // ----------------- FOLDER SCOPE -----------------
 
-fn paths_in_scope(root: Option<&str>, paths: &[&str]) -> Vec<String> {
+fn paths_in_scope<R: AsRef<str>, P: AsRef<str>>(root: Option<R>, paths: &[P]) -> Vec<String> {
     let conn = Connection::open_in_memory().unwrap();
     conn.execute("CREATE TABLE photos (current_path TEXT)", []).unwrap();
     for p in paths {
-        conn.execute("INSERT INTO photos VALUES (?1)", params![p]).unwrap();
+        conn.execute("INSERT INTO photos VALUES (?1)", params![p.as_ref()]).unwrap();
     }
     let mut stmt = conn
         .prepare("SELECT current_path FROM photos WHERE current_path LIKE ?1 ESCAPE '!' ORDER BY current_path")
         .unwrap();
-    stmt.query_map(params![make_folder_prefix(root)], |r| r.get(0))
+    stmt.query_map(params![make_folder_prefix(root.as_ref().map(|r| r.as_ref()))], |r| r.get(0))
         .unwrap()
         .flatten()
         .collect()
 }
 
+// The folder-scope tests are written with Windows paths; elsewhere "C:\Photos\a.jpg" becomes "/C/Photos/a.jpg"
+// so that make_folder_prefix's platform separator applies.
+fn os_path(windows_path: &str) -> String {
+    if cfg!(windows) {
+        return windows_path.to_string();
+    }
+    let p = windows_path.replace('\\', "/");
+    match p.split_once(':') {
+        Some((drive, rest)) if drive.len() == 1 => format!("/{drive}{rest}"),
+        _ => p,
+    }
+}
+
 #[test]
 fn folder_scope_excludes_sibling_folders() {
     let found = paths_in_scope(
-        Some(r"C:\Photos"),
-        &[r"C:\Photos\a.jpg", r"C:\Photos\sub\b.jpg", r"C:\Photos2\c.jpg", r"C:\PhotosOld\d.jpg"],
+        Some(os_path(r"C:\Photos")),
+        &[os_path(r"C:\Photos\a.jpg"), os_path(r"C:\Photos\sub\b.jpg"), os_path(r"C:\Photos2\c.jpg"), os_path(r"C:\PhotosOld\d.jpg")],
     );
-    assert_eq!(found, vec![r"C:\Photos\a.jpg", r"C:\Photos\sub\b.jpg"]);
+    assert_eq!(found, vec![os_path(r"C:\Photos\a.jpg"), os_path(r"C:\Photos\sub\b.jpg")]);
 }
 
 #[test]
 fn folder_scope_treats_wildcards_in_names_literally() {
     let found = paths_in_scope(
-        Some(r"D:\100%_Trip!"),
-        &[r"D:\100%_Trip!\a.jpg", r"D:\100X-Trip!\b.jpg", r"D:\100%xTrip!\c.jpg"],
+        Some(os_path(r"D:\100%_Trip!")),
+        &[os_path(r"D:\100%_Trip!\a.jpg"), os_path(r"D:\100X-Trip!\b.jpg"), os_path(r"D:\100%xTrip!\c.jpg")],
     );
-    assert_eq!(found, vec![r"D:\100%_Trip!\a.jpg"]);
+    assert_eq!(found, vec![os_path(r"D:\100%_Trip!\a.jpg")]);
 }
 
 #[test]
 fn folder_scope_handles_trailing_separator_and_drive_root() {
-    assert_eq!(paths_in_scope(Some(r"C:\Photos\"), &[r"C:\Photos\a.jpg"]), vec![r"C:\Photos\a.jpg"]);
-    assert_eq!(paths_in_scope(Some(r"D:\"), &[r"D:\a.jpg", r"E:\b.jpg"]), vec![r"D:\a.jpg"]);
+    assert_eq!(paths_in_scope(Some(os_path(r"C:\Photos\")), &[os_path(r"C:\Photos\a.jpg")]), vec![os_path(r"C:\Photos\a.jpg")]);
+    assert_eq!(paths_in_scope(Some(os_path(r"D:\")), &[os_path(r"D:\a.jpg"), os_path(r"E:\b.jpg")]), vec![os_path(r"D:\a.jpg")]);
 }
 
 #[test]
 fn folder_scope_is_case_insensitive_like_windows() {
-    assert_eq!(paths_in_scope(Some(r"c:\photos"), &[r"C:\Photos\a.jpg"]), vec![r"C:\Photos\a.jpg"]);
+    assert_eq!(paths_in_scope(Some(os_path(r"c:\photos")), &[os_path(r"C:\Photos\a.jpg")]), vec![os_path(r"C:\Photos\a.jpg")]);
 }
 
 #[test]
 fn folder_scope_without_root_matches_everything() {
     assert_eq!(make_folder_prefix(None), "%");
     assert_eq!(make_folder_prefix(Some("  ")), "%");
-    assert_eq!(paths_in_scope(None, &[r"C:\a.jpg", r"D:\b.jpg"]).len(), 2);
+    assert_eq!(paths_in_scope(None::<&str>, &[r"C:\a.jpg", r"D:\b.jpg"]).len(), 2);
 }
 
 // ----------------- FACE ALIGNMENT (engine v2) -----------------
@@ -1285,33 +1298,33 @@ fn the_copy_to_keep_is_largest_then_oldest_then_most_info() {
 #[test]
 fn same_photo_needs_the_same_shot_not_a_burst_or_a_raw() {
     use duplicates::{camera_frame, same_photo};
-    assert_eq!(camera_frame(r"D:\a\DSC00645.JPG"), Some(("dsc".into(), 645)));
-    assert_eq!(camera_frame(r"D:\a\IMG_7619.CR3.jpg"), Some(("img".into(), 7619)));
-    assert_eq!(camera_frame(r"D:\a\2023-09-25-0495.CR3.jpg"), None);
-    assert_eq!(camera_frame(r"D:\a\IMG_E7619.HEIC"), Some(("img".into(), 7619)));
+    assert_eq!(camera_frame(r"D:/a/DSC00645.JPG"), Some(("dsc".into(), 645)));
+    assert_eq!(camera_frame(r"D:/a/IMG_7619.CR3.jpg"), Some(("img".into(), 7619)));
+    assert_eq!(camera_frame(r"D:/a/2023-09-25-0495.CR3.jpg"), None);
+    assert_eq!(camera_frame(r"D:/a/IMG_E7619.HEIC"), Some(("img".into(), 7619)));
     let clip = HashMap::new();
     let looks = HashMap::new();
     let t = "2017-09-13 15:14:01";
-    let original = dup_row("a", r"D:\a\DSC00645.JPG", 9, 9, t, 0xff00);
-    let resized = dup_row("b", r"D:\t\DSC00645.JPG", 3, 2, t, 0xff01);
-    let bw = dup_row("c", r"D:\a\DSC00645BW.jpg", 9, 9, t, 0xff03);
-    let next_frame = dup_row("d", r"D:\a\DSC00646.JPG", 9, 9, t, 0xff00);
-    let raw = dup_row("e", r"D:\a\DSC00645.ARW", 9, 9, t, 0xff00);
+    let original = dup_row("a", r"D:/a/DSC00645.JPG", 9, 9, t, 0xff00);
+    let resized = dup_row("b", r"D:/t/DSC00645.JPG", 3, 2, t, 0xff01);
+    let bw = dup_row("c", r"D:/a/DSC00645BW.jpg", 9, 9, t, 0xff03);
+    let next_frame = dup_row("d", r"D:/a/DSC00646.JPG", 9, 9, t, 0xff00);
+    let raw = dup_row("e", r"D:/a/DSC00645.ARW", 9, 9, t, 0xff00);
     assert!(same_photo(&original, &resized, &clip, &looks));
     assert!(same_photo(&original, &bw, &clip, &looks));
     assert!(!same_photo(&original, &next_frame, &clip, &looks));
     assert!(!same_photo(&original, &raw, &clip, &looks));
     // Grouped only within one second, and never on a date without a time
-    let rows = vec![original, resized, dup_row("f", r"D:\w\IMG-1-WA0001.jpg", 1, 1, "2020-05-30 00:00:00", 0), dup_row("g", r"D:\w\IMG-1-WA0002.jpg", 1, 1, "2020-05-30 00:00:00", 0)];
+    let rows = vec![original, resized, dup_row("f", r"D:/w/IMG-1-WA0001.jpg", 1, 1, "2020-05-30 00:00:00", 0), dup_row("g", r"D:/w/IMG-1-WA0002.jpg", 1, 1, "2020-05-30 00:00:00", 0)];
     let sets = duplicates::same_photo_sets(&rows, &[0, 1, 2, 3], &clip, &looks);
     assert_eq!(sets.len(), 1);
     assert_eq!(sets[0].len(), 2);
 
     // An export matching two burst frames doesn't join them into one set
     let rows = vec![
-        dup_row("a", r"D:\a\DSC03762.JPG", 9, 9, t, 0xff00),
-        dup_row("b", r"D:\d\i5659--1x-1.ARW.jpg", 9, 9, t, 0xff00),
-        dup_row("c", r"D:\a\DSC03763.JPG", 9, 9, t, 0xff00),
+        dup_row("a", r"D:/a/DSC03762.JPG", 9, 9, t, 0xff00),
+        dup_row("b", r"D:/d/i5659--1x-1.ARW.jpg", 9, 9, t, 0xff00),
+        dup_row("c", r"D:/a/DSC03763.JPG", 9, 9, t, 0xff00),
     ];
     let looks: HashMap<String, Vec<u8>> = ["a", "b", "c"].iter().map(|h| (h.to_string(), test_look(0))).collect();
     let sets = duplicates::same_photo_sets(&rows, &[0, 1, 2], &clip, &looks);
@@ -1334,20 +1347,20 @@ fn test_look(shift: usize) -> Vec<u8> {
 fn file_names_tell_a_copy_from_a_burst() {
     use duplicates::{NamesSay::*, names_say};
     // Copies and edits of one shot
-    assert_eq!(names_say(r"D:\a\IMG_5748.CR3.jpg", r"D:\d\IMG_5748_1.CR3.jpg"), SameShot);
-    assert_eq!(names_say(r"D:\a\IMG_4187.HEIC", r"D:\a\IMG_E4187.HEIC"), SameShot);
-    assert_eq!(names_say(r"D:\t\20140208_025350.jpg", r"D:\t\20140208_025350-edited.jpg"), SameShot);
-    assert_eq!(names_say(r"D:\t\IMG_20180922_111851.jpg", r"D:\t\IMG_20180922_111851-EFFECTS-edited.jpg"), SameShot);
-    assert_eq!(names_say(r"D:\t\IMG20260912042644.jpg", r"D:\t\IMG20260912042644~2.jpg"), SameShot);
-    assert_eq!(names_say(r"D:\a\DSC00467.JPG", r"D:\b\MAARTEN - DSC00467(1).JPG"), SameShot);
+    assert_eq!(names_say(r"D:/a/IMG_5748.CR3.jpg", r"D:/d/IMG_5748_1.CR3.jpg"), SameShot);
+    assert_eq!(names_say(r"D:/a/IMG_4187.HEIC", r"D:/a/IMG_E4187.HEIC"), SameShot);
+    assert_eq!(names_say(r"D:/t/20140208_025350.jpg", r"D:/t/20140208_025350-edited.jpg"), SameShot);
+    assert_eq!(names_say(r"D:/t/IMG_20180922_111851.jpg", r"D:/t/IMG_20180922_111851-EFFECTS-edited.jpg"), SameShot);
+    assert_eq!(names_say(r"D:/t/IMG20260912042644.jpg", r"D:/t/IMG20260912042644~2.jpg"), SameShot);
+    assert_eq!(names_say(r"D:/a/DSC00467.JPG", r"D:/b/MAARTEN - DSC00467(1).JPG"), SameShot);
     // Burst frames
-    assert_eq!(names_say(r"D:\t\IMG20261014172951.jpg", r"D:\t\IMG20261014172951_01.jpg"), OtherShot);
-    assert_eq!(names_say(r"D:\t\IMG_20171018_213508_012.jpg", r"D:\t\IMG_20171018_213508_008.jpg"), OtherShot);
-    assert_eq!(names_say(r"D:\t\IMG_20210926_105547__01.jpg", r"D:\t\IMG_20210926_105547.jpg"), OtherShot);
-    assert_eq!(names_say(r"D:\a\IMG_1835.HEIC", r"D:\a\IMG_E1836.HEIC"), OtherShot);
+    assert_eq!(names_say(r"D:/t/IMG20261014172951.jpg", r"D:/t/IMG20261014172951_01.jpg"), OtherShot);
+    assert_eq!(names_say(r"D:/t/IMG_20171018_213508_012.jpg", r"D:/t/IMG_20171018_213508_008.jpg"), OtherShot);
+    assert_eq!(names_say(r"D:/t/IMG_20210926_105547__01.jpg", r"D:/t/IMG_20210926_105547.jpg"), OtherShot);
+    assert_eq!(names_say(r"D:/a/IMG_1835.HEIC", r"D:/a/IMG_E1836.HEIC"), OtherShot);
     // Nothing to go on
-    assert_eq!(names_say(r"D:\i\BJZH8955.JPG", r"D:\i\JHBL1609.JPG"), Unknown);
-    assert_eq!(names_say(r"D:\a\holiday-beach.jpg", r"D:\a\holiday-sunset.jpg"), Unknown);
+    assert_eq!(names_say(r"D:/i/BJZH8955.JPG", r"D:/i/JHBL1609.JPG"), Unknown);
+    assert_eq!(names_say(r"D:/a/holiday-beach.jpg", r"D:/a/holiday-sunset.jpg"), Unknown);
 }
 
 #[test]
@@ -1594,12 +1607,12 @@ fn redate_in_library() {
 fn whatsapp_media_by_name_and_folder() {
     use crate::imaging::is_whatsapp_media;
     use std::path::Path;
-    assert!(is_whatsapp_media(Path::new(r"D:\Photos\IMG-20200313-WA0014.jpg")));
-    assert!(is_whatsapp_media(Path::new(r"D:\Photos\IMG-20171127-WA0007-edited.jpg")));
-    assert!(is_whatsapp_media(Path::new(r"D:\Phone\WhatsApp Images\Sent\photo.jpg")));
-    assert!(!is_whatsapp_media(Path::new(r"D:\Photos\IMG_20200313_101010.jpg")));
-    assert!(!is_whatsapp_media(Path::new(r"D:\Photos\HAWAII-WAVE.jpg")));
-    assert!(!is_whatsapp_media(Path::new(r"D:\Photos\x-wa12.jpg")));
+    assert!(is_whatsapp_media(Path::new(r"D:/Photos/IMG-20200313-WA0014.jpg")));
+    assert!(is_whatsapp_media(Path::new(r"D:/Photos/IMG-20171127-WA0007-edited.jpg")));
+    assert!(is_whatsapp_media(Path::new(r"D:/Phone/WhatsApp Images/Sent/photo.jpg")));
+    assert!(!is_whatsapp_media(Path::new(r"D:/Photos/IMG_20200313_101010.jpg")));
+    assert!(!is_whatsapp_media(Path::new(r"D:/Photos/HAWAII-WAVE.jpg")));
+    assert!(!is_whatsapp_media(Path::new(r"D:/Photos/x-wa12.jpg")));
 }
 
 #[test]

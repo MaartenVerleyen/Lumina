@@ -320,7 +320,7 @@ fn face_eval() {
     }
 }
 
-// Manual: checks that ONNX Runtime + DirectML load the new face models, prints their inputs/outputs and timings.
+// Manual: checks that ONNX Runtime + the GPU provider (DirectML or CUDA) load the new face models, prints their inputs/outputs and timings.
 // PowerShell: $env:LUMINA_NEW_MODELS="<folder with det_10g.onnx and w600k_r50.onnx>";
 //             cargo test --release --lib ort_probe -- --ignored --nocapture
 #[test]
@@ -329,6 +329,7 @@ fn ort_probe() {
     use ort::session::Session;
     let dir = PathBuf::from(std::env::var("LUMINA_NEW_MODELS").expect("set LUMINA_NEW_MODELS"));
     let env = ort::init().with_name("lumina-probe").build().expect("ORT environment");
+    #[cfg(windows)]
     eprintln!("DirectML available in this ONNX Runtime build: {}", ort::ep::directml::api().is_some());
     for (file, shape) in [("det_10g.onnx", [1usize, 3, 640, 640]), ("w600k_r50.onnx", [1usize, 3, 112, 112])] {
         for gpu in [true, false] {
@@ -339,7 +340,7 @@ fn ort_probe() {
                     .unwrap()
                     .with_parallel_execution(false)
                     .unwrap()
-                    .with_execution_providers([ort::ep::DirectML::default().build().error_on_failure()])
+                    .with_execution_providers([crate::face_ort::gpu_provider()])
                     .unwrap();
             }
             let t = Instant::now();
