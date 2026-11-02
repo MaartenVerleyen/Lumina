@@ -2,19 +2,9 @@ use crate::*;
 
 // Naming faces and reviewing suggestions: assign a face box, match suggestions, accept / reject, "Who is this?" clusters
 
-#[tauri::command]
-pub async fn assign_face_region_and_automatch(
-    app: AppHandle,
-    hash: String,
-    image_path: String,
-    bbox_x: f64,
-    bbox_y: f64,
-    bbox_w: f64,
-    bbox_h: f64,
-    person_name: String,
-) -> Result<Vec<FaceInstance>, String> {
+pub async fn assign_face_region_and_automatch(app: SharedHost, hash: String, image_path: String, bbox_x: f64, bbox_y: f64, bbox_w: f64, bbox_h: f64, person_name: String) -> Result<Vec<FaceInstance>, String> {
     let models = face_models_v2(&app).await?;
-    tauri::async_runtime::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         let clean_name = person_name.trim().to_string();
         if clean_name.is_empty() {
             return Err("Person name cannot be empty".into());
@@ -47,8 +37,7 @@ pub async fn assign_face_region_and_automatch(
     .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
-pub fn remove_face_box(app: AppHandle, face_id: String, hash: String) -> Result<Vec<FaceInstance>, String> {
+pub fn remove_face_box(app: SharedHost, face_id: String, hash: String) -> Result<Vec<FaceInstance>, String> {
     let conn = open_global_db(&app)?;
     let prev_person: Option<String> = conn
         .query_row(
@@ -79,9 +68,9 @@ pub fn format_display_photo_path(
         .extension()
         .map(|e| e.to_string_lossy().to_lowercase())
         .unwrap_or_default();
-    let video_frame = crate::video_frames::frame_of_face(face_id)
-        .filter(|_| crate::video_meta::is_video_ext(&ext))
-        .map(|n| crate::video_frames::frame_path(&previews_dir.with_file_name("frames"), hash, n));
+    let video_frame = video_frames::frame_of_face(face_id)
+        .filter(|_| video_meta::is_video_ext(&ext))
+        .map(|n| video_frames::frame_path(&previews_dir.with_file_name("frames"), hash, n));
     let display_photo_path = if let Some(frame) = video_frame {
         frame.to_string_lossy().to_string()
     } else if is_raw_or_heic_ext(&ext) {
@@ -301,13 +290,7 @@ fn refresh_suggestion_cache(
     Ok(suggestions)
 }
 
-#[tauri::command]
-pub async fn find_similar_faces(
-    app: AppHandle,
-    person_name: String,
-    root_folder: Option<String>,
-    force_refresh: Option<bool>,
-) -> Result<Vec<SimilarFaceCandidate>, String> {
+pub async fn find_similar_faces(app: SharedHost, person_name: String, root_folder: Option<String>, force_refresh: Option<bool>) -> Result<Vec<SimilarFaceCandidate>, String> {
     let clean_name = person_name.trim().to_string();
     let cache_key = pending_cache_key(&clean_name, root_folder.as_deref());
 
@@ -320,7 +303,7 @@ pub async fn find_similar_faces(
         }
     }
 
-    tauri::async_runtime::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         let conn = open_global_db(&app)?;
         let suggestions = refresh_suggestion_cache(&app, &conn, root_folder.as_deref())?;
         Ok(suggestions
@@ -333,12 +316,8 @@ pub async fn find_similar_faces(
     .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
-pub async fn get_confirmed_faces_for_person(
-    app: AppHandle,
-    person_name: String,
-) -> Result<Vec<SimilarFaceCandidate>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+pub async fn get_confirmed_faces_for_person(app: SharedHost, person_name: String) -> Result<Vec<SimilarFaceCandidate>, String> {
+    tokio::task::spawn_blocking(move || {
         let conn = open_global_db(&app)?;
         let clean = person_name.trim().to_string();
         if clean.is_empty() {
@@ -398,12 +377,8 @@ pub async fn get_confirmed_faces_for_person(
     .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
-pub async fn get_rejected_faces_for_person(
-    app: AppHandle,
-    person_name: String,
-) -> Result<Vec<SimilarFaceCandidate>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+pub async fn get_rejected_faces_for_person(app: SharedHost, person_name: String) -> Result<Vec<SimilarFaceCandidate>, String> {
+    tokio::task::spawn_blocking(move || {
         let conn = open_global_db(&app)?;
         let clean = person_name.trim().to_string();
         if clean.is_empty() {
@@ -464,13 +439,8 @@ pub async fn get_rejected_faces_for_person(
     .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
-pub async fn reject_face_candidates_batch(
-    app: AppHandle,
-    face_ids: Vec<String>,
-    person_name: String,
-) -> Result<usize, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+pub async fn reject_face_candidates_batch(app: SharedHost, face_ids: Vec<String>, person_name: String) -> Result<usize, String> {
+    tokio::task::spawn_blocking(move || {
         let clean = person_name.trim().to_string();
         if clean.is_empty() || face_ids.is_empty() {
             return Ok(0);
@@ -510,9 +480,8 @@ pub fn ignored_face_ids(conn: &Connection) -> HashSet<String> {
 }
 
 // Ignored faces are left out of "Who is this?" and of every person's suggestions; `ignore: false` undoes it
-#[tauri::command]
-pub async fn ignore_faces(app: AppHandle, face_ids: Vec<String>, ignore: bool) -> Result<usize, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+pub async fn ignore_faces(app: SharedHost, face_ids: Vec<String>, ignore: bool) -> Result<usize, String> {
+    tokio::task::spawn_blocking(move || {
         let mut conn = open_global_db(&app)?;
         let tx = conn.transaction().map_err(|e| e.to_string())?;
         for fid in &face_ids {
@@ -541,13 +510,8 @@ pub async fn ignore_faces(app: AppHandle, face_ids: Vec<String>, ignore: bool) -
     .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
-pub async fn unreject_face_candidates_batch(
-    app: AppHandle,
-    face_ids: Vec<String>,
-    person_name: String,
-) -> Result<usize, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+pub async fn unreject_face_candidates_batch(app: SharedHost, face_ids: Vec<String>, person_name: String) -> Result<usize, String> {
+    tokio::task::spawn_blocking(move || {
         let clean = person_name.trim().to_string();
         if clean.is_empty() || face_ids.is_empty() {
             return Ok(0);
@@ -569,13 +533,8 @@ pub async fn unreject_face_candidates_batch(
     .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
-pub async fn unassign_faces_batch(
-    app: AppHandle,
-    face_ids: Vec<String>,
-    person_name: String,
-) -> Result<HashMap<String, Vec<FaceInstance>>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+pub async fn unassign_faces_batch(app: SharedHost, face_ids: Vec<String>, person_name: String) -> Result<HashMap<String, Vec<FaceInstance>>, String> {
+    tokio::task::spawn_blocking(move || {
         let clean = person_name.trim().to_string();
         if face_ids.is_empty() {
             return Ok(HashMap::new());
@@ -614,12 +573,8 @@ pub async fn unassign_faces_batch(
     .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
-pub async fn get_pending_face_match_counts(
-    app: AppHandle,
-    root_folder: Option<String>,
-) -> Result<HashMap<String, usize>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+pub async fn get_pending_face_match_counts(app: SharedHost, root_folder: Option<String>) -> Result<HashMap<String, usize>, String> {
+    tokio::task::spawn_blocking(move || {
         let conn = open_global_db(&app)?;
         let suggestions = refresh_suggestion_cache(&app, &conn, root_folder.as_deref())?;
         Ok(suggestions.into_iter().map(|(name, list)| (name, list.len())).collect())
@@ -628,13 +583,8 @@ pub async fn get_pending_face_match_counts(
     .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
-pub async fn assign_faces_to_person_batch(
-    app: AppHandle,
-    face_ids: Vec<String>,
-    person_name: String,
-) -> Result<HashMap<String, Vec<FaceInstance>>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+pub async fn assign_faces_to_person_batch(app: SharedHost, face_ids: Vec<String>, person_name: String) -> Result<HashMap<String, Vec<FaceInstance>>, String> {
+    tokio::task::spawn_blocking(move || {
         let clean = person_name.trim().to_string();
         if clean.is_empty() || face_ids.is_empty() {
             return Ok(HashMap::new());
@@ -713,9 +663,8 @@ const MAX_CLUSTERS: usize = 200;
 const MIN_CLUSTER_FACE_CONFIDENCE: f64 = 0.6;
 
 // Groups the folder's unnamed faces that aren't already suggested for someone, largest group first
-#[tauri::command]
-pub async fn get_unknown_face_clusters(app: AppHandle, root_folder: Option<String>) -> Result<Vec<FaceCluster>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+pub async fn get_unknown_face_clusters(app: SharedHost, root_folder: Option<String>) -> Result<Vec<FaceCluster>, String> {
+    tokio::task::spawn_blocking(move || {
         let conn = open_global_db(&app)?;
         let suggestions = refresh_suggestion_cache(&app, &conn, root_folder.as_deref())?;
         let mut suggested: std::collections::HashSet<String> =

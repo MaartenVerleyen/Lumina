@@ -2983,10 +2983,13 @@ dependencies = [
 name = "lumina-core"
 version = "4.2.0"
 dependencies = [
+ "base64 0.22.1",
  "blake3",
  "image",
  "jpeg-decoder",
  "kamadak-exif",
+ "little_exif",
+ "notify-debouncer-mini",
  "ort",
  "rayon",
  "reqwest 0.12.28",

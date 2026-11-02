@@ -62,13 +62,8 @@ pub fn sidecars_for(src: &Path) -> Vec<PathBuf> {
     out
 }
 
-#[tauri::command]
-pub async fn commit_staged_operations(
-    app: AppHandle,
-    root_folder: String,
-    smart_rename: Option<bool>,
-) -> Result<CommitResult, String> {
-    tauri::async_runtime::spawn_blocking(move || commit_staged_blocking(&app, root_folder, smart_rename))
+pub async fn commit_staged_operations(app: SharedHost, root_folder: String, smart_rename: Option<bool>) -> Result<CommitResult, String> {
+    tokio::task::spawn_blocking(move || commit_staged_blocking(&app, root_folder, smart_rename))
         .await
         .map_err(|e| e.to_string())?
 }
@@ -389,13 +384,8 @@ pub struct XmpExportResult {
     pub failed: usize,
 }
 
-#[tauri::command]
-pub async fn export_xmp_sidecars(
-    app: AppHandle,
-    hashes: Option<Vec<String>>,
-    root_folder: Option<String>,
-) -> Result<XmpExportResult, String> {
-    tauri::async_runtime::spawn_blocking(move || export_xmp_sidecars_blocking(&app, hashes, root_folder))
+pub async fn export_xmp_sidecars(app: SharedHost, hashes: Option<Vec<String>>, root_folder: Option<String>) -> Result<XmpExportResult, String> {
+    tokio::task::spawn_blocking(move || export_xmp_sidecars_blocking(&app, hashes, root_folder))
         .await
         .map_err(|e| e.to_string())?
 }
@@ -503,9 +493,8 @@ fn export_xmp_sidecars_blocking(
     Ok(result)
 }
 
-#[tauri::command]
-pub async fn get_library_health_stats(app: AppHandle, root_folder: Option<String>) -> Result<LibraryHealthStats, String> {
-    tauri::async_runtime::spawn_blocking(move || get_library_health_stats_blocking(&app, root_folder))
+pub async fn get_library_health_stats(app: SharedHost, root_folder: Option<String>) -> Result<LibraryHealthStats, String> {
+    tokio::task::spawn_blocking(move || get_library_health_stats_blocking(&app, root_folder))
         .await
         .map_err(|e| e.to_string())?
 }
@@ -626,9 +615,8 @@ fn get_library_health_stats_blocking(app: &dyn Host, root_folder: Option<String>
     })
 }
 
-#[tauri::command]
-pub async fn prune_orphaned_cache(app: AppHandle) -> Result<usize, String> {
-    tauri::async_runtime::spawn_blocking(move || prune_orphaned_cache_blocking(&app))
+pub async fn prune_orphaned_cache(app: SharedHost) -> Result<usize, String> {
+    tokio::task::spawn_blocking(move || prune_orphaned_cache_blocking(&app))
         .await
         .map_err(|e| e.to_string())?
 }
@@ -647,8 +635,8 @@ fn prune_orphaned_cache_blocking(app: &dyn Host) -> Result<usize, String> {
     let app_dir = get_app_storage_dir(&app);
     let thumbs_dir = app_dir.join("thumbnails");
     let faces_dir = app_dir.join("faces");
-    let frames_dir = crate::video_frames::frames_dir(&app_dir);
-    let transcodes_dir = crate::ffmpeg::transcodes_dir(&app_dir);
+    let frames_dir = video_frames::frames_dir(&app_dir);
+    let transcodes_dir = ffmpeg::transcodes_dir(&app_dir);
 
     let mut removed = 0usize;
     for dir in [&thumbs_dir, &faces_dir, &frames_dir, &transcodes_dir] {
@@ -779,20 +767,19 @@ pub struct TrashSummary {
     pub bytes: u64,
     // Sidecars in the _Trash folder whose photo is already gone
     pub orphan_sidecars: usize,
-    pub bin: crate::recycle::RecycleBinInfo,
+    pub bin: recycle::RecycleBinInfo,
 }
 
 // What emptying _Trash would remove, and whether the Recycle Bin on that drive can hold it
-#[tauri::command]
-pub async fn trash_summary(app: AppHandle, root_folder: String) -> Result<TrashSummary, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+pub async fn trash_summary(app: SharedHost, root_folder: String) -> Result<TrashSummary, String> {
+    tokio::task::spawn_blocking(move || {
         let conn = open_global_db(&app)?;
         let targets = trash_targets(&conn, &root_folder)?;
         Ok(TrashSummary {
             photos: targets.len(),
             bytes: targets.iter().map(|t| t.2).sum(),
             orphan_sidecars: orphan_trash_sidecars(&root_folder).len(),
-            bin: crate::recycle::bin_info(Path::new(&root_folder)),
+            bin: recycle::bin_info(Path::new(&root_folder)),
         })
     })
     .await
@@ -812,24 +799,19 @@ pub struct TrashResult {
 
 // Empties _Trash in batches with progress. To the Recycle Bin unless `permanent` (the user chose that
 // after being told the Recycle Bin can't hold it); the Recycle Bin route never deletes anything for good.
-#[tauri::command]
-pub async fn empty_library_trash_to_os(
-    app: AppHandle,
-    root_folder: String,
-    permanent: Option<bool>,
-) -> Result<TrashResult, String> {
-    tauri::async_runtime::spawn_blocking(move || empty_trash_blocking(&app, root_folder, permanent.unwrap_or(false)))
+pub async fn empty_library_trash_to_os(app: SharedHost, root_folder: String, permanent: Option<bool>) -> Result<TrashResult, String> {
+    tokio::task::spawn_blocking(move || empty_trash_blocking(&app, root_folder, permanent.unwrap_or(false)))
         .await
         .map_err(|e| e.to_string())?
 }
 
 const TRASH_BATCH: usize = 200;
 
-fn remove_paths(paths: &[PathBuf], permanent: bool) -> crate::recycle::RecycleOutcome {
+fn remove_paths(paths: &[PathBuf], permanent: bool) -> recycle::RecycleOutcome {
     if !permanent {
-        return crate::recycle::recycle(paths);
+        return recycle::recycle(paths);
     }
-    let mut outcome = crate::recycle::RecycleOutcome { gone: Vec::new(), failed: Vec::new(), refused_permanent: false };
+    let mut outcome = recycle::RecycleOutcome { gone: Vec::new(), failed: Vec::new(), refused_permanent: false };
     for p in paths {
         match fs::remove_file(p) {
             Ok(()) => outcome.gone.push(p.clone()),
@@ -845,7 +827,7 @@ fn to_failures(failed: Vec<(PathBuf, String)>) -> impl Iterator<Item = FileOpFai
 }
 
 fn empty_trash_blocking(app: &dyn Host, root_folder: String, permanent: bool) -> Result<TrashResult, String> {
-    let generation = crate::scan::SCAN_GENERATION.load(std::sync::atomic::Ordering::Acquire);
+    let generation = scan::SCAN_GENERATION.load(std::sync::atomic::Ordering::Acquire);
     let mut conn = open_global_db(app)?;
     let targets = trash_targets(&conn, &root_folder)?;
     let photo_paths: Vec<PathBuf> = targets.iter().map(|t| PathBuf::from(&t.1)).collect();
@@ -861,7 +843,7 @@ fn empty_trash_blocking(app: &dyn Host, root_folder: String, permanent: bool) ->
         "Moving leftover sidecar files to the Recycle Bin..."
     };
     let mut result = TrashResult::default();
-    let is_cancelled = || crate::scan::SCAN_GENERATION.load(std::sync::atomic::Ordering::Acquire) != generation;
+    let is_cancelled = || scan::SCAN_GENERATION.load(std::sync::atomic::Ordering::Acquire) != generation;
 
     let progress = |stage: &str, done: usize, file: &str, finished: bool| {
         let _ = emit_to(&app, 
@@ -974,17 +956,17 @@ fn forget_deleted_photos(app: &dyn Host, conn: &mut Connection, hashes: &[String
         }
         let _ = tx.commit();
     }
-    crate::clip::forget_vectors(hashes);
+    clip::forget_vectors(hashes);
     if let Ok(mut pending) = PENDING_CANDIDATES_CACHE.lock() {
         pending.clear();
     }
     let app_dir = get_app_storage_dir(app);
-    let frames_dir = crate::video_frames::frames_dir(&app_dir);
+    let frames_dir = video_frames::frames_dir(&app_dir);
     for h in hashes {
         let _ = fs::remove_file(app_dir.join("thumbnails").join(format!("{h}.jpg")));
         let _ = fs::remove_file(app_dir.join("previews").join(format!("{h}_preview.jpg")));
-        crate::video_frames::delete_frames(&frames_dir, h);
-        let _ = fs::remove_file(crate::ffmpeg::transcode_path(&app_dir, h));
+        video_frames::delete_frames(&frames_dir, h);
+        let _ = fs::remove_file(ffmpeg::transcode_path(&app_dir, h));
     }
     for thumb in face_thumbs {
         let _ = fs::remove_file(thumb);

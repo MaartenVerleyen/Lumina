@@ -11,13 +11,12 @@ static WATCHER: Mutex<Option<Debouncer<RecommendedWatcher>>> = Mutex::new(None);
 // Photos and videos only: Lumina's own .part files, sidecars and caches don't need a rescan
 pub fn is_library_photo(path: &Path) -> bool {
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
-    (PHOTO_EXTENSIONS.contains(&ext.as_str()) || crate::video_meta::is_video_ext(&ext))
+    (PHOTO_EXTENSIONS.contains(&ext.as_str()) || video_meta::is_video_ext(&ext))
         && !path.components().any(|c| c.as_os_str() == ".triage_cache")
 }
 
 // Starts watching `root` (stopping the previous watch); None just stops
-#[tauri::command]
-pub fn watch_library(app: AppHandle, root: Option<String>) -> Result<(), String> {
+pub fn watch_library(app: SharedHost, root: Option<String>) -> Result<(), String> {
     let mut slot = WATCHER.lock().map_err(|e| e.to_string())?;
     *slot = None;
     let Some(root) = root else { return Ok(()) };

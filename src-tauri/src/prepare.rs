@@ -11,9 +11,7 @@ use crate::*;
 use std::io::Write as _;
 use std::sync::atomic::AtomicU64;
 
-// The app identifier from tauri.conf.json: the app keeps its data in %LOCALAPPDATA%\<identifier>
-// (Tauri's app_local_data_dir). A test checks that it matches the config.
-pub const APP_IDENTIFIER: &str = "com.amazhr.lumina";
+pub use lumina_core::host::APP_IDENTIFIER;
 
 pub fn models_dir() -> Result<PathBuf, String> {
     let base = std::env::var_os("LOCALAPPDATA").ok_or("LOCALAPPDATA is not set")?;
@@ -71,4 +69,13 @@ pub fn run(steps: &str) -> i32 {
         }
     }
     if ok { 0 } else { 1 }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn prepare_models_uses_the_configured_app_identifier() {
+        let conf: serde_json::Value = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        assert_eq!(conf["identifier"].as_str(), Some(super::APP_IDENTIFIER));
+    }
 }

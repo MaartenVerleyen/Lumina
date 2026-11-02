@@ -1,4 +1,4 @@
-use crate::files::FileOpFailure;
+use files::FileOpFailure;
 use crate::*;
 use image::codecs::jpeg::JpegEncoder;
 
@@ -118,9 +118,8 @@ fn zip_photos(folder: &Path, files: &[String], zip_name: &str) -> Result<(), Str
     Ok(())
 }
 
-#[tauri::command]
-pub async fn export_gallery(app: AppHandle, options: GalleryOptions) -> Result<GalleryResult, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+pub async fn export_gallery(app: SharedHost, options: GalleryOptions) -> Result<GalleryResult, String> {
+    tokio::task::spawn_blocking(move || {
         let started = Instant::now();
         // A new folder for the gallery inside the chosen one
         let base = gallery_folder_name(&options.title);
@@ -161,7 +160,7 @@ pub async fn export_gallery(app: AppHandle, options: GalleryOptions) -> Result<G
                     continue;
                 };
                 // The gallery is a page of photos: videos are left out
-                if crate::video_meta::is_video_path(Path::new(&src.disk_path)) {
+                if video_meta::is_video_path(Path::new(&src.disk_path)) {
                     continue;
                 }
                 if options.people {

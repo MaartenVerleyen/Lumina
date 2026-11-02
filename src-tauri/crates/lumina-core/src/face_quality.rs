@@ -16,12 +16,11 @@ pub struct FaceQualityProgress {
 }
 
 // Starts measuring the folder's unmeasured faces; returns how many photos it will read (0 = nothing to do)
-#[tauri::command]
-pub async fn measure_face_quality(app: AppHandle, root_folder: String) -> Result<usize, String> {
+pub async fn measure_face_quality(app: SharedHost, root_folder: String) -> Result<usize, String> {
     if QUALITY_RUNNING.swap(true, Ordering::SeqCst) {
         return Ok(0);
     }
-    let started = start_measuring(Arc::new(app), root_folder).await;
+    let started = start_measuring(app, root_folder).await;
     if !matches!(started, Ok(n) if n > 0) {
         QUALITY_RUNNING.store(false, Ordering::SeqCst);
     }

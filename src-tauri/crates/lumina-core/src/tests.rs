@@ -1,7 +1,5 @@
 use crate::ai::parse_resilient_ai_json;
 use crate::*;
-use crate::fastdecode::*;
-use crate::thumbs::*;
 use crate::face_scan::carry_over_rejections;
 use image::{GrayImage, Luma};
 use std::io::{Seek, SeekFrom};
@@ -980,12 +978,6 @@ fn an_edited_file_keeps_its_tags_people_faces_and_albums() {
 }
 
 #[test]
-fn prepare_models_uses_the_configured_app_identifier() {
-    let conf: serde_json::Value = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
-    assert_eq!(conf["identifier"].as_str(), Some(prepare::APP_IDENTIFIER));
-}
-
-#[test]
 fn import_dates_folders_and_names() {
     use crate::import::*;
     assert_eq!(day_of("2024:06:15 18:30:00").as_deref(), Some("2024-06-15"));
@@ -1060,7 +1052,7 @@ fn import_groups_pairs_and_finds_duplicates() {
 fn eye_calibration() {
     let models_dir = std::env::var("LUMINA_MODELS")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from(std::env::var("LOCALAPPDATA").unwrap()).join(prepare::APP_IDENTIFIER).join("models"));
+        .unwrap_or_else(|_| PathBuf::from(std::env::var("LOCALAPPDATA").unwrap()).join(host::APP_IDENTIFIER).join("models"));
     let models = FaceModels::load(&models_dir).expect("face models");
     assert!(models.can_judge_eyes(), "the closed-eye check needs the smart search models");
     let faces_in = |dir: &str, largest_only: bool| -> Vec<FaceQuality> {

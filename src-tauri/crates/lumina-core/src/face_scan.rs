@@ -4,17 +4,11 @@ use crate::*;
 
 // ----------------- INTERACTIVE FACE SELECTION & PRECISION AUTO-MATCHER -----------------
 
-#[tauri::command]
-pub async fn detect_faces_in_photo(
-    app: AppHandle,
-    hash: String,
-    image_path: String,
-    force_onnx: Option<bool>,
-) -> Result<Vec<FaceInstance>, String> {
+pub async fn detect_faces_in_photo(app: SharedHost, hash: String, image_path: String, force_onnx: Option<bool>) -> Result<Vec<FaceInstance>, String> {
     let run_neural = force_onnx.unwrap_or(false);
     let models = if run_neural { Some(face_models_v2(&app).await?) } else { loaded_face_models_v2() };
 
-    tauri::async_runtime::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         let conn = open_global_db(&app)?;
         let existing = get_faces_for_hash(&conn, &hash);
         if !run_neural && !existing.is_empty() {
@@ -73,11 +67,7 @@ pub fn is_usable_face(img: &DynamicImage, bbox: (f64, f64, f64, f64)) -> bool {
     bbox.2 * img.width() as f64 >= MIN_FACE_PX
 }
 
-#[tauri::command]
-pub async fn scan_library_faces_batch(
-    app: AppHandle,
-    hashes: Vec<String>,
-) -> Result<usize, String> {
+pub async fn scan_library_faces_batch(app: SharedHost, hashes: Vec<String>) -> Result<usize, String> {
     // Downloads (first time only) and loads engine v2 before the background thread starts
     let models = face_models_v2(&app).await?;
 
@@ -109,7 +99,6 @@ pub async fn scan_library_faces_batch(
 
 pub static FACE_SCAN_CANCEL: AtomicBool = AtomicBool::new(false);
 
-#[tauri::command]
 pub fn cancel_face_scan() {
     FACE_SCAN_CANCEL.store(true, Ordering::Release);
 }
@@ -223,7 +212,7 @@ fn run_face_scan(app_clone: &dyn Host, hashes: Vec<String>, models: Arc<FaceMode
         let app_dir = get_app_storage_dir(&app_clone);
         let previews_dir = app_dir.join("previews");
         let faces_dir = app_dir.join("faces");
-        let frames_dir = crate::video_frames::frames_dir(&app_dir);
+        let frames_dir = video_frames::frames_dir(&app_dir);
         let _ = fs::create_dir_all(&faces_dir);
 
         // Named faces already on the videos being scanned: a new detection of the same person adds nothing
@@ -262,7 +251,7 @@ fn run_face_scan(app_clone: &dyn Host, hashes: Vec<String>, models: Arc<FaceMode
                     .par_iter()
                     .filter_map(|h| {
                         let orig_path = path_map.get(h)?;
-                        if crate::video_meta::is_video_path(Path::new(orig_path)) {
+                        if video_meta::is_video_path(Path::new(orig_path)) {
                             let known = named_video_faces.get(h).map(Vec::as_slice).unwrap_or_default();
                             let writes = video_faces(&models, h, &frames_dir, &faces_dir, known);
                             return Some((h.clone(), writes, Vec::new()));
@@ -335,7 +324,7 @@ fn run_face_scan(app_clone: &dyn Host, hashes: Vec<String>, models: Arc<FaceMode
                     if let Ok(tx) = conn.transaction() {
                         for (h, writes, reembeds) in &chunk_results {
                             // A video's faces come from different frames: boxes are never compared across them
-                            let is_video = path_map.get(h).is_some_and(|p| crate::video_meta::is_video_path(Path::new(p)));
+                            let is_video = path_map.get(h).is_some_and(|p| video_meta::is_video_path(Path::new(p)));
                             let _ = tx.execute(
                                 "DELETE FROM photo_faces WHERE hash = ?1 AND (person_name IS NULL OR person_name = '')",
                                 params![h],
@@ -416,7 +405,7 @@ fn run_face_scan(app_clone: &dyn Host, hashes: Vec<String>, models: Arc<FaceMode
                             if let Some(old) = old_rejected.get(h) {
                                 if is_video {
                                     // Only within the same frame
-                                    let frame = |id: &String| crate::video_frames::frame_of_face(id);
+                                    let frame = |id: &String| video_frames::frame_of_face(id);
                                     for (old_id, old_box) in old {
                                         let same: Vec<(String, (f64, f64, f64, f64))> =
                                             inserted.iter().filter(|(id, _)| frame(id) == frame(old_id)).cloned().collect();
@@ -510,7 +499,7 @@ fn same_person_in_video(a: (&[f32], usize, (f64, f64, f64, f64)), b: (&[f32], us
 // certain) and one that looks like a face already kept from another frame, or a face already named on this
 // video (`known`), is dropped. Boxes are relative to the frame the face was found in.
 pub(crate) fn video_faces(models: &FaceModels, hash: &str, frames_dir: &Path, faces_dir: &Path, known: &[Vec<f32>]) -> Vec<PendingFaceWrite> {
-    let frames: Vec<DynamicImage> = crate::video_frames::frame_paths(frames_dir, hash)
+    let frames: Vec<DynamicImage> = video_frames::frame_paths(frames_dir, hash)
         .iter()
         .filter_map(|p| image::open(p).ok())
         .collect();
@@ -539,7 +528,7 @@ pub(crate) fn video_faces(models: &FaceModels, hash: &str, frames_dir: &Path, fa
             continue;
         }
         let (bx, by, bw, bh) = face.detection.bbox;
-        let face_id = crate::video_frames::face_frame_id(hash, n, face.detection.bbox);
+        let face_id = video_frames::face_frame_id(hash, n, face.detection.bbox);
         let face_thumb_path = faces_dir.join(format!("{face_id}.jpg"));
         let _ = face_thumbnail(img, face.detection.bbox).save(&face_thumb_path);
         kept.push((n, face.embedding.clone(), face.detection.bbox));
@@ -565,9 +554,8 @@ pub(crate) fn video_faces(models: &FaceModels, hash: &str, frames_dir: &Path, fa
 
 // Photos in the folder that still have faces from an older face engine (they need re-detecting so their
 // faces can be matched again). Used to start the automatic upgrade scan when a folder is opened.
-#[tauri::command]
-pub async fn get_outdated_face_photos(app: AppHandle, root_folder: Option<String>) -> Result<Vec<String>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+pub async fn get_outdated_face_photos(app: SharedHost, root_folder: Option<String>) -> Result<Vec<String>, String> {
+    tokio::task::spawn_blocking(move || {
         let conn = open_global_db(&app)?;
         let prefix = make_folder_prefix(root_folder.as_deref());
         let mut stmt = conn

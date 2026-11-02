@@ -408,9 +408,8 @@ fn load_rows(conn: &Connection, root_folder: Option<&str>) -> Result<Vec<DupRow>
     Ok(rows.flatten().collect())
 }
 
-#[tauri::command]
-pub async fn find_duplicates(app: AppHandle, root_folder: Option<String>) -> Result<Vec<DuplicateSet>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+pub async fn find_duplicates(app: SharedHost, root_folder: Option<String>) -> Result<Vec<DuplicateSet>, String> {
+    tokio::task::spawn_blocking(move || {
         let started = Instant::now();
         let conn = open_global_db(&app)?;
         let thumbs_dir = get_app_storage_dir(&app).join("thumbnails");
@@ -482,9 +481,8 @@ pub struct DuplicateStageInput {
 
 // Stages the extra copies for _Trash, after giving the kept copy what the user added to them (stars, pick,
 // colour label, caption, tags, people and albums), so nothing is lost when the extras go
-#[tauri::command]
-pub async fn stage_duplicate_extras(app: AppHandle, sets: Vec<DuplicateStageInput>) -> Result<usize, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+pub async fn stage_duplicate_extras(app: SharedHost, sets: Vec<DuplicateStageInput>) -> Result<usize, String> {
+    tokio::task::spawn_blocking(move || {
         let mut conn = open_global_db(&app)?;
         let tx = conn.transaction().map_err(|e| e.to_string())?;
         let mut staged = 0;

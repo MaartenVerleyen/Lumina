@@ -2,7 +2,6 @@ use crate::*;
 
 // ----------------- OFFLINE CITY SEARCH & MANUAL LOCATION -----------------
 
-#[tauri::command]
 pub fn search_cities_offline(query: String) -> Result<Vec<CitySearchResult>, String> {
     let q = query.trim().to_lowercase();
     if q.len() < 2 {
@@ -55,14 +54,7 @@ pub fn search_cities_offline(query: String) -> Result<Vec<CitySearchResult>, Str
     Ok(matches)
 }
 
-#[tauri::command]
-pub fn set_manual_location(
-    app: AppHandle,
-    hashes: Vec<String>,
-    location: String,
-    latitude: Option<f64>,
-    longitude: Option<f64>,
-) -> Result<String, String> {
+pub fn set_manual_location(app: SharedHost, hashes: Vec<String>, location: String, latitude: Option<f64>, longitude: Option<f64>) -> Result<String, String> {
     let clean_loc = location.trim().to_string();
     let mut conn = open_global_db(&app)?;
 
@@ -101,8 +93,7 @@ pub fn set_manual_location(
 
 // ----------------- PICK/REJECT FLAGS, COLOR LABELS & ROTATION -----------------
 
-#[tauri::command]
-pub fn set_photo_flag(app: AppHandle, hashes: Vec<String>, flag: Option<String>) -> Result<(), String> {
+pub fn set_photo_flag(app: SharedHost, hashes: Vec<String>, flag: Option<String>) -> Result<(), String> {
     let mut conn = open_global_db(&app)?;
     if let Ok(tx) = conn.transaction() {
         for h in hashes {
@@ -116,8 +107,7 @@ pub fn set_photo_flag(app: AppHandle, hashes: Vec<String>, flag: Option<String>)
     Ok(())
 }
 
-#[tauri::command]
-pub fn set_photo_color_label(app: AppHandle, hashes: Vec<String>, color: Option<String>) -> Result<(), String> {
+pub fn set_photo_color_label(app: SharedHost, hashes: Vec<String>, color: Option<String>) -> Result<(), String> {
     let mut conn = open_global_db(&app)?;
     if let Ok(tx) = conn.transaction() {
         for h in hashes {
@@ -131,8 +121,7 @@ pub fn set_photo_color_label(app: AppHandle, hashes: Vec<String>, color: Option<
     Ok(())
 }
 
-#[tauri::command]
-pub fn set_photo_rotation(app: AppHandle, hashes: Vec<String>, delta_degrees: i32) -> Result<HashMap<String, i32>, String> {
+pub fn set_photo_rotation(app: SharedHost, hashes: Vec<String>, delta_degrees: i32) -> Result<HashMap<String, i32>, String> {
     let mut conn = open_global_db(&app)?;
     let mut out = HashMap::new();
 
@@ -157,8 +146,7 @@ pub struct RotationResetInput {
     pub rotation: i32,
 }
 
-#[tauri::command]
-pub fn set_photos_rotation_exact(app: AppHandle, ops: Vec<RotationResetInput>) -> Result<(), String> {
+pub fn set_photos_rotation_exact(app: SharedHost, ops: Vec<RotationResetInput>) -> Result<(), String> {
     if ops.is_empty() {
         return Ok(());
     }
@@ -184,8 +172,7 @@ pub struct StagedMoveInput {
     pub target_subfolder: Option<String>,
 }
 
-#[tauri::command]
-pub fn stage_photo_move(app: AppHandle, hash: String, target_subfolder: Option<String>) -> Result<(), String> {
+pub fn stage_photo_move(app: SharedHost, hash: String, target_subfolder: Option<String>) -> Result<(), String> {
     let conn = open_global_db(&app)?;
     conn.execute(
         "UPDATE photos SET staged_target = ?1 WHERE hash = ?2",
@@ -195,8 +182,7 @@ pub fn stage_photo_move(app: AppHandle, hash: String, target_subfolder: Option<S
     Ok(())
 }
 
-#[tauri::command]
-pub fn stage_photos_move(app: AppHandle, ops: Vec<StagedMoveInput>) -> Result<usize, String> {
+pub fn stage_photos_move(app: SharedHost, ops: Vec<StagedMoveInput>) -> Result<usize, String> {
     if ops.is_empty() {
         return Ok(0);
     }
@@ -214,8 +200,7 @@ pub fn stage_photos_move(app: AppHandle, ops: Vec<StagedMoveInput>) -> Result<us
     Ok(ops.len())
 }
 
-#[tauri::command]
-pub fn clear_all_staged(app: AppHandle, root_folder: Option<String>) -> Result<usize, String> {
+pub fn clear_all_staged(app: SharedHost, root_folder: Option<String>) -> Result<usize, String> {
     let conn = open_global_db(&app)?;
     let prefix = make_folder_prefix(root_folder.as_deref());
     let count = conn
@@ -227,8 +212,7 @@ pub fn clear_all_staged(app: AppHandle, root_folder: Option<String>) -> Result<u
     Ok(count)
 }
 
-#[tauri::command]
-pub fn get_staged_operations(app: AppHandle, root_folder: Option<String>) -> Result<Vec<StagedOperation>, String> {
+pub fn get_staged_operations(app: SharedHost, root_folder: Option<String>) -> Result<Vec<StagedOperation>, String> {
     let conn = open_global_db(&app)?;
     let prefix = make_folder_prefix(root_folder.as_deref());
     let mut stmt = conn
@@ -253,8 +237,7 @@ pub fn get_staged_operations(app: AppHandle, root_folder: Option<String>) -> Res
 
 // ----------------- PHASE 2: QUICK PINBOARD BASKET, CLOCK SHIFT, XMP EXPORT & HEALTH -----------------
 
-#[tauri::command]
-pub fn set_photo_basket(app: AppHandle, hashes: Vec<String>, in_basket: bool) -> Result<(), String> {
+pub fn set_photo_basket(app: SharedHost, hashes: Vec<String>, in_basket: bool) -> Result<(), String> {
     let mut conn = open_global_db(&app)?;
     let val = if in_basket { 1 } else { 0 };
     if let Ok(tx) = conn.transaction() {
@@ -328,12 +311,7 @@ pub fn shift_exif_datetime_str(raw: &str, offset_minutes: i64) -> Option<String>
     ))
 }
 
-#[tauri::command]
-pub fn shift_capture_timestamps(
-    app: AppHandle,
-    hashes: Vec<String>,
-    offset_minutes: i64,
-) -> Result<Vec<TimestampShiftResult>, String> {
+pub fn shift_capture_timestamps(app: SharedHost, hashes: Vec<String>, offset_minutes: i64) -> Result<Vec<TimestampShiftResult>, String> {
     let mut conn = open_global_db(&app)?;
     let mut out = Vec::new();
 
@@ -366,8 +344,7 @@ pub fn shift_capture_timestamps(
 
 // ----------------- CORE DATA COMMANDS -----------------
 
-#[tauri::command]
-pub fn set_photos_rating(app: AppHandle, hashes: Vec<String>, rating: i32) -> Result<(), String> {
+pub fn set_photos_rating(app: SharedHost, hashes: Vec<String>, rating: i32) -> Result<(), String> {
     if hashes.is_empty() {
         return Ok(());
     }
@@ -385,8 +362,7 @@ pub fn set_photos_rating(app: AppHandle, hashes: Vec<String>, rating: i32) -> Re
     Ok(())
 }
 
-#[tauri::command]
-pub fn add_tag_batch(app: AppHandle, hashes: Vec<String>, tag: String) -> Result<String, String> {
+pub fn add_tag_batch(app: SharedHost, hashes: Vec<String>, tag: String) -> Result<String, String> {
     let clean_tag = tag.trim().to_lowercase();
     if clean_tag.is_empty() {
         return Err("Tag cannot be empty".into());
@@ -408,8 +384,7 @@ pub fn add_tag_batch(app: AppHandle, hashes: Vec<String>, tag: String) -> Result
     Ok(clean_tag)
 }
 
-#[tauri::command]
-pub fn remove_tag(app: AppHandle, hash: String, tag: String) -> Result<Vec<String>, String> {
+pub fn remove_tag(app: SharedHost, hash: String, tag: String) -> Result<Vec<String>, String> {
     let conn = open_global_db(&app)?;
     conn.execute(
         "DELETE FROM photo_tags WHERE hash = ?1 AND tag = ?2",
@@ -421,8 +396,7 @@ pub fn remove_tag(app: AppHandle, hash: String, tag: String) -> Result<Vec<Strin
 }
 
 // Removes one tag from many photos (undo of a batch tag)
-#[tauri::command]
-pub fn remove_tag_batch(app: AppHandle, hashes: Vec<String>, tag: String) -> Result<(), String> {
+pub fn remove_tag_batch(app: SharedHost, hashes: Vec<String>, tag: String) -> Result<(), String> {
     let mut conn = open_global_db(&app)?;
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     {

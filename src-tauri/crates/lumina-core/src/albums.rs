@@ -35,8 +35,7 @@ fn unique_error(e: rusqlite::Error, what: &str, name: &str) -> String {
 }
 
 // Every album with all of its photos (the UI filters to the open folder); oldest album first
-#[tauri::command]
-pub fn get_albums(app: AppHandle) -> Result<Vec<Album>, String> {
+pub fn get_albums(app: SharedHost) -> Result<Vec<Album>, String> {
     let conn = open_global_db(&app)?;
     let mut albums: Vec<Album> = {
         let mut stmt = conn.prepare("SELECT id, name FROM albums ORDER BY created_at, id").map_err(|e| e.to_string())?;
@@ -60,8 +59,7 @@ pub fn get_albums(app: AppHandle) -> Result<Vec<Album>, String> {
     Ok(albums)
 }
 
-#[tauri::command]
-pub fn create_album(app: AppHandle, name: String) -> Result<i64, String> {
+pub fn create_album(app: SharedHost, name: String) -> Result<i64, String> {
     let name = clean_name(&name)?;
     let conn = open_global_db(&app)?;
     conn.execute("INSERT INTO albums (name) VALUES (?1)", params![name])
@@ -69,8 +67,7 @@ pub fn create_album(app: AppHandle, name: String) -> Result<i64, String> {
     Ok(conn.last_insert_rowid())
 }
 
-#[tauri::command]
-pub fn rename_album(app: AppHandle, id: i64, name: String) -> Result<(), String> {
+pub fn rename_album(app: SharedHost, id: i64, name: String) -> Result<(), String> {
     let name = clean_name(&name)?;
     let conn = open_global_db(&app)?;
     conn.execute("UPDATE albums SET name = ?1 WHERE id = ?2", params![name, id])
@@ -79,8 +76,7 @@ pub fn rename_album(app: AppHandle, id: i64, name: String) -> Result<(), String>
 }
 
 // Deletes the album only; its photos stay where they are
-#[tauri::command]
-pub fn delete_album(app: AppHandle, id: i64) -> Result<(), String> {
+pub fn delete_album(app: SharedHost, id: i64) -> Result<(), String> {
     let mut conn = open_global_db(&app)?;
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     tx.execute("DELETE FROM album_photos WHERE album_id = ?1", params![id]).map_err(|e| e.to_string())?;
@@ -89,8 +85,7 @@ pub fn delete_album(app: AppHandle, id: i64) -> Result<(), String> {
 }
 
 // Returns the photos that were newly added (so undo removes only those)
-#[tauri::command]
-pub fn add_to_album(app: AppHandle, id: i64, hashes: Vec<String>) -> Result<Vec<String>, String> {
+pub fn add_to_album(app: SharedHost, id: i64, hashes: Vec<String>) -> Result<Vec<String>, String> {
     let mut conn = open_global_db(&app)?;
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     let mut added = Vec::new();
@@ -109,8 +104,7 @@ pub fn add_to_album(app: AppHandle, id: i64, hashes: Vec<String>) -> Result<Vec<
 }
 
 // Returns the photos that were actually in the album
-#[tauri::command]
-pub fn remove_from_album(app: AppHandle, id: i64, hashes: Vec<String>) -> Result<Vec<String>, String> {
+pub fn remove_from_album(app: SharedHost, id: i64, hashes: Vec<String>) -> Result<Vec<String>, String> {
     let mut conn = open_global_db(&app)?;
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     let mut removed = Vec::new();
@@ -128,8 +122,7 @@ pub fn remove_from_album(app: AppHandle, id: i64, hashes: Vec<String>) -> Result
     Ok(removed)
 }
 
-#[tauri::command]
-pub fn get_saved_searches(app: AppHandle) -> Result<Vec<SavedSearch>, String> {
+pub fn get_saved_searches(app: SharedHost) -> Result<Vec<SavedSearch>, String> {
     let conn = open_global_db(&app)?;
     let mut stmt = conn
         .prepare("SELECT id, name, query FROM saved_searches ORDER BY created_at, id")
@@ -140,8 +133,7 @@ pub fn get_saved_searches(app: AppHandle) -> Result<Vec<SavedSearch>, String> {
     Ok(rows.flatten().collect())
 }
 
-#[tauri::command]
-pub fn save_search(app: AppHandle, name: String, query: String) -> Result<i64, String> {
+pub fn save_search(app: SharedHost, name: String, query: String) -> Result<i64, String> {
     let name = clean_name(&name)?;
     if query.trim().is_empty() {
         return Err("There is no search to save".into());
@@ -152,16 +144,14 @@ pub fn save_search(app: AppHandle, name: String, query: String) -> Result<i64, S
     Ok(conn.last_insert_rowid())
 }
 
-#[tauri::command]
-pub fn delete_saved_search(app: AppHandle, id: i64) -> Result<(), String> {
+pub fn delete_saved_search(app: SharedHost, id: i64) -> Result<(), String> {
     let conn = open_global_db(&app)?;
     conn.execute("DELETE FROM saved_searches WHERE id = ?1", params![id]).map_err(|e| e.to_string())?;
     Ok(())
 }
 
 // Custom names for automatically found trips, keyed by the trip id the UI computes
-#[tauri::command]
-pub fn get_trip_names(app: AppHandle) -> Result<HashMap<String, String>, String> {
+pub fn get_trip_names(app: SharedHost) -> Result<HashMap<String, String>, String> {
     let conn = open_global_db(&app)?;
     let mut stmt = conn.prepare("SELECT trip_id, name FROM trip_names").map_err(|e| e.to_string())?;
     let rows = stmt
@@ -171,8 +161,7 @@ pub fn get_trip_names(app: AppHandle) -> Result<HashMap<String, String>, String>
 }
 
 // An empty name goes back to the automatic one
-#[tauri::command]
-pub fn set_trip_name(app: AppHandle, trip_id: String, name: String) -> Result<(), String> {
+pub fn set_trip_name(app: SharedHost, trip_id: String, name: String) -> Result<(), String> {
     let conn = open_global_db(&app)?;
     if name.trim().is_empty() {
         conn.execute("DELETE FROM trip_names WHERE trip_id = ?1", params![trip_id]).map_err(|e| e.to_string())?;

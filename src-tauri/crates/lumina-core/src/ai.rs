@@ -2,7 +2,6 @@ use crate::*;
 
 // ----------------- OLLAMA LIFECYCLE -----------------
 
-#[tauri::command]
 pub async fn check_ollama_status() -> Result<OllamaStatus, String> {
     let res = FAST_STATUS_CLIENT.get("http://127.0.0.1:11434/api/tags").send().await;
 
@@ -71,7 +70,6 @@ fn ollama_serve_command() -> std::process::Command {
     cmd
 }
 
-#[tauri::command]
 pub async fn start_ollama_service() -> Result<String, String> {
     ollama_serve_command()
         .spawn()
@@ -100,10 +98,9 @@ fn user_env_var(name: &str) -> Option<String> {
         .and_then(|l| l.split_whitespace().nth(2).map(|v| v.to_string()))
 }
 
-#[tauri::command]
 pub async fn ollama_tuning_status() -> OllamaTuningStatus {
     let can_enable = cfg!(target_os = "windows");
-    let flash_attention = tauri::async_runtime::spawn_blocking(move || {
+    let flash_attention = tokio::task::spawn_blocking(move || {
         if can_enable { user_env_var(FLASH_ATTENTION_VAR) } else { None }
             .or_else(|| std::env::var(FLASH_ATTENTION_VAR).ok())
     })
@@ -114,12 +111,11 @@ pub async fn ollama_tuning_status() -> OllamaTuningStatus {
 
 // Saves OLLAMA_FLASH_ATTENTION=1 for the Windows user and restarts Ollama so it takes effect now:
 // the tray app (or a plain `ollama serve` if the tray app isn't installed) comes back with the setting on.
-#[tauri::command]
 pub async fn enable_ollama_flash_attention() -> Result<(), String> {
     if !cfg!(target_os = "windows") {
         return Err("Set OLLAMA_FLASH_ATTENTION=1 in Ollama's environment and restart it.".into());
     }
-    tauri::async_runtime::spawn_blocking(|| -> Result<(), String> {
+    tokio::task::spawn_blocking(|| -> Result<(), String> {
         let saved = hidden_command("setx")
             .args([FLASH_ATTENTION_VAR, "1"])
             .output()
@@ -154,7 +150,6 @@ pub async fn enable_ollama_flash_attention() -> Result<(), String> {
     Err("The setting is saved, but Ollama didn't come back within 20 s. Start it from the tray menu.".into())
 }
 
-#[tauri::command]
 pub async fn preload_ollama_vram(model_name: String) -> Result<String, String> {
     let payload = json!({
         "model": model_name.trim(),
@@ -172,7 +167,6 @@ pub async fn preload_ollama_vram(model_name: String) -> Result<String, String> {
     Ok("Model loaded into VRAM".to_string())
 }
 
-#[tauri::command]
 pub async fn unload_ollama_vram(model_name: String) -> Result<String, String> {
     let payload = json!({
         "model": model_name,
@@ -189,8 +183,7 @@ pub async fn unload_ollama_vram(model_name: String) -> Result<String, String> {
     Ok("Model unloaded from VRAM".to_string())
 }
 
-#[tauri::command]
-pub async fn pull_ollama_model(app: AppHandle, model_name: String) -> Result<String, String> {
+pub async fn pull_ollama_model(app: SharedHost, model_name: String) -> Result<String, String> {
     let clean_model = model_name.trim().to_string();
     if clean_model.is_empty() {
         return Err("Model name cannot be empty".into());
@@ -332,12 +325,11 @@ fn take_cached_ai_image(hash: &str) -> Option<String> {
 }
 
 // Prefetch: the batch runner calls this for the next photo while the current one is in Ollama
-#[tauri::command]
-pub async fn prepare_ai_image(app: AppHandle, hash: String, image_path: String) -> Result<(), String> {
+pub async fn prepare_ai_image(app: SharedHost, hash: String, image_path: String) -> Result<(), String> {
     if AI_IMAGE_CACHE.lock().map(|c| c.contains_key(&hash)).unwrap_or(false) {
         return Ok(());
     }
-    let encoded = tauri::async_runtime::spawn_blocking(move || {
+    let encoded = tokio::task::spawn_blocking(move || {
         encode_ai_image(&app, &hash, &image_path).map(|b64| (hash, b64))
     })
     .await
@@ -388,7 +380,6 @@ pub const AI_CANCELLED: &str = "AI analysis cancelled";
 static AI_CANCEL_GENERATION: AtomicU64 = AtomicU64::new(0);
 static AI_CANCEL_NOTIFY: LazyLock<tokio::sync::Notify> = LazyLock::new(tokio::sync::Notify::new);
 
-#[tauri::command]
 pub fn cancel_ai_analysis() {
     AI_CANCEL_GENERATION.fetch_add(1, Ordering::AcqRel);
     AI_CANCEL_NOTIFY.notify_waiters();
@@ -417,7 +408,6 @@ pub const PULL_CANCELLED: &str = "Model download cancelled";
 static PULL_CANCEL_GENERATION: AtomicU64 = AtomicU64::new(0);
 static PULL_CANCEL_NOTIFY: LazyLock<tokio::sync::Notify> = LazyLock::new(tokio::sync::Notify::new);
 
-#[tauri::command]
 pub fn cancel_ollama_pull() {
     PULL_CANCEL_GENERATION.fetch_add(1, Ordering::AcqRel);
     PULL_CANCEL_NOTIFY.notify_waiters();
@@ -617,14 +607,7 @@ pub fn parse_resilient_ai_json(raw: &str) -> Result<AiVisionResponse, String> {
     ))
 }
 
-#[tauri::command]
-pub async fn ai_analyze_photo(
-    app: AppHandle,
-    hash: String,
-    image_path_for_ai: String,
-    model_name: String,
-    existing_tags: Vec<String>,
-) -> Result<AiAnalysisResult, String> {
+pub async fn ai_analyze_photo(app: SharedHost, hash: String, image_path_for_ai: String, model_name: String, existing_tags: Vec<String>) -> Result<AiAnalysisResult, String> {
     let ai_started = Instant::now();
     let cancel_generation = AI_CANCEL_GENERATION.load(Ordering::Acquire);
     let base64_img = match take_cached_ai_image(&hash) {
@@ -633,7 +616,7 @@ pub async fn ai_analyze_photo(
             let img_path_clone = image_path_for_ai.clone();
             let app_for_buf = app.clone();
             let hash_for_buf = hash.clone();
-            tauri::async_runtime::spawn_blocking(move || {
+            tokio::task::spawn_blocking(move || {
                 encode_ai_image(&app_for_buf, &hash_for_buf, &img_path_clone)
             })
             .await
@@ -738,7 +721,7 @@ pub async fn ai_analyze_photo(
     let ai_result = parse_resilient_ai_json(raw_content)?;
 
     // DB writes and ONNX face detection are blocking work: keep them off the async runtime threads
-    let mut stored = tauri::async_runtime::spawn_blocking(move || store_ai_result(&app, &hash, ai_result))
+    let mut stored = tokio::task::spawn_blocking(move || store_ai_result(&app, &hash, ai_result))
     .await
     .map_err(|e| e.to_string())??;
 

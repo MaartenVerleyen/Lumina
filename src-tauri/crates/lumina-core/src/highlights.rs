@@ -98,9 +98,8 @@ fn aesthetic_scores(clip: &clip::ClipModels, vectors: &HashMap<String, Vec<f32>>
     raw.into_iter().map(|(h, s)| (h, ((s - mean) / sd).clamp(-2.0, 2.0))).collect()
 }
 
-#[tauri::command]
-pub async fn pick_highlights(app: AppHandle, candidates: Vec<HighlightCandidate>, count: usize) -> Result<Vec<String>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+pub async fn pick_highlights(app: SharedHost, candidates: Vec<HighlightCandidate>, count: usize) -> Result<Vec<String>, String> {
+    tokio::task::spawn_blocking(move || {
         let conn = open_global_db(&app)?;
         let hashes: Vec<String> = candidates.iter().map(|c| c.hash.clone()).collect();
         // Without the smart search index, quality and time spread still decide

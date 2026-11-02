@@ -1,5 +1,5 @@
 use crate::*;
-use crate::files::FileOpFailure;
+use files::FileOpFailure;
 use image::codecs::jpeg::JpegEncoder;
 use little_exif::exif_tag::ExifTag;
 use little_exif::filetype::FileExtension;
@@ -38,7 +38,6 @@ pub struct ExportResult {
 
 static EXPORT_CANCEL: AtomicU64 = AtomicU64::new(0);
 
-#[tauri::command]
 pub fn cancel_export() {
     EXPORT_CANCEL.fetch_add(1, Ordering::AcqRel);
 }
@@ -101,7 +100,7 @@ fn exif_for(src: &ExportSource, strip_gps: bool) -> Metadata {
 // A video keeps its own extension.
 fn unique_target(dir: &Path, name: &str, taken: &Mutex<HashSet<String>>) -> PathBuf {
     let stem = Path::new(name).file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "photo".into());
-    let ext = if crate::video_meta::is_video_path(Path::new(name)) {
+    let ext = if video_meta::is_video_path(Path::new(name)) {
         Path::new(name).extension().map(|e| e.to_string_lossy().to_string()).unwrap_or_default()
     } else {
         "jpg".to_string()
@@ -119,7 +118,7 @@ fn unique_target(dir: &Path, name: &str, taken: &Mutex<HashSet<String>>) -> Path
 
 fn export_one(src: &ExportSource, target: &Path, opts: &ExportOptions) -> Result<(), String> {
     // Videos are copied as they are (no resizing, and their location stays in the file)
-    if crate::video_meta::is_video_path(Path::new(&src.disk_path)) {
+    if video_meta::is_video_path(Path::new(&src.disk_path)) {
         let part = target.with_extension("part");
         fs::copy(&src.disk_path, &part).map_err(|e| e.to_string())?;
         return fs::rename(&part, target).map_err(|e| {
@@ -157,9 +156,8 @@ fn export_one(src: &ExportSource, target: &Path, opts: &ExportOptions) -> Result
     })
 }
 
-#[tauri::command]
-pub async fn export_photos(app: AppHandle, options: ExportOptions) -> Result<ExportResult, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+pub async fn export_photos(app: SharedHost, options: ExportOptions) -> Result<ExportResult, String> {
+    tokio::task::spawn_blocking(move || {
         let started = Instant::now();
         let dest = PathBuf::from(&options.dest_dir);
         fs::create_dir_all(&dest).map_err(|e| format!("Can't use the export folder: {e}"))?;

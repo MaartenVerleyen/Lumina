@@ -3,6 +3,10 @@
 // a `&dyn Host` (or `&impl Host`) instead of Tauri's AppHandle, so it can be built without Tauri.
 use crate::*;
 
+// The desktop app's identifier from tauri.conf.json: it keeps its data in %LOCALAPPDATA%\<identifier>
+// (Tauri's app_local_data_dir). A desktop test checks that it matches the config.
+pub const APP_IDENTIFIER: &str = "com.amazhr.lumina";
+
 // A host that background threads can keep (the desktop wraps its AppHandle in one)
 pub type SharedHost = Arc<dyn Host>;
 

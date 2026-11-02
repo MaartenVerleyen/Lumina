@@ -2,9 +2,8 @@ use crate::*;
 
 // People: the people list, tagging photos with a person, rename / merge / hide, profile pictures
 
-#[tauri::command]
-pub async fn get_people(app: AppHandle, root_folder: Option<String>) -> Result<Vec<PersonItem>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+pub async fn get_people(app: SharedHost, root_folder: Option<String>) -> Result<Vec<PersonItem>, String> {
+    tokio::task::spawn_blocking(move || {
         let conn = open_global_db(&app)?;
         let prefix = make_folder_prefix(root_folder.as_deref());
         let mut stmt = conn
@@ -55,8 +54,7 @@ pub async fn get_people(app: AppHandle, root_folder: Option<String>) -> Result<V
 }
 
 // Tags a person on many photos in one transaction (the UI used to call a per-photo command in a loop)
-#[tauri::command]
-pub fn add_person_to_photos(app: AppHandle, hashes: Vec<String>, name: String) -> Result<usize, String> {
+pub fn add_person_to_photos(app: SharedHost, hashes: Vec<String>, name: String) -> Result<usize, String> {
     let clean = name.trim().to_string();
     if clean.is_empty() {
         return Err("Name cannot be empty".into());
@@ -79,8 +77,7 @@ pub fn add_person_to_photos(app: AppHandle, hashes: Vec<String>, name: String) -
 
 // Removes a photo-level person tag from many photos (undo of a batch person assignment). Named face boxes are
 // left alone: the batch assignment never names faces.
-#[tauri::command]
-pub fn remove_person_from_photos(app: AppHandle, hashes: Vec<String>, name: String) -> Result<(), String> {
+pub fn remove_person_from_photos(app: SharedHost, hashes: Vec<String>, name: String) -> Result<(), String> {
     let mut conn = open_global_db(&app)?;
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     {
@@ -94,8 +91,7 @@ pub fn remove_person_from_photos(app: AppHandle, hashes: Vec<String>, name: Stri
     tx.commit().map_err(|e| e.to_string())
 }
 
-#[tauri::command]
-pub fn remove_person_from_photo(app: AppHandle, hash: String, name: String) -> Result<Vec<String>, String> {
+pub fn remove_person_from_photo(app: SharedHost, hash: String, name: String) -> Result<Vec<String>, String> {
     let conn = open_global_db(&app)?;
     conn.execute(
         "DELETE FROM photo_people WHERE hash = ?1 AND person_name = ?2",
@@ -118,14 +114,13 @@ pub fn remove_person_from_photo(app: AppHandle, hash: String, name: String) -> R
 
 // Renames a person everywhere (photo tags, named faces, rejections, the people list). When another person
 // already has the new name, the two are merged into that one. Returns the final name.
-#[tauri::command]
-pub async fn rename_person(app: AppHandle, old_name: String, new_name: String) -> Result<String, String> {
+pub async fn rename_person(app: SharedHost, old_name: String, new_name: String) -> Result<String, String> {
     let old = old_name.trim().to_string();
     let new = new_name.trim().to_string();
     if old.is_empty() || new.is_empty() {
         return Err("The name can't be empty".into());
     }
-    tauri::async_runtime::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         let mut conn = open_global_db(&app)?;
         rename_person_in_db(&mut conn, &old, &new)?;
         // Suggestions are keyed by name: recompute them on next use
@@ -200,8 +195,7 @@ pub fn rename_person_in_db(conn: &mut Connection, old: &str, new: &str) -> Resul
 }
 
 // Hidden people stay tagged on their photos but leave the people bar and get no new suggestions
-#[tauri::command]
-pub fn set_person_hidden(app: AppHandle, name: String, hidden: bool) -> Result<(), String> {
+pub fn set_person_hidden(app: SharedHost, name: String, hidden: bool) -> Result<(), String> {
     let conn = open_global_db(&app)?;
     conn.execute(
         "UPDATE people SET hidden = ?2 WHERE lower(name) = lower(?1)",
@@ -214,8 +208,7 @@ pub fn set_person_hidden(app: AppHandle, name: String, hidden: bool) -> Result<(
     Ok(())
 }
 
-#[tauri::command]
-pub fn set_person_starred(app: AppHandle, name: String, starred: bool) -> Result<(), String> {
+pub fn set_person_starred(app: SharedHost, name: String, starred: bool) -> Result<(), String> {
     let conn = open_global_db(&app)?;
     conn.execute(
         "UPDATE people SET starred = ?2 WHERE lower(name) = lower(?1)",
@@ -226,8 +219,7 @@ pub fn set_person_starred(app: AppHandle, name: String, starred: bool) -> Result
 }
 
 // Profile picture: one of the person's named faces becomes their avatar in the People list
-#[tauri::command]
-pub fn set_person_cover(app: AppHandle, name: String, face_id: String) -> Result<(), String> {
+pub fn set_person_cover(app: SharedHost, name: String, face_id: String) -> Result<(), String> {
     let conn = open_global_db(&app)?;
     let thumb: String = conn
         .query_row(

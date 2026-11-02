@@ -289,17 +289,8 @@ fn prune_backups(dir: &Path, prefix: &str, keep: usize) -> usize {
 // Backs up the library into `dest_dir`/`name`.luminabackup. `known_roots` are the library folders the
 // frontend knows (they name the roots in the manifest); `settings` is stored as given. With `keep`, older
 // backups whose name starts like this one's (up to its date) are removed beyond the newest `keep`.
-#[tauri::command]
-pub async fn backup_library(
-    app: AppHandle,
-    dest_dir: String,
-    name: String,
-    known_roots: Vec<String>,
-    settings: String,
-    keep: Option<usize>,
-    keep_prefix: Option<String>,
-) -> Result<BackupResult, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+pub async fn backup_library(app: SharedHost, dest_dir: String, name: String, known_roots: Vec<String>, settings: String, keep: Option<usize>, keep_prefix: Option<String>) -> Result<BackupResult, String> {
+    tokio::task::spawn_blocking(move || {
         let dir = PathBuf::from(dest_dir.trim());
         if dest_dir.trim().is_empty() {
             return Err("Choose a folder for the backup first.".to_string());
@@ -344,9 +335,8 @@ fn read_manifest(archive: &mut zip::ZipArchive<std::io::BufReader<fs::File>>) ->
 }
 
 // What a backup holds, with each library folder marked as present on this PC or not
-#[tauri::command]
 pub async fn inspect_backup(path: String) -> Result<BackupManifest, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         let mut archive = open_backup(&path)?;
         let mut manifest = read_manifest(&mut archive)?;
         for root in &mut manifest.roots {
@@ -420,9 +410,8 @@ pub fn rewrite_paths(conn: &mut Connection, remaps: &[(String, String)]) -> Resu
 // Prepares a backup for the next start: the database is checked, its paths rewritten (library folders as
 // chosen in `remaps`, face crops to this PC's app data folder) and left as library.db.restore; the face
 // crops are put in place. The frontend restores the returned settings and restarts Lumina.
-#[tauri::command]
-pub async fn restore_library(app: AppHandle, path: String, remaps: Vec<RootRemap>) -> Result<RestoreResult, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+pub async fn restore_library(app: SharedHost, path: String, remaps: Vec<RootRemap>) -> Result<RestoreResult, String> {
+    tokio::task::spawn_blocking(move || {
         let app_dir = get_app_storage_dir(&app);
         let mut archive = open_backup(&path)?;
         let manifest = read_manifest(&mut archive)?;
@@ -521,11 +510,6 @@ pub fn apply_pending_restore(app_dir: &Path) {
     }
 }
 
-#[tauri::command]
-pub fn restart_app(app: AppHandle) {
-    app.restart();
-}
-
 // ---------- CSV ----------
 
 pub fn csv_field(s: &str) -> String {
@@ -546,9 +530,8 @@ pub fn csv_date(captured_at: &str) -> String {
 
 // Ratings, flags, labels, tags, people, captions and places as a CSV file, for spreadsheets and other apps.
 // `root_folder` limits it to one library; without it every photo Lumina knows is listed.
-#[tauri::command]
-pub async fn export_library_csv(app: AppHandle, dest_path: String, root_folder: Option<String>) -> Result<usize, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+pub async fn export_library_csv(app: SharedHost, dest_path: String, root_folder: Option<String>) -> Result<usize, String> {
+    tokio::task::spawn_blocking(move || {
         let conn = open_global_db(&app)?;
         let prefix = make_folder_prefix(root_folder.as_deref());
         let mut stmt = conn

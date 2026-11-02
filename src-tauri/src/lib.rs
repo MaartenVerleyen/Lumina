@@ -1,72 +1,20 @@
-use base64::{engine::general_purpose, Engine as _};
-use image::{imageops::FilterType, DynamicImage, GenericImageView};
-use rayon::prelude::*;
-use rusqlite::{params, Connection};
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Value as JsonValue};
-use std::collections::{HashMap, HashSet};
-use std::fs::{self, File};
-use std::io::{Cursor, Read};
+use std::collections::HashMap;
+use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, LazyLock, Mutex};
-use std::time::Instant;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, LazyLock};
 use tauri::{AppHandle, Manager};
-use walkdir::WalkDir;
 
-pub use lumina_core::{clip, db, decode, exif_meta, face_engine, face_ort, fastdecode, ffmpeg, face_match, host, imaging, perf, recycle, scan, storage, thumbs, types, video_frames, video_meta, GEOCODER};
+pub use lumina_core::{ai, albums, backup, clip, db, decode, duplicates, exif_meta, export, face_engine, face_match, face_ort, face_quality, face_review, face_scan, fastdecode, ffmpeg, files, gallery, highlights, host, imaging, import, library, people, perf, recycle, scan, storage, thumbs, types, video_frames, video_meta, watch, GEOCODER, HTTP_CLIENT, FAST_STATUS_CLIENT};
 pub use types::*;
 mod engine_commands;
-mod library;
-mod files;
-mod face_scan;
-mod face_review;
-mod people;
-mod ai;
 mod system;
-mod albums;
-mod export;
 mod prepare;
-mod import;
-mod watch;
-mod face_quality;
-mod highlights;
-mod gallery;
-mod backup;
-mod duplicates;
-#[cfg(test)]
-mod tests;
-#[cfg(test)]
-mod face_eval;
 
 use db::*;
-use imaging::*;
-use face_engine::*;
-use scan::*;
-use exif_meta::*;
-use decode::*;
-use library::*;
-use perf::*;
 use storage::*;
-use face_ort::*;
-use face_match::*;
-use host::*;
 
 static SPLASH_CLOSED: AtomicBool = AtomicBool::new(false);
-
-static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
-    reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(120))
-        .build()
-        .unwrap_or_default()
-});
-
-static FAST_STATUS_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
-    reqwest::Client::builder()
-        .timeout(std::time::Duration::from_millis(1200))
-        .build()
-        .unwrap_or_default()
-});
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -91,114 +39,114 @@ pub fn run() {
                 LazyLock::force(&GEOCODER);
                 LazyLock::force(&BG_POOL);
             });
-            import::start_drive_watch(app.handle().clone());
+            import::start_drive_watch(Arc::new(app.handle().clone()));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             engine_commands::scan_folder,
-            library::set_photos_rating,
-            library::add_tag_batch,
-            library::remove_tag,
-            library::remove_tag_batch,
-            library::set_photo_flag,
-            library::set_photo_color_label,
-            library::set_photo_rotation,
-            library::set_photos_rotation_exact,
+            engine_commands::set_photos_rating,
+            engine_commands::add_tag_batch,
+            engine_commands::remove_tag,
+            engine_commands::remove_tag_batch,
+            engine_commands::set_photo_flag,
+            engine_commands::set_photo_color_label,
+            engine_commands::set_photo_rotation,
+            engine_commands::set_photos_rotation_exact,
             engine_commands::rescan_exif_batch,
-            library::search_cities_offline,
-            library::set_manual_location,
-            library::stage_photo_move,
-            library::stage_photos_move,
-            duplicates::find_duplicates,
+            engine_commands::search_cities_offline,
+            engine_commands::set_manual_location,
+            engine_commands::stage_photo_move,
+            engine_commands::stage_photos_move,
+            engine_commands::find_duplicates,
             engine_commands::existing_playable_copy,
             engine_commands::make_playable_copy,
             engine_commands::cancel_playable_copy,
             engine_commands::video_cache_info,
             engine_commands::clear_video_cache,
-            duplicates::stage_duplicate_extras,
-            library::clear_all_staged,
-            library::get_staged_operations,
-            files::commit_staged_operations,
-            library::set_photo_basket,
-            library::shift_capture_timestamps,
-            files::export_xmp_sidecars,
-            files::get_library_health_stats,
-            files::prune_orphaned_cache,
-            people::get_people,
-            people::add_person_to_photos,
-            people::remove_person_from_photo,
-            people::remove_person_from_photos,
-            people::rename_person,
-            people::set_person_hidden,
-            people::set_person_starred,
-            people::set_person_cover,
-            albums::get_trip_names,
-            albums::set_trip_name,
-            face_review::find_similar_faces,
-            face_review::get_confirmed_faces_for_person,
-            face_review::get_rejected_faces_for_person,
-            face_review::assign_faces_to_person_batch,
-            face_review::unassign_faces_batch,
-            face_review::reject_face_candidates_batch,
-            face_review::unreject_face_candidates_batch,
-            face_review::ignore_faces,
-            face_review::get_pending_face_match_counts,
-            face_scan::detect_faces_in_photo,
-            face_scan::scan_library_faces_batch,
-            face_scan::cancel_face_scan,
+            engine_commands::stage_duplicate_extras,
+            engine_commands::clear_all_staged,
+            engine_commands::get_staged_operations,
+            engine_commands::commit_staged_operations,
+            engine_commands::set_photo_basket,
+            engine_commands::shift_capture_timestamps,
+            engine_commands::export_xmp_sidecars,
+            engine_commands::get_library_health_stats,
+            engine_commands::prune_orphaned_cache,
+            engine_commands::get_people,
+            engine_commands::add_person_to_photos,
+            engine_commands::remove_person_from_photo,
+            engine_commands::remove_person_from_photos,
+            engine_commands::rename_person,
+            engine_commands::set_person_hidden,
+            engine_commands::set_person_starred,
+            engine_commands::set_person_cover,
+            engine_commands::get_trip_names,
+            engine_commands::set_trip_name,
+            engine_commands::find_similar_faces,
+            engine_commands::get_confirmed_faces_for_person,
+            engine_commands::get_rejected_faces_for_person,
+            engine_commands::assign_faces_to_person_batch,
+            engine_commands::unassign_faces_batch,
+            engine_commands::reject_face_candidates_batch,
+            engine_commands::unreject_face_candidates_batch,
+            engine_commands::ignore_faces,
+            engine_commands::get_pending_face_match_counts,
+            engine_commands::detect_faces_in_photo,
+            engine_commands::scan_library_faces_batch,
+            engine_commands::cancel_face_scan,
             engine_commands::cancel_folder_scan,
-            export::export_photos,
-            export::cancel_export,
-            albums::get_albums,
-            albums::create_album,
-            albums::rename_album,
-            albums::delete_album,
-            albums::add_to_album,
-            albums::remove_from_album,
-            albums::get_saved_searches,
-            albums::save_search,
-            albums::delete_saved_search,
+            engine_commands::export_photos,
+            engine_commands::cancel_export,
+            engine_commands::get_albums,
+            engine_commands::create_album,
+            engine_commands::rename_album,
+            engine_commands::delete_album,
+            engine_commands::add_to_album,
+            engine_commands::remove_from_album,
+            engine_commands::get_saved_searches,
+            engine_commands::save_search,
+            engine_commands::delete_saved_search,
             engine_commands::semantic_status,
             engine_commands::start_semantic_index,
             engine_commands::cancel_semantic_index,
             engine_commands::semantic_search,
             engine_commands::find_similar_photos,
             engine_commands::cancel_thumbnail_pass,
-            ai::cancel_ollama_pull,
-            face_scan::get_outdated_face_photos,
-            face_review::get_unknown_face_clusters,
+            engine_commands::cancel_ollama_pull,
+            engine_commands::get_outdated_face_photos,
+            engine_commands::get_unknown_face_clusters,
             engine_commands::get_face_match_config,
-            face_review::assign_face_region_and_automatch,
-            face_review::remove_face_box,
-            ai::ai_analyze_photo,
-            ai::prepare_ai_image,
-            ai::cancel_ai_analysis,
-            ai::ollama_tuning_status,
-            ai::enable_ollama_flash_attention,
-            ai::check_ollama_status,
-            ai::start_ollama_service,
-            ai::preload_ollama_vram,
-            ai::unload_ollama_vram,
-            ai::pull_ollama_model,
-            files::empty_library_trash_to_os,
-            files::trash_summary,
+            engine_commands::assign_face_region_and_automatch,
+            engine_commands::remove_face_box,
+            engine_commands::ai_analyze_photo,
+            engine_commands::prepare_ai_image,
+            engine_commands::cancel_ai_analysis,
+            engine_commands::ollama_tuning_status,
+            engine_commands::enable_ollama_flash_attention,
+            engine_commands::check_ollama_status,
+            engine_commands::start_ollama_service,
+            engine_commands::preload_ollama_vram,
+            engine_commands::unload_ollama_vram,
+            engine_commands::pull_ollama_model,
+            engine_commands::empty_library_trash_to_os,
+            engine_commands::trash_summary,
             system::open_in_default_app,
             system::reveal_in_file_manager,
             system::create_library_subfolder,
             system::get_app_data_dir,
-            import::list_import_sources,
-            import::preview_import,
-            import::start_import,
-            import::cancel_import,
-            watch::watch_library,
-            face_quality::measure_face_quality,
-            highlights::pick_highlights,
-            gallery::export_gallery,
-            backup::backup_library,
-            backup::inspect_backup,
-            backup::restore_library,
-            backup::restart_app,
-            backup::export_library_csv,
+            engine_commands::list_import_sources,
+            engine_commands::preview_import,
+            engine_commands::start_import,
+            engine_commands::cancel_import,
+            engine_commands::watch_library,
+            engine_commands::measure_face_quality,
+            engine_commands::pick_highlights,
+            engine_commands::export_gallery,
+            engine_commands::backup_library,
+            engine_commands::inspect_backup,
+            engine_commands::restore_library,
+            engine_commands::restart_app,
+            engine_commands::export_library_csv,
             system::copy_image_to_clipboard,
             engine_commands::ensure_high_res_preview,
             system::close_splashscreen

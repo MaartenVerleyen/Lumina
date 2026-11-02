@@ -1,11 +1,11 @@
-use crate::files::FileOpFailure;
+use files::FileOpFailure;
 use crate::*;
 use std::time::{Duration, UNIX_EPOCH};
 
 // Importing photos from a memory card, USB drive or any folder into the library: dated folders, duplicates
 // skipped, RAW+JPEG pairs and sidecars kept together, every copy verified before it counts.
 
-use crate::video_meta::VIDEO_EXTENSIONS;
+use video_meta::VIDEO_EXTENSIONS;
 const SIDECAR_EXTENSIONS: &[&str] = &["xmp", "aae", "thm"];
 pub const IMPORT_CANCELLED: &str = "Import cancelled";
 
@@ -248,9 +248,8 @@ pub(crate) fn plan(conn: &Connection, source: &Path, progress: &dyn Fn(usize)) -
     Ok(groups)
 }
 
-#[tauri::command]
-pub async fn preview_import(app: AppHandle, source: String, pattern: String) -> Result<ImportPreview, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+pub async fn preview_import(app: SharedHost, source: String, pattern: String) -> Result<ImportPreview, String> {
+    tokio::task::spawn_blocking(move || {
         IMPORT_CANCEL.store(false, Ordering::Relaxed);
         let conn = open_global_db(&app)?;
         let groups = plan(&conn, Path::new(&source), &|_| {})?;
@@ -444,13 +443,12 @@ fn run_import(app: &dyn Host, options: &ImportOptions) -> Result<ImportResult, S
     Ok(result)
 }
 
-#[tauri::command]
-pub async fn start_import(app: AppHandle, options: ImportOptions) -> Result<ImportResult, String> {
+pub async fn start_import(app: SharedHost, options: ImportOptions) -> Result<ImportResult, String> {
     if IMPORT_RUNNING.swap(true, Ordering::SeqCst) {
         return Err("An import is already running".into());
     }
     IMPORT_CANCEL.store(false, Ordering::Relaxed);
-    let result = tauri::async_runtime::spawn_blocking(move || {
+    let result = tokio::task::spawn_blocking(move || {
         let started = Instant::now();
         let r = run_import(&app, &options);
         if let Ok(res) = &r {
@@ -464,7 +462,6 @@ pub async fn start_import(app: AppHandle, options: ImportOptions) -> Result<Impo
     result?
 }
 
-#[tauri::command]
 pub fn cancel_import() {
     IMPORT_CANCEL.store(true, Ordering::Relaxed);
 }
@@ -508,13 +505,12 @@ pub fn removable_drives() -> Vec<ImportSource> {
     Vec::new()
 }
 
-#[tauri::command]
 pub fn list_import_sources() -> Vec<ImportSource> {
     removable_drives()
 }
 
 // Memory cards and USB drives with a DCIM folder (cameras, phones as drives): the app offers to import
-pub fn start_drive_watch(app: AppHandle) {
+pub fn start_drive_watch(app: SharedHost) {
     std::thread::spawn(move || {
         let mut known: HashSet<String> = removable_drives().into_iter().map(|d| d.path).collect();
         loop {
