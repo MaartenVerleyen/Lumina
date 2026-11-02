@@ -143,8 +143,13 @@ scan means the models did not run.
    Still open: add a few iPhone HEIC files and videos to the test library.
 3. Done: `server/docker-compose.yml` builds and runs (CUDA 13.0 + cuDNN 9 image, built on Ubuntu 24.04);
    in the container the test library gives the same results on `GPU (CUDA)`, and Ollama finds the GPU.
-4. One GPU for everything: Ollama and Lumina share the RTX 2070 Super (8 GB). Check that captions through
-   Ollama and Lumina's face and smart search models fit together, and what happens when they don't.
+4. Done: one GPU for everything. Ollama and Lumina share the RTX 2070 Super (8 GB) by taking turns: the
+   server pipeline unloads Ollama's models before faces and smart search (`ai::unload_loaded_models`) and
+   drops its own before captions (`face_ort::release_models`). Lumina takes 1.3 GB idle, 3.3 GB scanning.
+   Ollama must be 0.40 or newer (pinned in the compose file): up to 0.30 it ran the vision encoder on the
+   CPU on any card with 10 GB or less, ~30 s per photo instead of ~4. Caption model `qwen3-vl:8b-instruct`
+   (~4 s per photo, 34/37 layers on the GPU); `qwen3-vl:8b` is the thinking variant and named more things
+   that weren't there on a 12-photo test set; `4b-instruct` is 1.5 s but invented details on 2 of 12.
 5. Try `npm run tauri dev` on Linux (WebKitGTK); the desktop app has only been run on Windows.
 
 ## Style

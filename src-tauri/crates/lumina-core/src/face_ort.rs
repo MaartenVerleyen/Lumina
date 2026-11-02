@@ -553,6 +553,16 @@ pub async fn face_models_v2(app: &dyn Host) -> Result<Arc<FaceModels>, String> {
     Ok(loaded)
 }
 
+// Drops the face models and the smart search models (the eye check holds those too), so their GPU memory
+// goes back to the card: the server does this before Ollama's caption model needs it. The next use loads
+// them again (about a second); a scan that still holds them keeps them until it ends.
+pub fn release_models() {
+    if let Ok(mut slot) = FACE_MODELS_V2.lock() {
+        *slot = None;
+    }
+    clip::release_clip_models();
+}
+
 // Already-loaded models without awaiting (for blocking code that runs after face_models_v2 was awaited)
 pub fn loaded_face_models_v2() -> Option<Arc<FaceModels>> {
     FACE_MODELS_V2.lock().ok().and_then(|g| g.clone())

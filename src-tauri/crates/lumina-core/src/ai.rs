@@ -363,6 +363,37 @@ pub async fn prepare_ai_image(app: SharedHost, hash: String, image_path: String)
 // Smallest context that fits the ~1,100 prompt tokens + capped output (measured: same speed as 8192)
 const AI_MIN_CTX: u64 = 4096;
 
+// Unloads every model Ollama has loaded and waits until it has let them go (unloading is asynchronous), so
+// the GPU is free for the face and smart search models. Nothing is asked of an Ollama with nothing loaded:
+// a request for a model that isn't loaded would load it first. Returns the models that were unloaded.
+pub async fn unload_loaded_models() -> Result<Vec<String>, String> {
+    async fn loaded() -> Result<Vec<String>, String> {
+        let ps: JsonValue = FAST_STATUS_CLIENT
+            .get(format!("{}/api/ps", ollama_url()))
+            .send()
+            .await
+            .map_err(|e| format!("Failed to reach Ollama: {e}"))?
+            .json()
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(ps["models"]
+            .as_array()
+            .map(|models| models.iter().filter_map(|m| m["name"].as_str().map(String::from)).collect())
+            .unwrap_or_default())
+    }
+    let models = loaded().await?;
+    for model in &models {
+        unload_ollama_vram(model.clone()).await?;
+    }
+    for _ in 0..40 {
+        if loaded().await.map(|m| m.is_empty()).unwrap_or(true) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+    Ok(models)
+}
+
 // Context size for the request. Ollama reloads the model (~4-6 s) whenever a request asks for a different
 // context than the loaded model has, so reuse whatever is loaded (e.g. a user-configured 8k default) as long
 // as it is large enough; only ask for AI_MIN_CTX when the model isn't loaded yet or has less.

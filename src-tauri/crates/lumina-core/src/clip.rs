@@ -349,6 +349,12 @@ async fn clip_models(app: &dyn Host) -> Result<Arc<ClipModels>, String> {
     Ok(loaded)
 }
 
+pub(crate) fn release_clip_models() {
+    if let Ok(mut slot) = CLIP_MODELS.lock() {
+        *slot = None;
+    }
+}
+
 // The smart search models when they are installed, without downloading them (the face scan uses them to
 // spot closed eyes, but never triggers the 470 MB download itself)
 pub fn clip_models_if_present(dir: &Path) -> Option<Arc<ClipModels>> {

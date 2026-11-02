@@ -3,7 +3,7 @@
 // captions when a caption model is configured. Every step only does what is still missing.
 use crate::host::ServerHost;
 use lumina_core::host::SharedHost;
-use lumina_core::{ai, clip, db, face_engine, face_quality, face_scan, scan, thumbs};
+use lumina_core::{ai, clip, db, face_engine, face_ort, face_quality, face_scan, scan, thumbs};
 use serde_json::Value as JsonValue;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -60,6 +60,15 @@ impl Pipeline {
                 .filter(|h| in_library.contains(h.as_str()) && !live_clips.contains(h.as_str()))
                 .collect()
         };
+        // One GPU for both: the caption model (6+ GB) and the face and smart search models (1-3 GB) take
+        // turns rather than squeezing each other, which left Ollama with half its layers on the CPU
+        if self.caption_model.is_some() {
+            match ai::unload_loaded_models().await {
+                Ok(models) if !models.is_empty() => println!("[library] unloaded {} from Ollama", models.join(", ")),
+                Ok(_) => {}
+                Err(e) => println!("[library] Ollama: {e}"),
+            }
+        }
         if !unscanned.is_empty() {
             println!("[library] {root}: faces in {} photos and videos", unscanned.len());
             let mut rx = self.host.subscribe();
@@ -84,6 +93,7 @@ impl Pipeline {
                 .map(|p| p.hash.clone())
                 .collect();
             if !uncaptioned.is_empty() {
+                face_ort::release_models();
                 println!("[library] {root}: captions for {} photos ({model})", uncaptioned.len());
                 let summary = ai::run_caption_batch(self.shared(), uncaptioned, model.clone()).await?;
                 if !summary.failures.is_empty() {
