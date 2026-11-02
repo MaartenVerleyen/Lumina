@@ -252,10 +252,11 @@ pub fn bin_info(path: &Path) -> RecycleBinInfo {
     {
         win::bin_info(path)
     }
+    // Other systems (the Linux server): no Recycle Bin anyone would look in. Emptying _Trash is then a
+    // permanent delete the user is asked about first.
     #[cfg(not(windows))]
     {
-        let _ = path;
-        RecycleBinInfo { supported: true, ..Default::default() }
+        RecycleBinInfo { drive: path.to_string_lossy().into_owned(), supported: false, ..Default::default() }
     }
 }
 
@@ -267,13 +268,7 @@ pub fn recycle(paths: &[PathBuf]) -> RecycleOutcome {
     }
     #[cfg(not(windows))]
     {
-        let existing: Vec<&PathBuf> = paths.iter().filter(|p| p.exists()).collect();
-        let error = trash::delete_all(&existing).err().map(|e| e.to_string());
-        let (gone, still): (Vec<PathBuf>, Vec<PathBuf>) = paths.iter().cloned().partition(|p| !p.exists());
-        let failed = still
-            .into_iter()
-            .map(|p| (p, format!("could not move to Recycle Bin: {}", error.clone().unwrap_or_default())))
-            .collect();
-        RecycleOutcome { gone, failed, refused_permanent: false }
+        let failed = paths.iter().map(|p| (p.clone(), "this system has no Recycle Bin".to_string())).collect();
+        RecycleOutcome { gone: Vec::new(), failed, refused_permanent: true }
     }
 }

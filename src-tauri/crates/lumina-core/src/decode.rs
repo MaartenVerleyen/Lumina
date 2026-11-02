@@ -342,9 +342,24 @@ pub fn decode_via_windows_wic(file_path: &Path, max_dim: u32) -> Option<(Dynamic
     None
 }
 
+// Other systems decode HEIC with ffmpeg (the server's Docker image includes it); it comes out upright
 #[cfg(not(target_os = "windows"))]
-pub fn decode_via_windows_wic(_file_path: &Path, _max_dim: u32) -> Option<(DynamicImage, u32)> {
-    None
+pub fn decode_via_windows_wic(file_path: &Path, max_dim: u32) -> Option<(DynamicImage, u32)> {
+    decode_with_ffmpeg(&crate::ffmpeg::system_ffmpeg()?, file_path, max_dim).map(|img| (img, 1))
+}
+
+// A still image (HEIC/HEIF, AVIF) decoded by ffmpeg, its long edge scaled down to `max_dim` (never up).
+// ffmpeg applies the image's rotation itself.
+pub fn decode_with_ffmpeg(ffmpeg: &Path, file_path: &Path, max_dim: u32) -> Option<DynamicImage> {
+    let scale = format!("scale='min(iw,{max_dim})':'min(ih,{max_dim})':force_original_aspect_ratio=decrease");
+    let out = crate::ffmpeg::ffmpeg_command(ffmpeg)
+        .arg("-i")
+        .arg(file_path)
+        .args(["-frames:v", "1", "-vf", &scale, "-f", "image2pipe", "-c:v", "png", "-"])
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    image::load_from_memory_with_format(&out.stdout, ImageFormat::Png).ok()
 }
 
 // Large camera JPEGs (≥ ~1.5 MB) decode via DCT scaling when only `min_edge` pixels are needed; smaller ones

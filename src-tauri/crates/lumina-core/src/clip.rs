@@ -111,7 +111,7 @@ impl ClipModels {
     pub fn load(dir: &Path) -> Result<ClipModels, String> {
         let vision_path = dir.join(VISION_FILE);
         let (vision, device) = match face_ort::build_session(&vision_path, true) {
-            Ok(s) => (s, "GPU (DirectML)".to_string()),
+            Ok(s) => (s, face_ort::GPU_DEVICE.to_string()),
             Err(gpu_err) => (face_ort::build_session(&vision_path, false)?, format!("CPU (GPU unavailable: {gpu_err})")),
         };
         // The quantized text encoder runs on the CPU: one short query at a time, a few ms

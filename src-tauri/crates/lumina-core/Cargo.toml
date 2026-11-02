@@ -19,14 +19,14 @@ kamadak-exif = "0.5"
 reverse_geocoder = "4.1"
 rusqlite = { version = "0.32", features = ["bundled"] }
 rayon = "1.10"
-trash = "5"
 walkdir = "2.5"
 base64 = "0.22"
 little_exif = "=0.6.23"
 notify-debouncer-mini = "0.7.0"
 reqwest = { version = "0.12", features = ["json"] }
-# ONNX Runtime for faces and smart search; pinned like in the desktop crate
-ort = { version = "=2.0.0-rc.15", features = ["directml"] }
+# ONNX Runtime for faces and smart search (pinned: the 2.0 API still changes between release candidates).
+# The GPU provider is per system, see the target sections below.
+ort = "=2.0.0-rc.15"
 tokenizers = { version = "=0.22.2", default-features = false, features = ["fancy-regex"] }
 zip = { version = "9", default-features = false, features = ["deflate"] }
 sha2 = "0.10"
@@ -34,6 +34,7 @@ tokio = { version = "1", features = ["sync", "macros", "time", "rt"] }
 jpeg-decoder = { version = "0.3", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
+ort = { version = "=2.0.0-rc.15", features = ["directml"] }
 windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_Security",
@@ -51,3 +52,10 @@ windows = { version = "0.62", features = [
 ] }
 # The `#[implement]` macro (Recycle Bin progress sink) expands to `::windows_core` paths
 windows-core = "0.62"
+
+[target.'cfg(not(windows))'.dependencies]
+ort = { version = "=2.0.0-rc.15", features = ["cuda"] }
+
+[target.'cfg(unix)'.dependencies]
+# Local time for file dates (localtime_r)
+libc = "0.2"

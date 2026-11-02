@@ -72,6 +72,22 @@ pub struct FaceQuality {
 static ORT_ENV: LazyLock<Option<ort::environment::Environment>> =
     LazyLock::new(|| ort::init().with_name("lumina").build().ok());
 
+// The GPU: DirectML on Windows (any vendor), CUDA elsewhere (the server's NVIDIA card)
+#[cfg(windows)]
+pub const GPU_DEVICE: &str = "GPU (DirectML)";
+#[cfg(not(windows))]
+pub const GPU_DEVICE: &str = "GPU (CUDA)";
+
+#[cfg(windows)]
+fn gpu_provider() -> ort::ep::ExecutionProviderDispatch {
+    ort::ep::DirectML::default().build().error_on_failure()
+}
+
+#[cfg(not(windows))]
+fn gpu_provider() -> ort::ep::ExecutionProviderDispatch {
+    ort::ep::CUDA::default().build().error_on_failure()
+}
+
 pub fn build_session(path: &Path, gpu: bool) -> Result<Session, String> {
     let env = ORT_ENV.as_ref().ok_or("ONNX Runtime could not be initialised")?;
     let mut builder = Session::builder(env).map_err(|e| e.to_string())?;
@@ -82,7 +98,7 @@ pub fn build_session(path: &Path, gpu: bool) -> Result<Session, String> {
             .map_err(|e| e.to_string())?
             .with_parallel_execution(false)
             .map_err(|e| e.to_string())?
-            .with_execution_providers([ort::ep::DirectML::default().build().error_on_failure()])
+            .with_execution_providers([gpu_provider()])
             .map_err(|e| e.to_string())?;
     } else {
         let threads = std::thread::available_parallelism().map(|n| n.get() / 2).unwrap_or(4).max(1);
@@ -92,13 +108,13 @@ pub fn build_session(path: &Path, gpu: bool) -> Result<Session, String> {
 }
 
 impl FaceModels {
-    // GPU (DirectML) first, CPU as fallback; both models must load on the same device
+    // GPU first, CPU as fallback; both models must load on the same device
     pub fn load(models_dir: &Path) -> Result<FaceModels, String> {
         let det = models_dir.join(DETECTOR_FILE);
         let emb = models_dir.join(EMBEDDER_FILE);
         let gpu = build_session(&det, true).and_then(|d| build_session(&emb, true).map(|e| (d, e)));
         let (detector, embedder, device) = match gpu {
-            Ok((d, e)) => (d, e, "GPU (DirectML)".to_string()),
+            Ok((d, e)) => (d, e, GPU_DEVICE.to_string()),
             Err(gpu_err) => {
                 let d = build_session(&det, false)?;
                 let e = build_session(&emb, false)?;

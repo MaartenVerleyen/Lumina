@@ -131,6 +131,19 @@ pub fn system_time_local_iso(st: std::time::SystemTime) -> String {
             }
         }
     }
+    // Linux and macOS: the C library's local time (TZ, or /etc/localtime; a container sets TZ)
+    #[cfg(unix)]
+    {
+        if let Ok(d) = st.duration_since(std::time::UNIX_EPOCH) {
+            let t = d.as_secs() as libc::time_t;
+            let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+            if !unsafe { libc::localtime_r(&t, &mut tm) }.is_null() {
+                if let Some(secs) = (d.as_secs() as i64).checked_add(tm.tm_gmtoff as i64).filter(|s| *s >= 0) {
+                    return format_system_time_iso(std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs as u64));
+                }
+            }
+        }
+    }
     format_system_time_iso(st)
 }
 

@@ -1,5 +1,5 @@
 // Still frames from videos, decoded by Windows' own codecs through Media Foundation (the HEVC extension and
-// the GPU's decoder included): the grid thumbnail and a few frames across the video that smart search and the
+// the GPU's decoder included), or by ffmpeg on other systems: the grid thumbnail and a few frames across the video that smart search and the
 // face scan look at. Frames live in `frames/{hash}_{n}.jpg`, next to the thumbnails.
 use crate::*;
 
@@ -111,8 +111,74 @@ pub fn grab_frames(path: &Path, rotation: u32) -> Option<GrabbedFrames> {
     }
     #[cfg(not(windows))]
     {
-        let _ = (path, rotation);
-        None
+        let (raw, duration_ms, (w, h)) = ff::grab(&crate::ffmpeg::system_ffmpeg()?, path)?;
+        let frames: Vec<DynamicImage> = raw.into_iter().map(|f| rotate(f, rotation)).collect();
+        let (width, height) = if rotation == 90 || rotation == 270 { (h, w) } else { (w, h) };
+        Some(GrabbedFrames { frames, width, height, duration_ms })
+    }
+}
+
+// The same frames through ffmpeg, for systems without Media Foundation (the Linux server). Frames come out
+// with square pixels, scaled to FRAME_EDGE and not yet turned upright (like Media Foundation's).
+pub mod ff {
+    use super::*;
+    use std::process::Stdio;
+
+    // From what ffmpeg prints about its input: "Duration: 00:01:02.50" and the video stream's
+    // "1920x1080 [SAR 4:3 DAR 16:9]"; the size is with square pixels, before rotation
+    pub fn probe(ffmpeg: &Path, path: &Path) -> Option<(u64, (u32, u32))> {
+        let out = crate::ffmpeg::ffmpeg_command(ffmpeg)
+            .args(["-loglevel", "info", "-i"])
+            .arg(path)
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .output()
+            .ok()?;
+        let text = String::from_utf8_lossy(&out.stderr);
+        let stamp = text.split("Duration: ").nth(1)?.split(',').next()?.trim();
+        let mut parts = stamp.split(':');
+        let (h, m, s) = (parts.next()?.parse::<f64>().ok()?, parts.next()?.parse::<f64>().ok()?, parts.next()?.parse::<f64>().ok()?);
+        let duration_ms = ((h * 3600.0 + m * 60.0 + s) * 1000.0).round() as u64;
+
+        let stream = text.lines().find(|l| l.contains("Video:"))?;
+        let size = |token: &str| -> Option<(u32, u32)> {
+            let (w, h) = token.split_once('x')?;
+            Some((w.parse().ok()?, h.trim_end_matches(',').parse().ok()?))
+        };
+        let (w, h) = stream.split_whitespace().find_map(size)?;
+        let sar = stream.split("[SAR ").nth(1).and_then(|r| {
+            let (a, b) = r.split_whitespace().next()?.split_once(':')?;
+            Some((a.parse::<f64>().ok()?, b.parse::<f64>().ok()?))
+        });
+        let width = match sar {
+            Some((a, b)) if a > 0.0 && b > 0.0 => ((w as f64 * a / b) / 2.0).round() as u32 * 2,
+            _ => w,
+        };
+        Some((duration_ms, (width, h)))
+    }
+
+    fn frame_at(ffmpeg: &Path, path: &Path, seconds: f64) -> Option<DynamicImage> {
+        let scale = format!(
+            "scale=trunc(iw*sar/2)*2:ih,setsar=1,scale={e}:{e}:force_original_aspect_ratio=decrease",
+            e = FRAME_EDGE
+        );
+        let out = crate::ffmpeg::ffmpeg_command(ffmpeg)
+            .args(["-noautorotate", "-ss", &format!("{seconds:.3}"), "-i"])
+            .arg(path)
+            .args(["-frames:v", "1", "-vf", &scale, "-f", "image2pipe", "-c:v", "png", "-"])
+            .stderr(Stdio::null())
+            .output()
+            .ok()?;
+        image::load_from_memory_with_format(&out.stdout, ImageFormat::Png).ok()
+    }
+
+    pub fn grab(ffmpeg: &Path, path: &Path) -> Option<(Vec<DynamicImage>, u64, (u32, u32))> {
+        let (duration_ms, size) = probe(ffmpeg, path)?;
+        let frames: Vec<DynamicImage> = positions_for(duration_ms)
+            .iter()
+            .filter_map(|f| frame_at(ffmpeg, path, duration_ms as f64 * f / 1000.0))
+            .collect();
+        (!frames.is_empty()).then_some((frames, duration_ms, size))
     }
 }
 

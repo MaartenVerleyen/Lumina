@@ -55,6 +55,28 @@ pub struct FfmpegDownloadProgress {
     pub done: bool,
 }
 
+// Linux and macOS: no download, the system's ffmpeg is used (the server's Docker image includes it)
+#[cfg(not(windows))]
+async fn ensure_ffmpeg(_app: &dyn Host) -> Result<PathBuf, String> {
+    system_ffmpeg().ok_or_else(|| "ffmpeg is not installed: install it with your package manager".to_string())
+}
+
+#[cfg(not(windows))]
+pub fn system_ffmpeg() -> Option<PathBuf> {
+    static FOUND: LazyLock<Option<PathBuf>> = LazyLock::new(|| {
+        let path = PathBuf::from(std::env::var_os("LUMINA_FFMPEG").unwrap_or_else(|| "ffmpeg".into()));
+        let works = Command::new(&path)
+            .arg("-version")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success());
+        works.then_some(path)
+    });
+    FOUND.clone()
+}
+
+#[cfg(windows)]
 async fn ensure_ffmpeg(app: &dyn Host) -> Result<PathBuf, String> {
     let target = ffmpeg_path(app);
     let check = target.clone();
@@ -125,7 +147,7 @@ async fn ensure_ffmpeg(app: &dyn Host) -> Result<PathBuf, String> {
     Ok(target)
 }
 
-fn ffmpeg_command(ffmpeg: &Path) -> Command {
+pub(crate) fn ffmpeg_command(ffmpeg: &Path) -> Command {
     let mut cmd = Command::new(ffmpeg);
     cmd.args(["-hide_banner", "-nostdin", "-loglevel", "error"]);
     #[cfg(windows)]
@@ -333,6 +355,14 @@ pub fn grab_frame_with_ffmpeg(ffmpeg: &Path, source: &Path, out: &Path) -> Optio
 
 // The checked ffmpeg, if it is installed (for background work that must not start a download)
 pub fn installed_ffmpeg(app: &dyn Host) -> Option<PathBuf> {
-    let path = ffmpeg_path(app);
-    ffmpeg_ready(&path).then_some(path)
+    #[cfg(not(windows))]
+    {
+        let _ = app;
+        system_ffmpeg()
+    }
+    #[cfg(windows)]
+    {
+        let path = ffmpeg_path(app);
+        ffmpeg_ready(&path).then_some(path)
+    }
 }

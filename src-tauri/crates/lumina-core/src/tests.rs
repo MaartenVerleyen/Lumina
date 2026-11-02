@@ -2072,3 +2072,93 @@ fn migrate_db_copy() {
         .unwrap();
     assert_eq!(mismatched, 0);
 }
+
+// The ffmpeg frame grabber (Linux) against Media Foundation (Windows) on the same videos: same length, size
+// and number of frames. The frames themselves are only reported: Media Foundation lands near the position,
+// ffmpeg exactly on it, which in a fast-cut video can be another shot (see ffmpeg_frames_side_by_side).
+//   set LUMINA_DIAG_DIR=<folder with videos>  set LUMINA_FFMPEG_EXE=<ffmpeg.exe>
+//   cargo test --lib ffmpeg_frames_match_media_foundation -- --ignored --nocapture
+#[cfg(windows)]
+#[test]
+#[ignore]
+fn ffmpeg_frames_match_media_foundation() {
+    let dir = std::env::var("LUMINA_DIAG_DIR").expect("LUMINA_DIAG_DIR");
+    let ffmpeg = PathBuf::from(std::env::var("LUMINA_FFMPEG_EXE").expect("LUMINA_FFMPEG_EXE"));
+    let videos: Vec<PathBuf> = WalkDir::new(&dir)
+        .into_iter()
+        .flatten()
+        .map(|e| e.into_path())
+        .filter(|p| video_meta::is_video_path(p))
+        .collect();
+    assert!(!videos.is_empty());
+    for v in videos {
+        let name = v.file_name().unwrap().to_string_lossy().to_string();
+        let started = Instant::now();
+        let mf = video_frames::grab_frames(&v, 0);
+        let mf_ms = started.elapsed().as_millis();
+        let started = Instant::now();
+        let ff = video_frames::ff::grab(&ffmpeg, &v);
+        let ff_ms = started.elapsed().as_millis();
+        let (Some(mf), Some((frames, duration_ms, size))) = (mf, ff) else {
+            panic!("{name}: a grabber failed");
+        };
+        let diff = |a: &DynamicImage, b: &DynamicImage| -> f64 {
+            let (a, b) = (a.thumbnail_exact(32, 32).to_luma8(), b.thumbnail_exact(32, 32).to_luma8());
+            a.pixels().zip(b.pixels()).map(|(x, y)| (x.0[0] as f64 - y.0[0] as f64).abs()).sum::<f64>() / 1024.0
+        };
+        let diffs: Vec<f64> = mf.frames.iter().zip(&frames).map(|(a, b)| diff(a, b)).collect();
+        eprintln!(
+            "{name}: MF {}x{} {} ms {} frames ({mf_ms} ms) | ffmpeg {}x{} {} ms {} frames ({ff_ms} ms) | luma diff {:?}",
+            mf.width, mf.height, mf.duration_ms, mf.frames.len(), size.0, size.1, duration_ms, frames.len(),
+            diffs.iter().map(|d| d.round()).collect::<Vec<_>>()
+        );
+        assert_eq!((mf.width, mf.height), size, "{name}: size");
+        assert!(mf.duration_ms.abs_diff(duration_ms) < 1000, "{name}: length");
+        assert_eq!(mf.frames.len(), frames.len(), "{name}: frames");
+        assert_eq!(mf.frames[0].dimensions(), frames[0].dimensions(), "{name}: frame size");
+    }
+}
+
+// Writes each grabber's frames of LUMINA_DIAG_FILE side by side into LUMINA_DIAG_OUT (a PNG), to compare by eye
+#[cfg(windows)]
+#[test]
+#[ignore]
+fn ffmpeg_frames_side_by_side() {
+    let file = PathBuf::from(std::env::var("LUMINA_DIAG_FILE").expect("LUMINA_DIAG_FILE"));
+    let ffmpeg = PathBuf::from(std::env::var("LUMINA_FFMPEG_EXE").expect("LUMINA_FFMPEG_EXE"));
+    let out = std::env::var("LUMINA_DIAG_OUT").expect("LUMINA_DIAG_OUT");
+    let mf = video_frames::grab_frames(&file, 0).unwrap().frames;
+    let (ff, _, _) = video_frames::ff::grab(&ffmpeg, &file).unwrap();
+    let (w, h) = (320u32, 180u32);
+    let mut sheet = image::RgbImage::new(w * mf.len() as u32, h * 2);
+    for (row, frames) in [&mf, &ff].into_iter().enumerate() {
+        for (i, f) in frames.iter().enumerate() {
+            image::imageops::overlay(&mut sheet, &f.thumbnail_exact(w, h).to_rgb8(), (i as u32 * w) as i64, (row as u32 * h) as i64);
+        }
+    }
+    sheet.save(out).unwrap();
+}
+
+// HEIC through ffmpeg (Linux) against WIC (Windows): same size and orientation, near-identical pixels.
+//   set LUMINA_DIAG_FILE=<a .heic>  set LUMINA_FFMPEG_EXE=<ffmpeg.exe>
+#[cfg(windows)]
+#[test]
+#[ignore]
+fn ffmpeg_heic_matches_wic() {
+    let file = PathBuf::from(std::env::var("LUMINA_DIAG_FILE").expect("LUMINA_DIAG_FILE"));
+    let ffmpeg = PathBuf::from(std::env::var("LUMINA_FFMPEG_EXE").expect("LUMINA_FFMPEG_EXE"));
+    let started = Instant::now();
+    let (wic, orientation) = decode::decode_via_windows_wic(&file, 1920).expect("WIC (HEIF/HEVC extensions installed?)");
+    let wic_ms = started.elapsed().as_millis();
+    let started = Instant::now();
+    let ff = decode::decode_with_ffmpeg(&ffmpeg, &file, 1920).expect("ffmpeg");
+    let ff_ms = started.elapsed().as_millis();
+    let diff = {
+        let (a, b) = (wic.thumbnail_exact(64, 64).to_luma8(), ff.thumbnail_exact(64, 64).to_luma8());
+        a.pixels().zip(b.pixels()).map(|(x, y)| (x.0[0] as f64 - y.0[0] as f64).abs()).sum::<f64>() / 4096.0
+    };
+    eprintln!("WIC {:?} orientation {orientation} ({wic_ms} ms) | ffmpeg {:?} ({ff_ms} ms) | luma diff {diff:.1}", wic.dimensions(), ff.dimensions());
+    assert_eq!(orientation, 1);
+    assert_eq!(wic.dimensions(), ff.dimensions());
+    assert!(diff < 4.0);
+}
