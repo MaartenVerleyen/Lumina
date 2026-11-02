@@ -63,21 +63,6 @@ pub fn remove_face_box(app: AppHandle, face_id: String, hash: String) -> Result<
     Ok(get_faces_for_hash(&conn, &hash))
 }
 
-#[derive(Serialize, Clone)]
-pub struct SimilarFaceCandidate {
-    pub face_id: String,
-    pub hash: String,
-    pub face_thumb: String,
-    pub photo_name: String,
-    pub photo_path: String,
-    pub bbox_x: f64,
-    pub bbox_y: f64,
-    pub bbox_w: f64,
-    pub bbox_h: f64,
-    pub current_person: Option<String>,
-    pub similarity: f32,
-}
-
 pub fn format_display_photo_path(
     face_id: &str,
     photo_path: String,

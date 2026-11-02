@@ -435,7 +435,7 @@ fn sha256_matches_known_vector_and_handles_missing_files() {
 
 #[test]
 fn embedding_blob_round_trips() {
-    use crate::face_ort::{blob_to_embedding, embedding_to_blob};
+    use crate::face_engine::{blob_to_embedding, embedding_to_blob};
     let v: Vec<f32> = (0..512).map(|i| (i as f32 * 0.37).sin()).collect();
     let blob = embedding_to_blob(&v);
     assert_eq!(blob.len(), 512 * 4);

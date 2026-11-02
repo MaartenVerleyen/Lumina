@@ -10,9 +10,6 @@ use std::sync::OnceLock;
 // otherwise on the CPU with the same models, so embeddings never depend on the device.
 // Pre/post-processing follows InsightFace's reference implementation (scrfd.py, arcface_onnx.py, face_align.py).
 
-// Stored with every embedding: vectors from different engines must never be compared
-pub const FACE_ENGINE_V2: &str = "scrfd10g-arcface_r50-aligned-v1";
-
 pub const DETECTOR_FILE: &str = "det_10g.onnx";
 pub const EMBEDDER_FILE: &str = "w600k_r50.onnx";
 // SHA-256 of the files in InsightFace's official buffalo_l release (v0.7)
@@ -544,15 +541,6 @@ pub fn loaded_face_models_v2() -> Option<Arc<FaceModels>> {
 }
 
 // ----------------- APP INTEGRATION -----------------
-
-// Embeddings are stored as little-endian f32 bytes (2 KB per face instead of ~6 KB of JSON text)
-pub fn embedding_to_blob(embedding: &[f32]) -> Vec<u8> {
-    embedding.iter().flat_map(|v| v.to_le_bytes()).collect()
-}
-
-pub fn blob_to_embedding(blob: &[u8]) -> Vec<f32> {
-    blob.chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect()
-}
 
 // 96px face thumbnail from a box enlarged by 30%, so the UI shows the whole head rather than a tight crop
 pub fn face_thumbnail(img: &DynamicImage, bbox: (f64, f64, f64, f64)) -> image::RgbImage {

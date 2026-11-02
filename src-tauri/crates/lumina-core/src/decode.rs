@@ -1,5 +1,8 @@
 use crate::*;
 
+// Numbers the temporary files of Windows Imaging Component decodes, so parallel ones never collide
+static WIC_COUNTER: AtomicUsize = AtomicUsize::new(1);
+
 pub fn read_exif_orientation_from_bytes(bytes: &[u8]) -> Option<u32> {
     let mut cursor = Cursor::new(bytes);
     let exifreader = Reader::new();
@@ -471,52 +474,43 @@ pub fn open_and_orient_image_sized(file_path: &Path, min_edge: u32) -> Result<Dy
     decode_standard_or_recover(file_path, min_edge).map(|(img, _)| img)
 }
 
+// The 1920px preview for RAW & HEIC, made on demand when a photo is viewed in Loupe / Compare
+pub fn ensure_high_res_preview(host: &dyn Host, hash: &str, source_path: &str) -> Result<String, String> {
+    let app = host;
+    let previews_dir = get_app_storage_dir(app).join("previews");
+    let _ = fs::create_dir_all(&previews_dir);
+    let preview_file = previews_dir.join(format!("{}_preview.jpg", hash));
 
-// On-Demand 1920px High-Res Preview Generator for RAW & HEIC (only called when viewing a photo in Loupe / Compare!)
-#[tauri::command]
-pub async fn ensure_high_res_preview(
-    app: AppHandle,
-    hash: String,
-    source_path: String,
-) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let previews_dir = get_app_storage_dir(&app).join("previews");
-        let _ = fs::create_dir_all(&previews_dir);
-        let preview_file = previews_dir.join(format!("{}_preview.jpg", hash));
+    if preview_file.exists() && preview_file.metadata().map(|m| m.len() > 1024).unwrap_or(false) {
+        return Ok(preview_file.to_string_lossy().to_string());
+    }
 
-        if preview_file.exists() && preview_file.metadata().map(|m| m.len() > 1024).unwrap_or(false) {
-            return Ok(preview_file.to_string_lossy().to_string());
-        }
+    let preview_started = Instant::now();
+    let src = Path::new(source_path);
+    let img = open_and_orient_image(src)?;
+    let decode_ms = elapsed_ms(preview_started);
+    let (w, h) = img.dimensions();
+    let scaled = if w > 1920 || h > 1920 {
+        img.thumbnail(1920, 1920)
+    } else {
+        img
+    };
+    scaled
+        .to_rgb8()
+        .save(&preview_file)
+        .map_err(|e| e.to_string())?;
 
-        let preview_started = Instant::now();
-        let src = Path::new(&source_path);
-        let img = open_and_orient_image(src)?;
-        let decode_ms = elapsed_ms(preview_started);
-        let (w, h) = img.dimensions();
-        let scaled = if w > 1920 || h > 1920 {
-            img.thumbnail(1920, 1920)
-        } else {
-            img
-        };
-        scaled
-            .to_rgb8()
-            .save(&preview_file)
-            .map_err(|e| e.to_string())?;
+    let ext = src
+        .extension()
+        .map(|e| e.to_string_lossy().to_uppercase())
+        .unwrap_or_default();
+    emit_perf(
+        app,
+        &format!("1920px preview ({ext})"),
+        preview_started,
+        1,
+        format!("decode {decode_ms} ms · source {w}x{h}"),
+    );
 
-        let ext = src
-            .extension()
-            .map(|e| e.to_string_lossy().to_uppercase())
-            .unwrap_or_default();
-        emit_perf(
-            &app,
-            &format!("1920px preview ({ext})"),
-            preview_started,
-            1,
-            format!("decode {decode_ms} ms · source {w}x{h}"),
-        );
-
-        Ok(preview_file.to_string_lossy().to_string())
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    Ok(preview_file.to_string_lossy().to_string())
 }

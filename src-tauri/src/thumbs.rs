@@ -9,8 +9,6 @@ use std::time::Duration;
 
 const UI_BATCH_SIZE: usize = 48;
 
-// Grid thumbnails: 480 px stays sharp on large cards and HiDPI screens
-pub const THUMB_EDGE: u32 = 480;
 // dHash and focus scores are measured at 360 px, the size they were tuned on, whatever the thumbnail size
 const METRICS_EDGE: u32 = 360;
 const UI_BATCH_MAX_WAIT: Duration = Duration::from_millis(250);

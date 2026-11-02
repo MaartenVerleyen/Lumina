@@ -46,6 +46,7 @@ pub fn frame_of_face(face_id: &str) -> Option<usize> {
 // writes new frames and thumbnails. Returns whether it happened.
 const FRAMES_VERSION: &str = "2";
 
+// True when old frames were removed: the caller forgets the smart search vectors made from them
 pub fn refresh_outdated_frames(frames_dir: &Path, conn: &Connection) -> bool {
     let marker = frames_dir.join("version");
     if fs::read_to_string(&marker).ok().as_deref() == Some(FRAMES_VERSION) {
@@ -58,7 +59,6 @@ pub fn refresh_outdated_frames(frames_dir: &Path, conn: &Connection) -> bool {
         }
     }
     let _ = conn.execute("DELETE FROM photo_clip_frames", []);
-    crate::clip::forget_frame_vectors();
     let _ = fs::write(&marker, FRAMES_VERSION);
     true
 }

@@ -190,3 +190,6 @@ pub fn is_likely_screenshot(
 
     false
 }
+
+// Grid thumbnails: 480 px stays sharp on large cards and HiDPI screens
+pub const THUMB_EDGE: u32 = 480;

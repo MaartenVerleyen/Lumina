@@ -1,5 +1,17 @@
 use crate::*;
 
+// Stored with every embedding: vectors from different engines must never be compared
+pub const FACE_ENGINE_V2: &str = "scrfd10g-arcface_r50-aligned-v1";
+
+// Embeddings are stored as little-endian f32 bytes (2 KB per face instead of ~6 KB of JSON text)
+pub fn embedding_to_blob(embedding: &[f32]) -> Vec<u8> {
+    embedding.iter().flat_map(|v| v.to_le_bytes()).collect()
+}
+
+pub fn blob_to_embedding(blob: &[u8]) -> Vec<f32> {
+    blob.chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect()
+}
+
 pub static FACE_EMBEDDING_CACHE: LazyLock<Mutex<HashMap<String, Vec<f32>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 pub static EMBEDDING_CACHE_WARMED: AtomicBool = AtomicBool::new(false);
@@ -56,7 +68,6 @@ pub struct FaceMatchConfig {
     pub strong_similarity_percent: f32,
 }
 
-#[tauri::command]
 pub fn get_face_match_config() -> FaceMatchConfig {
     FaceMatchConfig {
         min_similarity_percent: FACE_MATCH_MIN_SIMILARITY * 100.0,

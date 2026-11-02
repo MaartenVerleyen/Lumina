@@ -1058,6 +1058,7 @@ pub async fn scan_folder(
         // A video has no dHash: it needs its frames instead
         let frames_dir = video_frames::frames_dir(&app_dir);
         if video_frames::refresh_outdated_frames(&frames_dir, &conn) {
+            clip::forget_frame_vectors();
             eprintln!("[scan] video frames from an older version removed; they are made again");
         }
         let needs_processing: Vec<PhotoItem> = photos

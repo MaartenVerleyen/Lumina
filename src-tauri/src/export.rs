@@ -244,6 +244,7 @@ pub async fn export_photos(app: AppHandle, options: ExportOptions) -> Result<Exp
 #[cfg(test)]
 mod tests {
     use super::*;
+    use exif::{Reader, Tag};
 
     fn encoded_with_exif(strip_gps: bool) -> Vec<u8> {
         let img = DynamicImage::ImageRgb8(image::RgbImage::new(64, 48));
@@ -321,7 +322,7 @@ fn export_real_files() {
         export_one(&src, &target, &opts).unwrap();
         let bytes = fs::read(&target).unwrap();
         let img = image::load_from_memory(&bytes).unwrap();
-        let exif = Reader::new().read_from_container(&mut Cursor::new(&bytes)).unwrap();
+        let exif = exif::Reader::new().read_from_container(&mut Cursor::new(&bytes)).unwrap();
         eprintln!(
             "{ext}: {} -> {}x{} in {} ms · {} KB · GPS {}",
             src.name,
@@ -329,7 +330,7 @@ fn export_real_files() {
             img.height(),
             t.elapsed().as_millis(),
             bytes.len() / 1024,
-            if exif.get_field(Tag::GPSLatitude, exif::In::PRIMARY).is_some() { "PRESENT" } else { "removed" }
+            if exif.get_field(exif::Tag::GPSLatitude, exif::In::PRIMARY).is_some() { "PRESENT" } else { "removed" }
         );
         assert!(img.width().max(img.height()) <= 2048);
     }

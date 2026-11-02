@@ -2985,6 +2985,7 @@ version = "4.2.0"
 dependencies = [
  "blake3",
  "image",
+ "jpeg-decoder",
  "kamadak-exif",
  "rayon",
  "reverse_geocoder",
@@ -2992,7 +2993,9 @@ dependencies = [
  "serde",
  "serde_json",
  "tauri",
+ "trash",
  "windows",
+ "windows-core",
 ]
 
 [[package]]
