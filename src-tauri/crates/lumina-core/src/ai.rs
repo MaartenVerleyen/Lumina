@@ -731,6 +731,163 @@ pub async fn ai_analyze_photo(app: SharedHost, hash: String, image_path_for_ai: 
     Ok(stored)
 }
 
+// ---------- Batch AI ----------
+
+#[derive(Serialize, Clone)]
+pub struct AiBatchItem {
+    pub hash: String,
+    pub result: AiAnalysisResult,
+}
+
+#[derive(Serialize, Clone)]
+pub struct AiBatchFailure {
+    pub hash: String,
+    pub error: String,
+    pub attempts: u32,
+}
+
+// "ai-batch-progress": counts, the file being analysed, and the results since the previous event
+#[derive(Serialize, Clone)]
+pub struct AiBatchProgress {
+    pub current: usize,
+    pub total: usize,
+    pub succeeded: usize,
+    pub failed: usize,
+    pub current_file: String,
+    // The photo being analysed now ("" between photos and at the end)
+    pub current_hash: String,
+    pub results: Vec<AiBatchItem>,
+    pub done: bool,
+}
+
+#[derive(Serialize, Clone)]
+pub struct AiBatchSummary {
+    pub completed: usize,
+    pub succeeded: usize,
+    pub failures: Vec<AiBatchFailure>,
+    pub stopped: bool,
+    pub elapsed_ms: u64,
+}
+
+static AI_BATCH_RUNNING: AtomicBool = AtomicBool::new(false);
+const AI_BATCH_ATTEMPTS: u32 = 3;
+// Results reach the window in batches instead of one re-render per photo
+const AI_BATCH_FLUSH: std::time::Duration = std::time::Duration::from_millis(500);
+
+// The library's most frequent tags, offered to the model so the same subject gets the same tag across photos
+pub fn top_library_tags(conn: &Connection, max: usize) -> Vec<String> {
+    let Ok(mut stmt) = conn.prepare(
+        "SELECT tag FROM photo_tags WHERE tag != 'screenshot' GROUP BY tag ORDER BY COUNT(*) DESC, tag LIMIT ?1",
+    ) else {
+        return Vec::new();
+    };
+    stmt.query_map(params![max as i64], |r| r.get(0)).map(|rows| rows.flatten().collect()).unwrap_or_default()
+}
+
+// Captions, tags and text for `hashes`, one photo at a time (Ollama runs vision requests one by one), with the
+// next photo's image prepared while the current one is analysed and up to three attempts per photo.
+// Stop is `cancel_ai_analysis`. Videos and photos no longer in the library are skipped.
+pub async fn run_caption_batch(app: SharedHost, hashes: Vec<String>, model_name: String) -> Result<AiBatchSummary, String> {
+    if AI_BATCH_RUNNING.swap(true, Ordering::AcqRel) {
+        return Err("Batch AI is already running".to_string());
+    }
+    struct Running;
+    impl Drop for Running {
+        fn drop(&mut self) {
+            AI_BATCH_RUNNING.store(false, Ordering::Release);
+        }
+    }
+    let _running = Running;
+
+    let started = Instant::now();
+    let cancel_generation = AI_CANCEL_GENERATION.load(Ordering::Acquire);
+    let lookup = app.clone();
+    let (targets, existing_tags) = tokio::task::spawn_blocking(move || -> Result<_, String> {
+        let conn = open_global_db(&lookup)?;
+        let mut stmt = conn
+            .prepare("SELECT current_path FROM photos WHERE hash = ?1 AND COALESCE(media_type, 'photo') != 'video'")
+            .map_err(|e| e.to_string())?;
+        let targets: Vec<(String, String)> = hashes
+            .into_iter()
+            .filter_map(|h| {
+                let path: String = stmt.query_row(params![h], |r| r.get(0)).ok()?;
+                Some((h, path))
+            })
+            .collect();
+        Ok((targets, top_library_tags(&conn, 40)))
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+
+    let total = targets.len();
+    let name_of = |path: &str| Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let mut summary = AiBatchSummary { completed: 0, succeeded: 0, failures: Vec::new(), stopped: false, elapsed_ms: 0 };
+    let mut pending: Vec<AiBatchItem> = Vec::new();
+    let mut last_flush = Instant::now();
+    let cancelled = || AI_CANCEL_GENERATION.load(Ordering::Acquire) != cancel_generation;
+    let progress = |summary: &AiBatchSummary, current: Option<&(String, String)>, results: Vec<AiBatchItem>, done: bool| AiBatchProgress {
+        current: summary.completed,
+        total,
+        succeeded: summary.succeeded,
+        failed: summary.failures.len(),
+        current_file: current.map(|(_, path)| name_of(path)).unwrap_or_default(),
+        current_hash: current.map(|(hash, _)| hash.clone()).unwrap_or_default(),
+        results,
+        done,
+    };
+
+    for (i, target) in targets.iter().enumerate() {
+        let (hash, path) = target;
+        if cancelled() {
+            summary.stopped = true;
+            break;
+        }
+        if let Some((next_hash, next_path)) = targets.get(i + 1) {
+            tokio::spawn(prepare_ai_image(app.clone(), next_hash.clone(), next_path.clone()));
+        }
+        emit_to(&app, "ai-batch-progress", progress(&summary, Some(target), Vec::new(), false));
+
+        let mut attempts = 0;
+        let mut outcome = Err(String::new());
+        while attempts < AI_BATCH_ATTEMPTS && outcome.is_err() && !cancelled() {
+            attempts += 1;
+            outcome = ai_analyze_photo(app.clone(), hash.clone(), path.clone(), model_name.clone(), existing_tags.clone()).await;
+            if let Err(e) = &outcome {
+                if e.contains(AI_CANCELLED) {
+                    break;
+                }
+                if attempts < AI_BATCH_ATTEMPTS {
+                    tokio::time::sleep(std::time::Duration::from_millis(450 * attempts as u64)).await;
+                }
+            }
+        }
+        if cancelled() {
+            summary.stopped = true;
+            break;
+        }
+        match outcome {
+            Ok(result) => {
+                summary.succeeded += 1;
+                pending.push(AiBatchItem { hash: hash.clone(), result });
+            }
+            Err(error) => summary.failures.push(AiBatchFailure {
+                hash: hash.clone(),
+                error: if error.is_empty() { "Unknown AI error".to_string() } else { error },
+                attempts,
+            }),
+        }
+        summary.completed += 1;
+        if last_flush.elapsed() >= AI_BATCH_FLUSH {
+            emit_to(&app, "ai-batch-progress", progress(&summary, None, std::mem::take(&mut pending), false));
+            last_flush = Instant::now();
+        }
+    }
+
+    summary.elapsed_ms = elapsed_ms(started);
+    emit_to(&app, "ai-batch-progress", progress(&summary, None, pending, true));
+    Ok(summary)
+}
+
 // The model sometimes "transcribes" the photo by repeating its own caption when there is no text
 pub fn ocr_repeats_caption(ocr: &str, caption: &str) -> bool {
     let norm = |s: &str| {

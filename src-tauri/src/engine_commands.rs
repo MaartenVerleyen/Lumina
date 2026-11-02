@@ -508,3 +508,8 @@ pub fn set_person_cover(app: AppHandle, name: String, face_id: String) -> Result
 pub fn watch_library(app: AppHandle, root: Option<String>) -> Result<(), String> {
     watch::watch_library(Arc::new(app), root)
 }
+
+#[tauri::command]
+pub async fn run_caption_batch(app: AppHandle, hashes: Vec<String>, model_name: String) -> Result<ai::AiBatchSummary, String> {
+    ai::run_caption_batch(Arc::new(app), hashes, model_name).await
+}

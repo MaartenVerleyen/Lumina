@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { confirmDialog } from "../../confirm";
-import { PhotoItem, OllamaStatus, AiAnalysisResult, AiPerf, OllamaPullProgress, AiFailureItem, AiBatchReport } from "../../types/lumina";
+import { PhotoItem, OllamaStatus, AiAnalysisResult, AiPerf, OllamaPullProgress, AiFailureItem, AiBatchReport, AiBatchProgressEvent, AiBatchSummary } from "../../types/lumina";
 import { diskPathOf } from "../../utils/rawPairs";
 import { isVideo, photosOnly } from "../../utils/media";
 import { AI_CANCELLED, PULL_CANCELLED, summarizeAiPerf, topLibraryTags } from "./shared";
@@ -181,9 +181,9 @@ export function useAi(core: LibraryCore) {
     } catch {}
   }
 
-  // Batch AI runner: one request at a time (qwen3-vl can't run requests in parallel in Ollama), with the next
-  // photo's image prepared while the current one is analysed, retries for real failures, and batched UI updates.
-  // Photos that already have AI results are skipped unless the user chooses to re-analyse them.
+  // Batch AI runs in the engine (`run_caption_batch`): one request at a time, the next photo's image prepared
+  // while the current one is analysed, retries for real failures. Results arrive in batches with its progress
+  // events. Photos that already have AI results are skipped unless the user chooses to re-analyse them.
   async function runBatchAiOnList(requested: PhotoItem[], options: { reanalyze?: boolean } = {}) {
     requested = photosOnly(requested);
     if (aiBatchProgress || requested.length === 0) return;
@@ -199,7 +199,9 @@ export function useAi(core: LibraryCore) {
         const fresh = requested.length - analyzed.length;
         const redo = await confirmDialog(
           fresh > 0
-            ? `${analyzed.length} of these ${requested.length} photos already have AI results. Analyse those again as well? Their caption, text and tags will be replaced.\n\nChoose "Only new photos" to analyse just the ${fresh} photo(s) without results.`
+            ? `${analyzed.length} of these ${requested.length} photos already have AI results. Analyse those again as well? Their caption, text and tags will be replaced.
+
+Choose "Only new photos" to analyse just the ${fresh} photo(s) without results.`
             : `All ${requested.length} photo(s) already have AI results. Analyse them again? Their caption, text and tags will be replaced.`,
           {
             title: "Batch AI",
@@ -223,117 +225,68 @@ export function useAi(core: LibraryCore) {
       currentFile: targets[0]?.name,
       startedAt: Date.now(),
     });
-
     addLog("AI", `Started Batch AI on ${targets.length} photo(s) using ${aiModel}`);
 
-    const batchStartedAt = performance.now();
     const batchPerfs: AiPerf[] = [];
-    let completedCount = 0;
-    let succeededCount = 0;
-    let stopped = false;
-    const failures: AiFailureItem[] = [];
-    const MAX_ATTEMPTS = 3;
-
-    // Results reach the grid in batches (every ~0.5 s) instead of one full re-render per photo
-    const pending = new Map<string, AiAnalysisResult>();
-    let lastFlush = performance.now();
-    const flush = () => {
-      applyAiResults(new Map(pending));
-      pending.clear();
-      lastFlush = performance.now();
-    };
-
-    for (let i = 0; i < targets.length; i++) {
-      if (cancelBatchRef.current) break;
-      const photo = targets[i];
-
-      // Prepare the next photo's 896px image while Ollama works on this one
-      const next = targets[i + 1];
-      if (next) {
-        invoke("prepare_ai_image", { hash: next.hash, imagePath: diskPathOf(next) }).catch(() => {});
+    const unlisten = await listen<AiBatchProgressEvent>("ai-batch-progress", (event) => {
+      const prog = event.payload;
+      if (prog.results.length > 0) {
+        for (const item of prog.results) batchPerfs.push(item.result.perf);
+        applyAiResults(new Map(prog.results.map((item) => [item.hash, item.result])));
       }
-
-      setAnalyzingHashes((prev) => new Set(prev).add(photo.hash));
-      setAiBatchProgress((p) => (p ? { ...p, currentFile: photo.name } : p));
-
-      let attempt = 0;
-      let success = false;
-      let lastErr = "";
-
-      while (attempt < MAX_ATTEMPTS && !success && !cancelBatchRef.current) {
-        attempt++;
-        try {
-          const res = await invoke<AiAnalysisResult>("ai_analyze_photo", {
-            hash: photo.hash,
-            imagePathForAi: diskPathOf(photo),
-            modelName: aiModel,
-            existingTags: topLibraryTags(photosRef.current),
-          });
-          success = true;
-          succeededCount++;
-          batchPerfs.push(res.perf);
-          pending.set(photo.hash, res);
-        } catch (err) {
-          lastErr = String(err);
-          if (lastErr.includes(AI_CANCELLED)) {
-            stopped = true;
-            break;
-          }
-          if (attempt < MAX_ATTEMPTS && !cancelBatchRef.current) {
-            await new Promise((r) => setTimeout(r, 450 * attempt));
-          }
-        }
-      }
-
-      setAnalyzingHashes((prev) => {
-        const nextSet = new Set(prev);
-        nextSet.delete(photo.hash);
-        return nextSet;
-      });
-      if (stopped || cancelBatchRef.current) break;
-
-      if (!success) {
-        failures.push({
-          photo,
-          error: lastErr || "Unknown AI error",
-          attempts: attempt,
-        });
-      }
-
-      completedCount++;
+      setAnalyzingHashes(prog.current_hash ? new Set([prog.current_hash]) : new Set());
       setAiBatchProgress((p) =>
-        p ? { ...p, current: completedCount, succeeded: succeededCount, failed: failures.length } : p
+        p
+          ? {
+              ...p,
+              current: prog.current,
+              succeeded: prog.succeeded,
+              failed: prog.failed,
+              currentFile: prog.current_file || p.currentFile,
+            }
+          : p
       );
-      if (performance.now() - lastFlush >= 500) flush();
+    });
+
+    let summary: AiBatchSummary | null = null;
+    try {
+      summary = await invoke<AiBatchSummary>("run_caption_batch", {
+        hashes: targets.map((p) => p.hash),
+        modelName: aiModel,
+      });
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      unlisten();
+      setAnalyzingHashes(new Set());
+      setAiBatchProgress(null);
     }
+    if (!summary) return;
 
-    flush();
-    setAnalyzingHashes(new Set());
-    setAiBatchProgress(null);
-
-    const wasStopped = stopped || cancelBatchRef.current;
+    const byHash = new Map(targets.map((p) => [p.hash, p]));
+    const failures: AiFailureItem[] = summary.failures.flatMap((f) => {
+      const photo = byHash.get(f.hash);
+      return photo ? [{ photo, error: f.error, attempts: f.attempts }] : [];
+    });
     addLog(
       "AI",
-      wasStopped
-        ? `Stopped Batch AI after ${completedCount} of ${targets.length} photo(s): ${succeededCount} succeeded, ${failures.length} failed`
-        : `Finished Batch AI: ${succeededCount} succeeded, ${failures.length} failed`
+      summary.stopped
+        ? `Stopped Batch AI after ${summary.completed} of ${targets.length} photo(s): ${summary.succeeded} succeeded, ${failures.length} failed`
+        : `Finished Batch AI: ${summary.succeeded} succeeded, ${failures.length} failed`
     );
 
     if (batchPerfs.length > 0) {
-      const wallSeconds = (performance.now() - batchStartedAt) / 1000;
-      const perMinute = (succeededCount / (wallSeconds / 60)).toFixed(1);
+      const wallSeconds = summary.elapsed_ms / 1000;
+      const perMinute = (summary.succeeded / (wallSeconds / 60)).toFixed(1);
       addLog(
         "PERF",
-        `Batch AI (${aiModel}): ${succeededCount} photos in ${wallSeconds.toFixed(1)} s · ${perMinute} photos/min`,
+        `Batch AI (${aiModel}): ${summary.succeeded} photos in ${wallSeconds.toFixed(1)} s · ${perMinute} photos/min`,
         summarizeAiPerf(batchPerfs)
       );
     }
 
     if (targets.length > 1 || failures.length > 0) {
-      setAiBatchReport({
-        succeededCount,
-        failures,
-      });
+      setAiBatchReport({ succeededCount: summary.succeeded, failures });
     }
   }
 

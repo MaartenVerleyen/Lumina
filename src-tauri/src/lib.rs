@@ -121,6 +121,7 @@ pub fn run() {
             engine_commands::ai_analyze_photo,
             engine_commands::prepare_ai_image,
             engine_commands::cancel_ai_analysis,
+            engine_commands::run_caption_batch,
             engine_commands::ollama_tuning_status,
             engine_commands::enable_ollama_flash_attention,
             engine_commands::check_ollama_status,

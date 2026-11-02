@@ -279,6 +279,26 @@ export interface AiFailureItem {
   attempts: number;
 }
 
+// "ai-batch-progress" from the engine's batch runner; `results` are the photos finished since the last event
+export interface AiBatchProgressEvent {
+  current: number;
+  total: number;
+  succeeded: number;
+  failed: number;
+  current_file: string;
+  current_hash: string;
+  results: { hash: string; result: AiAnalysisResult }[];
+  done: boolean;
+}
+
+export interface AiBatchSummary {
+  completed: number;
+  succeeded: number;
+  failures: { hash: string; error: string; attempts: number }[];
+  stopped: boolean;
+  elapsed_ms: number;
+}
+
 export interface AiBatchReport {
   succeededCount: number;
   failures: AiFailureItem[];
