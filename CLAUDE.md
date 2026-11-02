@@ -102,7 +102,7 @@ Windows-only code paths and their Linux counterparts (all in lumina-core):
 
 | What | Windows | Linux |
 | :--- | :--- | :--- |
-| GPU for ONNX models | DirectML | CUDA (`ort` feature `cuda`), CPU fallback; log says `GPU (CUDA)` or `CPU (GPU unavailable: …)` |
+| GPU for ONNX models | DirectML | CUDA 13 + cuDNN 9 (`ort` feature `cuda`; Arch: `pacman -S cuda cudnn`), CPU fallback; log says `GPU (CUDA)` or `CPU (GPU unavailable: …)` |
 | Video frames | Media Foundation (`video_frames::mf`) | ffmpeg (`video_frames::ff`) |
 | HEIC | WIC | ffmpeg (`decode::decode_with_ffmpeg`) |
 | ffmpeg | downloaded, SHA-256 pinned | the system's (`ffmpeg::system_ffmpeg`) |
@@ -110,8 +110,14 @@ Windows-only code paths and their Linux counterparts (all in lumina-core):
 | Emptying `_Trash` | Recycle Bin, never permanent by surprise | no Recycle Bin: the UI asks for a permanent delete |
 
 The ffmpeg paths were checked on Windows against the native ones (ignored tests
-`ffmpeg_frames_match_media_foundation`, `ffmpeg_heic_matches_wic`). CUDA, the Docker image and the engine
-tests have **not** been run on Linux yet.
+`ffmpeg_frames_match_media_foundation`, `ffmpeg_heic_matches_wic`). On the CachyOS machine (RTX 2070 Super,
+driver 580) the engine tests pass and the server scans the test library on CUDA: 94 files, 6 videos with
+5 frames each, 137 faces (one more than Windows, on CPU as well as CUDA), a full pass in about 9 s.
+
+The pinned `ort` downloads an ONNX Runtime built for CUDA 13 only. The GPU counts only once the warm-up run
+succeeds (`FaceModels::ready`, `ClipModels::load`): CUDA without cuDNN makes its sessions fine and fails
+only when a model runs. The face scan skips photos whose analysis fails without a word, so 0 faces after a
+scan means the models did not run.
 
 ## Lumina 5 plan and status
 
@@ -131,13 +137,13 @@ tests have **not** been run on Linux yet.
 
 ## First jobs on the Linux machine
 
-1. `cargo test --workspace --lib` on Linux. Some engine tests use Windows paths (`D:\...`) with
-   `make_folder_prefix`, which uses the platform separator: fix the tests or the code, whichever is wrong.
-2. Run the server on the test library and check: `GPU (CUDA)` in the face scan line, thumbnails and frames
-   for all 6 videos, 136 faces, smart search finds "rocket launch". Add a few iPhone HEIC files and videos.
-3. Build and run `server/docker-compose.yml` (fix the CUDA / cuDNN / ONNX Runtime versions if needed).
-4. With two GPUs: Ollama on the RTX 2070 Super, Lumina on the GTX 980 Ti (`device_ids` in the compose file).
-   If ONNX Runtime's CUDA build doesn't support the 980 Ti (Maxwell), the models fall back to the CPU.
+1. Done: `cargo test --workspace --lib` passes on Linux (the tests now write paths the local way).
+2. Done: the server on the test library (results under Platform notes; smart search finds "rocket launch").
+   Still open: add a few iPhone HEIC files and videos to the test library.
+3. Done: `server/docker-compose.yml` builds and runs (CUDA 13.0 + cuDNN 9 image, built on Ubuntu 24.04);
+   in the container the test library gives the same results on `GPU (CUDA)`, and Ollama finds the GPU.
+4. One GPU for everything: Ollama and Lumina share the RTX 2070 Super (8 GB). Check that captions through
+   Ollama and Lumina's face and smart search models fit together, and what happens when they don't.
 5. Try `npm run tauri dev` on Linux (WebKitGTK); the desktop app has only been run on Windows.
 
 ## Style
