@@ -1907,7 +1907,7 @@ fn video_faces_in_library() {
             .filter_map(|p| image::open(p).ok())
             .map(|img| models.analyze(&img).unwrap_or_default().iter().filter(|f| face_scan::is_usable_face(&img, f.detection.bbox)).count())
             .collect();
-        let faces = face_scan::video_faces(&models, h, &frames_dir, &out, &[]);
+        let faces = face_scan::video_faces(&models, h, &frames_dir, &out, &[]).unwrap_or_default();
         detections += per_frame.iter().sum::<usize>();
         kept += faces.len();
         eprintln!("{h}: faces per frame {per_frame:?} -> {} kept {:?}", faces.len(), faces.iter().map(|f| &f.face.face_id).collect::<Vec<_>>());

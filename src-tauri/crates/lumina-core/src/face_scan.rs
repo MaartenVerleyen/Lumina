@@ -253,7 +253,7 @@ fn run_face_scan(app_clone: &dyn Host, hashes: Vec<String>, models: Arc<FaceMode
                         let orig_path = path_map.get(h)?;
                         if video_meta::is_video_path(Path::new(orig_path)) {
                             let known = named_video_faces.get(h).map(Vec::as_slice).unwrap_or_default();
-                            let writes = video_faces(&models, h, &frames_dir, &faces_dir, known);
+                            let writes = video_faces(&models, h, &frames_dir, &faces_dir, known)?;
                             return Some((h.clone(), writes, Vec::new()));
                         }
                         let preview_path = previews_dir.join(format!("{}_preview.jpg", h));
@@ -499,8 +499,9 @@ fn same_person_in_video(a: (&[f32], usize, (f64, f64, f64, f64)), b: (&[f32], us
 
 // The faces in a video's stored frames, each person once: detections are taken best first (largest, most
 // certain) and one that looks like a face already kept from another frame, or a face already named on this
-// video (`known`), is dropped. Boxes are relative to the frame the face was found in.
-pub(crate) fn video_faces(models: &FaceModels, hash: &str, frames_dir: &Path, faces_dir: &Path, known: &[Vec<f32>]) -> Vec<PendingFaceWrite> {
+// video (`known`), is dropped. Boxes are relative to the frame the face was found in. None when the models
+// fail on a frame (the GPU out of memory, say): like a photo, the video then stays unscanned for the next pass.
+pub(crate) fn video_faces(models: &FaceModels, hash: &str, frames_dir: &Path, faces_dir: &Path, known: &[Vec<f32>]) -> Option<Vec<PendingFaceWrite>> {
     let frames: Vec<DynamicImage> = video_frames::frame_paths(frames_dir, hash)
         .iter()
         .filter_map(|p| image::open(p).ok())
@@ -508,7 +509,7 @@ pub(crate) fn video_faces(models: &FaceModels, hash: &str, frames_dir: &Path, fa
     let mut found: Vec<(usize, FaceV2)> = Vec::new();
     let mut faces_in_frame = vec![0usize; frames.len()];
     for (n, img) in frames.iter().enumerate() {
-        for face in models.analyze(img).unwrap_or_default() {
+        for face in models.analyze(img).ok()? {
             if is_usable_face(img, face.detection.bbox) {
                 faces_in_frame[n] += 1;
                 found.push((n, face));
@@ -551,7 +552,7 @@ pub(crate) fn video_faces(models: &FaceModels, hash: &str, frames_dir: &Path, fa
             embedding: face.embedding,
         });
     }
-    writes
+    Some(writes)
 }
 
 // Photos in the folder that still have faces from an older face engine (they need re-detecting so their
