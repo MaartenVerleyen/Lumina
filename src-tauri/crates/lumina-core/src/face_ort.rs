@@ -113,14 +113,18 @@ impl FaceModels {
         let det = models_dir.join(DETECTOR_FILE);
         let emb = models_dir.join(EMBEDDER_FILE);
         let gpu = build_session(&det, true).and_then(|d| build_session(&emb, true).map(|e| (d, e)));
-        let (detector, embedder, device) = match gpu {
-            Ok((d, e)) => (d, e, GPU_DEVICE.to_string()),
-            Err(gpu_err) => {
-                let d = build_session(&det, false)?;
-                let e = build_session(&emb, false)?;
-                (d, e, format!("CPU (GPU unavailable: {gpu_err})"))
-            }
+        let gpu_err = match gpu.and_then(|(d, e)| FaceModels::ready(models_dir, d, e, GPU_DEVICE.to_string())) {
+            Ok(models) => return Ok(models),
+            Err(e) => e,
         };
+        let d = build_session(&det, false)?;
+        let e = build_session(&emb, false)?;
+        FaceModels::ready(models_dir, d, e, format!("CPU (GPU unavailable: {gpu_err})"))
+    }
+
+    // The first run is also the test that the device works: CUDA without cuDNN makes its sessions fine and
+    // fails only when a model runs. It also compiles DirectML's shaders (~1-2 s) now, not on the first photo.
+    fn ready(models_dir: &Path, detector: Session, embedder: Session, device: String) -> Result<FaceModels, String> {
         let models = FaceModels {
             detector: Mutex::new(detector),
             embedder: Mutex::new(embedder),
@@ -128,10 +132,9 @@ impl FaceModels {
             models_dir: models_dir.to_path_buf(),
             device,
         };
-        // First DirectML run compiles shaders (~1-2 s): do it now, not on the user's first photo
         let warm = image::RgbImage::new(320, 240);
-        let _ = models.detect(&DynamicImage::ImageRgb8(warm));
-        let _ = models.embed(&[image::RgbImage::new(112, 112)]);
+        models.detect(&DynamicImage::ImageRgb8(warm))?;
+        models.embed(&[image::RgbImage::new(112, 112)])?;
         Ok(models)
     }
 

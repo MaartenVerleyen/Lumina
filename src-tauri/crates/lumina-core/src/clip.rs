@@ -107,12 +107,38 @@ pub fn clip_image_input(img: &DynamicImage) -> Vec<f32> {
     input
 }
 
+fn embed_image_with(session: &mut Session, input: &[f32]) -> Result<Vec<f32>, String> {
+    let tensor = Tensor::from_array(([1usize, 3, IMAGE_SIZE, IMAGE_SIZE], input.to_vec())).map_err(|e| e.to_string())?;
+    let input_name = session.inputs().first().map(|i| i.name().to_string()).unwrap_or_else(|| "pixel_values".into());
+    let outputs = session
+        .run(vec![(Cow::from(input_name), SessionInputValue::from(tensor))])
+        .map_err(|e| e.to_string())?;
+    // Xenova's export has `image_embeds` (projected, 512-D) and the raw `last_hidden_state`
+    let value = outputs.get("image_embeds").unwrap_or(&outputs[0]);
+    let (_, data) = value.try_extract_tensor::<f32>().map_err(|e| e.to_string())?;
+    let mut v: Vec<f32> = data.iter().take(EMBED_DIM).copied().collect();
+    if v.len() != EMBED_DIM {
+        return Err(format!("unexpected CLIP image output size {}", v.len()));
+    }
+    l2_normalize(&mut v);
+    Ok(v)
+}
+
 impl ClipModels {
     pub fn load(dir: &Path) -> Result<ClipModels, String> {
         let vision_path = dir.join(VISION_FILE);
-        let (vision, device) = match face_ort::build_session(&vision_path, true) {
+        // A session that is made is not yet one that runs (CUDA without cuDNN fails only then): the GPU counts
+        // once a blank image goes through it, which also compiles DirectML's shaders now
+        let blank = vec![0f32; 3 * IMAGE_SIZE * IMAGE_SIZE];
+        let gpu = face_ort::build_session(&vision_path, true)
+            .and_then(|mut s| embed_image_with(&mut s, &blank).map(|_| s));
+        let (vision, device) = match gpu {
             Ok(s) => (s, face_ort::GPU_DEVICE.to_string()),
-            Err(gpu_err) => (face_ort::build_session(&vision_path, false)?, format!("CPU (GPU unavailable: {gpu_err})")),
+            Err(gpu_err) => {
+                let mut s = face_ort::build_session(&vision_path, false)?;
+                embed_image_with(&mut s, &blank)?;
+                (s, format!("CPU (GPU unavailable: {gpu_err})"))
+            }
         };
         // The quantized text encoder runs on the CPU: one short query at a time, a few ms
         let text = face_ort::build_session(&dir.join(TEXT_FILE), false)?;
@@ -123,35 +149,19 @@ impl ClipModels {
             ..Default::default()
         }));
         tokenizer.with_padding(None);
-        let models = ClipModels {
+        Ok(ClipModels {
             vision: Mutex::new(vision),
             text: Mutex::new(text),
             tokenizer,
             dense: read_dense(&dir.join(DENSE_FILE))?,
             device,
-        };
-        // First DirectML run compiles shaders: do it now
-        let _ = models.embed_image_input(&vec![0f32; 3 * IMAGE_SIZE * IMAGE_SIZE]);
-        Ok(models)
+        })
     }
 
     // 512-D normalized vector for a preprocessed image (see clip_image_input)
     pub fn embed_image_input(&self, input: &[f32]) -> Result<Vec<f32>, String> {
-        let tensor = Tensor::from_array(([1usize, 3, IMAGE_SIZE, IMAGE_SIZE], input.to_vec())).map_err(|e| e.to_string())?;
         let mut session = self.vision.lock().map_err(|_| "CLIP vision lock poisoned")?;
-        let input_name = session.inputs().first().map(|i| i.name().to_string()).unwrap_or_else(|| "pixel_values".into());
-        let outputs = session
-            .run(vec![(Cow::from(input_name), SessionInputValue::from(tensor))])
-            .map_err(|e| e.to_string())?;
-        // Xenova's export has `image_embeds` (projected, 512-D) and the raw `last_hidden_state`
-        let value = outputs.get("image_embeds").unwrap_or(&outputs[0]);
-        let (_, data) = value.try_extract_tensor::<f32>().map_err(|e| e.to_string())?;
-        let mut v: Vec<f32> = data.iter().take(EMBED_DIM).copied().collect();
-        if v.len() != EMBED_DIM {
-            return Err(format!("unexpected CLIP image output size {}", v.len()));
-        }
-        l2_normalize(&mut v);
-        Ok(v)
+        embed_image_with(&mut session, input)
     }
 
     pub fn embed_image(&self, img: &DynamicImage) -> Result<Vec<f32>, String> {
