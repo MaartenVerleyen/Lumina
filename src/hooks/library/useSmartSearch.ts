@@ -98,8 +98,11 @@ export function useSmartSearch(core: LibraryCore, filters: FilterState, thumbnai
     if (!status || status.indexed < status.total) startSemanticIndex(folder);
   }
 
-  // Text queries: embedded after a short pause in typing; only the newest query may set the results
+  // Text queries: embedded after a short pause in typing; only the newest query may set the results. The
+  // query runs again when an index pass finishes (indexed changes), so the first search, typed while the
+  // library was still being indexed, doesn't stay empty.
   const semanticSeqRef = useRef(0);
+  const indexedCount = semanticStatus?.indexed ?? 0;
   useEffect(() => {
     // The words left once names, dates and places are understood ("at the beach")
     const query = parsedSearch.text;
@@ -118,7 +121,7 @@ export function useSmartSearch(core: LibraryCore, filters: FilterState, thumbnai
       }
     }, 300);
     return () => clearTimeout(timer);
-  }, [parsedSearch.text, smartSearch]);
+  }, [parsedSearch.text, smartSearch, indexedCount]);
 
   async function handleFindSimilar(photo: PhotoItem) {
     try {
