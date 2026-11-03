@@ -13,7 +13,7 @@ use std::io::Write as _;
 // it in after keeping a copy of the current database.
 
 const FORMAT: u32 = 1;
-const PENDING_RESTORE: &str = "library.db.restore";
+pub const PENDING_RESTORE: &str = "library.db.restore";
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct BackupRoot {

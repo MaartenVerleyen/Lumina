@@ -813,6 +813,11 @@ pub struct AiBatchSummary {
 }
 
 static AI_BATCH_RUNNING: AtomicBool = AtomicBool::new(false);
+
+// A caption batch is running (for a server's status page)
+pub fn batch_running() -> bool {
+    AI_BATCH_RUNNING.load(Ordering::Acquire)
+}
 const AI_BATCH_ATTEMPTS: u32 = 3;
 // Results reach the window in batches instead of one re-render per photo
 const AI_BATCH_FLUSH: std::time::Duration = std::time::Duration::from_millis(500);

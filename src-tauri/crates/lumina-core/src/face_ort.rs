@@ -535,6 +535,14 @@ async fn download_buffalo_l(dir: &Path, progress: DownloadProgress<'_>) -> Resul
 // Loaded once and shared by every face operation (sessions are internally locked)
 static FACE_MODELS_V2: LazyLock<Mutex<Option<Arc<FaceModels>>>> = LazyLock::new(|| Mutex::new(None));
 
+// The device the face models ran on when they last loaded ("GPU (CUDA)", or "CPU (GPU unavailable: ...)"):
+// they are dropped between jobs on a server, which still wants to show it
+static LAST_DEVICE: Mutex<Option<String>> = Mutex::new(None);
+
+pub fn last_device() -> Option<String> {
+    LAST_DEVICE.lock().ok().and_then(|d| d.clone())
+}
+
 pub async fn face_models_v2(app: &dyn Host) -> Result<Arc<FaceModels>, String> {
     if let Some(models) = FACE_MODELS_V2.lock().ok().and_then(|g| g.clone()) {
         return Ok(models);
@@ -543,6 +551,9 @@ pub async fn face_models_v2(app: &dyn Host) -> Result<Arc<FaceModels>, String> {
     let loaded = tokio::task::spawn_blocking(move || FaceModels::load(&dir))
         .await
         .map_err(|e| e.to_string())??;
+    if let Ok(mut last) = LAST_DEVICE.lock() {
+        *last = Some(loaded.device.clone());
+    }
     let loaded = Arc::new(loaded);
     if let Ok(mut slot) = FACE_MODELS_V2.lock() {
         if slot.is_none() {

@@ -9,6 +9,8 @@ use std::time::{Duration, Instant};
 use tokio::sync::broadcast;
 
 pub struct ServerHost {
+    // Jobs asked for from the admin page, and what the pipeline is doing
+    pub jobs: crate::pipeline::Jobs,
     data_dir: PathBuf,
     events: broadcast::Sender<(String, JsonValue)>,
     last_logged: Mutex<HashMap<String, Instant>>,
@@ -28,7 +30,7 @@ const LOGGED: &[&str] = &[
 impl ServerHost {
     pub fn new(data_dir: PathBuf) -> ServerHost {
         let _ = std::fs::create_dir_all(&data_dir);
-        ServerHost { data_dir, events: broadcast::channel(1024).0, last_logged: Mutex::new(HashMap::new()) }
+        ServerHost { jobs: Default::default(), data_dir, events: broadcast::channel(1024).0, last_logged: Mutex::new(HashMap::new()) }
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<(String, JsonValue)> {

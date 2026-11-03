@@ -1,6 +1,7 @@
 // The server on the network: the web client's files, login, and the engine's commands as
 // POST /api/rpc/{command}. It listens on 127.0.0.1 only; `tailscale serve` puts HTTPS in front of it.
 mod access;
+mod admin;
 mod auth;
 mod events;
 mod lookup;
@@ -74,6 +75,8 @@ pub fn router(state: Shared) -> Router {
         .route("/auth/logout", post(auth::logout))
         .route("/auth/me", get(auth::me))
         .route("/rpc/{command}", post(rpc::call))
+        // A backup to restore can be large: no body limit here (the handler caps it)
+        .route("/admin/restore", post(admin::upload_backup).layer(axum::extract::DefaultBodyLimit::disable()))
         .route("/events", get(events::events))
         .fallback(|| async { ApiError::new(StatusCode::NOT_FOUND, "Unknown API route") })
         .layer(middleware::from_fn_with_state(state.clone(), require_session))

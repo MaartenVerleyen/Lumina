@@ -39,6 +39,11 @@ lumina-server set-password anna          # also logs anna out everywhere
 lumina-server remove-user anna
 ```
 
+Admins can do all of this in the browser too: account menu › Server admin (accounts and roles per library,
+the server's state and backlog with buttons to start a rescan, face scan, smart search index or captions per
+library, and restoring a `.luminabackup` by upload; the server starts again by itself after a restore and keeps
+its accounts).
+
 Failed logins hold back the next try for that name and address (429 with Retry-After), up to 30 seconds;
 attempts sent at the same time are not all checked. A session lasts until logout or 90 days without use.
 

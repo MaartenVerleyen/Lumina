@@ -7,6 +7,7 @@ mod config;
 mod host;
 mod http;
 mod pipeline;
+mod restore;
 mod scope;
 mod throttle;
 
@@ -118,10 +119,18 @@ async fn serve(config: &Config, host: Arc<ServerHost>) -> Result<(), String> {
     if roots.is_empty() {
         return Err("No libraries to serve: list them as `libraries` in the configuration file".to_string());
     }
+    // A restore staged from the admin page goes in before anything opens the database
+    match restore::apply_staged(&host, &roots) {
+        Ok(true) => println!("[restore] the restored library is in place"),
+        Ok(false) => {}
+        Err(e) => eprintln!("[restore] {e}"),
+    }
+    host.jobs.set_caption_model(config.caption_model.clone());
     // The web server first, so people can log in while a long first scan runs
     start_web_server(config, host.clone()).await?;
 
     let mut changes = host.subscribe();
+    let mut jobs = host.jobs.take_receiver().ok_or("The pipeline runs once per server")?;
     let pipeline = pipeline(config, host.clone());
     for root in &roots {
         if let Err(e) = pipeline.update_library(root).await {
@@ -147,6 +156,13 @@ async fn serve(config: &Config, host: Arc<ServerHost>) -> Result<(), String> {
                         }
                     }
                 }
+            }
+            Some(job) = jobs.recv() => {
+                println!("[job] {}", job.describe());
+                if let Err(e) = pipeline.run(job).await {
+                    eprintln!("[job] {e}");
+                }
+                changes = changes.resubscribe();
             }
             _ = tokio::time::sleep(Duration::from_secs(5)), if !pending.is_empty() => {
                 for root in std::mem::take(&mut pending) {
@@ -196,7 +212,7 @@ async fn restore(host: Arc<ServerHost>, args: &[String]) -> Result<(), String> {
         println!("Backup library: {} ({} photos)", root.path, root.photos);
     }
     let result = backup::restore_library(host.clone(), file, remaps).await?;
-    backup::apply_pending_restore(&host.data_dir());
+    restore::apply_staged(&host, &[])?;
     println!("Restored {} photos ({} moved to new folders). Run `scan` or `serve` next.", result.photos, result.remapped);
     Ok(())
 }

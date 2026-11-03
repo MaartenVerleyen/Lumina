@@ -374,8 +374,8 @@ async fn libraries_are_listed_and_opened_from_the_database() {
 // of commands that have no place there, or on the list of commands still to come. The last list shrinks to
 // nothing by the end of phase 2.
 // Editor and admin commands: milestone 3 (restore_library and inspect_backup: milestone 5)
-// Restoring a backup comes with the admin pages (milestone 5): by upload, not from a path on the client
-const STILL_TO_COME: &[&str] = &["inspect_backup", "restore_library"];
+// Nothing left to come: every command the frontend calls is on the server or on the list above
+const STILL_TO_COME: &[&str] = &[];
 
 fn frontend_commands() -> std::collections::BTreeSet<String> {
     fn walk(dir: &std::path::Path, out: &mut std::collections::BTreeSet<String>) {
@@ -747,4 +747,106 @@ async fn sharing_an_album_gives_and_takes_its_photos() {
     assert_eq!(hashes_of(&photos), ["b2"]);
     let (status, _, _) = send(&s.app, post("/api/rpc/share_album", json!({"id": holiday, "userName": "nobody", "shared": true}), Some(&admin))).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+// ---- Milestone 5: administration ----
+
+#[tokio::test]
+async fn the_admin_page_is_for_admins_only() {
+    let s = server("adminonly");
+    add_library(&s);
+    let editor = login(&s.app, "ed").await;
+    for (cmd, args) in [
+        ("server_status", json!({})),
+        ("admin_list_users", json!({})),
+        ("admin_create_user", json!({"name": "x", "role": "viewer", "password": "long enough"})),
+        ("start_library_job", json!({"rootFolder": "/", "job": "faces"})),
+        ("inspect_backup", json!({"path": "upload-1.luminabackup"})),
+    ] {
+        assert_eq!(send(&s.app, post(&format!("/api/rpc/{cmd}"), args, Some(&editor))).await.0, StatusCode::FORBIDDEN, "{cmd}");
+    }
+    let upload = HttpRequest::post("/api/admin/restore").header("x-lumina", "1").header(header::COOKIE, &editor).body(Body::from("PK")).unwrap();
+    assert_eq!(send(&s.app, upload).await.0, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn the_status_shows_each_librarys_backlog_and_jobs_can_be_queued() {
+    let s = server("status");
+    let (root, _) = add_library(&s);
+    let admin = login(&s.app, "ada").await;
+    let (status, _, body) = send(&s.app, post("/api/rpc/server_status", json!({}), Some(&admin))).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let lib = &body["libraries"][0];
+    assert_eq!((&lib["root"], &lib["photos"]), (&json!(root), &json!(1)));
+    // The one photo: no face scan, no smart search vector, no caption yet; its thumbnail is too small to count
+    assert_eq!((&lib["faces_pending"], &lib["smart_search_pending"], &lib["captions_pending"]), (&json!(1), &json!(1), &json!(1)));
+    assert_eq!(lib["thumbnails_missing"], 1);
+    assert!(body["disk"]["total"].as_u64().unwrap_or(1) > 0);
+
+    let (status, _, _) = send(&s.app, post("/api/rpc/start_library_job", json!({"rootFolder": root, "job": "faces"}), Some(&admin))).await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, _, body) = send(&s.app, post("/api/rpc/server_status", json!({}), Some(&admin))).await;
+    assert_eq!(body["jobs"]["queued"], json!([format!("Face scan of {root}")]));
+    let (status, _, _) = send(&s.app, post("/api/rpc/start_library_job", json!({"rootFolder": root, "job": "dance"}), Some(&admin))).await;
+    assert_ne!(status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn accounts_are_managed_from_the_admin_page_without_locking_anyone_out() {
+    let s = server("accounts");
+    let (root, _) = add_library(&s);
+    let admin = login(&s.app, "ada").await;
+    let rpc = |cmd: &str, args: Value| post(&format!("/api/rpc/{cmd}"), args, Some(&admin));
+    let mut events = s.host.subscribe();
+
+    assert_eq!(send(&s.app, rpc("admin_create_user", json!({"name": "gwen", "role": "guest", "password": "long enough"}))).await.0, StatusCode::OK);
+    let (status, _, _) = send(&s.app, rpc("admin_create_user", json!({"name": "short", "role": "guest", "password": "x"}))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "password rules hold here too");
+    assert_eq!(send(&s.app, rpc("admin_set_library_role", json!({"name": "gwen", "rootFolder": root, "role": "editor"}))).await.0, StatusCode::OK);
+    let (event, payload) = events.recv().await.unwrap();
+    assert_eq!((event.as_str(), &payload["users"]), ("roles-changed", &json!(["gwen"])));
+    let (_, _, users) = send(&s.app, rpc("admin_list_users", json!({}))).await;
+    let gwen = users.as_array().unwrap().iter().find(|u| u["name"] == "gwen").unwrap().clone();
+    assert_eq!((&gwen["role"], &gwen["libraries"]), (&json!("guest"), &json!([{"root": root, "role": "editor"}])));
+    // And she can log in with it, and edit that library
+    let gwen_cookie = login(&s.app, "gwen").await;
+    assert_eq!(send(&s.app, post("/api/rpc/set_photos_rating", json!({"hashes": ["abc123"], "rating": 2}), Some(&gwen_cookie))).await.0, StatusCode::OK);
+    assert_eq!(send(&s.app, rpc("admin_set_library_role", json!({"name": "gwen", "rootFolder": root, "role": null}))).await.0, StatusCode::OK);
+    assert_eq!(send(&s.app, post("/api/rpc/set_photos_rating", json!({"hashes": ["abc123"], "rating": 2}), Some(&gwen_cookie))).await.0, StatusCode::FORBIDDEN);
+
+    // A new password logs her out; then she goes
+    assert_eq!(send(&s.app, rpc("admin_set_password", json!({"name": "gwen", "password": "another long one"}))).await.0, StatusCode::OK);
+    assert_eq!(send(&s.app, get("/api/auth/me", Some(&gwen_cookie))).await.0, StatusCode::UNAUTHORIZED);
+    assert_eq!(send(&s.app, rpc("admin_remove_user", json!({"name": "gwen"}))).await.0, StatusCode::OK);
+
+    // The admin can't lock themselves out, and the last admin stays
+    let (status, _, body) = send(&s.app, rpc("admin_set_role", json!({"name": "ada", "role": "editor"}))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(send(&s.app, rpc("admin_remove_user", json!({"name": "ADA"}))).await.0, StatusCode::BAD_REQUEST);
+    assert_eq!(send(&s.app, rpc("admin_set_role", json!({"name": "vera", "role": "editor"}))).await.0, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn a_backup_is_uploaded_into_the_data_folder_and_named_by_the_server() {
+    let s = server("upload");
+    let admin = login(&s.app, "ada").await;
+    let bytes = vec![42u8; 3 * 1024 * 1024];
+    let upload = HttpRequest::post("/api/admin/restore")
+        .header("x-lumina", "1")
+        .header(header::COOKIE, &admin)
+        .body(Body::from(bytes.clone()))
+        .unwrap();
+    let (status, _, body) = send(&s.app, upload).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let name = body["file"].as_str().unwrap().to_string();
+    assert_eq!(body["bytes"], json!(bytes.len()));
+    assert_eq!(std::fs::read(s.dir.join("restores").join(&name)).unwrap(), bytes, "larger than the default body limit, kept whole");
+    // Not a backup: a readable error, nothing restored
+    let (status, _, body) = send(&s.app, post("/api/rpc/inspect_backup", json!({"path": name}), Some(&admin))).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    // Only the server's own uploads, by name
+    for path in ["../library.db", "/etc/passwd", "upload-1.luminabackup"] {
+        let (status, _, body) = send(&s.app, post("/api/rpc/inspect_backup", json!({"path": path}), Some(&admin))).await;
+        assert_eq!(body, json!({"error": "No such uploaded backup: upload it again"}), "{path} {status}");
+    }
 }

@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import { call, inDesktopApp } from "./api";
+import { call, inDesktopApp, OPEN_ADMIN_EVENT } from "./api";
 import { platform } from "./api/platform";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useLibraryState } from "./hooks/useLibraryState";
@@ -71,6 +71,7 @@ import { useThrottled } from "./hooks/useThrottled";
 import { useSettings } from "./settings";
 import ConfirmDialog from "./components/modals/ConfirmDialog";
 import ShareAlbumDialog from "./components/modals/ShareAlbumDialog";
+import AdminPage from "./components/admin/AdminPage";
 import { useConfirmRequest } from "./confirm";
 import { useAccess } from "./components/auth/ServerGate";
 
@@ -120,6 +121,13 @@ export default function App() {
   const [isPaletteOpen, setIsPaletteOpen] = useState<boolean>(false);
   // The album whose sharing dialog is open (web client)
   const [shareAlbum, setShareAlbum] = useState<{ id: number; name: string } | null>(null);
+  // The server's admin page (web client, admins; opened from the account menu)
+  const [isAdminOpen, setIsAdminOpen] = useState(false);
+  useEffect(() => {
+    const open = () => setIsAdminOpen(true);
+    window.addEventListener(OPEN_ADMIN_EVENT, open);
+    return () => window.removeEventListener(OPEN_ADMIN_EVENT, open);
+  }, []);
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("general");
 
@@ -1070,6 +1078,7 @@ export default function App() {
       <ConfirmDialog />
 
       <ShareAlbumDialog album={shareAlbum} onClose={() => setShareAlbum(null)} />
+      <AdminPage isOpen={isAdminOpen} onClose={() => setIsAdminOpen(false)} />
 
       <RestoreModal
         target={lib.restoreTarget}

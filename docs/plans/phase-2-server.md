@@ -177,6 +177,18 @@ ask before pushing.
 - Restore a `.luminabackup` by upload (multipart, large file, written to the data folder first), with the
   folder remaps of `backup::inspect_backup` / `restore_library`; the server restarts its pipeline after.
 - Start a rescan, a face scan, the smart search index or Batch AI captions for a library.
+- **As built:** the admin page is opened from the account menu (admins only): Server (version, the
+  device faces and smart search last ran on, caption model and Ollama, data folder with free space, what
+  runs and what waits, and per library the backlog with a button per job), People (default role, a role
+  per library when there are several, reset password, remove, add; you can't demote or remove yourself,
+  and the last admin stays), Restore. Jobs go to the serve loop (`pipeline::Jobs`), which runs them
+  between the watcher's passes, one at a time. The backup is uploaded as the request body
+  (`POST /api/admin/restore`, no multipart: the file is streamed to `restores/` in the data folder, at most
+  20 GB); `inspect_backup` and `restore_library` take the name the upload answered, never a path. After a
+  restore the server starts itself again in place (`exec`, the same process for Docker); at start it moves
+  the staged database in and carries its own tables over from the database it replaced (users, sessions,
+  `changes`, roles per library matched by root, album shares matched by album name), so a desktop backup
+  keeps everyone's accounts. The command line's `restore-backup` does the same.
 
 ## Commands and roles
 

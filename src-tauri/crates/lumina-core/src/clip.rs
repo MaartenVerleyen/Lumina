@@ -441,6 +441,11 @@ pub const SEMANTIC_CANCELLED: &str = "Smart search indexing cancelled";
 static SEMANTIC_CANCEL: AtomicU64 = AtomicU64::new(0);
 static SEMANTIC_RUNNING: AtomicBool = AtomicBool::new(false);
 
+// An index pass is running (for a server's status page)
+pub fn semantic_index_running() -> bool {
+    SEMANTIC_RUNNING.load(Ordering::Acquire)
+}
+
 pub fn cancel_semantic_index() {
     SEMANTIC_CANCEL.fetch_add(1, Ordering::AcqRel);
 }

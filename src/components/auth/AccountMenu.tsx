@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { LogOut, Smartphone, UserRound } from "lucide-react";
+import { LogOut, Server, Smartphone, UserRound } from "lucide-react";
+import { OPEN_ADMIN_EVENT } from "../../api";
 import { useAccount } from "./ServerGate";
 import { usePhoneLayout } from "../../app/usePhoneLayout";
 
@@ -44,6 +45,18 @@ export function AccountMenu() {
             <div className="text-[11px] text-zinc-500">{ROLE_LABEL[user.role] ?? user.role}</div>
           </div>
           <div className="h-[1px] bg-zinc-800/80 my-1" />
+          {user.role === "admin" && (
+            <button
+              onClick={() => {
+                setOpen(false);
+                window.dispatchEvent(new Event(OPEN_ADMIN_EVENT));
+              }}
+              className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg hover:bg-zinc-800 text-zinc-200 transition text-left"
+            >
+              <Server className="w-4 h-4 text-zinc-400 shrink-0" />
+              <span>Server admin…</span>
+            </button>
+          )}
           {layout.phoneScreen && (
             <button
               onClick={() => layout.setPreferFull(false)}

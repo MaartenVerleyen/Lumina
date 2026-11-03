@@ -3,10 +3,13 @@
 // from. Later a desktop library can be on a server too (client mode), and `transportFor` picks the
 // connection per library.
 import { localTransport, type EngineEvent, type MediaRef, type Transport } from "./transport.ts";
-import { createRemoteAuth, createRemoteTransport, hasRole, type RemoteUser, type Role } from "./remote.ts";
+import { createRemoteAuth, createRemoteTransport, hasRole, uploadBackup, type RemoteUser, type Role } from "./remote.ts";
 
 export type { EngineEvent, MediaRef, Transport, RemoteUser, Role };
-export { hasRole };
+export { hasRole, uploadBackup };
+
+// Opens the admin page (from the account menu; App shows it)
+export const OPEN_ADMIN_EVENT = "lumina-open-admin";
 
 // Inside the Tauri desktop app (rather than a browser)
 export const inDesktopApp = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;

@@ -210,3 +210,31 @@ export function createRemoteAuth(options: Pick<RemoteOptions, "base" | "fetch"> 
     },
   };
 }
+
+// Uploads a backup to restore (admin page). XMLHttpRequest rather than fetch, for the upload's progress.
+export function uploadBackup(
+  file: Blob,
+  onProgress: (sent: number, total: number) => void,
+  base = ""
+): Promise<{ file: string; bytes: number }> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${base}/api/admin/restore`);
+    xhr.withCredentials = true;
+    xhr.setRequestHeader("X-Lumina", "1");
+    xhr.setRequestHeader("Content-Type", "application/octet-stream");
+    xhr.upload.onprogress = (e) => onProgress(e.loaded, e.lengthComputable ? e.total : file.size);
+    xhr.onload = () => {
+      let body: { error?: string; file?: string; bytes?: number } = {};
+      try {
+        body = JSON.parse(xhr.responseText);
+      } catch {
+        // not JSON (a proxy's error page)
+      }
+      if (xhr.status >= 200 && xhr.status < 300 && body.file) resolve({ file: body.file, bytes: body.bytes ?? 0 });
+      else reject(body.error ?? `The server answered ${xhr.status}`);
+    };
+    xhr.onerror = () => reject("Can't reach the server");
+    xhr.send(file);
+  });
+}

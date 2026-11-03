@@ -9,13 +9,16 @@ use axum::http::{HeaderMap, StatusCode};
 use lumina_core::host::Host;
 use axum::{Extension, Json};
 use super::lookup;
-use lumina_core::host::SharedHost;
+use crate::host::ServerHost;
 use super::access::{self, Target};
 use crate::scope::{self, Scope};
+use super::admin;
+use crate::pipeline::Job;
+use crate::restore;
 use crate::{accounts, changes};
 use lumina_core::types::PersonItem;
 use std::sync::Arc;
-use lumina_core::{ai, albums, clip, db, decode, duplicates, face_engine, face_quality, face_review, face_scan, ffmpeg, files, highlights, libraries, library, people, scan};
+use lumina_core::{ai, albums, backup, clip, db, decode, duplicates, face_engine, face_quality, face_review, face_scan, ffmpeg, files, highlights, libraries, library, people, scan};
 use serde::de::DeserializeOwned;
 use serde_json::Value as JsonValue;
 use std::future::Future;
@@ -26,7 +29,7 @@ type CallFuture = Pin<Box<dyn Future<Output = Result<(JsonValue, Changed), ApiEr
 pub struct Command {
     pub name: &'static str,
     pub role: Role,
-    call: fn(SharedHost, Arc<Scope>, JsonValue) -> CallFuture,
+    call: fn(Arc<ServerHost>, Arc<Scope>, JsonValue) -> CallFuture,
 }
 
 // What an editing command changed, for the `changes` table and the events other users' clients refresh from
@@ -37,6 +40,8 @@ pub struct Changed {
     pub albums: bool,
     // Users whose view changed because an album was shared with them or no longer is
     pub shared_with: Vec<String>,
+    // Users whose roles changed (or who were removed)
+    pub roles_of: Vec<String>,
 }
 
 impl Changed {
@@ -58,7 +63,7 @@ impl Changed {
         self
     }
     pub fn is_empty(&self) -> bool {
-        self.photos.is_empty() && !self.people && !self.albums && self.shared_with.is_empty()
+        self.photos.is_empty() && !self.people && !self.albums && self.shared_with.is_empty() && self.roles_of.is_empty()
     }
 }
 
@@ -72,7 +77,7 @@ fn answer<T: serde::Serialize, E: Into<ApiError>>(result: Result<T, E>) -> Resul
 }
 
 // Checks the command's target against the caller's scope, on a blocking thread (it reads the database)
-async fn check(host: &SharedHost, scope: &Arc<Scope>, role: Role, target: Option<Target>) -> Result<(), ApiError> {
+async fn check(host: &Arc<ServerHost>, scope: &Arc<Scope>, role: Role, target: Option<Target>) -> Result<(), ApiError> {
     let target = match target {
         Some(t) => t,
         None if role == Role::Admin => Target::Server,
@@ -162,15 +167,15 @@ macro_rules! commands {
 }
 
 // The photos that hold these faces (looked up before a command that may remove them)
-fn photos_of_faces(host: &SharedHost, face_ids: &[String]) -> Result<Vec<String>, String> {
-    let conn = db::open_global_db(&**host)?;
+fn photos_of_faces(host: &ServerHost, face_ids: &[String]) -> Result<Vec<String>, String> {
+    let conn = db::open_global_db(host)?;
     access::photos_of_faces(&conn, face_ids).map_err(|e| e.1)
 }
 
 // Every photo with this person on it (after a change that can reach far beyond the photos it names:
 // a rename, a merge)
-fn photos_of_person(host: &SharedHost, name: &str) -> Result<Changed, String> {
-    let conn = db::open_global_db(&**host)?;
+fn photos_of_person(host: &ServerHost, name: &str) -> Result<Changed, String> {
+    let conn = db::open_global_db(host)?;
     let mut stmt = conn
         .prepare(
             "SELECT DISTINCT hash FROM photo_people WHERE lower(person_name) = lower(?1)
@@ -181,27 +186,27 @@ fn photos_of_person(host: &SharedHost, name: &str) -> Result<Changed, String> {
     Ok(Changed::photos(rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?).and_people())
 }
 
-fn staged_photos(host: &SharedHost, root_folder: Option<String>) -> Result<Changed, String> {
+fn staged_photos(host: &Arc<ServerHost>, root_folder: Option<String>) -> Result<Changed, String> {
     Ok(Changed::photos(library::get_staged_operations(host.clone(), root_folder)?.into_iter().map(|op| op.hash)))
 }
 
 // An optional library root from a client: one of the server's libraries, or none (all of them)
-fn optional_root(host: &SharedHost, root: Option<String>) -> Result<Option<String>, ApiError> {
-    root.map(|r| lookup::library_root(&**host, &r)).transpose()
+fn optional_root(host: &ServerHost, root: Option<String>) -> Result<Option<String>, ApiError> {
+    root.map(|r| lookup::library_root(host, &r)).transpose()
 }
 
 // A read command's answer, kept to what this user may see (see access.rs)
-fn visible_only<T: serde::Serialize>(host: &SharedHost, scope: &Scope, result: Result<T, String>) -> Result<JsonValue, ApiError> {
+fn visible_only<T: serde::Serialize>(host: &ServerHost, scope: &Scope, result: Result<T, String>) -> Result<JsonValue, ApiError> {
     let value = answer(result)?;
     if scope.sees_all() {
         return Ok(value);
     }
-    access::keep_visible(&db::open_global_db(&**host)?, scope, value)
+    access::keep_visible(&db::open_global_db(host)?, scope, value)
 }
 
 // The libraries this user sees anything of, with their role on each (a guest's counts are of what is shared)
-fn libraries_for(host: &SharedHost, scope: &Scope) -> Result<JsonValue, ApiError> {
-    let conn = db::open_global_db(&**host)?;
+fn libraries_for(host: &ServerHost, scope: &Scope) -> Result<JsonValue, ApiError> {
+    let conn = db::open_global_db(host)?;
     let mut out = Vec::new();
     for l in libraries::list(&conn)? {
         let role = scope.role_on(l.id);
@@ -213,7 +218,7 @@ fn libraries_for(host: &SharedHost, scope: &Scope) -> Result<JsonValue, ApiError
     Ok(JsonValue::Array(out))
 }
 
-fn people_for(host: &SharedHost, scope: &Scope, root: Option<String>, people: Vec<PersonItem>) -> Result<JsonValue, ApiError> {
+fn people_for(host: &ServerHost, scope: &Scope, root: Option<String>, people: Vec<PersonItem>) -> Result<JsonValue, ApiError> {
     let value = answer(Ok::<_, String>(people))?;
     let library = root.as_deref().and_then(|r| scope.library_id_of_root(r));
     let sees = match library {
@@ -223,12 +228,12 @@ fn people_for(host: &SharedHost, scope: &Scope, root: Option<String>, people: Ve
     if sees {
         return Ok(value);
     }
-    access::people_for(&db::open_global_db(&**host)?, scope, library, value)
+    access::people_for(&db::open_global_db(host)?, scope, library, value)
 }
 
 // A user to share with, by name
-fn user_id(host: &SharedHost, name: &str) -> Result<i64, ApiError> {
-    let conn = db::open_global_db(&**host)?;
+fn user_id(host: &ServerHost, name: &str) -> Result<i64, ApiError> {
+    let conn = db::open_global_db(host)?;
     accounts::find_user(&conn, name)?.map(|u| u.id).ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "No such user"))
 }
 
@@ -523,6 +528,63 @@ commands! {
     Admin async unload_ollama_vram(model_name: String) |host, scope| { let _ = host; ai::unload_ollama_vram(model_name).await };
     Admin async pull_ollama_model(model_name: String) |host, scope| ai::pull_ollama_model(host, model_name).await;
     Admin blocking cancel_ollama_pull() |host, scope| { let _ = host; ai::cancel_ollama_pull(); Ok::<(), String>(()) };
+    // The admin page: the server's state, jobs for a library, accounts, restoring a backup
+    Admin async server_status() |host, scope| admin::status(&host).await;
+    Admin blocking start_library_job(root_folder: String, job: String) |host, scope| {
+        let root = lookup::library_root(&*host, &root_folder)?;
+        let job = Job::parse(&job, root)?;
+        host.jobs.queue(job).map_err(ApiError::from)
+    };
+    Admin blocking admin_list_users() |host, scope| admin::accounts(&host);
+    Admin blocking admin_create_user(name: String, role: String, password: String) |host, scope| {
+        let conn = db::open_global_db(&*host)?;
+        let role = Role::parse(&role)?;
+        accounts::create_user(&conn, &name, role, &password).map(|u| u.name).map_err(|e| ApiError::new(StatusCode::BAD_REQUEST, e))
+    };
+    Admin blocking admin_set_role(name: String, role: String) |host, scope| {
+        let conn = db::open_global_db(&*host)?;
+        let role = Role::parse(&role).map_err(|e| ApiError::new(StatusCode::BAD_REQUEST, e))?;
+        admin::check_not_last_admin(&conn, &scope.user, &name, role != Role::Admin)?;
+        accounts::set_role(&conn, &name, role).map_err(|e| ApiError::new(StatusCode::BAD_REQUEST, e))
+    }
+        => after Ok(Changed { roles_of: vec![name], ..Default::default() });
+    // A role on one library (None: back to their default)
+    Admin blocking admin_set_library_role(name: String, root_folder: String, role: Option<String>) |host, scope| {
+        let conn = db::open_global_db(&*host)?;
+        let user = accounts::find_user(&conn, &name)?.ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "No such user"))?;
+        let library = scope.library_id_of_root(&root_folder).ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "Not a library on this server"))?;
+        let role = role.map(|r| Role::parse(&r)).transpose().map_err(|e| ApiError::new(StatusCode::BAD_REQUEST, e))?;
+        scope::set_library_role(&conn, user.id, library, role).map_err(|e| ApiError::new(StatusCode::BAD_REQUEST, e))
+    }
+        => after Ok(Changed { roles_of: vec![name], ..Default::default() });
+    Admin blocking admin_set_password(name: String, password: String) |host, scope| {
+        let conn = db::open_global_db(&*host)?;
+        accounts::set_password(&conn, &name, &password).map_err(|e| ApiError::new(StatusCode::BAD_REQUEST, e))
+    };
+    Admin blocking admin_remove_user(name: String) |host, scope| {
+        let conn = db::open_global_db(&*host)?;
+        admin::check_not_last_admin(&conn, &scope.user, &name, true)?;
+        accounts::remove_user(&conn, &name).map_err(|e| ApiError::new(StatusCode::BAD_REQUEST, e))
+    }
+        => after Ok(Changed { roles_of: vec![name], ..Default::default() });
+    // A backup the admin page uploaded (POST /api/admin/restore), by the name the upload answered
+    Admin async inspect_backup(path: String) |host, scope| {
+        let file = restore::uploaded(&host, &path)?;
+        backup::inspect_backup(file.to_string_lossy().to_string()).await.map_err(ApiError::from)
+    };
+    // Stages the backup's database (with folders moved to the server's), then the server starts again and
+    // moves it in, keeping its accounts
+    Admin async restore_library(path: String, remaps: Vec<backup::RootRemap>) |host, scope| {
+        let file = restore::uploaded(&host, &path)?;
+        let result = backup::restore_library(host.clone(), file.to_string_lossy().to_string(), remaps).await?;
+        println!("[restore] {} restored a backup: {} photos; starting again", scope.user.name, result.photos);
+        tokio::spawn(async {
+            // Time for this answer to reach the browser
+            tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+            restore::restart();
+        });
+        Ok::<_, ApiError>(result)
+    };
 }
 
 // Desktop commands that have no place on a server: they act on the computer the app runs [open a file,
@@ -564,7 +626,7 @@ pub async fn call(
         return Err(ApiError::new(StatusCode::NOT_FOUND, format!("{command} isn't available on the server")));
     }
     let cmd = lookup(&command).ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, format!("Unknown command: {command}")))?;
-    let host: SharedHost = state.host.clone();
+    let host = state.host.clone();
     let scope = {
         let (host, user) = (host.clone(), user.clone());
         tokio::task::spawn_blocking(move || Scope::load(&db::open_global_db(&*host)?, &user))
@@ -621,8 +683,13 @@ async fn announce(state: &Shared, user: &User, what: &'static str, mut changed: 
         state.host.emit_value("albums-changed", by.clone());
     }
     if !changed.shared_with.is_empty() {
-        let mut payload = by;
+        let mut payload = by.clone();
         payload["users"] = serde_json::json!(changed.shared_with);
         state.host.emit_value("shares-changed", payload);
+    }
+    if !changed.roles_of.is_empty() {
+        let mut payload = by;
+        payload["users"] = serde_json::json!(changed.roles_of);
+        state.host.emit_value("roles-changed", payload);
     }
 }

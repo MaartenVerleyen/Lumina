@@ -98,7 +98,9 @@ roles are per library (a default per user, `library_roles` overrides, admins ser
 albums shared with them (`scope.rs`), so reads, media and events are filtered per user. An editing command also
 says which photos it changed, so the server writes `changes` (who did what) and sends `photos-changed` / `people-changed` /
 `albums-changed`, which other windows refresh from (`get_photos`; `useLiveUpdates`). The web client hides what
-the role on the open library can't do through `useAccess()` (`src/components/auth/ServerGate.tsx`); the server's pipeline runs the
+the role on the open library can't do through `useAccess()` (`src/components/auth/ServerGate.tsx`); admins have
+an admin page (`src/components/admin/AdminPage.tsx`, `http/admin.rs`: status, jobs through the serve loop,
+accounts, restore by upload with `restore.rs`); the server's pipeline runs the
 library's background jobs, so the web client never starts them (`platform.libraryJobs`).
 
 ## Test library
@@ -138,7 +140,7 @@ scan means the models did not run.
   (`ai::run_caption_batch`) in the engine; frontend transport layer `src/api/`.
 - **Phase 1 (on `lumina-5`, partly untested):** Linux counterparts (table above), `lumina-server`,
   `server/Dockerfile` + `docker-compose.yml`.
-- **Phase 2 (next, on the Linux machine; the full brief with milestones is `docs/plans/phase-2-server.md`):**
+- **Phase 2 (done on `lumina-5`; the brief with milestones and what was built is `docs/plans/phase-2-server.md`):**
   HTTP API in the server (axum), HTTPS through `tailscale serve`, accounts from the start: `POST /api/rpc/{command}` with the existing command
   names, WebSocket events, `/media/{thumb|original|preview|face}/…` (the kinds of `MediaRef` in
   `src/api/transport.ts`), accounts with roles (viewer, uploader, editor, admin) and shared albums, a jobs
