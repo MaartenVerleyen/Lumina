@@ -135,7 +135,8 @@ scan means the models did not run.
   names, WebSocket events, `/media/{thumb|original|preview|face}/…` (the kinds of `MediaRef` in
   `src/api/transport.ts`), accounts with roles (viewer, uploader, editor, admin) and shared albums, a jobs
   table, the web client served from `/`, restore of a `.luminabackup` in the admin UI.
-- **Phase 3:** desktop client mode (connect to a server), uploads (hash first), downloads, an "available on
+- **Phase 3 (after phase 2 is complete; the brief is `docs/plans/phase-3-client.md`):** desktop client
+  mode (connect to a server), uploads to `uploads/<name>/` (hash first, resumable), downloads, an "available on
   this device" badge and filter, and shared folders from another server next to local libraries
   (`transportFor` picks the connection per library). Mac and Linux desktop builds.
 - **Phase 4:** clients help with the server's AI backlog on request, and analyse photos before uploading.

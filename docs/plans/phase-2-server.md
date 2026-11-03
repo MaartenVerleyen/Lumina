@@ -5,7 +5,7 @@ for phase 2. Work on branch `lumina-5`, on the test library, never on a real lib
 
 ## Goal
 
-Maarten and his partner open `https://cachy.<tailnet>.ts.net` in a browser (desktop or phone, over
+Maarten and their partner open `https://cachy.<tailnet>.ts.net` in a browser (desktop or phone, over
 Tailscale), log in with their own account and use Lumina on the server's library: browse, search, People,
 Map, Collections, videos; and, with the right role, rate, tag, name faces and make albums. Changes one of
 them makes show up for the other within seconds.
@@ -21,7 +21,7 @@ through `src/api` instead of Tauri. The desktop app must keep working exactly as
   on.) Command: `sudo tailscale serve --bg --https=443 http://127.0.0.1:8080`.
 - **Accounts from the start**, with passwords (argon2id). Roles, lowest to highest:
   `viewer` < `uploader` < `editor` < `admin`. `uploader` behaves as `viewer` until uploads exist (phase 3).
-  Maarten is `admin`, his partner `editor`. Shared albums for people without a role on the library come in
+  Maarten is `admin`, Maarten's partner `editor`. Shared albums for people without a role on the library come in
   milestone 4.
 - **One RPC endpoint, not a REST route per command.** `POST /api/rpc/{command}` takes the same JSON the
   desktop frontend already sends to Tauri's `invoke`, and returns what the Tauri command returns. Every
@@ -145,7 +145,7 @@ ask before pushing.
 - **Who did what:** a table `changes (at, user_id, hash, what)` written by the server for every editing
   command, and an RPC to read a photo's history (shown in the Inspector later). Keep it small: one row per
   command and photo, no payloads.
-- **Done when:** Maarten (admin) and his partner (editor) are logged in at the same time in two browsers. A
+- **Done when:** Maarten (admin) and their partner (editor) are logged in at the same time in two browsers. A
   rating, tag, album or named face from one appears in the other within a few seconds. A viewer account sees
   everything and can change nothing (buttons hidden; direct RPC calls refused with 403).
 
