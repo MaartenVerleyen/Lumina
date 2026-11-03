@@ -1,5 +1,6 @@
-# Only src-tauri is needed to build the server image
+# The server image needs src-tauri (the engine and server) and the frontend sources (the web client)
 node_modules
 dist
 src-tauri/target
 .git
+lumina-data

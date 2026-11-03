@@ -1,9 +1,12 @@
 // lumina-server: Lumina's engine without a window, for a home server (Linux in Docker, or Windows).
-// It keeps its libraries scanned, with thumbnails, faces and smart search. Clients connect to it from
-// Lumina 5.0 on (the API is not here yet).
+// It keeps its libraries scanned, with thumbnails, faces and smart search, and serves the web client and
+// the engine's commands to logged-in users (http).
+mod accounts;
 mod config;
 mod host;
+mod http;
 mod pipeline;
+mod throttle;
 
 use config::Config;
 use host::ServerHost;
@@ -11,6 +14,7 @@ use lumina_core::host::Host;
 use lumina_core::{ai, backup, db, libraries, watch};
 use pipeline::Pipeline;
 use std::collections::BTreeSet;
+use std::io::BufRead;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -25,8 +29,17 @@ Commands:
   restore-backup FILE [--map FROM=TO]...
                             Put a .luminabackup in place of the database (paths under FROM move to TO)
 
+Accounts (roles, lowest first: viewer, uploader, editor, admin):
+  users                     List the users and their roles
+  create-user NAME --role ROLE [--password-stdin]
+  set-password NAME [--password-stdin]
+                            A new password also logs the user out everywhere
+  set-role NAME ROLE
+  remove-user NAME
+  The password is asked twice, without echo; --password-stdin reads one line from standard input instead.
+
 The configuration file defaults to ./lumina-server.toml. LUMINA_DATA_DIR, LUMINA_LIBRARIES (separated by ;),
-LUMINA_OLLAMA_URL and LUMINA_CAPTION_MODEL override it.";
+LUMINA_OLLAMA_URL, LUMINA_CAPTION_MODEL, LUMINA_LISTEN and LUMINA_WEB_DIR override it.";
 
 #[tokio::main]
 async fn main() {
@@ -44,6 +57,11 @@ async fn main() {
         return;
     };
     let rest = &args[1..];
+    // Before anything creates the data folder
+    if matches!(command.as_str(), "help" | "--help" | "-h") {
+        println!("{USAGE}");
+        return;
+    }
     let config = Config::load(config_path.as_deref()).unwrap_or_else(|e| fail(&e));
     if let Some(url) = &config.ollama_url {
         ai::set_ollama_url(url);
@@ -58,11 +76,8 @@ async fn main() {
             scan(&config, host, &folders).await
         }
         "libraries" => list_libraries(&host),
+        "users" | "create-user" | "set-password" | "set-role" | "remove-user" => account_command(&host, &command, rest),
         "restore-backup" => restore(host, rest).await,
-        "help" | "--help" | "-h" => {
-            println!("{USAGE}");
-            Ok(())
-        }
         other => Err(format!("Unknown command: {other}\n\n{USAGE}")),
     };
     if let Err(e) = result {
@@ -95,6 +110,9 @@ async fn serve(config: &Config, host: Arc<ServerHost>) -> Result<(), String> {
     if roots.is_empty() {
         return Err("No libraries to serve: list them as `libraries` in the configuration file".to_string());
     }
+    // The web server first, so people can log in while a long first scan runs
+    start_web_server(config, host.clone()).await?;
+
     let mut changes = host.subscribe();
     let pipeline = pipeline(config, host.clone());
     for root in &roots {
@@ -172,5 +190,104 @@ async fn restore(host: Arc<ServerHost>, args: &[String]) -> Result<(), String> {
     let result = backup::restore_library(host.clone(), file, remaps).await?;
     backup::apply_pending_restore(&host.data_dir());
     println!("Restored {} photos ({} moved to new folders). Run `scan` or `serve` next.", result.photos, result.remapped);
+    Ok(())
+}
+
+async fn start_web_server(config: &Config, host: Arc<ServerHost>) -> Result<(), String> {
+    let users = {
+        let conn = db::open_global_db(&*host)?;
+        accounts::ensure_tables(&conn)?;
+        accounts::list_users(&conn)?.len()
+    };
+    let listen = config.listen();
+    let web_dir = config.web_dir();
+    let listener = tokio::net::TcpListener::bind(&listen).await.map_err(|e| format!("Can't listen on {listen}: {e}"))?;
+    match &web_dir {
+        Some(dir) => println!("Web: http://{listen} (web client from {})", dir.display()),
+        None => println!("Web: http://{listen} (no web client found: set web_dir or LUMINA_WEB_DIR)"),
+    }
+    if users == 0 {
+        println!("No users yet: `lumina-server create-user NAME --role admin` adds the first one");
+    }
+    let state = Arc::new(http::AppState { host, web_dir, throttle: Default::default() });
+    let app = http::router(state).into_make_service_with_connect_info::<std::net::SocketAddr>();
+    tokio::spawn(async move {
+        if let Err(e) = axum::serve(listener, app).await {
+            eprintln!("[http] the web server stopped: {e}");
+        }
+    });
+    Ok(())
+}
+
+// A password from the terminal (twice, without echo) or, with --password-stdin, one line of standard input
+fn read_password(from_stdin: bool) -> Result<String, String> {
+    if from_stdin {
+        let mut line = String::new();
+        std::io::stdin().lock().read_line(&mut line).map_err(|e| e.to_string())?;
+        return Ok(line.trim_end_matches(['\r', '\n']).to_string());
+    }
+    let first = rpassword::prompt_password("Password: ").map_err(|e| e.to_string())?;
+    let second = rpassword::prompt_password("Password again: ").map_err(|e| e.to_string())?;
+    if first != second {
+        return Err("The two passwords differ".to_string());
+    }
+    Ok(first)
+}
+
+fn account_command(host: &ServerHost, command: &str, args: &[String]) -> Result<(), String> {
+    let conn = db::open_global_db(host)?;
+    accounts::ensure_tables(&conn)?;
+    let password_stdin = args.iter().any(|a| a == "--password-stdin");
+    let mut words = Vec::new();
+    let mut role = None;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--password-stdin" => {}
+            "--role" => {
+                role = Some(accounts::Role::parse(args.get(i + 1).ok_or("--role needs a role")?)?);
+                i += 1;
+            }
+            other => words.push(other.to_string()),
+        }
+        i += 1;
+    }
+    let name = || words.first().cloned().ok_or_else(|| format!("{command} needs a user name"));
+    match command {
+        "users" => {
+            let users = accounts::list_users(&conn)?;
+            if users.is_empty() {
+                println!("No users yet: `create-user NAME --role admin` adds one");
+            }
+            for u in users {
+                println!("{:<8} {}", u.role.as_str(), u.name);
+            }
+        }
+        "create-user" => {
+            let name = name()?;
+            let role = role.ok_or("create-user needs --role (viewer, uploader, editor or admin)")?;
+            let password = read_password(password_stdin)?;
+            let user = accounts::create_user(&conn, &name, role, &password)?;
+            println!("Created {} ({})", user.name, user.role.as_str());
+        }
+        "set-password" => {
+            let name = name()?;
+            let password = read_password(password_stdin)?;
+            accounts::set_password(&conn, &name, &password)?;
+            println!("New password for {name}; their sessions are logged out");
+        }
+        "set-role" => {
+            let name = name()?;
+            let role = words.get(1).map(|r| accounts::Role::parse(r)).or(role.map(Ok)).ok_or("set-role needs NAME ROLE")??;
+            accounts::set_role(&conn, &name, role)?;
+            println!("{name} is now {}", role.as_str());
+        }
+        "remove-user" => {
+            let name = name()?;
+            accounts::remove_user(&conn, &name)?;
+            println!("Removed {name}");
+        }
+        _ => unreachable!(),
+    }
     Ok(())
 }

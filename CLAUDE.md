@@ -39,7 +39,8 @@ src-tauri/                Cargo workspace root, and the desktop app crate ("Lumi
   crates/lumina-core/     the engine, no Tauri: db, libraries, scan, thumbs, decode, video_frames, ffmpeg,
                           face_* (SCRFD + ArcFace via ONNX Runtime), clip, ai (Ollama), albums, files,
                           backup, import, watch, ...; tests.rs holds the engine tests
-  crates/lumina-server/   headless server binary (serve / scan / libraries / restore-backup)
+  crates/lumina-server/   headless server binary (serve / scan / libraries / restore-backup / users):
+                          accounts.rs (users, sessions), http/ (axum: login, RPC table with roles, web client)
 server/                   Dockerfile and docker-compose.yml (CUDA + ffmpeg + Ollama)
 installer/                "Lumina Setup" (Windows)
 scripts/                  release.ps1, set-version.ps1 (Windows); test-library/; linux/setup-cachyos.sh
@@ -68,7 +69,8 @@ with a final `done: true`.
 ```bash
 # Engine and desktop (from src-tauri/)
 cargo check --workspace
-cargo test --workspace --lib                 # ~89 tests; ~20 more are #[ignore] diagnostics
+cargo test --workspace --lib                 # ~90 tests; ~20 more are #[ignore] diagnostics
+cargo test -p lumina-server                  # the server's own tests (a binary crate: --lib skips them)
 cargo build --release -p lumina-server
 
 # Frontend (from the repository root)
@@ -84,9 +86,11 @@ LUMINA_DATA_DIR=~/LuminaTest/ServerData ./src-tauri/target/release/lumina-server
 LUMINA_DATA_DIR=~/LuminaTest/ServerData LUMINA_LIBRARIES=~/LuminaTest/Library ./src-tauri/target/release/lumina-server serve
 ```
 
-Server configuration: `lumina-server.toml` (`data_dir`, `libraries`, `ollama_url`, `caption_model`) or the
-variables `LUMINA_DATA_DIR`, `LUMINA_LIBRARIES` (separated by `;`), `LUMINA_OLLAMA_URL`,
-`LUMINA_CAPTION_MODEL`. `LUMINA_FFMPEG` names another ffmpeg.
+Server configuration: `lumina-server.toml` (`data_dir`, `libraries`, `ollama_url`, `caption_model`, `listen`,
+`web_dir`) or the variables `LUMINA_DATA_DIR`, `LUMINA_LIBRARIES` (separated by `;`), `LUMINA_OLLAMA_URL`,
+`LUMINA_CAPTION_MODEL`, `LUMINA_LISTEN` (default `127.0.0.1:8080`), `LUMINA_WEB_DIR` (the built `dist`).
+`LUMINA_FFMPEG` names another ffmpeg. Accounts: `lumina-server create-user NAME --role admin` (see
+`server/README.md`); HTTPS comes from `tailscale serve` in front of `127.0.0.1:8080`.
 
 ## Test library
 

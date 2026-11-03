@@ -1,0 +1,232 @@
+// The HTTP routes against a temporary data folder, with tower's oneshot (no network)
+use super::*;
+use crate::accounts::Role;
+use axum::body::Body;
+use axum::extract::connect_info::MockConnectInfo;
+use axum::http::{header, Request as HttpRequest};
+use http_body_util::BodyExt;
+use serde_json::{json, Value};
+use tower::ServiceExt;
+
+struct TestServer {
+    app: Router,
+    dir: PathBuf,
+}
+
+impl Drop for TestServer {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+
+// A server on its own data folder, with a viewer, an editor and an admin (password "long enough"), and a
+// built web client of one file
+fn server(name: &str) -> TestServer {
+    let dir = std::env::temp_dir().join(format!("lumina_http_test_{name}_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let web = dir.join("web");
+    std::fs::create_dir_all(&web).unwrap();
+    std::fs::write(web.join("index.html"), "<!doctype html><title>Lumina</title>").unwrap();
+    let host = Arc::new(ServerHost::new(dir.clone()));
+    let conn = db::open_global_db(&*host).unwrap();
+    // The engine migrates once per process; every test has a database of its own
+    db::migrate(&conn).unwrap();
+    accounts::ensure_tables(&conn).unwrap();
+    for (name, role) in [("vera", Role::Viewer), ("ed", Role::Editor), ("ada", Role::Admin)] {
+        accounts::create_user(&conn, name, role, "long enough").unwrap();
+    }
+    let state = Arc::new(AppState { host, web_dir: Some(web), throttle: Default::default() });
+    let app = router(state).layer(MockConnectInfo(SocketAddr::from(([127, 0, 0, 1], 50000))));
+    TestServer { app, dir }
+}
+
+async fn send(app: &Router, req: HttpRequest<Body>) -> (StatusCode, HeaderMap, Value) {
+    let resp = app.clone().oneshot(req).await.unwrap();
+    let status = resp.status();
+    let headers = resp.headers().clone();
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let body = serde_json::from_slice(&bytes).unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&bytes).into()));
+    (status, headers, body)
+}
+
+fn post(path: &str, body: Value, cookie: Option<&str>) -> HttpRequest<Body> {
+    let mut req = HttpRequest::post(path).header(header::CONTENT_TYPE, "application/json").header("x-lumina", "1");
+    if let Some(c) = cookie {
+        req = req.header(header::COOKIE, c);
+    }
+    req.body(Body::from(body.to_string())).unwrap()
+}
+
+fn get(path: &str, cookie: Option<&str>) -> HttpRequest<Body> {
+    let mut req = HttpRequest::get(path);
+    if let Some(c) = cookie {
+        req = req.header(header::COOKIE, c);
+    }
+    req.body(Body::empty()).unwrap()
+}
+
+// Logs in and returns the "lumina_session=..." pair for the Cookie header
+async fn login(app: &Router, name: &str) -> String {
+    let (status, headers, _) = send(app, post("/api/auth/login", json!({"name": name, "password": "long enough"}), None)).await;
+    assert_eq!(status, StatusCode::OK);
+    let set_cookie = headers.get(header::SET_COOKIE).unwrap().to_str().unwrap();
+    set_cookie.split(';').next().unwrap().to_string()
+}
+
+#[tokio::test]
+async fn login_sets_a_strict_http_only_cookie_and_me_answers() {
+    let s = server("login");
+    let (status, headers, body) =
+        send(&s.app, post("/api/auth/login", json!({"name": "ED", "password": "long enough"}), None)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, json!({"name": "ed", "role": "editor"}));
+    let cookie = headers.get(header::SET_COOKIE).unwrap().to_str().unwrap();
+    for part in ["lumina_session=", "HttpOnly", "Secure", "SameSite=Strict", "Path=/", "Max-Age="] {
+        assert!(cookie.contains(part), "{part} missing in {cookie}");
+    }
+    let session = cookie.split(';').next().unwrap();
+    let (status, _, body) = send(&s.app, get("/api/auth/me", Some(session))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, json!({"name": "ed", "role": "editor"}));
+}
+
+#[tokio::test]
+async fn a_wrong_password_and_an_unknown_name_answer_the_same() {
+    let s = server("wrong");
+    let wrong = send(&s.app, post("/api/auth/login", json!({"name": "ed", "password": "not the one"}), None)).await;
+    let unknown = send(&s.app, post("/api/auth/login", json!({"name": "nobody", "password": "long enough"}), None)).await;
+    assert_eq!(wrong.0, StatusCode::UNAUTHORIZED);
+    assert_eq!((wrong.0, &wrong.2), (unknown.0, &unknown.2));
+    assert!(wrong.1.get(header::SET_COOKIE).is_none());
+}
+
+#[tokio::test]
+async fn failed_logins_slow_down_the_next_try() {
+    let s = server("slow");
+    send(&s.app, post("/api/auth/login", json!({"name": "ed", "password": "not the one"}), None)).await;
+    let started = Instant::now();
+    let (status, _, _) = send(&s.app, post("/api/auth/login", json!({"name": "ed", "password": "long enough"}), None)).await;
+    assert_eq!(status, StatusCode::OK, "the right password still works, after the wait");
+    assert!(started.elapsed() >= std::time::Duration::from_millis(500));
+}
+
+#[tokio::test]
+async fn no_session_means_401_for_api_and_media() {
+    let s = server("nosession");
+    for req in [
+        get("/api/auth/me", None),
+        post("/api/rpc/get_albums", json!({}), None),
+        get("/api/anything", None),
+        get("/media/thumb/abc", None),
+        get("/api/auth/me", Some("lumina_session=0000000000000000000000000000000000000000000000000000000000000000")),
+    ] {
+        let path = req.uri().path().to_string();
+        let (status, _, body) = send(&s.app, req).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{path}");
+        assert_eq!(body, json!({"error": "Not logged in"}), "{path}");
+    }
+}
+
+#[tokio::test]
+async fn a_viewer_cant_call_an_editor_command() {
+    let s = server("roles");
+    let viewer = login(&s.app, "vera").await;
+    let (status, _, body) = send(&s.app, post("/api/rpc/create_album", json!({"name": "Trip"}), Some(&viewer))).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(body, json!({"error": "create_album needs the editor role"}));
+    let (status, _, albums) = send(&s.app, post("/api/rpc/get_albums", json!({}), Some(&viewer))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(albums, json!([]));
+
+    let editor = login(&s.app, "ed").await;
+    let (status, _, id) = send(&s.app, post("/api/rpc/create_album", json!({"name": "Trip"}), Some(&editor))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(id.is_i64());
+    let (_, _, albums) = send(&s.app, post("/api/rpc/get_albums", json!({}), Some(&viewer))).await;
+    assert_eq!(albums[0]["name"], "Trip");
+}
+
+#[tokio::test]
+async fn rpc_answers_404_for_unknown_commands_and_400_for_bad_arguments() {
+    let s = server("rpc");
+    let admin = login(&s.app, "ada").await;
+    let (status, _, body) = send(&s.app, post("/api/rpc/open_in_default_app", json!({"path": "/"}), Some(&admin))).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body, json!({"error": "Unknown command: open_in_default_app"}));
+    let (status, _, body) = send(&s.app, post("/api/rpc/create_album", json!({"title": "x"}), Some(&admin))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(body["error"].as_str().unwrap().contains("name"), "{body}");
+    // camelCase arguments, as the frontend sends them to Tauri
+    let (status, _, _) =
+        send(&s.app, post("/api/rpc/semantic_status", json!({"rootFolder": "/photos"}), Some(&admin))).await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn changes_need_the_x_lumina_header() {
+    let s = server("csrf");
+    let admin = login(&s.app, "ada").await;
+    let no_header = |path: &str, body: Value| {
+        HttpRequest::post(path)
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::COOKIE, &admin)
+            .body(Body::from(body.to_string()))
+            .unwrap()
+    };
+    for (path, body) in [
+        ("/api/rpc/create_album", json!({"name": "x"})),
+        ("/api/auth/login", json!({"name": "ada", "password": "long enough"})),
+        ("/api/auth/logout", json!({})),
+    ] {
+        let (status, _, body) = send(&s.app, no_header(path, body)).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{path}");
+        assert_eq!(body, json!({"error": "Missing the X-Lumina: 1 header"}));
+    }
+}
+
+#[tokio::test]
+async fn a_bearer_token_works_and_logout_ends_the_session() {
+    let s = server("bearer");
+    let cookie = login(&s.app, "ed").await;
+    let token = cookie.trim_start_matches("lumina_session=").to_string();
+    let bearer = HttpRequest::get("/api/auth/me").header(header::AUTHORIZATION, format!("Bearer {token}")).body(Body::empty()).unwrap();
+    assert_eq!(send(&s.app, bearer).await.0, StatusCode::OK);
+
+    let (status, headers, _) = send(&s.app, post("/api/auth/logout", json!({}), Some(&cookie))).await;
+    assert_eq!(status, StatusCode::OK);
+    let cleared = headers.get(header::SET_COOKIE).unwrap().to_str().unwrap();
+    assert!(cleared.starts_with("lumina_session=;") || cleared.contains("Max-Age=0"), "{cleared}");
+    assert_eq!(send(&s.app, get("/api/auth/me", Some(&cookie))).await.0, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn the_web_client_is_served_with_its_security_headers() {
+    let s = server("web");
+    for path in ["/", "/people/someone", "/index.html"] {
+        let (status, headers, body) = send(&s.app, get(path, None)).await;
+        assert_eq!(status, StatusCode::OK, "{path}");
+        assert!(body.as_str().unwrap().contains("<title>Lumina</title>"), "{path}: index.html for app routes");
+        let csp = headers.get("content-security-policy").unwrap().to_str().unwrap();
+        assert!(csp.contains("script-src 'self'") && csp.contains("frame-ancestors 'none'"));
+        assert_eq!(headers.get("x-content-type-options").unwrap(), "nosniff");
+    }
+    // API answers carry them too, and an unknown API route is not the web client
+    let admin = login(&s.app, "ada").await;
+    let (status, headers, body) = send(&s.app, get("/api/nothing-here", Some(&admin))).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body, json!({"error": "Unknown API route"}));
+    assert!(headers.get("content-security-policy").is_some());
+}
+
+#[test]
+fn the_client_address_comes_from_x_forwarded_for_only_behind_a_local_proxy_or_docker() {
+    let mut headers = HeaderMap::new();
+    headers.insert("x-forwarded-for", "100.64.0.7, 127.0.0.1".parse().unwrap());
+    let local = SocketAddr::from(([127, 0, 0, 1], 1));
+    let docker_gateway = SocketAddr::from(([172, 21, 0, 1], 1));
+    let tailnet = SocketAddr::from(([100, 71, 44, 14], 1));
+    assert_eq!(client_addr(Some(local), &headers), "100.64.0.7");
+    assert_eq!(client_addr(Some(docker_gateway), &headers), "100.64.0.7");
+    assert_eq!(client_addr(Some(tailnet), &headers), "100.71.44.14", "a direct client can't choose its address");
+    assert_eq!(client_addr(Some(local), &HeaderMap::new()), "127.0.0.1");
+}
