@@ -94,6 +94,8 @@ async fn login_sets_a_strict_http_only_cookie_and_me_answers() {
 async fn a_wrong_password_and_an_unknown_name_answer_the_same() {
     let s = server("wrong");
     let wrong = send(&s.app, post("/api/auth/login", json!({"name": "ed", "password": "not the one"}), None)).await;
+    // Past the address's wait from the first failure
+    tokio::time::sleep(std::time::Duration::from_millis(550)).await;
     let unknown = send(&s.app, post("/api/auth/login", json!({"name": "nobody", "password": "long enough"}), None)).await;
     assert_eq!(wrong.0, StatusCode::UNAUTHORIZED);
     assert_eq!((wrong.0, &wrong.2), (unknown.0, &unknown.2));
@@ -101,13 +103,51 @@ async fn a_wrong_password_and_an_unknown_name_answer_the_same() {
 }
 
 #[tokio::test]
-async fn failed_logins_slow_down_the_next_try() {
+async fn failed_logins_hold_back_the_next_try_with_429() {
     let s = server("slow");
     send(&s.app, post("/api/auth/login", json!({"name": "ed", "password": "not the one"}), None)).await;
-    let started = Instant::now();
+    let (status, headers, body) = send(&s.app, post("/api/auth/login", json!({"name": "ed", "password": "long enough"}), None)).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "even the right password waits its turn");
+    assert_eq!(headers.get(header::RETRY_AFTER).unwrap(), "1");
+    assert!(body["error"].as_str().unwrap().starts_with("Too many attempts"));
+    tokio::time::sleep(std::time::Duration::from_millis(550)).await;
     let (status, _, _) = send(&s.app, post("/api/auth/login", json!({"name": "ed", "password": "long enough"}), None)).await;
-    assert_eq!(status, StatusCode::OK, "the right password still works, after the wait");
-    assert!(started.elapsed() >= std::time::Duration::from_millis(500));
+    assert_eq!(status, StatusCode::OK, "after the wait it works");
+}
+
+// Attempts sent at once must not all be checked: one per key gets its password checked, the rest 429
+#[tokio::test]
+async fn parallel_wrong_attempts_check_one_password_per_key() {
+    let s = server("parallel");
+    let attempts = (0..20).map(|i| {
+        let app = s.app.clone();
+        tokio::spawn(async move {
+            send(&app, post("/api/auth/login", json!({"name": "ed", "password": format!("guess {i}")}), None)).await.0
+        })
+    });
+    let statuses: Vec<StatusCode> = futures_join(attempts).await;
+    let checked = statuses.iter().filter(|s| **s == StatusCode::UNAUTHORIZED).count();
+    let refused = statuses.iter().filter(|s| **s == StatusCode::TOO_MANY_REQUESTS).count();
+    assert_eq!((checked, refused), (1, 19), "{statuses:?}");
+
+    // After the wait, again only one of a parallel burst is checked, and the wait has doubled
+    tokio::time::sleep(std::time::Duration::from_millis(550)).await;
+    let burst = (0..20).map(|_| {
+        let app = s.app.clone();
+        tokio::spawn(async move { send(&app, post("/api/auth/login", json!({"name": "ed", "password": "nope"}), None)).await })
+    });
+    let answers: Vec<(StatusCode, HeaderMap, Value)> = futures_join(burst).await;
+    assert_eq!(answers.iter().filter(|a| a.0 == StatusCode::UNAUTHORIZED).count(), 1);
+    let retry = answers.iter().find(|a| a.0 == StatusCode::TOO_MANY_REQUESTS).unwrap().1.get(header::RETRY_AFTER).unwrap().clone();
+    assert!(retry == "1" || retry == "2", "{retry:?}");
+}
+
+async fn futures_join<T: Send + 'static>(tasks: impl Iterator<Item = tokio::task::JoinHandle<T>>) -> Vec<T> {
+    let mut out = Vec::new();
+    for t in tasks.collect::<Vec<_>>() {
+        out.push(t.await.unwrap());
+    }
+    out
 }
 
 #[tokio::test]
