@@ -22,18 +22,25 @@ Create the first account, an admin. The password is asked twice and not shown:
 docker compose -f server/docker-compose.yml exec lumina /opt/lumina/lumina-server create-user maarten --role admin
 ```
 
-Roles, lowest first: `viewer` (browse and search), `uploader` (as viewer until uploads exist), `editor`
-(ratings, tags, people, albums), `admin` (everything, including moving files and starting scans).
+Roles, lowest first: `guest` (only the albums shared with them), `viewer` (browse and search), `uploader`
+(as viewer until uploads exist), `editor` (ratings, tags, people, albums, sharing albums), `admin` (everything,
+on the whole server, including moving files and starting scans).
+
+A user's role is their default for every library. On a server with more than one library it can be set
+differently per library: an editor of their own library and a guest of someone else's, say. Albums shared
+with someone (from the album's menu, "Share with…") add those photos to what they may look at.
 
 ```bash
-lumina-server users                      # who has which role
-lumina-server set-role anna editor
+lumina-server users                      # who has which role, and their roles per library
+lumina-server set-role anna editor       # the default role
+lumina-server set-library-role anna /photos/bob guest    # a different role on one library
+lumina-server set-library-role anna /photos/bob default  # back to her default there
 lumina-server set-password anna          # also logs anna out everywhere
 lumina-server remove-user anna
 ```
 
-Failed logins slow down the next try for that name and address, up to 30 seconds. A session lasts until
-logout or 90 days without use.
+Failed logins hold back the next try for that name and address (429 with Retry-After), up to 30 seconds;
+attempts sent at the same time are not all checked. A session lasts until logout or 90 days without use.
 
 ## HTTPS through Tailscale
 

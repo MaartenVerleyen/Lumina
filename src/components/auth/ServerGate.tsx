@@ -1,6 +1,16 @@
-import { createContext, useContext, useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useState, useSyncExternalStore, type FormEvent, type ReactNode } from "react";
 import { Loader2, LogIn } from "lucide-react";
-import { hasRole, inDesktopApp, LOGGED_OUT_EVENT, serverAuth, type RemoteUser } from "../../api";
+import {
+  accessSnapshot,
+  hasRole,
+  inDesktopApp,
+  LOGGED_OUT_EVENT,
+  openLibraryIsLocal,
+  openLibraryRole,
+  serverAuth,
+  subscribeAccess,
+  type RemoteUser,
+} from "../../api";
 
 // Who is logged in to the server (the web client only; null in the desktop app)
 interface Account {
@@ -14,8 +24,10 @@ export function useAccount(): Account | null {
   return useContext(AccountContext);
 }
 
-// What the user may do. The desktop app's user owns the library: everything. On a server it follows the
-// role; the server checks it again on every call, this only hides what would be refused.
+// What the user may do with the open library. A library on this computer is the user's own: everything. A
+// library on a server follows the user's role there, which can differ per library (an editor of their own,
+// a guest of someone else's); before the server has said, their default role. The server checks every call
+// again; this only hides what would be refused.
 export interface Access {
   // Rate, flag, tag, name faces, albums, locations, dates, single-photo AI, planned moves
   edit: boolean;
@@ -27,8 +39,11 @@ const EVERYTHING: Access = { edit: true, admin: true };
 
 export function useAccess(): Access {
   const account = useAccount();
-  if (inDesktopApp) return EVERYTHING;
-  return { edit: hasRole(account?.user, "editor"), admin: hasRole(account?.user, "admin") };
+  useSyncExternalStore(subscribeAccess, accessSnapshot);
+  if (openLibraryIsLocal()) return EVERYTHING;
+  const admin = hasRole(account?.user, "admin");
+  const role = openLibraryRole() ?? account?.user.role;
+  return { edit: admin || hasRole(role ? { role } : null, "editor"), admin };
 }
 
 // The web client shows the app only to a logged-in user: it asks the server who is logged in, shows the

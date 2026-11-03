@@ -567,3 +567,184 @@ async fn paths_and_folders_from_the_client_are_checked() {
     assert_eq!((status, staged), (StatusCode::OK, json!([])));
     let _ = photo;
 }
+
+// ---- Milestone 4: guests, shared albums, roles per library ----
+
+// Two libraries: Anna's (a1) and Bob's (b1, b2, b2 with a face of "Bob"); an album "Holiday" with b2 and one
+// "Private" with b1. Thumbnails for all three.
+fn two_libraries(s: &TestServer) -> (String, String, i64) {
+    let conn = db::open_global_db(&*s.host).unwrap();
+    std::fs::create_dir_all(s.dir.join("thumbnails")).unwrap();
+    std::fs::create_dir_all(s.dir.join("faces")).unwrap();
+    let mut roots = Vec::new();
+    for (lib, photos) in [("Anna", vec!["a1"]), ("Bob", vec!["b1", "b2"])] {
+        let root = s.dir.join(lib);
+        std::fs::create_dir_all(&root).unwrap();
+        let root_str = root.to_string_lossy().to_string();
+        lumina_core::libraries::open(&conn, &root_str).unwrap();
+        for hash in photos {
+            let file = root.join(format!("{hash}.jpg"));
+            std::fs::write(&file, b"photo").unwrap();
+            std::fs::write(s.dir.join("thumbnails").join(format!("{hash}.jpg")), vec![1u8; 300]).unwrap();
+            conn.execute("INSERT INTO photos (hash, current_path) VALUES (?1, ?2)", [hash, &file.to_string_lossy()]).unwrap();
+        }
+        roots.push(root_str);
+    }
+    let face = s.dir.join("faces").join("b2_1_1.jpg");
+    std::fs::write(&face, b"face").unwrap();
+    conn.execute(
+        "INSERT INTO photo_faces (face_id, hash, bbox_x, bbox_y, bbox_w, bbox_h, face_thumb, embedding, person_name) VALUES ('b2_1_1', 'b2', 0.1, 0.1, 0.1, 0.1, ?1, '', 'Bob')",
+        [face.to_string_lossy().to_string()],
+    )
+    .unwrap();
+    conn.execute_batch(
+        "INSERT INTO photo_people (hash, person_name) VALUES ('b2', 'Bob'), ('b1', 'Bob'), ('b1', 'Carol'), ('a1', 'Anna');
+         INSERT INTO people (name, cover_face_thumb) VALUES ('Bob', ''), ('Carol', ''), ('Anna', '');",
+    )
+    .unwrap();
+    let holiday = lumina_core::albums::create_album(s.host.clone(), "Holiday".into()).unwrap();
+    lumina_core::albums::add_to_album(s.host.clone(), holiday, vec!["b2".into()]).unwrap();
+    let private = lumina_core::albums::create_album(s.host.clone(), "Private".into()).unwrap();
+    lumina_core::albums::add_to_album(s.host.clone(), private, vec!["b1".into()]).unwrap();
+    // gus: a guest with Holiday shared; mia: a guest by default, an editor of Anna's library, Holiday shared too
+    let gus = accounts::create_user(&conn, "gus", Role::Guest, "long enough").unwrap();
+    let mia = accounts::create_user(&conn, "mia", Role::Guest, "long enough").unwrap();
+    let anna_id = lumina_core::libraries::list(&conn).unwrap().into_iter().find(|l| l.root == roots[0]).unwrap().id;
+    crate::scope::set_library_role(&conn, mia.id, anna_id, Some(Role::Editor)).unwrap();
+    for u in [gus.id, mia.id] {
+        crate::scope::share_album(&conn, holiday, u, true).unwrap();
+    }
+    (roots[0].clone(), roots[1].clone(), holiday)
+}
+
+fn hashes_of(list: &Value) -> Vec<String> {
+    list.as_array().unwrap().iter().map(|p| p["hash"].as_str().unwrap().to_string()).collect()
+}
+
+#[tokio::test]
+async fn a_guest_sees_exactly_the_shared_albums_photos_everywhere() {
+    let s = server("guest");
+    let (anna, bob, holiday) = two_libraries(&s);
+    let gus = login(&s.app, "gus").await;
+    let rpc = |cmd: &str, args: Value| post(&format!("/api/rpc/{cmd}"), args, Some(&gus));
+
+    let (_, _, libs) = send(&s.app, rpc("list_libraries", json!({}))).await;
+    assert_eq!(libs.as_array().unwrap().len(), 1, "only the library with something shared: {libs}");
+    assert_eq!((&libs[0]["root"], &libs[0]["photos"], &libs[0]["role"]), (&json!(bob), &json!(1), &json!("guest")));
+
+    let (status, _, photos) = send(&s.app, rpc("scan_folder", json!({"folderPath": bob}))).await;
+    assert_eq!((status, hashes_of(&photos)), (StatusCode::OK, vec!["b2".to_string()]));
+    let (status, _, _) = send(&s.app, rpc("scan_folder", json!({"folderPath": anna}))).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "a library with nothing shared doesn't exist for them");
+    let (_, _, fresh) = send(&s.app, rpc("get_photos", json!({"hashes": ["a1", "b1", "b2"]}))).await;
+    assert_eq!(hashes_of(&fresh), ["b2"]);
+
+    // Albums: only the shared one; People: only who is on its photos, counted there
+    let (_, _, albums) = send(&s.app, rpc("get_albums", json!({}))).await;
+    assert_eq!(albums.as_array().unwrap().len(), 1);
+    assert_eq!((&albums[0]["id"], &albums[0]["hashes"]), (&json!(holiday), &json!(["b2"])));
+    let (_, _, people) = send(&s.app, rpc("get_people", json!({"rootFolder": bob}))).await;
+    let names: Vec<(&str, i64)> = people.as_array().unwrap().iter().map(|p| (p["name"].as_str().unwrap(), p["photo_count"].as_i64().unwrap())).collect();
+    assert_eq!(names, [("Bob", 1)], "Carol is only on a photo they can't see");
+    assert!(people[0]["cover_thumb"].as_str().unwrap().ends_with("b2_1_1.jpg"));
+    let (_, _, searches) = send(&s.app, rpc("get_saved_searches", json!({}))).await;
+    assert_eq!(searches, json!([]));
+
+    // Guessing a hash tells nothing: every route answers as if it didn't exist
+    for hash in ["a1", "b1"] {
+        for path in [format!("/media/thumb/{hash}"), format!("/media/original/{hash}")] {
+            assert_eq!(send(&s.app, get(&path, Some(&gus))).await.0, StatusCode::NOT_FOUND, "{path}");
+        }
+        for (cmd, args) in [
+            ("find_similar_photos", json!({"hash": hash})),
+            ("get_photo_history", json!({"hash": hash})),
+            ("existing_playable_copy", json!({"hash": hash})),
+        ] {
+            assert_eq!(send(&s.app, rpc(cmd, args)).await.0, StatusCode::NOT_FOUND, "{cmd} {hash}");
+        }
+    }
+    assert_eq!(send(&s.app, get("/media/thumb/b2", Some(&gus))).await.0, StatusCode::OK);
+    assert_eq!(send(&s.app, get("/media/face/b2_1_1.jpg", Some(&gus))).await.0, StatusCode::OK);
+
+    // Looking only: no editing, not even of the shared photo
+    let (status, _, _) = send(&s.app, rpc("set_photos_rating", json!({"hashes": ["b2"], "rating": 5}))).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn a_guest_gets_no_events_about_other_photos() {
+    let s = server("guestevents");
+    two_libraries(&s);
+    let conn = db::open_global_db(&*s.host).unwrap();
+    let gus = accounts::find_user(&conn, "gus").unwrap().unwrap();
+    let scope = super::events::load_scope(&s.host, &gus).await.unwrap();
+    let event = |hashes: Value| json!({"hashes": hashes, "by": "ed", "origin": ""});
+    let pass = |name: &'static str, payload: Value| {
+        let (host, scope) = (s.host.clone(), scope.clone());
+        async move { super::events::for_user(&host, &scope, name, payload).await }
+    };
+    assert_eq!(pass("photos-changed", event(json!(["a1", "b1"]))).await, None);
+    assert_eq!(pass("photos-changed", event(json!(["b1", "b2"]))).await.unwrap()["hashes"], json!(["b2"]));
+    assert!(pass("albums-changed", json!({"by": "ed"})).await.is_some());
+    // Progress events name other photos (files, faces): none of them
+    for name in ["scan-progress", "thumb-batch-ready", "face-scan-progress", "semantic-progress", "ai-batch-progress"] {
+        assert_eq!(pass(name, json!({"current_file": "/Anna/a1.jpg"})).await, None, "{name}");
+    }
+}
+
+#[tokio::test]
+async fn roles_per_library_let_someone_edit_their_own_and_only_look_at_what_is_shared() {
+    let s = server("perlibrary");
+    let (anna, bob, holiday) = two_libraries(&s);
+    let mia = login(&s.app, "mia").await;
+    let rpc = |cmd: &str, args: Value| post(&format!("/api/rpc/{cmd}"), args, Some(&mia));
+
+    let (_, _, libs) = send(&s.app, rpc("list_libraries", json!({}))).await;
+    let roles: Vec<(&str, &str)> = libs.as_array().unwrap().iter().map(|l| (l["root"].as_str().unwrap(), l["role"].as_str().unwrap())).collect();
+    assert_eq!(roles, [(anna.as_str(), "editor"), (bob.as_str(), "guest")]);
+    let (_, _, photos) = send(&s.app, rpc("scan_folder", json!({"folderPath": anna}))).await;
+    assert_eq!(hashes_of(&photos), ["a1"]);
+
+    assert_eq!(send(&s.app, rpc("set_photos_rating", json!({"hashes": ["a1"], "rating": 4}))).await.0, StatusCode::OK);
+    let (status, _, body) = send(&s.app, rpc("set_photos_rating", json!({"hashes": ["b2"], "rating": 4}))).await;
+    assert_eq!((status, body), (StatusCode::FORBIDDEN, json!({"error": "set_photos_rating needs the editor role"})));
+    assert_eq!(send(&s.app, rpc("set_photos_rating", json!({"hashes": ["b1"], "rating": 4}))).await.0, StatusCode::NOT_FOUND);
+    // One photo they may not change spoils the batch
+    assert_eq!(send(&s.app, rpc("add_tag_batch", json!({"hashes": ["a1", "b2"], "tag": "x"}))).await.0, StatusCode::FORBIDDEN);
+    // Bob is on Bob's library too: renaming him needs the editor role there
+    assert_eq!(send(&s.app, rpc("rename_person", json!({"oldName": "Bob", "newName": "Robert"}))).await.0, StatusCode::FORBIDDEN);
+    assert_eq!(send(&s.app, rpc("rename_person", json!({"oldName": "Anna", "newName": "Anna B"}))).await.0, StatusCode::OK);
+    // Sharing Holiday (Bob's photos) is for those who may edit there; a new album is theirs to make
+    assert_eq!(send(&s.app, rpc("share_album", json!({"id": holiday, "userName": "gus", "shared": false}))).await.0, StatusCode::FORBIDDEN);
+    assert_eq!(send(&s.app, rpc("create_album", json!({"name": "Mine"}))).await.0, StatusCode::OK);
+    // Server work stays with admins
+    assert_eq!(send(&s.app, rpc("commit_staged_operations", json!({"rootFolder": anna}))).await.0, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn sharing_an_album_gives_and_takes_its_photos() {
+    let s = server("sharing");
+    let (_, bob, holiday) = two_libraries(&s);
+    let admin = login(&s.app, "ada").await;
+    let gus = login(&s.app, "gus").await;
+    let mut events = s.host.subscribe();
+    let (status, _, shares) = send(&s.app, post("/api/rpc/get_album_shares", json!({"id": holiday}), Some(&admin))).await;
+    assert_eq!((status, shares), (StatusCode::OK, json!(["gus", "mia"])));
+
+    let (status, _, _) = send(&s.app, post("/api/rpc/share_album", json!({"id": holiday, "userName": "gus", "shared": false}), Some(&admin))).await;
+    assert_eq!(status, StatusCode::OK);
+    let (event, payload) = events.recv().await.unwrap();
+    assert_eq!(event, "albums-changed");
+    let (event, payload2) = events.recv().await.unwrap();
+    assert_eq!((event.as_str(), &payload2["users"]), ("shares-changed", &json!(["gus"])));
+    let _ = payload;
+    let (status, _, _) = send(&s.app, post("/api/rpc/scan_folder", json!({"folderPath": bob}), Some(&gus))).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "nothing shared any more");
+    assert_eq!(send(&s.app, get("/media/thumb/b2", Some(&gus))).await.0, StatusCode::NOT_FOUND);
+
+    send(&s.app, post("/api/rpc/share_album", json!({"id": holiday, "userName": "gus", "shared": true}), Some(&admin))).await;
+    let (_, _, photos) = send(&s.app, post("/api/rpc/scan_folder", json!({"folderPath": bob}), Some(&gus))).await;
+    assert_eq!(hashes_of(&photos), ["b2"]);
+    let (status, _, _) = send(&s.app, post("/api/rpc/share_album", json!({"id": holiday, "userName": "nobody", "shared": true}), Some(&admin))).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}

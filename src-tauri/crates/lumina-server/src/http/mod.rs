@@ -1,5 +1,6 @@
 // The server on the network: the web client's files, login, and the engine's commands as
 // POST /api/rpc/{command}. It listens on 127.0.0.1 only; `tailscale serve` puts HTTPS in front of it.
+mod access;
 mod auth;
 mod events;
 mod lookup;

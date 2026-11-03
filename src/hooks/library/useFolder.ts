@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
-import { call, subscribe } from "../../api";
+import { call, rememberLibraryRoles, setOpenLibrary, subscribe, type Role } from "../../api";
+import { useAccount } from "../../components/auth/ServerGate";
 import { open, platform } from "../../api/platform";
 import { PhotoItem, ThumbBatchProgress, ThumbBatchItem, ExifRefreshResult, PerfLogEvent, TrashResult, TrashSummary, ScanProgressEvent } from "../../types/lumina";
 import { formatBytes } from "../../utils/photoHelpers";
@@ -516,6 +517,41 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
       unlisten.then((f) => f());
     };
   }, [addLog]);
+
+  // Rights follow the open library (see useAccess)
+  useEffect(() => {
+    setOpenLibrary(folder || null);
+  }, [folder]);
+
+  // An album was shared with this user (or no longer is), or an admin changed their role: what they may see
+  // changed, so the library is listed again, and the roles per library fetched again
+  const account = useAccount();
+  const myName = account?.user.name;
+  useEffect(() => {
+    if (!myName) return;
+    const offs = ["shares-changed", "roles-changed"].map((name) =>
+      subscribe<{ users?: string[] }>(name, (event) => {
+        if (!(event.payload.users ?? []).some((u) => u.toLowerCase() === myName.toLowerCase())) return;
+        call<{ root: string; role: Role }[]>("list_libraries")
+          .then((list) => {
+            rememberLibraryRoles(list);
+            const open = folderRef.current;
+            if (!open) return;
+            // Nothing of the open library is left for them: back to the list of what they have
+            if (!list.some((l) => isSameFolder(l.root, open))) {
+              setFolder("");
+              setPhotos([]);
+            } else {
+              silentRescanRef.current();
+            }
+          })
+          .catch(() => {});
+      })
+    );
+    return () => {
+      for (const off of offs) off.then((f) => f());
+    };
+  }, [myName]);
 
   return {
     silentRescan,

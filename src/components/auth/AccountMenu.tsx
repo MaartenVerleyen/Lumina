@@ -4,6 +4,7 @@ import { useAccount } from "./ServerGate";
 import { usePhoneLayout } from "../../app/usePhoneLayout";
 
 const ROLE_LABEL: Record<string, string> = {
+  guest: "Guest: sees what is shared with them",
   viewer: "Viewer: can look and search",
   uploader: "Uploader: can look and search",
   editor: "Editor: can rate, tag and name",

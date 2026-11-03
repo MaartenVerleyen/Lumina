@@ -8,10 +8,13 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::sync::LazyLock;
 
-// Lowest to highest. `uploader` can do what a viewer can until uploads exist (phase 3).
+// Lowest to highest. A user's role is their default for every library (an admin's covers the whole server;
+// see scope.rs for roles per library). A guest sees only albums shared with them; `uploader` can do what a
+// viewer can until uploads exist (phase 3).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Role {
+    Guest,
     Viewer,
     Uploader,
     Editor,
@@ -21,16 +24,18 @@ pub enum Role {
 impl Role {
     pub fn parse(text: &str) -> Result<Role, String> {
         match text.trim().to_lowercase().as_str() {
+            "guest" => Ok(Role::Guest),
             "viewer" => Ok(Role::Viewer),
             "uploader" => Ok(Role::Uploader),
             "editor" => Ok(Role::Editor),
             "admin" => Ok(Role::Admin),
-            other => Err(format!("Unknown role \"{other}\": viewer, uploader, editor or admin")),
+            other => Err(format!("Unknown role \"{other}\": guest, viewer, uploader, editor or admin")),
         }
     }
 
     pub fn as_str(self) -> &'static str {
         match self {
+            Role::Guest => "guest",
             Role::Viewer => "viewer",
             Role::Uploader => "uploader",
             Role::Editor => "editor",
@@ -71,7 +76,8 @@ pub fn ensure_tables(conn: &Connection) -> Result<(), String> {
          CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);",
     )
     .map_err(|e| e.to_string())?;
-    crate::changes::ensure_table(conn)
+    crate::changes::ensure_table(conn)?;
+    crate::scope::ensure_tables(conn)
 }
 
 fn now() -> i64 {
@@ -170,8 +176,16 @@ pub fn set_role(conn: &Connection, name: &str, role: Role) -> Result<(), String>
 
 pub fn remove_user(conn: &Connection, name: &str) -> Result<(), String> {
     let user = require_user(conn, name)?;
-    conn.execute("DELETE FROM sessions WHERE user_id = ?1", [user.id]).map_err(|e| e.to_string())?;
-    conn.execute("DELETE FROM users WHERE id = ?1", [user.id]).map_err(|e| e.to_string())?;
+    // Their sessions, roles per library and album shares go with them (`changes` keeps their rows, shown
+    // without a name)
+    for sql in [
+        "DELETE FROM sessions WHERE user_id = ?1",
+        "DELETE FROM library_roles WHERE user_id = ?1",
+        "DELETE FROM album_shares WHERE user_id = ?1",
+        "DELETE FROM users WHERE id = ?1",
+    ] {
+        conn.execute(sql, [user.id]).map_err(|e| e.to_string())?;
+    }
     Ok(())
 }
 

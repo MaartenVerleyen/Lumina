@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import { call } from "./api";
+import { call, inDesktopApp } from "./api";
 import { platform } from "./api/platform";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useLibraryState } from "./hooks/useLibraryState";
@@ -70,6 +70,7 @@ import { useUpdater } from "./hooks/useUpdater";
 import { useThrottled } from "./hooks/useThrottled";
 import { useSettings } from "./settings";
 import ConfirmDialog from "./components/modals/ConfirmDialog";
+import ShareAlbumDialog from "./components/modals/ShareAlbumDialog";
 import { useConfirmRequest } from "./confirm";
 import { useAccess } from "./components/auth/ServerGate";
 
@@ -117,6 +118,8 @@ export default function App() {
   const [isNewFolderModalOpen, setIsNewFolderModalOpen] = useState<boolean>(false);
   const [newFolderInput, setNewFolderInput] = useState<string>("");
   const [isPaletteOpen, setIsPaletteOpen] = useState<boolean>(false);
+  // The album whose sharing dialog is open (web client)
+  const [shareAlbum, setShareAlbum] = useState<{ id: number; name: string } | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("general");
 
@@ -639,6 +642,7 @@ export default function App() {
               onDeleteAlbum={lib.handleDeleteAlbum}
               onDeleteSavedSearch={lib.handleDeleteSavedSearch}
               onRenameTrip={lib.handleRenameTrip}
+              onShareAlbum={!inDesktopApp && access.edit ? setShareAlbum : undefined}
               pickHighlights={lib.pickHighlights}
               bestOfFocus={bestOfFocus}
               onShareGallery={platform.localFiles ? (title, hashes) => lib.openGallery(title, hashes) : undefined}
@@ -1064,6 +1068,8 @@ export default function App() {
       />
 
       <ConfirmDialog />
+
+      <ShareAlbumDialog album={shareAlbum} onClose={() => setShareAlbum(null)} />
 
       <RestoreModal
         target={lib.restoreTarget}

@@ -29,6 +29,8 @@ interface CollectionsViewProps {
   onDeleteAlbum: (id: number) => Promise<void>;
   onDeleteSavedSearch: (id: number) => Promise<void>;
   onRenameTrip: (id: string, name: string) => Promise<void>;
+  // On a server: share an album with other users (absent in the desktop app, and for who may not edit)
+  onShareAlbum?: (album: { id: number; name: string }) => void;
   onHighlights: (title: string, hashes: string[], count?: number, focus?: HighlightFocus) => void;
   // The best `count` photos of a set, as Highlights would choose them
   pickHighlights: (source: PhotoItem[], count: number, focus?: HighlightFocus) => Promise<string[]>;
@@ -174,6 +176,7 @@ export default function CollectionsView({
   onDeleteAlbum,
   onDeleteSavedSearch,
   onRenameTrip,
+  onShareAlbum,
   onHighlights,
   pickHighlights,
   bestOfFocus,
@@ -298,6 +301,7 @@ export default function CollectionsView({
                 ...(onShareGallery
                   ? [{ label: "Share as web gallery", run: () => onShareGallery(a.name, a.hashes.filter((h) => photoByHash.has(h))) }]
                   : []),
+                ...(onShareAlbum ? [{ label: "Share with…", run: () => onShareAlbum({ id: a.id, name: a.name }) }] : []),
                 ...(access.edit
                   ? [
                       { label: "Rename", run: () => setRenaming({ kind: "album", id: String(a.id), value: a.name }) },
@@ -348,7 +352,7 @@ export default function CollectionsView({
         </div>
       </section>
 
-      {(savedSearches.length > 0 || q === "") && (
+      {(savedSearches.length > 0 || (q === "" && access.edit)) && (
         <section className="flex flex-col gap-3">
           <h2 className="text-xs font-bold text-zinc-400 uppercase tracking-wider flex items-center gap-2">
             <Sparkles className="w-4 h-4 text-amber-300" /> Smart albums ({savedSearches.length})

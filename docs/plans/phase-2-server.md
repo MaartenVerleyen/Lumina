@@ -158,6 +158,14 @@ ask before pushing.
   filtering result sets in the server over adding a user parameter to every engine query, unless a query
   would return far too much to filter.
 - Admin and editor can share an album with a user (RPC + a small dialog in the album's menu).
+- **Roles per library (decided by Maarten, 2026-11-03):** a user's role is their default for every library;
+  `library_roles (library_id, user_id, role)` sets it differently per library (guest to editor; admin stays
+  server-wide). So one person can be an editor of their own library and a guest of someone else's on the same
+  server; album shares add view-only access on top. The server works out a scope per request
+  (`scope.rs`): every command names what it touches (photos, faces, a person, an album, a library;
+  `http/access.rs`) and needs its role on each library involved; reads are filtered to what the user sees.
+  A guest of another server has an account there. In the app, rights follow the open library: a local one
+  is the user's own, a server one has their role there (`useAccess`), which phase 3's client mode builds on.
 - **Done when:** a guest sees exactly the shared albums' photos everywhere, can't open other photos by
   guessing a hash (404), and gets no events about other photos.
 

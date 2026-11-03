@@ -1,7 +1,8 @@
 import { useEffect, useState, type RefObject } from "react";
 import { Clock, FolderInput, FolderOpen, Images, Search } from "lucide-react";
 import type { LibraryState } from "../../hooks/useLibraryState";
-import { call } from "../../api";
+import { call, rememberLibraryRoles, subscribe, type Role } from "../../api";
+import { useAccount } from "../auth/ServerGate";
 import { platform } from "../../api/platform";
 
 type GridRef = RefObject<HTMLDivElement | null>;
@@ -10,19 +11,38 @@ interface ServerLibrary {
   root: string;
   name: string;
   photos: number;
+  // This user's role on it ("guest": only what is shared with them)
+  role?: Role;
 }
 
 // In the web client: the server's libraries, where the desktop picks a folder. With just one it opens it.
 function ServerLibraries({ lib, gridContainerRef }: { lib: LibraryState; gridContainerRef: GridRef }) {
   const [libraries, setLibraries] = useState<ServerLibrary[] | null>(null);
+  const account = useAccount();
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
-    call<ServerLibrary[]>("list_libraries")
-      .then((list) => {
-        setLibraries(list);
-        if (list.length === 1) lib.handleLoadFolderPath(list[0].root);
+    let shown: ServerLibrary[] | null = null;
+    const load = () =>
+      call<ServerLibrary[]>("list_libraries")
+        .then((list) => {
+          rememberLibraryRoles(list);
+          // Opens the only library at first, or once one appears where there was none (shared just now)
+          if (list.length === 1 && (shown === null || shown.length === 0)) lib.handleLoadFolderPath(list[0].root);
+          shown = list;
+          setLibraries(list);
+        })
+        .catch((e) => setError(String(e)));
+    load();
+    // Someone shared an album with this user (or stopped), or changed their role
+    const myName = account?.user.name.toLowerCase();
+    const offs = ["shares-changed", "roles-changed"].map((name) =>
+      subscribe<{ users?: string[] }>(name, (e) => {
+        if ((e.payload.users ?? []).some((u) => u.toLowerCase() === myName)) load();
       })
-      .catch((e) => setError(String(e)));
+    );
+    return () => {
+      for (const off of offs) off.then((f) => f());
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   return (
@@ -34,7 +54,9 @@ function ServerLibraries({ lib, gridContainerRef }: { lib: LibraryState; gridCon
         <h2 className="text-lg font-bold text-zinc-100">Photo libraries on this server</h2>
         {error && <p className="text-xs text-red-400 mt-2">{error}</p>}
         {libraries?.length === 0 && (
-          <p className="text-xs text-zinc-400 mt-2">The server has no libraries yet.</p>
+          <p className="text-xs text-zinc-400 mt-2">
+            {account?.user.role === "guest" ? "Nothing is shared with you yet." : "The server has no libraries yet."}
+          </p>
         )}
         <div className="w-full mt-5 flex flex-col gap-1.5">
           {libraries?.map((l) => (

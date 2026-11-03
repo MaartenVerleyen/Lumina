@@ -7,6 +7,7 @@ mod config;
 mod host;
 mod http;
 mod pipeline;
+mod scope;
 mod throttle;
 
 use config::Config;
@@ -30,13 +31,17 @@ Commands:
   restore-backup FILE [--map FROM=TO]...
                             Put a .luminabackup in place of the database (paths under FROM move to TO)
 
-Accounts (roles, lowest first: viewer, uploader, editor, admin):
-  users                     List the users and their roles
+Accounts (roles, lowest first: guest, viewer, uploader, editor, admin):
+  users                     List the users, their roles, and their roles per library
   create-user NAME --role ROLE [--password-stdin]
+                            ROLE is the default for every library; admin is the whole server
   set-password NAME [--password-stdin]
                             A new password also logs the user out everywhere
-  set-role NAME ROLE
+  set-role NAME ROLE        The default role
+  set-library-role NAME ROOT ROLE|default
+                            A different role on one library (default: back to the user's own role)
   remove-user NAME
+  A guest sees only the albums shared with them (shared in the app, from the album's menu).
   The password is asked twice, without echo; --password-stdin reads one line from standard input instead.
 
 The configuration file defaults to ./lumina-server.toml. LUMINA_DATA_DIR, LUMINA_LIBRARIES (separated by ;),
@@ -77,7 +82,9 @@ async fn main() {
             scan(&config, host, &folders).await
         }
         "libraries" => list_libraries(&host),
-        "users" | "create-user" | "set-password" | "set-role" | "remove-user" => account_command(&host, &command, rest),
+        "users" | "create-user" | "set-password" | "set-role" | "set-library-role" | "remove-user" => {
+            account_command(&host, &command, rest)
+        }
         "restore-backup" => restore(host, rest).await,
         other => Err(format!("Unknown command: {other}\n\n{USAGE}")),
     };
@@ -260,13 +267,18 @@ fn account_command(host: &ServerHost, command: &str, args: &[String]) -> Result<
             if users.is_empty() {
                 println!("No users yet: `create-user NAME --role admin` adds one");
             }
+            let roots: std::collections::HashMap<i64, String> =
+                libraries::list(&conn)?.into_iter().map(|l| (l.id, l.root)).collect();
             for u in users {
                 println!("{:<8} {}", u.role.as_str(), u.name);
+                for (library, role) in scope::library_roles_of(&conn, u.id)? {
+                    println!("{:<8}   {} on {}", "", role.as_str(), roots.get(&library).map(String::as_str).unwrap_or("(a removed library)"));
+                }
             }
         }
         "create-user" => {
             let name = name()?;
-            let role = role.ok_or("create-user needs --role (viewer, uploader, editor or admin)")?;
+            let role = role.ok_or("create-user needs --role (guest, viewer, uploader, editor or admin)")?;
             let password = read_password(password_stdin)?;
             let user = accounts::create_user(&conn, &name, role, &password)?;
             println!("Created {} ({})", user.name, user.role.as_str());
@@ -282,6 +294,23 @@ fn account_command(host: &ServerHost, command: &str, args: &[String]) -> Result<
             let role = words.get(1).map(|r| accounts::Role::parse(r)).or(role.map(Ok)).ok_or("set-role needs NAME ROLE")??;
             accounts::set_role(&conn, &name, role)?;
             println!("{name} is now {}", role.as_str());
+        }
+        "set-library-role" => {
+            let (Some(name), Some(root), Some(role)) = (words.first(), words.get(1), words.get(2)) else {
+                return Err("set-library-role needs NAME ROOT ROLE (or default)".into());
+            };
+            let user = accounts::find_user(&conn, name)?.ok_or_else(|| format!("No user called {name}"))?;
+            let wanted = libraries::normalize_root(root);
+            let library = libraries::list(&conn)?
+                .into_iter()
+                .find(|l| libraries::normalize_root(&l.root) == wanted)
+                .ok_or_else(|| format!("{root} isn't one of the server's libraries (see `libraries`)"))?;
+            let role = if role == "default" { None } else { Some(accounts::Role::parse(role)?) };
+            scope::set_library_role(&conn, user.id, library.id, role)?;
+            match role {
+                Some(r) => println!("{} is {} on {}", user.name, r.as_str(), library.root),
+                None => println!("{} has their own role ({}) on {} again", user.name, user.role.as_str(), library.root),
+            }
         }
         "remove-user" => {
             let name = name()?;
