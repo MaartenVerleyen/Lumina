@@ -68,6 +68,9 @@ fi
 if [[ $WITH_DESKTOP -eq 1 ]]; then
   # Tauri v2 on Linux: WebKitGTK 4.1 and friends (https://v2.tauri.app/start/prerequisites/)
   PACKAGES+=(webkit2gtk-4.1 gtk3 libappindicator-gtk3 librsvg xdotool file appmenu-gtk-module)
+  # WebKitGTK plays video through GStreamer: -good has the MP4 demuxer and audio output, -bad the H.264
+  # parser, gst-libav the decoders. Without them a video shows its frames but never plays.
+  PACKAGES+=(gst-plugins-good gst-plugins-bad gst-libav)
 fi
 [[ $WITH_DOCKER -eq 1 ]] && PACKAGES+=(docker docker-compose docker-buildx nvidia-container-toolkit)
 [[ $WITH_OLLAMA -eq 1 ]] && PACKAGES+=(ollama-cuda)
