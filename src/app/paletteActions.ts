@@ -6,6 +6,7 @@ import { UNKNOWN_FACES } from "../components/modals/FaceMatchReviewModal";
 import { diskPathOf } from "../utils/rawPairs";
 import { scopeTitle } from "../components/layout/PhotoToolbar";
 import type { LibraryState } from "../hooks/useLibraryState";
+import type { Access } from "../components/auth/ServerGate";
 
 interface PaletteContext {
   lib: LibraryState;
@@ -19,10 +20,13 @@ interface PaletteContext {
   setIsLeftCollapsed: React.Dispatch<React.SetStateAction<boolean>>;
   isRightCollapsed: boolean;
   setIsRightCollapsed: React.Dispatch<React.SetStateAction<boolean>>;
+  // What the user may do (everything in the desktop app)
+  access: Access;
 }
 
 // Every action of the command palette (Ctrl+P), grouped, with its shortcut and when it is available
 export function buildPaletteActions({
+  access,
   lib,
   searchInputRef,
   setSaveSearchName,
@@ -165,9 +169,25 @@ export function buildPaletteActions({
     { id: "updates", group: "Help", label: "Check for updates", keywords: "new version upgrade", run: () => { openSettings("updates"); checkForUpdates(); } },
     { id: "welcome", group: "Help", label: "Welcome tour", keywords: "help intro what's new guide", run: openWelcomeTour },
   ];
-  if (platform.localFiles) return paletteActions;
-  return paletteActions.filter((a) => !NEEDS_THIS_COMPUTER.has(a.id) && !a.id.startsWith("recent-"));
+  const allowed = paletteActions.filter((a) => (access.edit || !needsEdit(a.id)) && (access.admin || !NEEDS_ADMIN.has(a.id)));
+  if (platform.localFiles) return allowed;
+  return allowed.filter((a) => !NEEDS_THIS_COMPUTER.has(a.id) && !a.id.startsWith("recent-"));
 }
+
+// Actions that change photos, people or albums (editor and up on a server)
+const NEEDS_EDIT = new Set([
+  "auto-stage", "duplicates", "keep-sharpest", "pick", "reject", "unflag", "label-clear", "rotate-left", "rotate-right",
+  "basket", "save-search", "album-new", "album-remove", "review-faces", "who", "detect-one", "ai-one", "exif", "undo", "redo",
+]);
+function needsEdit(id: string): boolean {
+  return NEEDS_EDIT.has(id) || id.startsWith("rate-") || id.startsWith("label-") || id.startsWith("album-add-");
+}
+
+// Files on disk and the long jobs: admin work on a server
+const NEEDS_ADMIN = new Set([
+  "deep", "health", "xmp-all", "xmp-sel", "commit", "dismiss", "empty-trash", "scan-faces", "scan-faces-photos",
+  "scan-faces-videos", "scan-faces-visible", "stop-faces", "ai-visible", "ai-selected", "ai-stop", "index",
+]);
 
 // Actions on this computer's folders, files and updater: not in the web client
 const NEEDS_THIS_COMPUTER = new Set(["open-folder", "import", "backup", "restore", "csv", "gallery", "export", "updates"]);

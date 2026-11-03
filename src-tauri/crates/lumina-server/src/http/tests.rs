@@ -11,6 +11,7 @@ use tower::ServiceExt;
 struct TestServer {
     app: Router,
     dir: PathBuf,
+    host: Arc<ServerHost>,
 }
 
 impl Drop for TestServer {
@@ -35,9 +36,9 @@ fn server(name: &str) -> TestServer {
     for (name, role) in [("vera", Role::Viewer), ("ed", Role::Editor), ("ada", Role::Admin)] {
         accounts::create_user(&conn, name, role, "long enough").unwrap();
     }
-    let state = Arc::new(AppState { host, web_dir: Some(web), throttle: Default::default() });
+    let state = Arc::new(AppState { host: host.clone(), web_dir: Some(web), throttle: Default::default() });
     let app = router(state).layer(MockConnectInfo(SocketAddr::from(([127, 0, 0, 1], 50000))));
-    TestServer { app, dir }
+    TestServer { app, dir, host }
 }
 
 async fn send(app: &Router, req: HttpRequest<Body>) -> (StatusCode, HeaderMap, Value) {
@@ -201,8 +202,14 @@ async fn rpc_answers_404_for_unknown_commands_and_400_for_bad_arguments() {
     assert!(body["error"].as_str().unwrap().contains("name"), "{body}");
     // camelCase arguments, as the frontend sends them to Tauri
     let (status, _, _) =
-        send(&s.app, post("/api/rpc/semantic_status", json!({"rootFolder": "/photos"}), Some(&admin))).await;
+        send(&s.app, post("/api/rpc/shift_capture_timestamps", json!({"hashes": [], "offsetMinutes": 60}), Some(&admin))).await;
     assert_eq!(status, StatusCode::OK);
+    let (status, _, _) = send(&s.app, post("/api/rpc/semantic_status", json!({"rootFolder": null}), Some(&admin))).await;
+    assert_eq!(status, StatusCode::OK);
+    // A folder that isn't one of the server's libraries
+    let (status, _, body) =
+        send(&s.app, post("/api/rpc/semantic_status", json!({"rootFolder": "/photos"}), Some(&admin))).await;
+    assert_eq!((status, body), (StatusCode::NOT_FOUND, json!({"error": "Not a library on this server"})));
 }
 
 #[tokio::test]
@@ -367,25 +374,8 @@ async fn libraries_are_listed_and_opened_from_the_database() {
 // of commands that have no place there, or on the list of commands still to come. The last list shrinks to
 // nothing by the end of phase 2.
 // Editor and admin commands: milestone 3 (restore_library and inspect_backup: milestone 5)
-const STILL_TO_COME: &[&str] = &[
-    "add_person_to_photos", "add_tag_batch", "add_to_album", "ai_analyze_photo",
-    "assign_face_region_and_automatch", "assign_faces_to_person_batch", "cancel_ai_analysis",
-    "cancel_face_scan", "cancel_semantic_index", "cancel_thumbnail_pass", "clear_all_staged",
-    "clear_video_cache", "commit_staged_operations", "delete_album", "delete_saved_search",
-    "detect_faces_in_photo", "empty_library_trash_to_os", "export_xmp_sidecars", "find_duplicates",
-    "find_similar_faces", "get_library_health_stats", "get_outdated_face_photos",
-    "get_pending_face_match_counts", "get_rejected_faces_for_person", "get_unknown_face_clusters",
-    "ignore_faces", "inspect_backup", "measure_face_quality", "ollama_tuning_status", "preload_ollama_vram",
-    "prune_orphaned_cache", "pull_ollama_model", "reject_face_candidates_batch", "remove_face_box",
-    "remove_from_album", "remove_person_from_photo", "remove_person_from_photos", "remove_tag",
-    "remove_tag_batch", "rename_album", "rename_person", "rescan_exif_batch", "restore_library",
-    "run_caption_batch", "save_search", "scan_library_faces_batch", "set_manual_location", "set_person_cover",
-    "set_person_hidden", "set_person_starred", "set_photo_basket", "set_photo_color_label", "set_photo_flag",
-    "set_photo_rotation", "set_photos_rating", "set_photos_rotation_exact", "set_trip_name",
-    "shift_capture_timestamps", "stage_duplicate_extras", "stage_photo_move", "stage_photos_move",
-    "start_semantic_index", "trash_summary", "unassign_faces_batch", "unload_ollama_vram",
-    "unreject_face_candidates_batch", "video_cache_info",
-];
+// Restoring a backup comes with the admin pages (milestone 5): by upload, not from a path on the client
+const STILL_TO_COME: &[&str] = &["inspect_backup", "restore_library"];
 
 fn frontend_commands() -> std::collections::BTreeSet<String> {
     fn walk(dir: &std::path::Path, out: &mut std::collections::BTreeSet<String>) {
@@ -457,4 +447,123 @@ fn every_command_the_frontend_calls_is_accounted_for() {
     for c in STILL_TO_COME {
         assert!(super::rpc::lookup(c).is_none(), "{c} is on the server now: take it off STILL_TO_COME");
     }
+}
+
+// ---- Milestone 3: editing by role, live updates, who did what ----
+
+#[tokio::test]
+async fn every_editing_command_is_refused_below_its_role_before_anything_runs() {
+    let s = server("refused");
+    let viewer = login(&s.app, "vera").await;
+    let editor = login(&s.app, "ed").await;
+    for cmd in super::rpc::COMMANDS.iter().filter(|c| c.role > Role::Viewer) {
+        // No arguments at all: a refusal must come before the arguments are even read
+        let (status, _, body) = send(&s.app, post(&format!("/api/rpc/{}", cmd.name), json!({}), Some(&viewer))).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "viewer -> {}: {body}", cmd.name);
+        if cmd.role == Role::Admin {
+            let (status, _, _) = send(&s.app, post(&format!("/api/rpc/{}", cmd.name), json!({}), Some(&editor))).await;
+            assert_eq!(status, StatusCode::FORBIDDEN, "editor -> {}", cmd.name);
+        }
+    }
+}
+
+#[tokio::test]
+async fn an_edit_is_announced_recorded_and_readable_by_others() {
+    let s = server("announce");
+    add_library(&s);
+    let editor = login(&s.app, "ed").await;
+    let viewer = login(&s.app, "vera").await;
+    let mut events = s.host.subscribe();
+
+    let req = HttpRequest::post("/api/rpc/set_photos_rating")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header("x-lumina", "1")
+        .header("x-lumina-client", "window-1")
+        .header(header::COOKIE, &editor)
+        .body(Body::from(json!({"hashes": ["abc123"], "rating": 4}).to_string()))
+        .unwrap();
+    assert_eq!(send(&s.app, req).await.0, StatusCode::OK);
+    let (event, payload) = events.recv().await.unwrap();
+    assert_eq!(event, "photos-changed");
+    assert_eq!(payload, json!({"hashes": ["abc123"], "by": "ed", "origin": "window-1"}));
+
+    // Another user refreshes just that photo
+    let (status, _, photos) = send(&s.app, post("/api/rpc/get_photos", json!({"hashes": ["abc123", "unknown"]}), Some(&viewer))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(photos.as_array().unwrap().len(), 1);
+    assert_eq!(photos[0]["rating"], 4);
+
+    // A tag, then a person: people-changed too
+    send(&s.app, post("/api/rpc/add_tag_batch", json!({"hashes": ["abc123"], "tag": "beach"}), Some(&editor))).await;
+    send(&s.app, post("/api/rpc/add_person_to_photos", json!({"hashes": ["abc123"], "name": "Anna"}), Some(&editor))).await;
+    let mut seen = Vec::new();
+    while let Ok((event, _)) = events.try_recv() {
+        seen.push(event);
+    }
+    assert_eq!(seen, ["photos-changed", "photos-changed", "people-changed"]);
+
+    // Albums: albums-changed, and the photo it touched
+    let (_, _, id) = send(&s.app, post("/api/rpc/create_album", json!({"name": "Trip"}), Some(&editor))).await;
+    assert_eq!(events.recv().await.unwrap().0, "albums-changed");
+    send(&s.app, post("/api/rpc/add_to_album", json!({"id": id, "hashes": ["abc123"]}), Some(&editor))).await;
+    assert_eq!(events.recv().await.unwrap().0, "photos-changed");
+    assert_eq!(events.recv().await.unwrap().0, "albums-changed");
+
+    // Who did what, newest first
+    let (status, _, history) = send(&s.app, post("/api/rpc/get_photo_history", json!({"hash": "abc123"}), Some(&viewer))).await;
+    assert_eq!(status, StatusCode::OK);
+    let whats: Vec<&str> = history.as_array().unwrap().iter().map(|c| c["what"].as_str().unwrap()).collect();
+    assert_eq!(whats, ["add_to_album", "add_person_to_photos", "add_tag_batch", "set_photos_rating"]);
+    assert!(history.as_array().unwrap().iter().all(|c| c["user"] == "ed"));
+
+    // Reading changes nothing and announces nothing
+    send(&s.app, post("/api/rpc/get_albums", json!({}), Some(&viewer))).await;
+    assert!(events.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn a_rename_announces_every_photo_of_that_person() {
+    let s = server("rename");
+    add_library(&s);
+    let editor = login(&s.app, "ed").await;
+    let conn = db::open_global_db(&*s.host).unwrap();
+    conn.execute("UPDATE photo_faces SET person_name = 'Ann' WHERE face_id = 'abc123_10_20'", []).unwrap();
+    conn.execute("INSERT INTO photo_people (hash, person_name) VALUES ('abc123', 'Ann')", []).unwrap();
+    let mut events = s.host.subscribe();
+    let (status, _, _) =
+        send(&s.app, post("/api/rpc/rename_person", json!({"oldName": "Ann", "newName": "Anna"}), Some(&editor))).await;
+    assert_eq!(status, StatusCode::OK);
+    let (event, payload) = events.recv().await.unwrap();
+    assert_eq!((event.as_str(), &payload["hashes"]), ("photos-changed", &json!(["abc123"])));
+    assert_eq!(events.recv().await.unwrap().0, "people-changed");
+}
+
+#[tokio::test]
+async fn paths_and_folders_from_the_client_are_checked() {
+    let s = server("paths");
+    let (root, photo) = add_library(&s);
+    let editor = login(&s.app, "ed").await;
+    let admin = login(&s.app, "ada").await;
+    let elsewhere = s.dir.join("thumbnails").join("abc123.jpg").to_string_lossy().to_string();
+    for (cmd, args) in [
+        ("detect_faces_in_photo", json!({"hash": "abc123", "imagePath": elsewhere})),
+        ("ai_analyze_photo", json!({"hash": "abc123", "imagePathForAi": "/etc/passwd", "modelName": "m", "existingTags": []})),
+        ("prepare_ai_image", json!({"hash": "abc123", "imagePath": elsewhere})),
+    ] {
+        let (status, _, body) = send(&s.app, post(&format!("/api/rpc/{cmd}"), args, Some(&editor))).await;
+        assert_eq!((status, body), (StatusCode::BAD_REQUEST, json!({"error": "Not the path of that photo"})), "{cmd}");
+    }
+    for (cmd, args) in [
+        ("commit_staged_operations", json!({"rootFolder": "/"})),
+        ("empty_library_trash_to_os", json!({"rootFolder": "/tmp"})),
+        ("rescan_library", json!({"folderPath": s.dir.to_string_lossy()})),
+        ("start_semantic_index", json!({"rootFolder": "/home"})),
+    ] {
+        let (status, _, _) = send(&s.app, post(&format!("/api/rpc/{cmd}"), args, Some(&admin))).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{cmd}");
+    }
+    // The real ones are accepted
+    let (status, _, staged) = send(&s.app, post("/api/rpc/get_staged_operations", json!({"rootFolder": root}), Some(&editor))).await;
+    assert_eq!((status, staged), (StatusCode::OK, json!([])));
+    let _ = photo;
 }

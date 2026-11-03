@@ -1,8 +1,10 @@
 import { Sparkles } from "lucide-react";
 import type { LibraryState } from "../../hooks/useLibraryState";
+import { useAccess } from "../auth/ServerGate";
 
 // Banners above the grid: smart search results ("best matches for …") and the burst comparison
 export default function ResultBanners({ lib }: { lib: LibraryState }) {
+  const access = useAccess();
   return (
     <>
       {lib.semanticScores && lib.semanticResult && (
@@ -42,12 +44,14 @@ export default function ResultBanners({ lib }: { lib: LibraryState }) {
               Comparing <strong>{lib.totalBurstGroups}</strong> Burst Groups (
               {lib.duplicatePhotosCount} items):
             </span>
+            {access.edit && (
             <button
               onClick={lib.handleKeepSharpestInAllGroups}
               className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold shadow transition"
             >
               Keep Best & Stage Rest for _Trash
             </button>
+            )}
           </div>
         )}
     </>

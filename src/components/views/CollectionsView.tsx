@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useAccess } from "../auth/ServerGate";
 import { BookImage, Calendar, Check, MoreHorizontal, Plane, Plus, Search, Sparkles, Trophy } from "lucide-react";
 import { Album, PhotoItem, SavedSearch } from "../../types/lumina";
 import { Trip } from "../../utils/trips";
@@ -182,6 +183,8 @@ export default function CollectionsView({
   const [newAlbumName, setNewAlbumName] = useState<string | null>(null);
   // Years whose trips are all shown (the rest show the first few: a large library has well over a thousand)
   const [expandedYears, setExpandedYears] = useState<Set<number>>(new Set());
+  // Making, renaming and deleting albums is editing; looking and Highlights are for everyone
+  const access = useAccess();
   const [renaming, setRenaming] = useState<{ kind: "album" | "trip"; id: string; value: string } | null>(null);
 
   const q = filter.trim().toLowerCase();
@@ -295,8 +298,12 @@ export default function CollectionsView({
                 ...(onShareGallery
                   ? [{ label: "Share as web gallery", run: () => onShareGallery(a.name, a.hashes.filter((h) => photoByHash.has(h))) }]
                   : []),
-                { label: "Rename", run: () => setRenaming({ kind: "album", id: String(a.id), value: a.name }) },
-                { label: "Delete album", danger: true, run: () => onDeleteAlbum(a.id) },
+                ...(access.edit
+                  ? [
+                      { label: "Rename", run: () => setRenaming({ kind: "album", id: String(a.id), value: a.name }) },
+                      { label: "Delete album", danger: true, run: () => onDeleteAlbum(a.id) },
+                    ]
+                  : []),
               ]}
               renaming={renaming?.kind === "album" && renaming.id === String(a.id)}
               renameValue={renaming?.value}
@@ -304,7 +311,7 @@ export default function CollectionsView({
               onRenameDone={finishRename}
             />
           ))}
-          {newAlbumName === null ? (
+          {!access.edit ? null : newAlbumName === null ? (
             <button
               onClick={() => setNewAlbumName("")}
               className="aspect-[4/3] rounded-xl border-2 border-dashed border-zinc-800 hover:border-indigo-500/50 text-zinc-500 hover:text-indigo-200 flex flex-col items-center justify-center gap-1.5 text-xs"
@@ -364,7 +371,7 @@ export default function CollectionsView({
                     </div>
                   }
                   onOpen={() => onOpenSavedSearch(s)}
-                  menu={[{ label: "Delete smart album", danger: true, run: () => onDeleteSavedSearch(s.id) }]}
+                  menu={access.edit ? [{ label: "Delete smart album", danger: true, run: () => onDeleteSavedSearch(s.id) }] : undefined}
                 />
               ))}
             </div>
@@ -425,7 +432,7 @@ export default function CollectionsView({
                     ...(onShareGallery
                       ? [{ label: "Share as web gallery", run: () => onShareGallery(e.label, tripsById.get(e.id)?.hashes ?? []) }]
                       : []),
-                    { label: "Rename", run: () => setRenaming({ kind: "trip", id: e.id, value: "" }) },
+                    ...(access.edit ? [{ label: "Rename", run: () => setRenaming({ kind: "trip", id: e.id, value: "" }) }] : []),
                   ]}
                   renaming={renaming?.kind === "trip" && renaming.id === e.id}
                   renameValue={renaming?.value}

@@ -33,6 +33,8 @@ interface UseKeyboardShortcutsParams {
   setCompareZoom: React.Dispatch<React.SetStateAction<number>>;
   setComparePan: React.Dispatch<React.SetStateAction<{ x: number; y: number }>>;
   handleToggleBasketSelection: () => Promise<void>;
+  // The user may change photos (a viewer on a server may not: rating, flag, colour, rotate and AI keys do nothing)
+  canEdit: boolean;
 }
 
 // Typing into a field (including contenteditable) must never trigger triage shortcuts
@@ -110,6 +112,8 @@ export function useKeyboardShortcuts(params: UseKeyboardShortcutsParams) {
         p.setIsDrawingFace(false);
         p.setDrawnBox(null);
         p.setActiveBulkPopover(null);
+      } else if (!p.canEdit && ["p", "u", "x", "a", "b", "[", "]", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"].includes(key)) {
+        return;
       } else if (key === "p" && hasSelection) {
         e.preventDefault();
         p.handleSetFlag("pick");

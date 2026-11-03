@@ -3,9 +3,10 @@
 // from. Later a desktop library can be on a server too (client mode), and `transportFor` picks the
 // connection per library.
 import { localTransport, type EngineEvent, type MediaRef, type Transport } from "./transport";
-import { createRemoteAuth, createRemoteTransport, type RemoteUser } from "./remote";
+import { createRemoteAuth, createRemoteTransport, hasRole, type RemoteUser, type Role } from "./remote";
 
-export type { EngineEvent, MediaRef, Transport, RemoteUser };
+export type { EngineEvent, MediaRef, Transport, RemoteUser, Role };
+export { hasRole };
 
 // Inside the Tauri desktop app (rather than a browser)
 export const inDesktopApp = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -16,6 +17,11 @@ export const LOGGED_OUT_EVENT = "lumina-logged-out";
 const serverTransport = inDesktopApp
   ? null
   : createRemoteTransport({ onUnauthorized: () => window.dispatchEvent(new Event(LOGGED_OUT_EVENT)) });
+
+// A change event this window caused itself (it already shows that change)
+export function isOwnChange(payload: { origin?: string } | null | undefined): boolean {
+  return !!serverTransport && payload?.origin === serverTransport.clientId;
+}
 
 // Logging in and out of the server the web client came from (unused in the desktop app)
 export const serverAuth = createRemoteAuth();

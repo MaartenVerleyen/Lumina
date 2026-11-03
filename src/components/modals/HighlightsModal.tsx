@@ -12,7 +12,8 @@ interface HighlightsModalProps {
   onClose: () => void;
   onCount: (count: number) => void;
   onShowInGrid: () => void;
-  onSaveAsAlbum: () => void;
+  // Absent for users who may not make albums
+  onSaveAsAlbum?: () => void;
   // Absent in the web client (a gallery is written to a folder on this computer)
   onShareGallery?: () => void;
   onOpenPhoto: (hash: string) => void;
@@ -127,6 +128,7 @@ export default function HighlightsModal({
                 <Globe className="w-3.5 h-3.5 text-emerald-400" /> Share as web page
               </button>
             )}
+            {onSaveAsAlbum && (
             <button
               onClick={onSaveAsAlbum}
               disabled={picks.length === 0}
@@ -134,6 +136,7 @@ export default function HighlightsModal({
             >
               <BookImage className="w-3.5 h-3.5 text-indigo-300" /> Save as album
             </button>
+            )}
             <button
               onClick={onShowInGrid}
               disabled={picks.length === 0}

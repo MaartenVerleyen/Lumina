@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowUpDown, Calendar, Check, ChevronDown, Columns, Copy, FilterX, Folder, FolderSync, Layers, SlidersHorizontal, Trophy, X } from "lucide-react";
 import type { LibraryState } from "../../hooks/useLibraryState";
+import { useAccess } from "../auth/ServerGate";
 import { AutoStagePreset, OrientationFilter, SortOption } from "../../types/lumina";
 
 const SORTS: { value: SortOption; label: string; pro?: boolean }[] = [
@@ -87,6 +88,7 @@ export function scopeTitle(lib: LibraryState): string {
 
 // The bar above the photo grid: Timeline, bursts, Compare, Highlights and two menus (View, Organize)
 export default function PhotoToolbar({ lib }: { lib: LibraryState }) {
+  const access = useAccess();
   const viewChanged = lib.orientationFilter !== "ALL" || !lib.autoAdvance;
   // The filters clearAllFilters resets
   const activeFilterCount = [
@@ -287,6 +289,8 @@ export default function PhotoToolbar({ lib }: { lib: LibraryState }) {
           )}
         </Menu>
 
+        {/* Planned moves and duplicates change photos: not for those who may only look */}
+        {access.edit && (
         <Menu label="Organize" icon={<FolderSync className="w-3.5 h-3.5 text-indigo-400" />}>
           {(close) => (
             <>
@@ -337,6 +341,7 @@ export default function PhotoToolbar({ lib }: { lib: LibraryState }) {
             </>
           )}
         </Menu>
+        )}
       </div>
     </div>
   );

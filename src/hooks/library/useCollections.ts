@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
-import { call } from "../../api";
+import { call, isOwnChange, subscribe } from "../../api";
 import { Album, SavedSearch } from "../../types/lumina";
 import { MatchContext } from "../../utils/searchQuery";
 import { computeTrips, tripLabel } from "../../utils/trips";
@@ -77,6 +77,18 @@ export function useCollections(core: LibraryCore, filters: FilterState) {
 
   useEffect(() => {
     refreshAlbums();
+  }, [refreshAlbums]);
+
+  // Another user changed albums, saved searches or trip names on the server
+  useEffect(() => {
+    const off = subscribe<{ origin?: string }>("albums-changed", (e) => {
+      if (isOwnChange(e.payload)) return;
+      refreshAlbums();
+      call<Record<string, string>>("get_trip_names").then(setTripNames).catch(() => {});
+    });
+    return () => {
+      off.then((f) => f());
+    };
   }, [refreshAlbums]);
 
   // Photos of each album that are in the open folder

@@ -8,7 +8,7 @@ import type { LibraryState } from "../hooks/useLibraryState";
 export function useAppKeys(lib: LibraryState) {
   // Global Undo/Redo (`Ctrl+Z` / `Ctrl+Y`), Shortcuts (`?`), and Session Log (`Ctrl+L`) Listener.
   // Registered once; reads the latest handlers through a ref.
-  const extraKeysRef = useRef({ lib, isBlockingModalOpen: false, isDialogOpen: false, togglePalette: () => {}, openSettings: () => {} });
+  const extraKeysRef = useRef({ lib, isBlockingModalOpen: false, isDialogOpen: false, canEdit: true, togglePalette: () => {}, openSettings: () => {} });
   useEffect(() => {
     function handleExtraKeys(e: KeyboardEvent) {
       // A confirmation on screen keeps every key to itself
@@ -36,15 +36,15 @@ export function useAppKeys(lib: LibraryState) {
         return;
       }
       if (isEditableTarget(e.target)) return;
-      const { lib: l, isBlockingModalOpen: blocked } = extraKeysRef.current;
+      const { lib: l, isBlockingModalOpen: blocked, canEdit } = extraKeysRef.current;
 
       if (mod && key === "z" && !e.shiftKey) {
         // Undo/redo would change photos behind an open dialog (Face Review has its own Ctrl+Z)
-        if (blocked) return;
+        if (blocked || !canEdit) return;
         e.preventDefault();
         l.handleUndo();
       } else if (mod && (key === "y" || (e.shiftKey && key === "z"))) {
-        if (blocked) return;
+        if (blocked || !canEdit) return;
         e.preventDefault();
         l.handleRedo();
       } else if (e.key === "?" || (e.shiftKey && e.key === "/")) {

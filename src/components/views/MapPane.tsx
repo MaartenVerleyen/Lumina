@@ -1,9 +1,12 @@
 import { Compass, Crosshair, MapPin } from "lucide-react";
 import PhotoMap from "./PhotoMap";
+import { useAccess } from "../auth/ServerGate";
 import type { LibraryState } from "../../hooks/useLibraryState";
 
 // The Map tab: the map with a bar to assign GPS to the selection by clicking the map
 export default function MapPane({ lib }: { lib: LibraryState }) {
+  // Pinning a location on the map changes photos
+  const access = useAccess();
   return (
     <div className="flex-1 flex flex-col overflow-hidden relative">
       <div className="bg-zinc-900/95 border-b border-zinc-800 px-4 py-2 flex items-center justify-between text-xs z-10">
@@ -19,6 +22,7 @@ export default function MapPane({ lib }: { lib: LibraryState }) {
               : `Showing ${lib.gpsPhotosCount} geotagged photos on map.`}
           </span>
         </div>
+        {access.edit && (
         <button
           onClick={() => lib.setIsPickingMapLocation((p) => !p)}
           disabled={lib.selectedHashes.size === 0}
@@ -35,11 +39,12 @@ export default function MapPane({ lib }: { lib: LibraryState }) {
               : `Click Map to Set GPS (${lib.selectedHashes.size})`}
           </span>
         </button>
+        )}
       </div>
       <PhotoMap
         photos={lib.visiblePhotos}
         onSelectPhoto={(h) => lib.setActiveHash(h)}
-        isPickingLocation={lib.isPickingMapLocation}
+        isPickingLocation={access.edit && lib.isPickingMapLocation}
         onMapPickCoordinates={lib.handleMapPickCoordinates}
       />
     </div>

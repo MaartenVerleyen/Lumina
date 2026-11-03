@@ -1,4 +1,5 @@
 import { useRef, useMemo } from "react";
+import { useAccess } from "../auth/ServerGate";
 import { useWheel } from "../../hooks/useWheel";
 import { mediaUrl } from "../../api";
 import { PhotoItem, ViewMode } from "../../types/lumina";
@@ -49,6 +50,7 @@ export default function CompareView({
   compareCandidateCount = 0,
   culling = DEFAULT_CULLING,
 }: CompareViewProps) {
+  const access = useAccess();
   const isPanningCompareRef = useRef<boolean>(false);
   const panStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const canvasRef = useRef<HTMLDivElement>(null);
@@ -270,6 +272,7 @@ export default function CompareView({
                 </div>
 
                 <div className="flex items-center gap-1.5 shrink-0">
+                  {access.edit && (
                   <button
                     onClick={async (e) => {
                       e.stopPropagation();
@@ -322,6 +325,7 @@ export default function CompareView({
                     <Trophy className="w-3.5 h-3.5" />
                     <span>Keep This & Trash Rest</span>
                   </button>
+                  )}
                 </div>
               </div>
             </div>

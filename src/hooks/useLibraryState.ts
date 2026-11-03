@@ -17,6 +17,7 @@ import { useImport } from "./library/useImport";
 import { useHighlights } from "./library/useHighlights";
 import { useBackup } from "./library/useBackup";
 import { useDuplicates } from "./library/useDuplicates";
+import { useLiveUpdates } from "./library/useLiveUpdates";
 
 export type { Toast } from "./library/shared";
 
@@ -44,6 +45,7 @@ export function useLibraryState() {
   const highlighter = useHighlights(core, filters, view, collections);
   const backup = useBackup(core, folder.recentFolders);
   const duplicates = useDuplicates(core);
+  useLiveUpdates(core);
 
   return {
     ...core,

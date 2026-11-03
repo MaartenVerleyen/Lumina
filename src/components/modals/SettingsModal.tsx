@@ -1,5 +1,6 @@
 import { useEffect, useState, ReactNode } from "react";
 import { call } from "../../api";
+import { useAccess } from "../auth/ServerGate";
 import { getVersion, open as openDialog, openUrl, platform } from "../../api/platform";
 import { confirmDialog } from "../../confirm";
 import {
@@ -183,6 +184,7 @@ export default function SettingsModal({
   updater,
 }: SettingsModalProps) {
   const settings = useSettings();
+  const access = useAccess();
   const dialogRef = useDialogFocus<HTMLDivElement>(isOpen);
   const [section, setSection] = useState<SettingsSection>(initialSection);
   const [version, setVersion] = useState("");
@@ -509,7 +511,7 @@ export default function SettingsModal({
                 <Group title="Ollama">
                   <Row
                     label="Status"
-                    hint="Captions, tags and text in photos are written by a vision model running in Ollama on this PC."
+                    hint={`Captions, tags and text in photos are written by a vision model running in Ollama on ${platform.localFiles ? "this PC" : "the server"}.`}
                   >
                     <Status ok={Boolean(ollama?.running)}>{ollama?.running ? "Running" : "Not running"}</Status>
                     {!ollama?.running && platform.localFiles && (
@@ -531,10 +533,12 @@ export default function SettingsModal({
                           </option>
                         ))}
                       </select>
-                    ) : (
+                    ) : access.admin ? (
                       <Button primary disabled={!ollama?.running || Boolean(lib.ollamaPullProgress)} onClick={then(() => lib.handlePullDefaultAiModel())}>
                         Download {DEFAULT_AI_MODEL}
                       </Button>
+                    ) : (
+                      <Status ok={false}>None on the server</Status>
                     )}
                   </Row>
                   {platform.localFiles && (
@@ -557,6 +561,7 @@ export default function SettingsModal({
             {section === "faces" && (
               <>
                 <Group title="Face recognition">
+                  {access.edit && (
                   <Row label="People" hint={`${lib.people.length} named · ${pending} suggestion(s) to review`}>
                     <Button disabled={!hasPhotos} onClick={then(() => lib.setFaceReviewPerson(UNKNOWN_FACES))}>
                       Who is this?
@@ -572,6 +577,8 @@ export default function SettingsModal({
                       Review matches
                     </Button>
                   </Row>
+                  )}
+                  {access.admin && (
                   <Row label="Scan this library for faces" hint="Finds faces in every photo; names you gave are kept. Runs on the graphics card when it can.">
                     {lib.faceScanProgress ? (
                       <Button onClick={lib.handleCancelFaceScan}>Stop scan</Button>
@@ -581,6 +588,8 @@ export default function SettingsModal({
                       </Button>
                     )}
                   </Row>
+                  )}
+                  {!access.edit && <Row label="People" hint="Naming faces needs the editor role." />}
                 </Group>
               </>
             )}
@@ -601,7 +610,7 @@ export default function SettingsModal({
                         : "Open a library to see its index."
                     }
                   >
-                    {lib.semanticProgress ? (
+                    {!access.admin ? null : lib.semanticProgress ? (
                       <Button onClick={lib.handleCancelSemanticIndex}>Stop</Button>
                     ) : (
                       <Button

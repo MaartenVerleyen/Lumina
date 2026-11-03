@@ -1,5 +1,6 @@
 import type { ViewMode } from "../../types/lumina";
 import { useEffect, useRef, useState } from "react";
+import { useAccess } from "../auth/ServerGate";
 import { CheckSquare, FileText, Grid, Images, Loader2, Square, X } from "lucide-react";
 
 // A background job shown in the Jobs panel (folder scan, thumbnails, face scan, AI batch, downloads, ...)
@@ -64,6 +65,7 @@ export default function BottomStatusBar({
   sessionLogsCount = 0,
   onOpenSessionLog,
 }: BottomStatusBarProps) {
+  const access = useAccess();
   const [isJobsOpen, setIsJobsOpen] = useState(false);
   const jobsRef = useRef<HTMLDivElement>(null);
   const etas = useEtas(jobs);
@@ -170,15 +172,15 @@ export default function BottomStatusBar({
 
       {/* Center: keyboard hints */}
       <div className="hidden lg:flex items-center gap-3 text-[11px] text-zinc-500 font-mono">
-        {[
-          ["Ctrl+P", "Commands", "text-emerald-300"],
-          ["Space", "Loupe", "text-zinc-400"],
-          ["P", "Pick", "text-emerald-400"],
-          ["X", "Reject", "text-red-400"],
-          ["1-5", "Rate", "text-amber-400"],
-          ["C", "Compare", "text-indigo-400"],
-          ["A", "AI Tag", "text-indigo-400"],
-        ].map(([key, label, color]) => (
+        {([
+          ["Ctrl+P", "Commands", "text-emerald-300", true],
+          ["Space", "Loupe", "text-zinc-400", true],
+          ["P", "Pick", "text-emerald-400", access.edit],
+          ["X", "Reject", "text-red-400", access.edit],
+          ["1-5", "Rate", "text-amber-400", access.edit],
+          ["C", "Compare", "text-indigo-400", true],
+          ["A", "AI Tag", "text-indigo-400", access.edit],
+        ] as [string, string, string, boolean][]).filter(([, , , shown]) => shown).map(([key, label, color]) => (
           <span key={key}>
             <kbd className={`px-1 py-0.2 bg-zinc-900 border border-zinc-800 rounded ${color}`}>{key}</kbd> {label}
           </span>

@@ -2,6 +2,7 @@
 // It keeps its libraries scanned, with thumbnails, faces and smart search, and serves the web client and
 // the engine's commands to logged-in users (http).
 mod accounts;
+mod changes;
 mod config;
 mod host;
 mod http;

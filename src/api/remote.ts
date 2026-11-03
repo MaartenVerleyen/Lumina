@@ -13,11 +13,23 @@ export interface RemoteOptions {
   WebSocket?: typeof WebSocket;
   // A request answered 401: the session ended (logged out elsewhere, password changed, 90 days idle)
   onUnauthorized?: () => void;
+  // Fixed in tests; a random one per window otherwise
+  clientId?: string;
 }
+
+// Lowest to highest. A guest sees only albums shared with them; a viewer everything, read-only; an uploader
+// can also upload (phase 3); an editor rates, tags, names faces and makes albums; an admin does everything.
+export const ROLES = ["guest", "viewer", "uploader", "editor", "admin"] as const;
+export type Role = (typeof ROLES)[number];
 
 export interface RemoteUser {
   name: string;
-  role: "viewer" | "uploader" | "editor" | "admin";
+  role: Role;
+}
+
+// At least this role (an unknown role counts as the lowest)
+export function hasRole(user: Pick<RemoteUser, "role"> | null | undefined, wanted: Role): boolean {
+  return !!user && ROLES.indexOf(user.role) >= ROLES.indexOf(wanted);
 }
 
 // Commands and media ids may only be plain words: never let one change the URL's path
@@ -60,8 +72,11 @@ export async function errorText(resp: Response): Promise<string> {
 // Requests that change something carry this header; a page on another site can't send it with the cookie
 const HEADERS = { "Content-Type": "application/json", "X-Lumina": "1" };
 
-export function createRemoteTransport(options: RemoteOptions = {}): Transport & { close(): void } {
+export function createRemoteTransport(options: RemoteOptions = {}): Transport & { close(): void; clientId: string } {
   const base = options.base ?? "";
+  // This window's name in change events (photos-changed, ...): it already shows its own changes
+  const clientId = options.clientId ?? Math.random().toString(36).slice(2, 12);
+  const headers = { ...HEADERS, "X-Lumina-Client": clientId };
   const doFetch = options.fetch ?? ((...args: Parameters<typeof fetch>) => fetch(...args));
   const Socket = options.WebSocket ?? (typeof WebSocket === "undefined" ? undefined : WebSocket);
 
@@ -71,7 +86,7 @@ export function createRemoteTransport(options: RemoteOptions = {}): Transport & 
       resp = await doFetch(`${base}/api/rpc/${segment(command)}`, {
         method: "POST",
         credentials: "same-origin",
-        headers: HEADERS,
+        headers,
         body: JSON.stringify(args ?? {}),
       });
     } catch (e) {
@@ -158,6 +173,7 @@ export function createRemoteTransport(options: RemoteOptions = {}): Transport & 
   return {
     call,
     subscribe,
+    clientId,
     mediaUrl: (ref) => base + mediaPath(ref),
     close() {
       closed = true;

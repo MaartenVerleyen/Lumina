@@ -76,7 +76,7 @@ cargo build --release -p lumina-server
 
 # Frontend (from the repository root)
 npm ci
-npm test                                     # 78 tests
+npm test                                     # 81 tests
 npx tsc --noEmit -p .
 
 # Desktop app in development, on the test data (never on the real library)
@@ -92,6 +92,12 @@ Server configuration: `lumina-server.toml` (`data_dir`, `libraries`, `ollama_url
 `LUMINA_CAPTION_MODEL`, `LUMINA_LISTEN` (default `127.0.0.1:8080`), `LUMINA_WEB_DIR` (the built `dist`).
 `LUMINA_FFMPEG` names another ffmpeg. Accounts: `lumina-server create-user NAME --role admin` (see
 `server/README.md`); HTTPS comes from `tailscale serve` in front of `127.0.0.1:8080`.
+
+On the server every RPC command has a lowest role (`http/rpc.rs`); an editing command also says which photos it
+changed, so the server writes `changes` (who did what) and sends `photos-changed` / `people-changed` /
+`albums-changed`, which other windows refresh from (`get_photos`; `useLiveUpdates`). The web client hides what
+the role can't do through `useAccess()` (`src/components/auth/ServerGate.tsx`); the server's pipeline runs the
+library's background jobs, so the web client never starts them (`platform.libraryJobs`).
 
 ## Test library
 

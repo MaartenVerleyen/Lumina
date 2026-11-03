@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Loader2, LogIn } from "lucide-react";
-import { inDesktopApp, LOGGED_OUT_EVENT, serverAuth, type RemoteUser } from "../../api";
+import { hasRole, inDesktopApp, LOGGED_OUT_EVENT, serverAuth, type RemoteUser } from "../../api";
 
 // Who is logged in to the server (the web client only; null in the desktop app)
 interface Account {
@@ -12,6 +12,23 @@ const AccountContext = createContext<Account | null>(null);
 
 export function useAccount(): Account | null {
   return useContext(AccountContext);
+}
+
+// What the user may do. The desktop app's user owns the library: everything. On a server it follows the
+// role; the server checks it again on every call, this only hides what would be refused.
+export interface Access {
+  // Rate, flag, tag, name faces, albums, locations, dates, single-photo AI, planned moves
+  edit: boolean;
+  // Files on disk (commit moves, empty _Trash), caches, the long jobs, users
+  admin: boolean;
+}
+
+const EVERYTHING: Access = { edit: true, admin: true };
+
+export function useAccess(): Access {
+  const account = useAccount();
+  if (inDesktopApp) return EVERYTHING;
+  return { edit: hasRole(account?.user, "editor"), admin: hasRole(account?.user, "admin") };
 }
 
 // The web client shows the app only to a logged-in user: it asks the server who is logged in, shows the

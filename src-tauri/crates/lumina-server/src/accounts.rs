@@ -70,7 +70,8 @@ pub fn ensure_tables(conn: &Connection) -> Result<(), String> {
          );
          CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);",
     )
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?;
+    crate::changes::ensure_table(conn)
 }
 
 fn now() -> i64 {

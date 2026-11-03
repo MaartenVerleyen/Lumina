@@ -71,9 +71,11 @@ import { useThrottled } from "./hooks/useThrottled";
 import { useSettings } from "./settings";
 import ConfirmDialog from "./components/modals/ConfirmDialog";
 import { useConfirmRequest } from "./confirm";
+import { useAccess } from "./components/auth/ServerGate";
 
 export default function App() {
   const lib = useLibraryState();
+  const access = useAccess();
   // Best of focuses on the starred people
   const bestOfFocus = useMemo(
     () => ({ starred: new Set(lib.people.filter((p) => p.starred).map((p) => p.name.toLowerCase())) }),
@@ -378,7 +380,7 @@ export default function App() {
     setSettingsSection(section);
     setIsSettingsOpen(true);
   };
-  extraKeysRef.current = { lib, isBlockingModalOpen, isDialogOpen, togglePalette, openSettings };
+  extraKeysRef.current = { lib, isBlockingModalOpen, isDialogOpen, canEdit: access.edit, togglePalette, openSettings };
 
   // ---------- Drag photos onto folders, people and quick filters ----------
   const hashesForDrag = (hash: string): string[] => {
@@ -410,7 +412,9 @@ export default function App() {
     }
     lib.setAutoMatchNotice(`${target.label}: ${hashes.length} photo(s). Ctrl+Z undoes it.`);
   };
-  const { drag, onCardPointerDown } = usePhotoDrag(hashesForDrag, handleDropPhotos);
+  const { drag, onCardPointerDown: startPhotoDrag } = usePhotoDrag(hashesForDrag, handleDropPhotos);
+  // Dropping photos on a folder, person or filter changes them: not for users who may only look
+  const onCardPointerDown: typeof startPhotoDrag = access.edit ? startPhotoDrag : () => {};
   const dragPhoto = drag ? lib.visiblePhotos.find((p) => p.hash === drag.thumbHash) : undefined;
 
   const jobs = backgroundJobsOf(lib);
@@ -422,6 +426,7 @@ export default function App() {
   const [saveSearchName, setSaveSearchName] = useState<string | null>(null);
 
   const paletteActions = buildPaletteActions({
+    access,
     lib,
     searchInputRef,
     setSaveSearchName,
@@ -461,6 +466,7 @@ export default function App() {
     setCompareZoom: lib.setCompareZoom,
     setComparePan: lib.setComparePan,
     handleToggleBasketSelection: lib.handleToggleBasketSelection,
+    canEdit: access.edit,
   });
 
   return (
@@ -595,7 +601,7 @@ export default function App() {
               folderTree={lib.folderTree}
               expandedFolders={lib.expandedFolders}
               setExpandedFolders={lib.setExpandedFolders}
-              handleEmptyTrashToRecycleBin={lib.handleEmptyTrashToRecycleBin}
+              handleEmptyTrashToRecycleBin={access.admin ? lib.handleEmptyTrashToRecycleBin : undefined}
               onFolderContextMenu={handleFolderContextMenu}
               collapsedSections={collapsedSections}
               onToggleSection={(id) =>
@@ -891,10 +897,10 @@ export default function App() {
           navigator.clipboard?.writeText(diskPath).catch(() => {});
           lib.setAutoMatchNotice(`Copied file path: ${diskPath}`);
         }}
-        onPickPhoto={() => {
+        onPickPhoto={!access.edit ? undefined : () => {
           if (contextPhoto) lib.handleSetFlag("pick", contextMenuTargets(contextPhoto.hash));
         }}
-        onStageTrash={() => {
+        onStageTrash={!access.edit ? undefined : () => {
           if (contextPhoto) lib.handleRejectToTrash(contextMenuTargets(contextPhoto.hash));
         }}
         onFindSimilar={() => {
@@ -907,14 +913,14 @@ export default function App() {
           if (contextPhoto) lib.openGallery(scopeTitle(lib), contextMenuTargets(contextPhoto.hash));
         }}
         albums={lib.albums}
-        onAddToAlbum={(albumId) => {
+        onAddToAlbum={!access.edit ? undefined : (albumId) => {
           if (contextPhoto) lib.handleAddToAlbum(albumId, contextMenuTargets(contextPhoto.hash));
         }}
-        onCreateAlbum={(name) => {
+        onCreateAlbum={!access.edit ? undefined : (name) => {
           if (contextPhoto) lib.handleCreateAlbum(name, contextMenuTargets(contextPhoto.hash));
         }}
         onRemoveFromAlbum={
-          lib.activeAlbumId !== null
+          lib.activeAlbumId !== null && access.edit
             ? () => {
                 if (contextPhoto && lib.activeAlbumId !== null) {
                   lib.handleRemoveFromAlbum(lib.activeAlbumId, contextMenuTargets(contextPhoto.hash));
@@ -1036,7 +1042,7 @@ export default function App() {
         onClose={() => lib.setHighlights(null)}
         onCount={lib.setHighlightsCount}
         onShowInGrid={lib.showHighlightsInGrid}
-        onSaveAsAlbum={lib.saveHighlightsAsAlbum}
+        onSaveAsAlbum={access.edit ? lib.saveHighlightsAsAlbum : undefined}
         onShareGallery={!platform.localFiles ? undefined : () => {
           if (!lib.highlights?.hashes) return;
           const { title, hashes } = lib.highlights;

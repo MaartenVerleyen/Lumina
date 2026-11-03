@@ -1,4 +1,5 @@
 import { Sparkles, X } from "lucide-react";
+import { useAccess } from "../auth/ServerGate";
 import { describePeopleExpr, peopleInExpr } from "../../utils/peopleQuery";
 import { describeTerm, removeTerm } from "../../utils/searchQuery";
 import { removeUnderstood } from "../../utils/naturalQuery";
@@ -14,6 +15,7 @@ export default function FilterBar({
   saveSearchName: string | null;
   setSaveSearchName: (name: string | null) => void;
 }) {
+  const access = useAccess();
   return (
     <>
       {(lib.parsedSearch.terms.length > 0 ||
@@ -86,7 +88,7 @@ export default function FilterBar({
             </span>
           ))}
           <span className="ml-auto flex items-center gap-1.5">
-            {lib.activeAlbumId !== null && lib.selectedHashes.size > 0 && (
+            {lib.activeAlbumId !== null && lib.selectedHashes.size > 0 && access.edit && (
               <button
                 onClick={() => lib.activeAlbumId !== null && lib.handleRemoveFromAlbum(lib.activeAlbumId)}
                 className="px-2 py-0.5 rounded-lg bg-zinc-900 hover:bg-red-950/60 border border-zinc-800 text-zinc-300"
@@ -95,6 +97,7 @@ export default function FilterBar({
               </button>
             )}
             {lib.searchQuery.trim() !== "" &&
+              access.edit &&
               (saveSearchName === null ? (
                 <button
                   onClick={() => setSaveSearchName("")}

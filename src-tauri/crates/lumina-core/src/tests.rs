@@ -2271,6 +2271,12 @@ fn listing_from_the_database_matches_a_scan() {
     assert_eq!(scanned.len(), 3);
     assert_eq!(comparable(&listed), comparable(&scanned));
     assert_eq!(listed.iter().map(|p| p.subfolder.as_str()).collect::<Vec<_>>(), vec!["Root", "Trip", "Trip"]);
+
+    // A few photos by hash come back as the listing has them, in the order asked, and unknown hashes are left out
+    let wanted = vec![listed[2].hash.clone(), "no-such-hash".to_string(), listed[0].hash.clone()];
+    let by_hash = scan::photos_by_hash(&*host, &wanted).unwrap();
+    assert_eq!(comparable(&by_hash), comparable(&[listed[2].clone(), listed[0].clone()]));
+    assert!(scan::photos_by_hash(&*host, &[]).unwrap().is_empty());
     drop(rt);
     let _ = fs::remove_dir_all(&base);
 }

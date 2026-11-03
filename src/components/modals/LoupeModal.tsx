@@ -2,6 +2,7 @@ import { thumbSrc } from "../../utils/photoHelpers";
 import { platform } from "../../api/platform";
 import { useState, useRef, useEffect } from "react";
 import { call, mediaUrl } from "../../api";
+import { useAccess } from "../auth/ServerGate";
 import { diskPathOf } from "../../utils/rawPairs";
 import { isVideo } from "../../utils/media";
 import LoupeVideo from "./LoupeVideo";
@@ -63,6 +64,7 @@ export default function LoupeModal({
   handleSetColorLabel,
   handleToggleBasketSelection,
 }: LoupeModalProps) {
+  const access = useAccess();
   const [loupeZoom, setLoupeZoom] = useState<number>(1);
   const [loupePan, setLoupePan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [isMovePopoverOpen, setIsMovePopoverOpen] = useState<boolean>(false);
@@ -415,7 +417,8 @@ export default function LoupeModal({
           </form>
         )}
 
-        {/* Complete Interactive Triage Action HUD */}
+        {/* Complete Interactive Triage Action HUD (not for those who may only look) */}
+        {access.edit && (
         <div className="bg-card/95 border border-zinc-700/70 backdrop-blur-xl px-4 py-2 rounded-2xl flex items-center gap-3 text-xs text-zinc-200 shadow-2xl flex-wrap justify-center">
           {/* Pick / Reject / Unflag */}
           <div className="flex items-center gap-1">
@@ -587,6 +590,7 @@ export default function LoupeModal({
             </>
           )}
         </div>
+        )}
 
         {/* Bottom Filmstrip Scrubber (when visiblePhotos are provided) */}
         {filmstripPhotos.length > 1 && setActiveHash && setSelectedHashes && (

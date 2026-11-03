@@ -2,6 +2,7 @@ import { thumbSrc } from "../../utils/photoHelpers";
 import { codecLabel, formatDuration, isVideo } from "../../utils/media";
 import { memo, useEffect, useRef } from "react";
 import { call, mediaUrl } from "../../api";
+import { useAccess } from "../auth/ServerGate";
 import {
   CitySearchResult,
   FaceInstance,
@@ -244,6 +245,7 @@ function RightInspector({
   refreshPeople,
   onOpenFaceReviewModal,
 }: RightInspectorProps) {
+  const access = useAccess();
   const previewImgWrapRef = useRef<HTMLDivElement>(null);
   const faceInputRef = useRef<HTMLInputElement>(null);
 
@@ -397,7 +399,7 @@ function RightInspector({
           )}
 
           {/* Draw Face Button (photos only) */}
-          {!video && (
+          {!video && access.edit && (
             <button
               onClick={(e) => {
                 e.stopPropagation();
@@ -485,6 +487,7 @@ function RightInspector({
               <ScanFace className="w-3.5 h-3.5 text-indigo-400" />
               Faces in Photo ({activePhoto.faces.length})
             </span>
+            {access.edit && (
             <button
               onClick={handleDetectFacesSingleOnnx}
               disabled={isDetectingSingleFace}
@@ -504,6 +507,7 @@ function RightInspector({
                   : "Detect Faces (ONNX)"}
               </span>
             </button>
+            )}
           </div>
 
           {activePhoto.faces.length > 0 && (
@@ -535,6 +539,7 @@ function RightInspector({
                     <span className="text-[11px] font-medium">
                       {f.person_name || `Face #${idx + 1}`}
                     </span>
+                    {access.edit && (
                     <button
                       onClick={async (e) => {
                         e.stopPropagation();
@@ -573,12 +578,14 @@ function RightInspector({
                     >
                       <X className="w-3 h-3" />
                     </button>
+                    )}
                   </div>
                 );
               })}
             </div>
           )}
 
+          {access.edit && (
           <form onSubmit={handleSaveFaceAndAutomatch} className="flex gap-1.5">
             <input
               ref={faceInputRef}
@@ -604,6 +611,7 @@ function RightInspector({
               Save Name
             </button>
           </form>
+          )}
 
           {/* Assigned People Pills with 1-Click Unassign (X) */}
           {activePhoto.people.length > 0 && (
@@ -618,6 +626,7 @@ function RightInspector({
                 >
                   <User className="w-3 h-3 text-emerald-400" />
                   <span className="capitalize">{personName}</span>
+                  {access.edit && (
                   <button
                     type="button"
                     onClick={async (e) => {
@@ -659,6 +668,7 @@ function RightInspector({
                   >
                     <X className="w-3 h-3" />
                   </button>
+                  )}
                 </span>
               ))}
             </div>
@@ -666,7 +676,7 @@ function RightInspector({
 
           {/* Pop-out Button to open the Full-Screen Face Match Review Studio */}
           {(faceNameInput.trim() || activePhoto.people.length > 0) &&
-            onOpenFaceReviewModal && (
+            onOpenFaceReviewModal && access.edit && (
               <button
                 type="button"
                 onClick={() =>
@@ -683,7 +693,9 @@ function RightInspector({
         </div>
       </div>
 
-      {/* Complete Triage Action Bar (Pick/Reject, 1-5 Star Rating, Rotate, Color Labels) */}
+      {/* Complete Triage Action Bar (Pick/Reject, 1-5 Star Rating, Rotate, Color Labels); read-only for those
+          who may only look */}
+      {access.edit ? (
       <div className="flex flex-col gap-2 p-2.5 bg-zinc-900/90 rounded-xl border border-zinc-800">
         <div className="flex items-center justify-between">
           {/* Pick / Reject */}
@@ -798,6 +810,9 @@ function RightInspector({
           </div>
         </div>
       </div>
+      ) : (
+        <ReadOnlyTriage photo={activePhoto} />
+      )}
 
       {/* Details & AI Section */}
       <div className="flex flex-col gap-3">
@@ -848,7 +863,7 @@ function RightInspector({
               )}
             </div>
           </div>
-          {!video && (
+          {!video && access.edit && (
             <button
               onClick={handleAiAnalyzeSingle}
               disabled={analyzingHashes.has(activePhoto.hash)}
@@ -880,6 +895,8 @@ function RightInspector({
                 <MapPin className="w-3 h-3 text-emerald-400" />
                 <span>{activePhoto.location}</span>
               </button>
+              {access.edit && (
+              <>
               <button
                 onClick={() => {
                   setIsEditingInspectorLocation((p) => !p);
@@ -897,8 +914,10 @@ function RightInspector({
               >
                 <X className="w-2.5 h-2.5" />
               </button>
+              </>
+              )}
             </div>
-          ) : (
+          ) : access.edit && (
             <button
               onClick={() => {
                 setIsEditingInspectorLocation((p) => !p);
@@ -923,7 +942,7 @@ function RightInspector({
               <span>{activePhoto.camera_model}</span>
             </span>
           )}
-          {!simpleMode && (
+          {!simpleMode && access.edit && (
             <button
               onClick={handleForceRescanExifSelected}
               className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 hover:text-white transition"
@@ -935,7 +954,7 @@ function RightInspector({
           )}
         </div>
 
-        {isEditingInspectorLocation && (
+        {isEditingInspectorLocation && access.edit && (
           <div className="p-2.5 bg-zinc-900/95 border border-emerald-500/40 rounded-xl flex flex-col gap-2 text-xs">
             <div className="flex justify-between items-center text-[11px] font-semibold text-zinc-300">
               <span className="flex items-center gap-1.5">
@@ -1030,7 +1049,7 @@ function RightInspector({
           <div className="flex flex-wrap gap-1.5">
             {activePhoto.tags.length === 0 && (
               <span className="text-xs text-zinc-500 italic">
-                No tags yet — press A to run AI
+                {access.edit ? "No tags yet — press A to run AI" : "No tags yet"}
               </span>
             )}
             {activePhoto.tags.map((t) => (
@@ -1039,6 +1058,7 @@ function RightInspector({
                 className="inline-flex items-center gap-1 px-2 py-0.5 bg-zinc-800 text-zinc-200 rounded-md text-[11px]"
               >
                 #{t}
+                {access.edit && (
                 <button
                   onClick={async () => {
                     await call("remove_tag", { hash: activePhoto.hash, tag: t });
@@ -1054,9 +1074,11 @@ function RightInspector({
                 >
                   <X className="w-3 h-3" />
                 </button>
+                )}
               </span>
             ))}
           </div>
+          {access.edit && (
           <form
             onSubmit={(e) => {
               e.preventDefault();
@@ -1079,6 +1101,7 @@ function RightInspector({
               Add
             </button>
           </form>
+          )}
         </div>
 
         {activePhoto.ocr_text && (
@@ -1096,4 +1119,28 @@ function RightInspector({
     </aside>
   );
 }
+// Pick or reject, colour label and stars as they are, for users who may only look
+function ReadOnlyTriage({ photo }: { photo: PhotoItem }) {
+  const colors = { red: "bg-red-500", yellow: "bg-yellow-400", green: "bg-green-500", blue: "bg-blue-500" } as const;
+  if (!photo.flag && !photo.color_label && photo.rating === 0) return null;
+  return (
+    <div className="flex items-center gap-3 px-2.5 py-2 bg-zinc-900/90 rounded-xl border border-zinc-800 text-xs">
+      {photo.flag && (
+        <span className={`flex items-center gap-1 font-medium ${photo.flag === "pick" ? "text-emerald-300" : "text-red-300"}`}>
+          <Flag className="w-3.5 h-3.5" />
+          {photo.flag === "pick" ? "Pick" : "Reject"}
+        </span>
+      )}
+      {photo.color_label && <span className={`w-3 h-3 rounded-full ${colors[photo.color_label]}`} title={photo.color_label} />}
+      {photo.rating > 0 && (
+        <span className="flex items-center gap-0.5 ml-auto" title={`${photo.rating} star${photo.rating === 1 ? "" : "s"}`}>
+          {[1, 2, 3, 4, 5].map((star) => (
+            <Star key={star} className={`w-3.5 h-3.5 ${star <= photo.rating ? "text-amber-400 fill-amber-400" : "text-zinc-700"}`} />
+          ))}
+        </span>
+      )}
+    </div>
+  );
+}
+
 export default memo(RightInspector);

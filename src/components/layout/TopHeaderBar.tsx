@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, RefObject } from "react";
 import { AccountMenu } from "../auth/AccountMenu";
 import { platform } from "../../api/platform";
+import { useAccess } from "../auth/ServerGate";
 import { confirmDialog } from "../../confirm";
 import { call } from "../../api";
 import luminaMark from "../../assets/lumina-mark.svg";
@@ -176,6 +177,7 @@ export default function TopHeaderBar({
   totalPendingFaceMatches = 0,
   onOpenFaceReviewStudio,
 }: TopHeaderBarProps) {
+  const access = useAccess();
   const [isLibraryMenuOpen, setIsLibraryMenuOpen] = useState(false);
   const [isAiMenuOpen, setIsAiMenuOpen] = useState(false);
   // Flash attention: when Ollama runs without it, offer to switch it on (saves a Windows setting, restarts Ollama)
@@ -375,12 +377,13 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
               >
                 <RefreshCw className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
                 <div>
-                  <div className="font-medium text-zinc-200">Quick Rescan</div>
+                  <div className="font-medium text-zinc-200">{platform.localFiles ? "Quick Rescan" : "Reload Library"}</div>
                   <div className="text-[11px] text-zinc-500">
-                    Detect added/removed files & refresh EXIF
+                    {platform.localFiles ? "Detect added/removed files & refresh EXIF" : "Get the latest from the server"}
                   </div>
                 </div>
               </button>
+              {platform.localFiles && (
               <button
                 onClick={() => {
                   setIsLibraryMenuOpen(false);
@@ -396,6 +399,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                   </div>
                 </div>
               </button>
+              )}
             </div>
           )}
         </div>
@@ -437,7 +441,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
         </nav>
 
         {/* Compact Undo / Redo */}
-        {handleUndo && handleRedo && photos.length > 0 && (
+        {handleUndo && handleRedo && photos.length > 0 && access.edit && (
           <div className="flex items-center bg-zinc-900 border border-zinc-800 rounded-lg p-0.5">
             <button
               onClick={handleUndo}
@@ -585,7 +589,16 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
 
       {/* ZONE 3: Staged Commit, Unified AI & Faces Hub, and Studio Tools Menu */}
       <div className="flex items-center gap-2 shrink-0">
-        {stagedPhotosCount > 0 && (
+        {stagedPhotosCount > 0 && !access.admin && access.edit && (
+          <span
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500/10 text-emerald-300/80 border border-emerald-500/30 rounded-lg text-xs font-semibold"
+            title="Planned moves and photos for _Trash: an admin commits them"
+          >
+            <CheckCircle className="w-3.5 h-3.5 text-emerald-400/70" />
+            <span>{stagedPhotosCount} staged</span>
+          </span>
+        )}
+        {stagedPhotosCount > 0 && access.admin && (
           <div className="flex items-center gap-1">
             <button
               onClick={() => setIsCommitModalOpen(true)}
@@ -605,7 +618,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
         )}
 
         {/* Unified AI & Face Recognition Studio Split-Button */}
-        {photos.length > 0 && (
+        {photos.length > 0 && access.edit && (
           <div ref={aiMenuRef} className="relative flex items-center">
             <div className="flex items-center rounded-lg overflow-hidden border border-indigo-500/40 bg-indigo-950/60 shadow-sm">
               {/* Primary Action: Scan Faces or Show Progress */}
@@ -617,6 +630,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                       ? `Face models ${faceModelDownload.percent}%`
                       : `Faces ${faceScanProgress.completed}/${faceScanProgress.total}`}
                   </span>
+                  {access.admin && (
                   <button
                     onClick={handleCancelFaceScan}
                     className="ml-1 p-0.5 rounded hover:bg-indigo-800/80 text-indigo-300 hover:text-white transition"
@@ -625,8 +639,9 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                   >
                     <XCircle className="w-3.5 h-3.5" />
                   </button>
+                  )}
                 </span>
-              ) : (
+              ) : access.admin && (
                 <button
                   onClick={() => handleBatchScanFacesOnnx("all")}
                   className="flex items-center gap-1.5 px-2.5 py-1.5 hover:bg-indigo-900/80 text-indigo-200 text-xs font-medium transition border-r border-indigo-500/30"
@@ -642,8 +657,8 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                 </button>
               )}
 
-              {/* Secondary Action: Batch AI Tagging */}
-              {aiBatchProgress ? (
+              {/* Secondary Action: Batch AI Tagging (a long job: admin work on a server) */}
+              {!access.admin ? null : aiBatchProgress ? (
                 <button
                   onClick={handleStopAiBatch}
                   disabled={aiBatchProgress.stopping}
@@ -732,6 +747,9 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                   </button>
                 )}
 
+                {/* Face scans, the AI engine and its models: admin work on a server */}
+                {access.admin && (
+                <>
                 <div className="flex flex-col gap-1">
                   <span className="text-[11px] text-zinc-500 uppercase font-bold">Scan faces in</span>
                   <div className="grid grid-cols-2 gap-1">
@@ -890,6 +908,8 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                       <span>Download Qwen3-VL:8B</span>
                     </button>
                   ))}
+                </>
+                )}
               </div>
             )}
           </div>
@@ -987,7 +1007,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                 </div>
               ))}
 
-              {photos.length > 0 && (
+              {photos.length > 0 && access.admin && (
                 <button
                   onClick={() => {
                     setIsToolsMenuOpen(false);

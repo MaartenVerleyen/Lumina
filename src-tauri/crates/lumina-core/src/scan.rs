@@ -390,10 +390,15 @@ pub struct LibraryIndex {
 }
 
 pub fn load_library_index(conn: &Connection, folder_prefix: &str) -> Result<LibraryIndex, String> {
+    load_index(conn, "p.current_path LIKE ?1 ESCAPE '!'", folder_prefix)
+}
+
+// The same, for the photos that meet `condition` (on `photos p`, with one parameter ?1)
+fn load_index(conn: &Connection, condition: &str, param: &str) -> Result<LibraryIndex, String> {
     let mut cache_map: HashMap<String, CachedRow> = HashMap::new();
     {
         let mut stmt = conn
-            .prepare(
+            .prepare(&format!(
                 "SELECT current_path, file_size, modified_time, rating,
                         COALESCE(ai_caption, ''), COALESCE(ocr_text, ''), hash,
                         COALESCE(captured_at, ''), COALESCE(camera_model, ''),
@@ -403,11 +408,11 @@ pub fn load_library_index(conn: &Connection, folder_prefix: &str) -> Result<Libr
                         COALESCE(width, 0), COALESCE(height, 0),
                         focal_length, aperture, shutter_speed, iso, lens_model,
                         COALESCE(damaged, 0), COALESCE(thumb_edge, 0), duration_ms, video_codec
-                 FROM photos WHERE current_path LIKE ?1 ESCAPE '!'",
-            )
+                 FROM photos p WHERE {condition}"
+            ))
             .map_err(|e| e.to_string())?;
         let rows = stmt
-            .query_map(params![folder_prefix], |row| {
+            .query_map(params![param], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     CachedRow {
@@ -453,15 +458,15 @@ pub fn load_library_index(conn: &Connection, folder_prefix: &str) -> Result<Libr
     let mut tags_map: HashMap<String, Vec<String>> = HashMap::new();
     {
         let mut stmt = conn
-            .prepare(
+            .prepare(&format!(
                 "SELECT pt.hash, pt.tag FROM photo_tags pt
                  JOIN photos p ON pt.hash = p.hash
-                 WHERE p.current_path LIKE ?1 ESCAPE '!'
-                 ORDER BY pt.tag ASC",
-            )
+                 WHERE {condition}
+                 ORDER BY pt.tag ASC"
+            ))
             .map_err(|e| e.to_string())?;
         let rows = stmt
-            .query_map(params![folder_prefix], |row| {
+            .query_map(params![param], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
             })
             .map_err(|e| e.to_string())?;
@@ -473,15 +478,15 @@ pub fn load_library_index(conn: &Connection, folder_prefix: &str) -> Result<Libr
     let mut people_map: HashMap<String, Vec<String>> = HashMap::new();
     {
         let mut stmt = conn
-            .prepare(
+            .prepare(&format!(
                 "SELECT pp.hash, pp.person_name FROM photo_people pp
                  JOIN photos p ON pp.hash = p.hash
-                 WHERE p.current_path LIKE ?1 ESCAPE '!'
-                 ORDER BY pp.person_name ASC",
-            )
+                 WHERE {condition}
+                 ORDER BY pp.person_name ASC"
+            ))
             .map_err(|e| e.to_string())?;
         let rows = stmt
-            .query_map(params![folder_prefix], |row| {
+            .query_map(params![param], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
             })
             .map_err(|e| e.to_string())?;
@@ -492,15 +497,15 @@ pub fn load_library_index(conn: &Connection, folder_prefix: &str) -> Result<Libr
 
     let mut faces_map: HashMap<String, Vec<FaceInstance>> = HashMap::new();
     {
-        if let Ok(mut stmt) = conn.prepare(
+        if let Ok(mut stmt) = conn.prepare(&format!(
             "SELECT pf.face_id, pf.hash, pf.bbox_x, pf.bbox_y, pf.bbox_w, pf.bbox_h, pf.person_name, pf.face_thumb, pf.confidence,
                     pf.eyes_open, pf.face_sharpness
              FROM photo_faces pf
              JOIN photos p ON pf.hash = p.hash
-             WHERE p.current_path LIKE ?1 ESCAPE '!'
-             ORDER BY pf.bbox_x ASC",
-        ) {
-            if let Ok(rows) = stmt.query_map(params![folder_prefix], |row| {
+             WHERE {condition}
+             ORDER BY pf.bbox_x ASC"
+        )) {
+            if let Ok(rows) = stmt.query_map(params![param], |row| {
                 Ok(FaceInstance {
                     face_id: row.get(0)?,
                     hash: row.get(1)?,
@@ -569,71 +574,99 @@ pub fn list_library_photos<H: Host + ?Sized>(app: &H, root: &str) -> Result<Vec<
     let index = load_library_index(&conn, &make_folder_prefix(Some(&root_path.to_string_lossy())))?;
     let app_dir = get_app_storage_dir(app);
     let (thumbs_dir, previews_dir) = (app_dir.join("thumbnails"), app_dir.join("previews"));
-    let mut photos: Vec<PhotoItem> = index
-        .cache
-        .iter()
-        .map(|(path, c)| {
-            let file_path = Path::new(path);
-            let ext = file_path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
-            let is_raw_heic = is_raw_or_heic_ext(&ext);
-            let thumb_file = thumbs_dir.join(format!("{}.jpg", c.hash));
-            let preview_file = previews_dir.join(format!("{}_preview.jpg", c.hash));
-            // As in scan_folder: RAW and HEIC show their 1920 px preview, or the thumbnail until it exists
-            let display_path = if !is_raw_heic {
-                path.clone()
-            } else if preview_file.exists() {
-                preview_file.to_string_lossy().to_string()
-            } else {
-                thumb_file.to_string_lossy().to_string()
-            };
-            PhotoItem {
-                hash: c.hash.clone(),
-                name: file_path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
-                subfolder: get_relative_subfolder(&root_path, file_path),
-                path: display_path,
-                thumb_path: thumb_file.to_string_lossy().to_string(),
-                size_kb: c.size / 1024,
-                width: c.width,
-                height: c.height,
-                thumb_ready: thumb_file.metadata().map(|m| m.len() > 256).unwrap_or(false),
-                rating: c.rating,
-                flag: c.flag.clone(),
-                color_label: c.color_label.clone(),
-                rotation: c.rotation,
-                in_basket: c.in_basket,
-                tags: index.tags.get(&c.hash).cloned().unwrap_or_default(),
-                people: index.people.get(&c.hash).cloned().unwrap_or_default(),
-                faces: index.faces.get(&c.hash).cloned().unwrap_or_default(),
-                ai_caption: c.ai_caption.clone(),
-                ocr_text: c.ocr_text.clone(),
-                captured_at: c.captured_at.clone(),
-                camera_model: c.camera_model.clone(),
-                location: c.location.clone(),
-                latitude: c.lat,
-                longitude: c.lon,
-                dhash: c.dhash.clone(),
-                sharpness: c.sharpness,
-                duplicate_group: None,
-                staged_target: c.staged_target.clone(),
-                focal_length: c.focal_length.clone(),
-                aperture: c.aperture.clone(),
-                shutter_speed: c.shutter_speed.clone(),
-                iso: c.iso.clone(),
-                lens_model: c.lens_model.clone(),
-                pair_raw_path: is_raw_heic.then(|| path.clone()),
-                damaged: c.damaged,
-                media_type: if video_meta::is_video_ext(&ext) { "video" } else { "photo" }.to_string(),
-                duration_ms: c.duration_ms,
-                video_codec: c.video_codec.clone(),
-                ..Default::default()
-            }
-        })
-        .collect();
+    let mut photos: Vec<PhotoItem> =
+        index.cache.iter().map(|(path, c)| photo_item(&root_path, path, c, &index, &thumbs_dir, &previews_dir)).collect();
     photos.sort_by(|a, b| a.subfolder.cmp(&b.subfolder).then(a.name.cmp(&b.name)));
     pair_raw_jpegs(&mut photos);
     link_live_photos(&mut photos);
     let hashes: Vec<String> = photos.iter().map(|p| p.hash.clone()).collect();
     assign_duplicate_groups(&mut photos, &clip::clip_vectors(&conn, &hashes));
+    Ok(photos)
+}
+
+// One photo as a listing shows it, from its database row (library-wide links, such as burst groups, RAW
+// pairs and Live Photos, are added by the caller)
+fn photo_item(root_path: &Path, path: &str, c: &CachedRow, index: &LibraryIndex, thumbs_dir: &Path, previews_dir: &Path) -> PhotoItem {
+    let file_path = Path::new(path);
+    let ext = file_path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+    let is_raw_heic = is_raw_or_heic_ext(&ext);
+    let thumb_file = thumbs_dir.join(format!("{}.jpg", c.hash));
+    let preview_file = previews_dir.join(format!("{}_preview.jpg", c.hash));
+    // As in scan_folder: RAW and HEIC show their 1920 px preview, or the thumbnail until it exists
+    let display_path = if !is_raw_heic {
+        path.to_string()
+    } else if preview_file.exists() {
+        preview_file.to_string_lossy().to_string()
+    } else {
+        thumb_file.to_string_lossy().to_string()
+    };
+    PhotoItem {
+        hash: c.hash.clone(),
+        name: file_path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
+        subfolder: get_relative_subfolder(&root_path, file_path),
+        path: display_path,
+        thumb_path: thumb_file.to_string_lossy().to_string(),
+        size_kb: c.size / 1024,
+        width: c.width,
+        height: c.height,
+        thumb_ready: thumb_file.metadata().map(|m| m.len() > 256).unwrap_or(false),
+        rating: c.rating,
+        flag: c.flag.clone(),
+        color_label: c.color_label.clone(),
+        rotation: c.rotation,
+        in_basket: c.in_basket,
+        tags: index.tags.get(&c.hash).cloned().unwrap_or_default(),
+        people: index.people.get(&c.hash).cloned().unwrap_or_default(),
+        faces: index.faces.get(&c.hash).cloned().unwrap_or_default(),
+        ai_caption: c.ai_caption.clone(),
+        ocr_text: c.ocr_text.clone(),
+        captured_at: c.captured_at.clone(),
+        camera_model: c.camera_model.clone(),
+        location: c.location.clone(),
+        latitude: c.lat,
+        longitude: c.lon,
+        dhash: c.dhash.clone(),
+        sharpness: c.sharpness,
+        duplicate_group: None,
+        staged_target: c.staged_target.clone(),
+        focal_length: c.focal_length.clone(),
+        aperture: c.aperture.clone(),
+        shutter_speed: c.shutter_speed.clone(),
+        iso: c.iso.clone(),
+        lens_model: c.lens_model.clone(),
+        pair_raw_path: is_raw_heic.then(|| path.to_string()),
+        damaged: c.damaged,
+        media_type: if video_meta::is_video_ext(&ext) { "video" } else { "photo" }.to_string(),
+        duration_ms: c.duration_ms,
+        video_codec: c.video_codec.clone(),
+        ..Default::default()
+    }
+}
+
+// The photos with these hashes, as a listing shows them, from whichever library each is in (a photo outside
+// every library is left out): what a client asks for when another user changed some photos. Burst groups,
+// RAW pairs and Live Photos are library-wide, so the client keeps those from its own list.
+pub fn photos_by_hash<H: Host + ?Sized>(app: &H, hashes: &[String]) -> Result<Vec<PhotoItem>, String> {
+    if hashes.is_empty() {
+        return Ok(Vec::new());
+    }
+    let conn = open_global_db(app)?;
+    let wanted = serde_json::to_string(hashes).map_err(|e| e.to_string())?;
+    let index = load_index(&conn, "p.hash IN (SELECT value FROM json_each(?1)) AND p.library_id IS NOT NULL", &wanted)?;
+    let mut roots: Vec<PathBuf> =
+        libraries::list(&conn)?.into_iter().map(|l| PathBuf::from(libraries::normalize_root(&l.root))).collect();
+    // The deepest root first, should one library sit inside another
+    roots.sort_by_key(|r| std::cmp::Reverse(r.as_os_str().len()));
+    let app_dir = get_app_storage_dir(app);
+    let (thumbs_dir, previews_dir) = (app_dir.join("thumbnails"), app_dir.join("previews"));
+    let mut photos = Vec::new();
+    for (path, c) in &index.cache {
+        if let Some(root) = roots.iter().find(|r| Path::new(path).starts_with(r)) {
+            photos.push(photo_item(root, path, c, &index, &thumbs_dir, &previews_dir));
+        }
+    }
+    let order: HashMap<&str, usize> = hashes.iter().enumerate().map(|(i, h)| (h.as_str(), i)).collect();
+    photos.sort_by_key(|p| order.get(p.hash.as_str()).copied().unwrap_or(usize::MAX));
     Ok(photos)
 }
 

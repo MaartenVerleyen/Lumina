@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { mediaUrl } from "../../api";
+import { useAccess } from "../auth/ServerGate";
 import { ChevronDown, ChevronRight, Search, Star, User, Users, X } from "lucide-react";
 import { PersonItem } from "../../types/lumina";
 import {
@@ -56,6 +57,8 @@ export default function PeopleSidebar({
   collapsedSections,
   onToggleSection,
 }: PeopleSidebarProps) {
+  // Naming, starring, hiding and reviewing are editing; someone who may only look gets the list and search
+  const access = useAccess();
   const [query, setQuery] = useState("");
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [menuInput, setMenuInput] = useState("");
@@ -163,7 +166,7 @@ export default function PeopleSidebar({
         key={p.name}
         onContextMenu={(e) => {
           e.preventDefault();
-          openMenu(p.name, e.clientX, e.clientY);
+          if (access.edit) openMenu(p.name, e.clientX, e.clientY);
         }}
         className={`@container group relative flex items-center gap-2 pl-1.5 pr-1 py-1 rounded-xl border transition ${
           on ? "bg-emerald-500/15 border-emerald-500/40" : "border-transparent hover:bg-zinc-900"
@@ -204,7 +207,7 @@ export default function PeopleSidebar({
             </span>
           </span>
         </button>
-        {pending > 0 && (
+        {pending > 0 && access.edit && (
           <button
             onClick={() => onReview(p.name)}
             className="hidden @[17rem]:block shrink-0 px-2 py-0.5 rounded-full bg-amber-500/15 hover:bg-amber-500/30 border border-amber-400/40 text-amber-300 text-[11px] font-semibold"
@@ -213,7 +216,10 @@ export default function PeopleSidebar({
             {pending} to review
           </button>
         )}
-        {!p.hidden && (
+        {!p.hidden && !access.edit && p.starred && (
+          <Star className="w-3.5 h-3.5 shrink-0 text-amber-300 fill-current" aria-label="Starred" />
+        )}
+        {!p.hidden && access.edit && (
           <button
             onClick={() => onSetStarred(p.name, !p.starred)}
             className={`shrink-0 p-0.5 rounded hover:bg-zinc-800 ${
@@ -226,6 +232,7 @@ export default function PeopleSidebar({
             <Star className={`w-3.5 h-3.5 ${p.starred ? "fill-current" : ""}`} />
           </button>
         )}
+        {access.edit && (
         <button
           onClick={(e) => {
             const r = e.currentTarget.getBoundingClientRect();
@@ -236,6 +243,7 @@ export default function PeopleSidebar({
         >
           ⋯
         </button>
+        )}
       </div>
     );
   };
@@ -363,6 +371,7 @@ export default function PeopleSidebar({
             <span className="block text-[11px] text-zinc-500">{totalPhotos} photos</span>
           </span>
         </button>
+        {access.edit && (
         <button
           onClick={onWhoIsThis}
           className="flex items-center gap-2.5 px-2 py-1.5 rounded-xl border border-transparent hover:bg-zinc-900 text-left"
@@ -376,6 +385,7 @@ export default function PeopleSidebar({
             <span className="block text-[11px] text-zinc-500">Name unknown faces</span>
           </span>
         </button>
+        )}
 
         <span className="px-2 pt-3 pb-1 text-[11px] font-bold text-zinc-500 uppercase tracking-wider">
           People ({visible.length})

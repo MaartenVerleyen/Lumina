@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Album, BulkPopover, CitySearchResult, PhotoItem, ViewMode } from "../../types/lumina";
+import { useAccess } from "../auth/ServerGate";
 import {
   CheckSquare,
   Clock,
@@ -123,6 +124,7 @@ export default function BulkActionDock({
   runBatchAiOnList,
   handleBatchAssignPerson,
 }: BulkActionDockProps) {
+  const access = useAccess();
   if (selectedHashes.size <= 1) return null;
 
   return (
@@ -339,6 +341,8 @@ export default function BulkActionDock({
           <span>{selectedHashes.size} Selected</span>
         </div>
 
+        {access.edit && (
+          <>
         {/* Pick / Reject / Unflag */}
         <div className="flex items-center gap-1 border-r border-zinc-700 pr-2.5">
           <button
@@ -528,6 +532,9 @@ export default function BulkActionDock({
           <span>Pin</span>
         </button>
 
+          </>
+        )}
+
         <button
           onClick={() => {
             setCompareZoom(1);
@@ -541,6 +548,7 @@ export default function BulkActionDock({
           <span>Compare</span>
         </button>
 
+        {access.edit && (
         <button
           onClick={handleForceRescanExifSelected}
           className="flex items-center gap-1 text-zinc-300 hover:text-white"
@@ -549,7 +557,10 @@ export default function BulkActionDock({
           <RefreshCw className="w-3.5 h-3.5 text-zinc-400" />
           <span>EXIF</span>
         </button>
+        )}
 
+        {/* Batch AI is a long job: admin work on a server */}
+        {access.admin && (
         <button
           onClick={() => {
             const targets = visiblePhotos.filter((p) => selectedHashes.has(p.hash));
@@ -560,7 +571,9 @@ export default function BulkActionDock({
           <Sparkles className="w-3.5 h-3.5" />
           <span>AI</span>
         </button>
+        )}
 
+        {access.edit && (
         <button
           onClick={() => handleBatchStageMove("_Trash")}
           className="flex items-center gap-1 text-red-400 hover:text-red-300 font-medium border-l border-zinc-700 pl-2.5"
@@ -568,6 +581,7 @@ export default function BulkActionDock({
           <Trash2 className="w-3.5 h-3.5" />
           <span>Trash</span>
         </button>
+        )}
 
         <button
           onClick={() => setSelectedHashes(new Set())}

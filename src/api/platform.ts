@@ -19,6 +19,9 @@ export const platform = {
   localFiles: inDesktopApp,
   // Updates through the built-in updater (a server updates with its image)
   updater: inDesktopApp,
+  // The library's background work runs in this app (face scans and their upgrades, eyes and focus, the smart
+  // search index). A server's own pipeline does all of that, so its web client never starts them.
+  libraryJobs: inDesktopApp,
 };
 
 const noComputer = () => Promise.reject("Not available in the browser");

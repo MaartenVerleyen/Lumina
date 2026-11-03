@@ -273,11 +273,17 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
       );
       if (!ok) return;
     } else {
-      const why = !bin.supported
+      const why = !platform.localFiles
+        ? "The server has no Recycle Bin."
+        : !bin.supported
         ? `Drive ${bin.drive} has no Recycle Bin (a network or removable drive, or the Recycle Bin is switched off for it).`
         : `The Recycle Bin on ${bin.drive} holds at most ${formatBytes(bin.capacity ?? 0)}, so it can't keep these files.`;
       const ok = await confirmAction(
-        `${why}\n\nDelete ${what} permanently? This can't be undone.\n\nTo keep them recoverable, cancel and make the Recycle Bin bigger first (right-click the Recycle Bin › Properties › choose drive ${bin.drive}).`,
+        `${why}\n\nDelete ${what} permanently? This can't be undone.${
+          platform.localFiles && bin.supported
+            ? `\n\nTo keep them recoverable, cancel and make the Recycle Bin bigger first (right-click the Recycle Bin › Properties › choose drive ${bin.drive}).`
+            : ""
+        }`,
         "Delete permanently",
         { title: "Empty _Trash", kind: "danger" }
       );

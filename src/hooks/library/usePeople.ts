@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef } from "react";
-import { call, subscribe } from "../../api";
+import { platform } from "../../api/platform";
+import { useAccess } from "../../components/auth/ServerGate";
+import { call, isOwnChange, subscribe } from "../../api";
 import { PhotoItem, PersonItem, FaceScanProgress, FaceMatchEvent, FaceInstance, FaceModelDownloadProgress, FaceQualityProgress } from "../../types/lumina";
 import { diskPathOf } from "../../utils/rawPairs";
 import { isLiveClip, isVideo } from "../../utils/media";
@@ -28,6 +30,7 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
     setActiveBulkPopover,
   } = core;
   const { setPeopleFilter } = filters;
+  const access = useAccess();
   const [people, setPeople] = useState<PersonItem[]>([]);
   const [pendingFaceCounts, setPendingFaceCounts] = useState<Record<string, number>>({});
   // Face Review dialog: the person it is open for (or UNKNOWN_FACES for "Who is this?"), null when closed
@@ -77,8 +80,9 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
       });
       setPeople(res);
 
-      // 2. Asynchronously compute & cache pending face match counts in the background
-      if (!skipPendingScan) {
+      // 2. Asynchronously compute & cache pending face match counts in the background (suggestions are for
+      // those who may accept them)
+      if (!skipPendingScan && access.edit) {
         call<Record<string, number>>("get_pending_face_match_counts", {
           rootFolder: currentFolder || null,
         })
@@ -89,6 +93,18 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
       }
     } catch {}
   }
+
+  // Another user named, renamed, hid or merged people on the server
+  const refreshPeopleRef = useRef(refreshPeople);
+  refreshPeopleRef.current = refreshPeople;
+  useEffect(() => {
+    const off = subscribe<{ origin?: string }>("people-changed", (e) => {
+      if (!isOwnChange(e.payload)) refreshPeopleRef.current();
+    });
+    return () => {
+      off.then((f) => f());
+    };
+  }, []);
 
   // After accepting or denying suggestions: the badge counts follow at once, without recomputing every match
   function reducePendingCount(person: string, by: number) {
@@ -271,7 +287,7 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
   const hasPhotos = photos.length > 0;
   const faceUpgradeCheckedRef = useRef<Set<string>>(new Set());
   useEffect(() => {
-    if (!folder || !hasPhotos || faceUpgradeCheckedRef.current.has(folder)) return;
+    if (!platform.libraryJobs || !folder || !hasPhotos || faceUpgradeCheckedRef.current.has(folder)) return;
     const timer = setTimeout(async () => {
       if (faceScanProgressRef.current) return;
       faceUpgradeCheckedRef.current.add(folder);
@@ -313,7 +329,7 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
 
   const qualityCheckedRef = useRef<Set<string>>(new Set());
   useEffect(() => {
-    if (!folder || !hasPhotos || qualityCheckedRef.current.has(folder)) return;
+    if (!platform.libraryJobs || !folder || !hasPhotos || qualityCheckedRef.current.has(folder)) return;
     const timer = setTimeout(() => {
       if (faceScanProgressRef.current) return;
       qualityCheckedRef.current.add(folder);

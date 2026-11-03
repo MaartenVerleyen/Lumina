@@ -29,7 +29,8 @@ interface PhotoContextMenuProps {
   onRevealInFolder?: () => void;
   // Absent in the web client (it acts on this computer's files)
   onCopyFullImage?: () => void;
-  onStageTrash: () => void;
+  // Absent for users who may not change photos (as are Pick and the albums)
+  onStageTrash?: () => void;
   // Optional callbacks for quick Pick & Copy Path
   onPickPhoto?: () => void;
   onCopyPath?: () => void;
@@ -274,16 +275,18 @@ export function PhotoContextMenu({
         </button>
       )}
 
-      <button
-        onClick={() => {
-          onStageTrash();
-          onClose();
-        }}
-        className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-red-950/60 text-red-300 transition text-left"
-      >
-        <Trash2 className="w-3.5 h-3.5 text-red-400" />
-        <span>Reject & Stage for _Trash (X)</span>
-      </button>
+      {onStageTrash && (
+        <button
+          onClick={() => {
+            onStageTrash();
+            onClose();
+          }}
+          className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-red-950/60 text-red-300 transition text-left"
+        >
+          <Trash2 className="w-3.5 h-3.5 text-red-400" />
+          <span>Reject & Stage for _Trash (X)</span>
+        </button>
+      )}
     </div>
   );
 }
@@ -324,7 +327,8 @@ export function FolderContextMenu({
     };
   }, [onClose]);
 
-  if (!position) return null;
+  // Nothing to offer (the web client has neither item)
+  if (!position || (!onRevealFolder && !onCreateSubfolder)) return null;
 
   return (
     <div
