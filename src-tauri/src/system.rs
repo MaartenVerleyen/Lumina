@@ -1,5 +1,18 @@
 use crate::*;
 
+// WebKitGTK's DMA-BUF renderer gets no buffers from NVIDIA's driver under X11 ("Failed to create GBM
+// buffer"), so the window stays empty. Under Wayland it works and stays on. Must run before GTK starts and
+// before any other thread exists (it sets an environment variable); the user's own setting wins.
+#[cfg(target_os = "linux")]
+pub fn linux_webkit_workarounds() {
+    let var = "WEBKIT_DISABLE_DMABUF_RENDERER";
+    let x11 = std::env::var_os("WAYLAND_DISPLAY").is_none() || std::env::var("GDK_BACKEND").is_ok_and(|b| b.starts_with("x11"));
+    let nvidia = Path::new("/proc/driver/nvidia/version").exists();
+    if x11 && nvidia && std::env::var_os(var).is_none() {
+        // SAFETY: called first thing in main, while the process has a single thread
+        unsafe { std::env::set_var(var, "1") };
+    }
+}
 
 #[tauri::command]
 pub fn open_in_default_app(path: String) -> Result<(), String> {

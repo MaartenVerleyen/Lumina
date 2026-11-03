@@ -18,6 +18,9 @@ static SPLASH_CLOSED: AtomicBool = AtomicBool::new(false);
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(target_os = "linux")]
+    system::linux_webkit_workarounds();
+
     // Lumina Setup downloads the models through the app itself, without a window (see prepare.rs)
     let args: Vec<String> = std::env::args().collect();
     if let Some(i) = args.iter().position(|a| a == "--prepare-models") {
