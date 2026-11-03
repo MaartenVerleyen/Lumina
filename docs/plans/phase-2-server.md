@@ -83,6 +83,14 @@ ask before pushing.
   - `GET /media/face/{face_id}`: `faces/{face_id}.jpg` (the frontend has the crop's path; its file name is
     the face id).
   - Every lookup goes through the database by hash or id. Never build a file path from request text.
+  - **The Linux desktop uses the same routes for its local videos.** WebKitGTK can't play video from
+    Tauri's `asset://` URLs (tauri#3725; tested 2026-11-03: `FormatError`, while GStreamer plays the file
+    and a fetch of the URL works), and serving the file over HTTP from 127.0.0.1 does work. So the
+    desktop app on Linux starts these `/media/...` routes on 127.0.0.1 only, on a random port, with a
+    secret token per session in every URL, serving only the opened libraries and the app's data folder.
+    `mediaUrl` in the local transport uses it for videos on Linux. Only for that: local files on the
+    Windows desktop (the standalone install) keep `convertFileSrc` (`asset://`, which plays there), and
+    files from a server already come over these routes.
 - **Events:** `GET /api/events` upgrades to a WebSocket and sends `{event, payload}` for every engine
   event (`ServerHost` already has a broadcast channel). Authenticated like the rest.
 - **Remote transport** `src/api/remote.ts`, implementing `Transport`:

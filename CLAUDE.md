@@ -150,7 +150,13 @@ scan means the models did not run.
    CPU on any card with 10 GB or less, ~30 s per photo instead of ~4. Caption model `qwen3-vl:8b-instruct`
    (~4 s per photo, 34/37 layers on the GPU); `qwen3-vl:8b` is the thinking variant and named more things
    that weren't there on a 12-photo test set; `4b-instruct` is 1.5 s but invented details on 2 of 12.
-5. Try `npm run tauri dev` on Linux (WebKitGTK); the desktop app has only been run on Windows.
+5. Done, except local video: `npm run tauri dev` on Linux (WebKitGTK) opens the test library with
+   thumbnails, 137 faces and smart search on `GPU (CUDA)`, on Wayland and on X11 (under X11 with NVIDIA
+   the app turns off WebKit's DMA-BUF renderer itself, `system::linux_webkit_workarounds`). Video needs
+   `gst-plugins-good` (without it WebKit's web process aborts) and still doesn't play from a local library:
+   WebKitGTK can't stream Tauri's `asset://` URLs (tauri#3725). Fixed in phase 2 by serving the Linux
+   desktop's local videos over the `/media/...` routes on 127.0.0.1 (see `docs/plans/phase-2-server.md`);
+   the Windows desktop keeps `asset://`, where video plays.
 
 ## Style
 
