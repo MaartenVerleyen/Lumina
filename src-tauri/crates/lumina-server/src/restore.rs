@@ -182,7 +182,7 @@ mod tests {
         let anna = accounts::find_user(&conn, "anna").unwrap().expect("the account survives the restore");
         assert!(accounts::verify_login(&conn, "anna", "long enough").unwrap().is_some());
         let scope = crate::scope::Scope::load(&conn, &anna).unwrap();
-        assert_eq!(scope.role_on_root(&root), Role::Editor, "her role on the library, matched by root");
+        assert_eq!(scope.role_on(scope.library_id_of_root(&root).unwrap()), Role::Editor, "her role on the library, matched by root");
         assert_eq!(scope.shared_albums.iter().copied().collect::<Vec<_>>(), [41], "the share, matched by album name");
         assert!(!apply_staged(&host, &[root]).unwrap(), "nothing staged any more");
         drop(conn);

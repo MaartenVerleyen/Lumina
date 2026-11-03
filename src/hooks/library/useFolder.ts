@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { call, rememberLibraryRoles, setOpenLibrary, subscribe, type Role } from "../../api";
+import { call, openLibraryRole, rememberLibraryRoles, setOpenLibrary, subscribe, type Role } from "../../api";
 import { useAccount } from "../../components/auth/ServerGate";
 import { open, platform } from "../../api/platform";
 import { PhotoItem, ThumbBatchProgress, ThumbBatchItem, ExifRefreshResult, PerfLogEvent, TrashResult, TrashSummary, ScanProgressEvent } from "../../types/lumina";
@@ -517,6 +517,17 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
       unlisten.then((f) => f());
     };
   }, [addLog]);
+
+  // A guest sees a library through its shared albums: when an album changes (a photo added or taken out),
+  // what they see changes, so their window lists the library again
+  useEffect(() => {
+    const off = subscribe("albums-changed", () => {
+      if (openLibraryRole() === "guest" && folderRef.current) silentRescanRef.current();
+    });
+    return () => {
+      off.then((f) => f());
+    };
+  }, []);
 
   // Rights follow the open library (see useAccess)
   useEffect(() => {

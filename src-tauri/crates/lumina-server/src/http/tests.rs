@@ -506,8 +506,8 @@ async fn an_edit_is_announced_recorded_and_readable_by_others() {
     let (_, _, id) = send(&s.app, post("/api/rpc/create_album", json!({"name": "Trip"}), Some(&editor))).await;
     assert_eq!(events.recv().await.unwrap().0, "albums-changed");
     send(&s.app, post("/api/rpc/add_to_album", json!({"id": id, "hashes": ["abc123"]}), Some(&editor))).await;
+    assert_eq!(events.recv().await.unwrap().0, "albums-changed", "albums first: guests' sockets look again before the photos");
     assert_eq!(events.recv().await.unwrap().0, "photos-changed");
-    assert_eq!(events.recv().await.unwrap().0, "albums-changed");
 
     // Who did what, newest first
     let (status, _, history) = send(&s.app, post("/api/rpc/get_photo_history", json!({"hash": "abc123"}), Some(&viewer))).await;
@@ -849,4 +849,84 @@ async fn a_backup_is_uploaded_into_the_data_folder_and_named_by_the_server() {
         let (status, _, body) = send(&s.app, post("/api/rpc/inspect_backup", json!({"path": path}), Some(&admin))).await;
         assert_eq!(body, json!({"error": "No such uploaded backup: upload it again"}), "{path} {status}");
     }
+}
+
+// ---- Open sockets follow sessions and shares ----
+
+// The session token in a "lumina_session=..." cookie pair
+fn token_of(cookie: &str) -> String {
+    cookie.split_once('=').unwrap().1.to_string()
+}
+
+// Feeds the next events the server sends to a listener, answering what it did with each
+async fn feed(listener: &mut super::events::Listener, events: &mut tokio::sync::broadcast::Receiver<(String, Value)>) -> Vec<String> {
+    let mut out = Vec::new();
+    while let Ok((name, payload)) = events.try_recv() {
+        out.push(match listener.event(&name, payload).await {
+            super::events::Step::Send(p) => format!("send {name} {}", p["hashes"]),
+            super::events::Step::Skip => format!("skip {name}"),
+            super::events::Step::Close => format!("close {name}"),
+        });
+    }
+    out
+}
+
+#[tokio::test]
+async fn an_open_socket_closes_when_its_user_is_removed_or_their_password_reset() {
+    let s = server("socketsession");
+    two_libraries(&s);
+    let admin = login(&s.app, "ada").await;
+    let gus = login(&s.app, "gus").await;
+    let vera = login(&s.app, "vera").await;
+    let mut events = s.host.subscribe();
+    let mut gus_socket = super::events::Listener::open(s.host.clone(), token_of(&gus)).await.unwrap();
+    let mut vera_socket = super::events::Listener::open(s.host.clone(), token_of(&vera)).await.unwrap();
+
+    send(&s.app, post("/api/rpc/set_photos_rating", json!({"hashes": ["b2"], "rating": 3}), Some(&admin))).await;
+    assert_eq!(feed(&mut gus_socket, &mut events).await, [r#"send photos-changed ["b2"]"#]);
+
+    // Removed: the very event that says so closes the socket, and nothing after it gets through
+    send(&s.app, post("/api/rpc/admin_remove_user", json!({"name": "gus"}), Some(&admin))).await;
+    send(&s.app, post("/api/rpc/set_photos_rating", json!({"hashes": ["b2"], "rating": 4}), Some(&admin))).await;
+    let answers = feed(&mut gus_socket, &mut events).await;
+    assert_eq!(answers.first().map(String::as_str), Some("close roles-changed"), "{answers:?}");
+    assert!(answers.iter().all(|a| a.starts_with("close")), "{answers:?}");
+    assert!(!gus_socket.recheck(false).await, "and the next ping tick closes it too");
+
+    // A new password says nothing on the socket: the ping tick finds the session gone
+    assert!(vera_socket.recheck(false).await);
+    send(&s.app, post("/api/rpc/admin_set_password", json!({"name": "vera", "password": "a new long one"}), Some(&admin))).await;
+    assert!(!vera_socket.recheck(false).await);
+    // And no other event slips through in the meantime (the session is looked at again after a second)
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    send(&s.app, post("/api/rpc/set_photos_rating", json!({"hashes": ["a1"], "rating": 1}), Some(&admin))).await;
+    let mut vera_socket2 = super::events::Listener::open(s.host.clone(), token_of(&vera)).await;
+    assert!(vera_socket2.is_none(), "the old session can't open a socket either");
+    let _ = vera_socket2.take();
+}
+
+#[tokio::test]
+async fn a_guests_socket_follows_photos_added_to_and_removed_from_a_shared_album() {
+    let s = server("socketalbum");
+    let (_, _, holiday) = two_libraries(&s);
+    let admin = login(&s.app, "ada").await;
+    let gus = login(&s.app, "gus").await;
+    let mut events = s.host.subscribe();
+    let mut socket = super::events::Listener::open(s.host.clone(), token_of(&gus)).await.unwrap();
+
+    // b1 isn't shared yet: a change to it doesn't reach the guest
+    send(&s.app, post("/api/rpc/set_photos_rating", json!({"hashes": ["b1"], "rating": 2}), Some(&admin))).await;
+    assert_eq!(feed(&mut socket, &mut events).await, ["skip photos-changed"]);
+
+    // Added to the shared album: the guest hears about it, without reconnecting
+    send(&s.app, post("/api/rpc/add_to_album", json!({"id": holiday, "hashes": ["b1"]}), Some(&admin))).await;
+    assert_eq!(feed(&mut socket, &mut events).await, ["send albums-changed null", r#"send photos-changed ["b1"]"#]);
+    send(&s.app, post("/api/rpc/set_photos_rating", json!({"hashes": ["b1"], "rating": 3}), Some(&admin))).await;
+    assert_eq!(feed(&mut socket, &mut events).await, [r#"send photos-changed ["b1"]"#]);
+
+    // Taken out again: later changes to it don't reach the guest
+    send(&s.app, post("/api/rpc/remove_from_album", json!({"id": holiday, "hashes": ["b1"]}), Some(&admin))).await;
+    assert_eq!(feed(&mut socket, &mut events).await, ["send albums-changed null", "skip photos-changed"]);
+    send(&s.app, post("/api/rpc/set_photos_rating", json!({"hashes": ["b1"], "rating": 4}), Some(&admin))).await;
+    assert_eq!(feed(&mut socket, &mut events).await, ["skip photos-changed"]);
 }

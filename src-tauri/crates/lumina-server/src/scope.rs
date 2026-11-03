@@ -133,11 +133,6 @@ impl Scope {
         self.libraries.iter().find(|l| l.0 == library_id).map(|l| l.2).unwrap_or(Role::Guest)
     }
 
-    pub fn role_on_root(&self, root: &str) -> Role {
-        let wanted = libraries::normalize_root(root);
-        self.libraries.iter().find(|l| libraries::normalize_root(&l.1) == wanted).map(|l| l.2).unwrap_or(Role::Guest)
-    }
-
     pub fn library_id_of_root(&self, root: &str) -> Option<i64> {
         let wanted = libraries::normalize_root(root);
         self.libraries.iter().find(|l| libraries::normalize_root(&l.1) == wanted).map(|l| l.0)
@@ -201,14 +196,6 @@ impl Scope {
 
     pub fn can_see(&self, conn: &Connection, hash: &str) -> Result<bool, String> {
         Ok(!self.visible(conn, &[hash.to_string()])?.is_empty())
-    }
-
-    // A set to filter result lists with; None when this user sees everything
-    pub fn visible_set(&self, conn: &Connection, hashes: &[String]) -> Result<Option<HashSet<String>>, String> {
-        if self.sees_all() {
-            return Ok(None);
-        }
-        Ok(Some(self.visible(conn, hashes)?.into_iter().collect()))
     }
 }
 

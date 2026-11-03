@@ -671,6 +671,11 @@ async fn announce(state: &Shared, user: &User, what: &'static str, mut changed: 
         eprintln!("[changes] couldn't record {what}: {e}");
     }
     let by = serde_json::json!({ "by": user.name, "origin": origin });
+    // Albums first: a guest's socket looks at what is shared with them again on albums-changed, and then
+    // gets photos-changed for a photo just added to a shared album
+    if changed.albums {
+        state.host.emit_value("albums-changed", by.clone());
+    }
     if !changed.photos.is_empty() {
         let mut payload = by.clone();
         payload["hashes"] = serde_json::json!(changed.photos);
@@ -678,9 +683,6 @@ async fn announce(state: &Shared, user: &User, what: &'static str, mut changed: 
     }
     if changed.people {
         state.host.emit_value("people-changed", by.clone());
-    }
-    if changed.albums {
-        state.host.emit_value("albums-changed", by.clone());
     }
     if !changed.shared_with.is_empty() {
         let mut payload = by.clone();
