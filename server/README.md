@@ -47,6 +47,14 @@ its accounts).
 Failed logins hold back the next try for that name and address (429 with Retry-After), up to 30 seconds;
 attempts sent at the same time are not all checked. A session lasts until logout or 90 days without use.
 
+## Uploads
+
+Accounts with the `uploader` role or higher (on the upload library) can upload. Files go to
+`<library>/uploads/<user name>/` and are indexed at once; the pipeline adds faces, smart search and captions as
+for any new photo. The upload library is `upload_library` in the configuration file (`LUMINA_UPLOAD_LIBRARY`),
+by default the first library. Unfinished uploads wait in `<data folder>/incoming/` and are removed after 7 days
+without progress; the server keeps 5 GB of its disk free.
+
 ## HTTPS through Tailscale
 
 In the Tailscale admin console, turn on MagicDNS and HTTPS certificates (DNS page). Then, on the server:

@@ -46,7 +46,7 @@ Accounts (roles, lowest first: guest, viewer, uploader, editor, admin):
   The password is asked twice, without echo; --password-stdin reads one line from standard input instead.
 
 The configuration file defaults to ./lumina-server.toml. LUMINA_DATA_DIR, LUMINA_LIBRARIES (separated by ;),
-LUMINA_OLLAMA_URL, LUMINA_CAPTION_MODEL, LUMINA_LISTEN and LUMINA_WEB_DIR override it.";
+LUMINA_OLLAMA_URL, LUMINA_CAPTION_MODEL, LUMINA_LISTEN, LUMINA_WEB_DIR and LUMINA_UPLOAD_LIBRARY override it.";
 
 #[tokio::main]
 async fn main() {
@@ -233,7 +233,7 @@ async fn start_web_server(config: &Config, host: Arc<ServerHost>) -> Result<(), 
     if users == 0 {
         println!("No users yet: `lumina-server create-user NAME --role admin` adds the first one");
     }
-    let state = Arc::new(http::AppState { host, web_dir, throttle: Default::default() });
+    let state = Arc::new(http::AppState { host, web_dir, throttle: Default::default(), upload_library: config.upload_library.clone() });
     let app = http::router(state).into_make_service_with_connect_info::<std::net::SocketAddr>();
     tokio::spawn(async move {
         if let Err(e) = axum::serve(listener, app).await {

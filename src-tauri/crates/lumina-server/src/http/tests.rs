@@ -36,7 +36,7 @@ fn server(name: &str) -> TestServer {
     for (name, role) in [("vera", Role::Viewer), ("ed", Role::Editor), ("ada", Role::Admin)] {
         accounts::create_user(&conn, name, role, "long enough").unwrap();
     }
-    let state = Arc::new(AppState { host: host.clone(), web_dir: Some(web), throttle: Default::default() });
+    let state = Arc::new(AppState { host: host.clone(), web_dir: Some(web), throttle: Default::default(), upload_library: None });
     let app = router(state).layer(MockConnectInfo(SocketAddr::from(([127, 0, 0, 1], 50000))));
     TestServer { app, dir, host }
 }
@@ -929,4 +929,187 @@ async fn a_guests_socket_follows_photos_added_to_and_removed_from_a_shared_album
     assert_eq!(feed(&mut socket, &mut events).await, ["send albums-changed null", "skip photos-changed"]);
     send(&s.app, post("/api/rpc/set_photos_rating", json!({"hashes": ["b1"], "rating": 4}), Some(&admin))).await;
     assert_eq!(feed(&mut socket, &mut events).await, ["skip photos-changed"]);
+}
+
+// ---- Phase 3, milestone 1: uploads and downloads ----
+
+// A small real JPEG (the server indexes what arrives)
+fn jpeg(seed: u8) -> Vec<u8> {
+    let img = image::RgbImage::from_fn(48, 32, |x, y| image::Rgb([seed, (x * 5) as u8, (y * 7) as u8]));
+    let mut out = std::io::Cursor::new(Vec::new());
+    img.write_to(&mut out, image::ImageFormat::Jpeg).unwrap();
+    out.into_inner()
+}
+
+fn content_hash(bytes: &[u8]) -> String {
+    let path = std::env::temp_dir().join(format!("lumina_hash_{}_{}", std::process::id(), blake3::hash(bytes).to_hex()));
+    std::fs::write(&path, bytes).unwrap();
+    let (h, _) = lumina_core::imaging::hash_and_read_head(&path, bytes.len() as u64).unwrap();
+    let _ = std::fs::remove_file(&path);
+    h
+}
+
+fn put_chunk(id: &str, offset: usize, bytes: &[u8], cookie: &str) -> HttpRequest<Body> {
+    HttpRequest::put(format!("/api/upload/{id}"))
+        .header("x-lumina", "1")
+        .header("upload-offset", offset.to_string())
+        .header(header::COOKIE, cookie)
+        .body(Body::from(bytes.to_vec()))
+        .unwrap()
+}
+
+fn start_body(name: &str, bytes: &[u8]) -> Value {
+    json!({"name": name, "size": bytes.len(), "hash": content_hash(bytes), "full_hash": blake3::hash(bytes).to_hex().to_string(), "modified": 1_700_000_000})
+}
+
+#[tokio::test]
+async fn a_file_uploads_in_three_chunks_and_lands_in_the_users_folder_indexed() {
+    let s = server("upload3");
+    let (root, _) = add_library(&s);
+    let ed = login(&s.app, "ed").await;
+    let bytes = jpeg(10);
+    let mut events = s.host.subscribe();
+
+    let (_, _, check) = send(&s.app, post("/api/upload/check", json!({"files": [{"hash": content_hash(&bytes), "size": bytes.len(), "name": "beach.jpg"}]}), Some(&ed))).await;
+    assert_eq!(check["missing"].as_array().unwrap().len(), 1, "not on the server yet");
+
+    let (status, _, started) = send(&s.app, post("/api/upload", start_body("beach.jpg", &bytes), Some(&ed))).await;
+    assert_eq!(status, StatusCode::OK, "{started}");
+    let id = started["id"].as_str().unwrap().to_string();
+    let third = bytes.len() / 3 + 1;
+    for (i, part) in bytes.chunks(third).enumerate() {
+        let (status, _, body) = send(&s.app, put_chunk(&id, i * third, part, &ed)).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+    let (_, _, progress) = send(&s.app, get(&format!("/api/upload/{id}"), Some(&ed))).await;
+    assert_eq!((&progress["received"], &progress["size"]), (&json!(bytes.len()), &json!(bytes.len())));
+
+    let (status, _, photo) = send(&s.app, post(&format!("/api/upload/{id}/finish"), json!({}), Some(&ed))).await;
+    assert_eq!(status, StatusCode::OK, "{photo}");
+    let landed = std::path::Path::new(&root).join("uploads").join("ed").join("beach.jpg");
+    assert_eq!(std::fs::read(&landed).unwrap(), bytes);
+    assert_eq!(photo["name"], "beach.jpg");
+    assert_eq!(photo["hash"], json!(content_hash(&bytes)));
+    let mtime = landed.metadata().unwrap().modified().unwrap().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+    assert_eq!(mtime, 1_700_000_000, "the file keeps its own time");
+    let (event, payload) = events.recv().await.unwrap();
+    assert_eq!((event.as_str(), &payload["hashes"]), ("photos-changed", &json!([content_hash(&bytes)])));
+
+    // Now the server has it
+    let (_, _, check) = send(&s.app, post("/api/upload/check", json!({"files": [{"hash": content_hash(&bytes), "size": bytes.len(), "name": "x.jpg"}]}), Some(&ed))).await;
+    assert_eq!(check["missing"], json!([]));
+    let (_, _, has) = send(&s.app, post("/api/rpc/content_hashes", json!({"hashes": [content_hash(&bytes), "abc123", "nothere"]}), Some(&ed))).await;
+    assert_eq!(has, json!([content_hash(&bytes), "abc123"]));
+    // And nothing is left behind in incoming/
+    assert_eq!(std::fs::read_dir(s.dir.join("incoming")).unwrap().count(), 0);
+}
+
+#[tokio::test]
+async fn an_upload_resumes_refuses_a_wrong_offset_and_keeps_names_apart() {
+    let s = server("uploadresume");
+    let (root, _) = add_library(&s);
+    let ed = login(&s.app, "ed").await;
+    let bytes = jpeg(20);
+    let (_, _, first) = send(&s.app, post("/api/upload", start_body("a.jpg", &bytes), Some(&ed))).await;
+    let id = first["id"].as_str().unwrap().to_string();
+    send(&s.app, put_chunk(&id, 0, &bytes[..100], &ed)).await;
+
+    // Starting the same file again carries on where it stopped
+    let (_, _, again) = send(&s.app, post("/api/upload", start_body("a.jpg", &bytes), Some(&ed))).await;
+    assert_eq!((&again["id"], &again["received"]), (&json!(id), &json!(100)));
+    // A chunk at the wrong place: 409 with where to carry on
+    let (status, _, body) = send(&s.app, put_chunk(&id, 50, &bytes[50..150], &ed)).await;
+    assert_eq!((status, &body["offset"]), (StatusCode::CONFLICT, &json!(100)));
+    // Finishing early says so
+    assert_eq!(send(&s.app, post(&format!("/api/upload/{id}/finish"), json!({}), Some(&ed))).await.0, StatusCode::CONFLICT);
+    send(&s.app, put_chunk(&id, 100, &bytes[100..], &ed)).await;
+    // The library already has an a.jpg (the test photo): this one becomes "a (2).jpg"... in the user's folder
+    std::fs::create_dir_all(std::path::Path::new(&root).join("uploads").join("ed")).unwrap();
+    std::fs::write(std::path::Path::new(&root).join("uploads").join("ed").join("a.jpg"), b"someone else").unwrap();
+    let (status, _, photo) = send(&s.app, post(&format!("/api/upload/{id}/finish"), json!({}), Some(&ed))).await;
+    assert_eq!((status, &photo["name"]), (StatusCode::OK, &json!("a (2).jpg")), "{photo}");
+    assert_eq!(std::fs::read(std::path::Path::new(&root).join("uploads").join("ed").join("a.jpg")).unwrap(), b"someone else", "never overwritten");
+
+    // Someone else's upload id is "not found"
+    let other = login(&s.app, "ada").await;
+    let (_, _, mine) = send(&s.app, post("/api/upload", start_body("b.jpg", &jpeg(21)), Some(&ed))).await;
+    let mine = mine["id"].as_str().unwrap();
+    assert_eq!(send(&s.app, get(&format!("/api/upload/{mine}"), Some(&other))).await.0, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn a_damaged_upload_is_not_kept_and_a_viewer_may_not_upload() {
+    let s = server("uploadbad");
+    let (root, _) = add_library(&s);
+    let ed = login(&s.app, "ed").await;
+    let bytes = jpeg(30);
+    let mut body = start_body("c.jpg", &bytes);
+    body["full_hash"] = json!(blake3::hash(b"something else").to_hex().to_string());
+    let (_, _, started) = send(&s.app, post("/api/upload", body, Some(&ed))).await;
+    let id = started["id"].as_str().unwrap().to_string();
+    send(&s.app, put_chunk(&id, 0, &bytes, &ed)).await;
+    let (status, _, err) = send(&s.app, post(&format!("/api/upload/{id}/finish"), json!({}), Some(&ed))).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{err}");
+    assert!(!std::path::Path::new(&root).join("uploads").join("ed").join("c.jpg").exists());
+    assert_eq!(std::fs::read_dir(s.dir.join("incoming")).unwrap().count(), 0, "the part is removed");
+    assert_eq!(send(&s.app, get(&format!("/api/upload/{id}"), Some(&ed))).await.0, StatusCode::NOT_FOUND);
+
+    // Not a photo, a path for a name
+    let (status, _, _) = send(&s.app, post("/api/upload", start_body("notes.txt", &bytes), Some(&ed))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (_, _, sneaky) = send(&s.app, post("/api/upload", start_body("../../etc/x.jpg", &jpeg(31)), Some(&ed))).await;
+    let sid = sneaky["id"].as_str().unwrap().to_string();
+    send(&s.app, put_chunk(&sid, 0, &jpeg(31), &ed)).await;
+    let (_, _, photo) = send(&s.app, post(&format!("/api/upload/{sid}/finish"), json!({}), Some(&ed))).await;
+    assert_eq!(photo["name"], "x.jpg", "only the file's own name is used");
+
+    let vera = login(&s.app, "vera").await;
+    for req in [
+        post("/api/upload/check", json!({"files": []}), Some(&vera)),
+        post("/api/upload", start_body("d.jpg", &bytes), Some(&vera)),
+    ] {
+        assert_eq!(send(&s.app, req).await.0, StatusCode::FORBIDDEN);
+    }
+}
+
+#[tokio::test]
+async fn a_download_is_the_original_with_its_blake3_and_follows_who_may_see_it() {
+    let s = server("download");
+    two_libraries(&s);
+    let ada = login(&s.app, "ada").await;
+    let gus = login(&s.app, "gus").await;
+    let (status, headers, body) = send(&s.app, get("/media/download/b1", Some(&ada))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, Value::String("photo".into()));
+    assert_eq!(headers.get("x-lumina-blake3").unwrap(), blake3::hash(b"photo").to_hex().as_str());
+    assert_eq!(headers.get("content-disposition").unwrap(), "attachment; filename=\"b1.jpg\"; filename*=UTF-8''b1.jpg");
+    let range = HttpRequest::get("/media/download/b1").header(header::COOKIE, &ada).header(header::RANGE, "bytes=1-2").body(Body::empty()).unwrap();
+    let (status, headers, body) = send(&s.app, range).await;
+    assert_eq!((status, body), (StatusCode::PARTIAL_CONTENT, Value::String("ho".into())));
+    assert_eq!(headers.get("x-lumina-blake3").unwrap(), blake3::hash(b"photo").to_hex().as_str(), "the whole file's, also for a part");
+    // The guest: only what is shared (b2), not b1
+    assert_eq!(send(&s.app, get("/media/download/b2", Some(&gus))).await.0, StatusCode::OK);
+    assert_eq!(send(&s.app, get("/media/download/b1", Some(&gus))).await.0, StatusCode::NOT_FOUND);
+    let (_, _, has) = send(&s.app, post("/api/rpc/content_hashes", json!({"hashes": ["a1", "b1", "b2"]}), Some(&gus))).await;
+    assert_eq!(has, json!(["b2"]));
+}
+
+#[tokio::test]
+async fn a_partial_upload_untouched_for_a_week_is_given_up() {
+    let s = server("uploadold");
+    add_library(&s);
+    let ed = login(&s.app, "ed").await;
+    let (_, _, old) = send(&s.app, post("/api/upload", start_body("old.jpg", &jpeg(40)), Some(&ed))).await;
+    let old = old["id"].as_str().unwrap().to_string();
+    send(&s.app, put_chunk(&old, 0, &jpeg(40)[..10], &ed)).await;
+    // Eight days without a chunk
+    let part = s.dir.join("incoming").join(format!("{old}.part"));
+    let week_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(8 * 24 * 3600);
+    std::fs::OpenOptions::new().write(true).open(&part).unwrap().set_modified(week_ago).unwrap();
+    let conn = db::open_global_db(&*s.host).unwrap();
+    conn.execute("UPDATE uploads SET created_at = created_at - 8 * 86400 WHERE id = ?1", [&old]).unwrap();
+    // The next upload that starts tidies up
+    send(&s.app, post("/api/upload", start_body("new.jpg", &jpeg(41)), Some(&ed))).await;
+    assert!(!part.exists());
+    assert_eq!(send(&s.app, get(&format!("/api/upload/{old}"), Some(&ed))).await.0, StatusCode::NOT_FOUND);
 }

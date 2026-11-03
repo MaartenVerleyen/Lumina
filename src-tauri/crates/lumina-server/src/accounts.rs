@@ -77,7 +77,8 @@ pub fn ensure_tables(conn: &Connection) -> Result<(), String> {
     )
     .map_err(|e| e.to_string())?;
     crate::changes::ensure_table(conn)?;
-    crate::scope::ensure_tables(conn)
+    crate::scope::ensure_tables(conn)?;
+    crate::http::upload::ensure_table(conn)
 }
 
 fn now() -> i64 {

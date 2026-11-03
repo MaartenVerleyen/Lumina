@@ -7,6 +7,7 @@ mod events;
 mod lookup;
 mod media;
 mod rpc;
+pub mod upload;
 mod web;
 
 use crate::accounts::{self, User};
@@ -31,6 +32,8 @@ pub struct AppState {
     pub host: Arc<ServerHost>,
     pub web_dir: Option<PathBuf>,
     pub throttle: LoginThrottle,
+    // Where uploads go (None: the first library)
+    pub upload_library: Option<String>,
 }
 
 pub type Shared = Arc<AppState>;
@@ -75,6 +78,16 @@ pub fn router(state: Shared) -> Router {
         .route("/auth/logout", post(auth::logout))
         .route("/auth/me", get(auth::me))
         .route("/rpc/{command}", post(rpc::call))
+        .route("/upload/check", post(upload::check))
+        .route("/upload", post(upload::start))
+        // Chunks are the only large bodies besides a backup: up to 8 MB each
+        .route(
+            "/upload/{id}",
+            axum::routing::put(upload::chunk)
+                .get(upload::progress)
+                .layer(axum::extract::DefaultBodyLimit::max(upload::MAX_CHUNK + 64 * 1024)),
+        )
+        .route("/upload/{id}/finish", post(upload::finish))
         // A backup to restore can be large: no body limit here (the handler caps it)
         .route("/admin/restore", post(admin::upload_backup).layer(axum::extract::DefaultBodyLimit::disable()))
         .route("/events", get(events::events))
@@ -86,6 +99,7 @@ pub fn router(state: Shared) -> Router {
         .route("/original/{hash}", get(media::original))
         .route("/preview/{hash}", get(media::preview))
         .route("/face/{face_id}", get(media::face))
+        .route("/download/{hash}", get(media::download))
         .fallback(|| async { ApiError::new(StatusCode::NOT_FOUND, "No such media") })
         .layer(middleware::from_fn_with_state(state.clone(), require_session));
     let app = web::attach(Router::new().nest("/api", api).nest("/media", media), state.web_dir.as_deref())

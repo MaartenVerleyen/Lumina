@@ -88,8 +88,10 @@ LUMINA_DATA_DIR=~/LuminaTest/ServerData LUMINA_LIBRARIES=~/LuminaTest/Library ./
 ```
 
 Server configuration: `lumina-server.toml` (`data_dir`, `libraries`, `ollama_url`, `caption_model`, `listen`,
-`web_dir`) or the variables `LUMINA_DATA_DIR`, `LUMINA_LIBRARIES` (separated by `;`), `LUMINA_OLLAMA_URL`,
-`LUMINA_CAPTION_MODEL`, `LUMINA_LISTEN` (default `127.0.0.1:8080`), `LUMINA_WEB_DIR` (the built `dist`).
+`web_dir`, `upload_library`) or the variables `LUMINA_DATA_DIR`, `LUMINA_LIBRARIES` (separated by `;`),
+`LUMINA_OLLAMA_URL`, `LUMINA_CAPTION_MODEL`, `LUMINA_LISTEN` (default `127.0.0.1:8080`), `LUMINA_WEB_DIR` (the
+built `dist`), `LUMINA_UPLOAD_LIBRARY` (default the first library). Uploads (`http/upload.rs`) are resumable and
+land in `<library>/uploads/<user>/`; `/media/download/{hash}` sends originals with their BLAKE3.
 `LUMINA_FFMPEG` names another ffmpeg. Accounts: `lumina-server create-user NAME --role admin` (see
 `server/README.md`); HTTPS comes from `tailscale serve` in front of `127.0.0.1:8080`.
 
@@ -145,7 +147,8 @@ scan means the models did not run.
   names, WebSocket events, `/media/{thumb|original|preview|face}/…` (the kinds of `MediaRef` in
   `src/api/transport.ts`), accounts with roles (viewer, uploader, editor, admin) and shared albums, a jobs
   table, the web client served from `/`, restore of a `.luminabackup` in the admin UI.
-- **Phase 3 (after phase 2 is complete; the brief is `docs/plans/phase-3-client.md`):** desktop client
+- **Phase 3 (on `lumina-5`; the brief is `docs/plans/phase-3-client.md`; milestone 1, the server's upload and
+  download routes, is done on Linux; milestones 2–4 are the Windows desktop client):** desktop client
   mode (connect to a server), uploads to `uploads/<name>/` (hash first, resumable), downloads, an "available on
   this device" badge and filter, and shared folders from another server next to local libraries
   (`transportFor` picks the connection per library). Mac and Linux desktop builds.

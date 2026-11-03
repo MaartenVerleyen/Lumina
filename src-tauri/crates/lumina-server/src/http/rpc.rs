@@ -255,6 +255,8 @@ commands! {
     Viewer [Target::Photos(vec![hash.clone()])] blocking get_photo_history(hash: String) |host, scope|
         changes::history(&db::open_global_db(&*host)?, &hash, 50);
     // The server watches its libraries by itself
+    // Which of these photos the server has (and this user may see): for a client's "on this device" check
+    Viewer blocking content_hashes(hashes: Vec<String>) |host, scope| scope.visible(&db::open_global_db(&*host)?, &hashes);
     Viewer blocking watch_library(root: Option<String>) |host, scope| { let _ = (host, root); Ok::<(), String>(()) };
     Viewer [Target::OptRoot(root_folder.clone())] async get_people(root_folder: Option<String>) |host, scope| {
         let root = optional_root(&host, root_folder)?;

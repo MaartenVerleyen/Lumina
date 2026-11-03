@@ -23,10 +23,12 @@ rpassword = "7"
 # ServeFile is a tower service, called with oneshot
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
+blake3 = "1.5"
 # The cookie's Max-Age (the cookie crate uses time's Duration)
 time = "0.3"
 
 [dev-dependencies]
+image = "0.25"
 
 # Free disk space of the data folder, for the admin page
 [target.'cfg(unix)'.dependencies]

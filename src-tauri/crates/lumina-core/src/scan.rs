@@ -670,6 +670,106 @@ pub fn photos_by_hash<H: Host + ?Sized>(app: &H, hashes: &[String]) -> Result<Ve
     Ok(photos)
 }
 
+// Whether the library holds a file with this content hash and size: under that hash, or as a copy that got
+// a path-salted hash (the second copy of the same file in one database). Answers the row's hash.
+pub fn find_by_content(conn: &Connection, hash: &str, size: u64) -> Result<Option<String>, String> {
+    let direct: Option<String> = conn
+        .query_row("SELECT hash FROM photos WHERE hash = ?1 AND library_id IS NOT NULL", [hash], |r| r.get(0))
+        .map(Some)
+        .or_else(|e| if e == rusqlite::Error::QueryReturnedNoRows { Ok(None) } else { Err(e) })
+        .map_err(|e| e.to_string())?;
+    if direct.is_some() {
+        return Ok(direct);
+    }
+    let mut stmt = conn
+        .prepare("SELECT hash, current_path FROM photos WHERE file_size = ?1 AND library_id IS NOT NULL")
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([size as i64], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+        .map_err(|e| e.to_string())?;
+    for row in rows.flatten() {
+        if salt_hash_with_path(hash, &row.1) == row.0 {
+            return Ok(Some(row.0));
+        }
+    }
+    Ok(None)
+}
+
+// One file just put into a library (an upload), indexed on its own: no walk of the library, and no new scan
+// generation, so a scan or pipeline pass that runs isn't superseded. Its thumbnail (and a video's frames)
+// follow in a pass of their own. Answers the photo as a listing shows it.
+pub fn index_new_file(app: SharedHost, root: &str, path: &Path) -> Result<PhotoItem, String> {
+    let root_path = PathBuf::from(libraries::normalize_root(root));
+    let metadata = fs::metadata(path).map_err(|e| e.to_string())?;
+    let size_bytes = metadata.len();
+    if size_bytes == 0 {
+        return Err("The file is empty".into());
+    }
+    let modified_time = metadata
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let ext = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+    let is_video = video_meta::is_video_ext(&ext);
+    if !is_video && !PHOTO_EXTENSIONS.contains(&ext.as_str()) {
+        return Err(format!("Not a photo or video Lumina reads (.{ext})"));
+    }
+    let (hash, head) = hash_and_read_head(path, size_bytes)?;
+    let ex = extract_all_exif_with_head(path, Some(&head));
+    let app_dir = get_app_storage_dir(&*app);
+    let (thumbs_dir, previews_dir) = (app_dir.join("thumbnails"), app_dir.join("previews"));
+    let _ = fs::create_dir_all(&thumbs_dir);
+    let _ = fs::create_dir_all(&previews_dir);
+    let orig = path.to_string_lossy().to_string();
+    let is_raw_heic = is_raw_or_heic_ext(&ext);
+    let thumb_file = thumbs_dir.join(format!("{hash}.jpg"));
+    let mut tags = Vec::new();
+    if !is_video && is_likely_screenshot(path, &ex.camera_model, None, None) {
+        tags.push("screenshot".to_string());
+    }
+    if is_whatsapp_media(path) {
+        tags.push("whatsapp".to_string());
+    }
+    let item = PhotoItem {
+        hash: hash.clone(),
+        name: path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
+        subfolder: get_relative_subfolder(&root_path, path),
+        path: if is_raw_heic { thumb_file.to_string_lossy().to_string() } else { orig.clone() },
+        thumb_path: thumb_file.to_string_lossy().to_string(),
+        size_kb: size_bytes / 1024,
+        width: ex.width,
+        height: ex.height,
+        tags,
+        captured_at: ex.captured_at,
+        camera_model: ex.camera_model,
+        location: ex.location,
+        latitude: ex.lat,
+        longitude: ex.lon,
+        focal_length: ex.focal_length,
+        aperture: ex.aperture,
+        shutter_speed: ex.shutter_speed,
+        iso: ex.iso,
+        lens_model: ex.lens_model,
+        pair_raw_path: is_raw_heic.then(|| orig.clone()),
+        media_type: if is_video { "video" } else { "photo" }.to_string(),
+        duration_ms: ex.duration_ms,
+        video_codec: ex.video_codec,
+        ..Default::default()
+    };
+    let mut conn = open_global_db(&*app)?;
+    let mut indexed: Vec<IndexedFile> = vec![(item, orig, size_bytes, modified_time, true)];
+    save_indexed(&mut conn, &mut indexed, &thumbs_dir, &previews_dir, false);
+    let saved = indexed.remove(0).0;
+    // The running generation: this pass neither stops a scan nor is stopped by it before it starts
+    spawn_thumbnail_pass(app.clone(), vec![saved.clone()], root_path, SCAN_GENERATION.load(Ordering::Acquire), false, HashSet::new());
+    photos_by_hash(&*app, &[saved.hash.clone()])?
+        .into_iter()
+        .next()
+        .ok_or_else(|| "The file isn't inside one of the libraries".to_string())
+}
+
 pub async fn list_library(app: SharedHost, root: String) -> Result<Vec<PhotoItem>, String> {
     tokio::task::spawn_blocking(move || list_library_photos(&*app, &root)).await.map_err(|e| e.to_string())?
 }

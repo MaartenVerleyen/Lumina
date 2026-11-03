@@ -141,3 +141,72 @@ pub async fn face(State(state): State<Shared>, Extension(user): Extension<User>,
         Err(e) => e.into_response(),
     }
 }
+
+// The full BLAKE3 of a library file, kept per photo while its size and time are unchanged (a large video
+// takes a while to hash, and every download sends it)
+fn full_blake3(conn: &rusqlite::Connection, hash: &str, path: &std::path::Path) -> Result<String, String> {
+    let meta = path.metadata().map_err(|e| e.to_string())?;
+    let mtime = meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs() as i64).unwrap_or(0);
+    let size = meta.len() as i64;
+    let cached: Option<String> = conn
+        .query_row("SELECT blake3 FROM full_hashes WHERE hash = ?1 AND size = ?2 AND mtime = ?3", rusqlite::params![hash, size, mtime], |r| r.get(0))
+        .ok();
+    if let Some(b) = cached {
+        return Ok(b);
+    }
+    let b = super::upload::file_blake3(path)?;
+    let _ = conn.execute(
+        "INSERT OR REPLACE INTO full_hashes (hash, size, mtime, blake3) VALUES (?1, ?2, ?3, ?4)",
+        rusqlite::params![hash, size, mtime, b],
+    );
+    Ok(b)
+}
+
+// Content-Disposition for a file name with any characters: a plain fallback and the exact name (RFC 6266)
+fn attachment(name: &str) -> String {
+    let plain: String = name.chars().map(|c| if c.is_ascii_graphic() && c != '"' && c != '\\' || c == ' ' { c } else { '_' }).collect();
+    let exact: String = name
+        .bytes()
+        .map(|b| if b.is_ascii_alphanumeric() || b"-._~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") })
+        .collect();
+    format!("attachment; filename=\"{plain}\"; filename*=UTF-8''{exact}")
+}
+
+// GET /media/download/{hash}: the original file as stored (a RAW as RAW, not its preview), as a download,
+// with Range support and its BLAKE3 in X-Lumina-Blake3 so the client can check what it saved
+pub async fn download(State(state): State<Shared>, Extension(user): Extension<User>, Path(hash): Path<String>, req: Request) -> Response {
+    let found = async {
+        check_id(&hash)?;
+        let host = state.host.clone();
+        blocking(move || {
+            let conn = db::open_global_db(&*host)?;
+            if !may_see(&conn, &user, &hash)? {
+                return Ok(None);
+            }
+            let Some(path) = lookup::photo_path(&conn, &hash).map_err(|e| e.1)? else { return Ok(None) };
+            let path = PathBuf::from(path);
+            if !path.is_file() {
+                return Ok(None);
+            }
+            let blake = full_blake3(&conn, &hash, &path)?;
+            Ok(Some((path, blake)))
+        })
+        .await?
+        .ok_or_else(not_found)
+    };
+    match found.await {
+        Ok((path, blake)) => {
+            let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "photo".into());
+            let mut resp = send_file(path, req).await;
+            let headers = resp.headers_mut();
+            if let Ok(v) = HeaderValue::from_str(&attachment(&name)) {
+                headers.insert("content-disposition", v);
+            }
+            if let Ok(v) = HeaderValue::from_str(&blake) {
+                headers.insert("x-lumina-blake3", v);
+            }
+            resp
+        }
+        Err(e) => e.into_response(),
+    }
+}

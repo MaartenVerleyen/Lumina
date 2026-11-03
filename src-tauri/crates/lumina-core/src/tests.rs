@@ -2280,3 +2280,51 @@ fn listing_from_the_database_matches_a_scan() {
     drop(rt);
     let _ = fs::remove_dir_all(&base);
 }
+
+// An upload: one file put into a library is indexed on its own, a copy of a file the library has gets its
+// own (salted) hash, and both are found again by content
+#[test]
+fn a_new_file_is_indexed_alone_and_found_by_content() {
+    let base = std::env::temp_dir().join(format!("lumina_new_file_test_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&base);
+    let (library, data) = (base.join("Library"), base.join("Data"));
+    fs::create_dir_all(library.join("uploads").join("anna")).unwrap();
+    let img = image::RgbImage::from_fn(64, 48, |x, y| image::Rgb([(x * 4) as u8, (y * 5) as u8, 9]));
+    img.save(library.join("a.jpg")).unwrap();
+    let host: SharedHost = Arc::new(DirHost(data.clone()));
+    db::migrate(&open_global_db(&*host).unwrap()).unwrap();
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    let root = library.to_string_lossy().to_string();
+    let scanned = rt.block_on(scan::scan_folder(host.clone(), root.clone(), None)).unwrap();
+    let original = scanned[0].hash.clone();
+
+    // A different photo, uploaded
+    let other = image::RgbImage::from_fn(64, 48, |x, _| image::Rgb([200, (x * 3) as u8, 40]));
+    let new_path = library.join("uploads").join("anna").join("b.jpg");
+    other.save(&new_path).unwrap();
+    let photo = scan::index_new_file(host.clone(), &root, &new_path).unwrap();
+    assert_eq!(photo.name, "b.jpg");
+    assert!(photo.subfolder.contains("anna"), "{}", photo.subfolder);
+    assert_eq!(scan::list_library_photos(&*host, &root).unwrap().len(), 2);
+
+    // The same photo again: its own row, found by the original's content hash
+    let copy = library.join("uploads").join("anna").join("a.jpg");
+    fs::copy(library.join("a.jpg"), &copy).unwrap();
+    let copied = scan::index_new_file(host.clone(), &root, &copy).unwrap();
+    assert_ne!(copied.hash, original, "a second copy gets a path-salted hash");
+    let conn = open_global_db(&*host).unwrap();
+    let size = fs::metadata(&copy).unwrap().len();
+    assert_eq!(scan::find_by_content(&conn, &original, size).unwrap(), Some(original.clone()));
+    fs::remove_file(library.join("a.jpg")).unwrap();
+    conn.execute("DELETE FROM photos WHERE hash = ?1", [&original]).unwrap();
+    assert_eq!(scan::find_by_content(&conn, &original, size).unwrap(), Some(copied.hash.clone()), "the salted copy counts as present");
+    assert_eq!(scan::find_by_content(&conn, "0000000000000000", size).unwrap(), None);
+    assert!(scan::index_new_file(host.clone(), &root, &library.join("notes.txt")).is_err());
+    drop(conn);
+    drop(rt);
+    // The thumbnail pass for the new files runs in a thread of its own
+    while thumbs::thumbnail_passes_running() {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let _ = fs::remove_dir_all(&base);
+}

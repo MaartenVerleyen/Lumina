@@ -7,9 +7,11 @@
 //   listen = "127.0.0.1:8080"              # the web server (HTTPS comes from `tailscale serve` in front)
 //   web_dir = "/opt/lumina/web"            # the built web client (default: `dist` next to the binary,
 //                                          # else /opt/lumina/web)
+//   upload_library = "/photos"             # where uploads go, in uploads/<user>/ (default: the first library)
 //
 // Environment variables override the file (handy in Docker): LUMINA_DATA_DIR, LUMINA_LIBRARIES (folders
-// separated by ";"), LUMINA_OLLAMA_URL, LUMINA_CAPTION_MODEL, LUMINA_LISTEN and LUMINA_WEB_DIR.
+// separated by ";"), LUMINA_OLLAMA_URL, LUMINA_CAPTION_MODEL, LUMINA_LISTEN, LUMINA_WEB_DIR and
+// LUMINA_UPLOAD_LIBRARY.
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
@@ -23,6 +25,7 @@ pub struct Config {
     pub caption_model: Option<String>,
     pub listen: Option<String>,
     pub web_dir: Option<PathBuf>,
+    pub upload_library: Option<String>,
 }
 
 impl Config {
@@ -58,6 +61,9 @@ impl Config {
         }
         if let Some(dir) = var("LUMINA_WEB_DIR") {
             self.web_dir = Some(PathBuf::from(dir));
+        }
+        if let Some(root) = var("LUMINA_UPLOAD_LIBRARY") {
+            self.upload_library = Some(root);
         }
         self
     }
