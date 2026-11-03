@@ -380,6 +380,268 @@ fn save_indexed(
     upsert_count
 }
 
+// What the database knows about a library's files (by full path), with their tags, people and faces: what a
+// scan starts from, and all a listing without a scan needs
+pub struct LibraryIndex {
+    pub cache: HashMap<String, CachedRow>,
+    pub tags: HashMap<String, Vec<String>>,
+    pub people: HashMap<String, Vec<String>>,
+    pub faces: HashMap<String, Vec<FaceInstance>>,
+}
+
+pub fn load_library_index(conn: &Connection, folder_prefix: &str) -> Result<LibraryIndex, String> {
+    let mut cache_map: HashMap<String, CachedRow> = HashMap::new();
+    {
+        let mut stmt = conn
+            .prepare(
+                "SELECT current_path, file_size, modified_time, rating,
+                        COALESCE(ai_caption, ''), COALESCE(ocr_text, ''), hash,
+                        COALESCE(captured_at, ''), COALESCE(camera_model, ''),
+                        COALESCE(location, ''), latitude, longitude,
+                        COALESCE(dhash, ''), COALESCE(sharpness, 0.0), staged_target,
+                        COALESCE(exif_checked, 0), flag, color_label, COALESCE(rotation, 0), COALESCE(in_basket, 0),
+                        COALESCE(width, 0), COALESCE(height, 0),
+                        focal_length, aperture, shutter_speed, iso, lens_model,
+                        COALESCE(damaged, 0), COALESCE(thumb_edge, 0), duration_ms, video_codec
+                 FROM photos WHERE current_path LIKE ?1 ESCAPE '!'",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params![folder_prefix], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    CachedRow {
+                        size: row.get(1)?,
+                        mtime: row.get(2)?,
+                        rating: row.get(3)?,
+                        ai_caption: row.get(4)?,
+                        ocr_text: row.get(5)?,
+                        hash: row.get(6)?,
+                        captured_at: row.get(7)?,
+                        camera_model: row.get(8)?,
+                        location: row.get(9)?,
+                        lat: row.get(10)?,
+                        lon: row.get(11)?,
+                        dhash: row.get(12)?,
+                        sharpness: row.get(13)?,
+                        staged_target: row.get(14)?,
+                        exif_checked: row.get(15)?,
+                        flag: row.get(16)?,
+                        color_label: row.get(17)?,
+                        rotation: row.get(18)?,
+                        in_basket: row.get::<_, i32>(19).unwrap_or(0) != 0,
+                        width: row.get::<_, u32>(20).unwrap_or(0),
+                        height: row.get::<_, u32>(21).unwrap_or(0),
+                        focal_length: row.get(22).ok().flatten(),
+                        aperture: row.get(23).ok().flatten(),
+                        shutter_speed: row.get(24).ok().flatten(),
+                        iso: row.get(25).ok().flatten(),
+                        lens_model: row.get(26).ok().flatten(),
+                        damaged: row.get::<_, i32>(27).unwrap_or(0) != 0,
+                        thumb_edge: row.get::<_, u32>(28).unwrap_or(0),
+                        duration_ms: row.get(29).ok().flatten(),
+                        video_codec: row.get(30).ok().flatten(),
+                    },
+                ))
+            })
+            .map_err(|e| e.to_string())?;
+        for r in rows.flatten() {
+            cache_map.insert(r.0, r.1);
+        }
+    }
+
+    let mut tags_map: HashMap<String, Vec<String>> = HashMap::new();
+    {
+        let mut stmt = conn
+            .prepare(
+                "SELECT pt.hash, pt.tag FROM photo_tags pt
+                 JOIN photos p ON pt.hash = p.hash
+                 WHERE p.current_path LIKE ?1 ESCAPE '!'
+                 ORDER BY pt.tag ASC",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params![folder_prefix], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|e| e.to_string())?;
+        for r in rows.flatten() {
+            tags_map.entry(r.0).or_default().push(r.1);
+        }
+    }
+
+    let mut people_map: HashMap<String, Vec<String>> = HashMap::new();
+    {
+        let mut stmt = conn
+            .prepare(
+                "SELECT pp.hash, pp.person_name FROM photo_people pp
+                 JOIN photos p ON pp.hash = p.hash
+                 WHERE p.current_path LIKE ?1 ESCAPE '!'
+                 ORDER BY pp.person_name ASC",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params![folder_prefix], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|e| e.to_string())?;
+        for r in rows.flatten() {
+            people_map.entry(r.0).or_default().push(r.1);
+        }
+    }
+
+    let mut faces_map: HashMap<String, Vec<FaceInstance>> = HashMap::new();
+    {
+        if let Ok(mut stmt) = conn.prepare(
+            "SELECT pf.face_id, pf.hash, pf.bbox_x, pf.bbox_y, pf.bbox_w, pf.bbox_h, pf.person_name, pf.face_thumb, pf.confidence,
+                    pf.eyes_open, pf.face_sharpness
+             FROM photo_faces pf
+             JOIN photos p ON pf.hash = p.hash
+             WHERE p.current_path LIKE ?1 ESCAPE '!'
+             ORDER BY pf.bbox_x ASC",
+        ) {
+            if let Ok(rows) = stmt.query_map(params![folder_prefix], |row| {
+                Ok(FaceInstance {
+                    face_id: row.get(0)?,
+                    hash: row.get(1)?,
+                    bbox_x: row.get(2)?,
+                    bbox_y: row.get(3)?,
+                    bbox_w: row.get(4)?,
+                    bbox_h: row.get(5)?,
+                    person_name: row.get(6)?,
+                    face_thumb: row.get(7)?,
+                    confidence: row.get(8)?,
+                    eyes_open: row.get(9)?,
+                    face_sharpness: row.get(10)?,
+                })
+            }) {
+                for f in rows.flatten() {
+                    faces_map.entry(f.hash.clone()).or_default().push(f);
+                }
+            }
+        }
+    }
+    Ok(LibraryIndex { cache: cache_map, tags: tags_map, people: people_map, faces: faces_map })
+}
+
+// A JPEG next to a RAW or HEIC with the same name (in the same folder) is its pair: the Loupe can show both
+fn pair_raw_jpegs(photos: &mut [PhotoItem]) {
+    let mut raw_stem_map: HashMap<(String, String), String> = HashMap::new();
+    for p in photos.iter() {
+        let disk_p = p.pair_raw_path.as_deref().unwrap_or(&p.path);
+        let path_obj = Path::new(disk_p);
+        let stem = path_obj
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+        let ext = path_obj
+            .extension()
+            .map(|e| e.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+        if !stem.is_empty() && is_raw_or_heic_ext(&ext) {
+            raw_stem_map.insert((p.subfolder.clone(), stem), disk_p.to_string());
+        }
+    }
+    for p in photos.iter_mut() {
+        let path_obj = Path::new(&p.name);
+        let stem = path_obj
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+        let ext = path_obj
+            .extension()
+            .map(|e| e.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+        if matches!(ext.as_str(), "jpg" | "jpeg") {
+            if let Some(raw_p) = raw_stem_map.get(&(p.subfolder.clone(), stem)) {
+                p.pair_raw_path = Some(raw_p.clone());
+            }
+        }
+    }
+}
+
+// A library's photos as a scan lists them, from the database alone: no walk and no file reads beyond
+// checking which thumbnails and previews exist. A server keeps its libraries up to date itself, so this is
+// what it answers when a client opens one.
+pub fn list_library_photos<H: Host + ?Sized>(app: &H, root: &str) -> Result<Vec<PhotoItem>, String> {
+    let root_path = PathBuf::from(libraries::normalize_root(root));
+    let conn = open_global_db(app)?;
+    let index = load_library_index(&conn, &make_folder_prefix(Some(&root_path.to_string_lossy())))?;
+    let app_dir = get_app_storage_dir(app);
+    let (thumbs_dir, previews_dir) = (app_dir.join("thumbnails"), app_dir.join("previews"));
+    let mut photos: Vec<PhotoItem> = index
+        .cache
+        .iter()
+        .map(|(path, c)| {
+            let file_path = Path::new(path);
+            let ext = file_path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+            let is_raw_heic = is_raw_or_heic_ext(&ext);
+            let thumb_file = thumbs_dir.join(format!("{}.jpg", c.hash));
+            let preview_file = previews_dir.join(format!("{}_preview.jpg", c.hash));
+            // As in scan_folder: RAW and HEIC show their 1920 px preview, or the thumbnail until it exists
+            let display_path = if !is_raw_heic {
+                path.clone()
+            } else if preview_file.exists() {
+                preview_file.to_string_lossy().to_string()
+            } else {
+                thumb_file.to_string_lossy().to_string()
+            };
+            PhotoItem {
+                hash: c.hash.clone(),
+                name: file_path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
+                subfolder: get_relative_subfolder(&root_path, file_path),
+                path: display_path,
+                thumb_path: thumb_file.to_string_lossy().to_string(),
+                size_kb: c.size / 1024,
+                width: c.width,
+                height: c.height,
+                thumb_ready: thumb_file.metadata().map(|m| m.len() > 256).unwrap_or(false),
+                rating: c.rating,
+                flag: c.flag.clone(),
+                color_label: c.color_label.clone(),
+                rotation: c.rotation,
+                in_basket: c.in_basket,
+                tags: index.tags.get(&c.hash).cloned().unwrap_or_default(),
+                people: index.people.get(&c.hash).cloned().unwrap_or_default(),
+                faces: index.faces.get(&c.hash).cloned().unwrap_or_default(),
+                ai_caption: c.ai_caption.clone(),
+                ocr_text: c.ocr_text.clone(),
+                captured_at: c.captured_at.clone(),
+                camera_model: c.camera_model.clone(),
+                location: c.location.clone(),
+                latitude: c.lat,
+                longitude: c.lon,
+                dhash: c.dhash.clone(),
+                sharpness: c.sharpness,
+                duplicate_group: None,
+                staged_target: c.staged_target.clone(),
+                focal_length: c.focal_length.clone(),
+                aperture: c.aperture.clone(),
+                shutter_speed: c.shutter_speed.clone(),
+                iso: c.iso.clone(),
+                lens_model: c.lens_model.clone(),
+                pair_raw_path: is_raw_heic.then(|| path.clone()),
+                damaged: c.damaged,
+                media_type: if video_meta::is_video_ext(&ext) { "video" } else { "photo" }.to_string(),
+                duration_ms: c.duration_ms,
+                video_codec: c.video_codec.clone(),
+                ..Default::default()
+            }
+        })
+        .collect();
+    photos.sort_by(|a, b| a.subfolder.cmp(&b.subfolder).then(a.name.cmp(&b.name)));
+    pair_raw_jpegs(&mut photos);
+    link_live_photos(&mut photos);
+    let hashes: Vec<String> = photos.iter().map(|p| p.hash.clone()).collect();
+    assign_duplicate_groups(&mut photos, &clip::clip_vectors(&conn, &hashes));
+    Ok(photos)
+}
+
+pub async fn list_library(app: SharedHost, root: String) -> Result<Vec<PhotoItem>, String> {
+    tokio::task::spawn_blocking(move || list_library_photos(&*app, &root)).await.map_err(|e| e.to_string())?
+}
+
+
 pub async fn scan_folder(app: SharedHost, folder_path: String, force_reprocess: Option<bool>) -> Result<Vec<PhotoItem>, String> {
     let force = force_reprocess.unwrap_or(false);
     // Every scan supersedes any background thumbnail pass still running from an earlier scan
@@ -426,137 +688,8 @@ pub async fn scan_folder(app: SharedHost, folder_path: String, force_reprocess: 
         libraries::open(&conn, &root_path.to_string_lossy())?;
         let folder_prefix = make_folder_prefix(Some(&root_path.to_string_lossy()));
 
-        let mut cache_map: HashMap<String, CachedRow> = HashMap::new();
-        {
-            let mut stmt = conn
-                .prepare(
-                    "SELECT current_path, file_size, modified_time, rating,
-                            COALESCE(ai_caption, ''), COALESCE(ocr_text, ''), hash,
-                            COALESCE(captured_at, ''), COALESCE(camera_model, ''),
-                            COALESCE(location, ''), latitude, longitude,
-                            COALESCE(dhash, ''), COALESCE(sharpness, 0.0), staged_target,
-                            COALESCE(exif_checked, 0), flag, color_label, COALESCE(rotation, 0), COALESCE(in_basket, 0),
-                            COALESCE(width, 0), COALESCE(height, 0),
-                            focal_length, aperture, shutter_speed, iso, lens_model,
-                            COALESCE(damaged, 0), COALESCE(thumb_edge, 0), duration_ms, video_codec
-                     FROM photos WHERE current_path LIKE ?1 ESCAPE '!'",
-                )
-                .map_err(|e| e.to_string())?;
-            let rows = stmt
-                .query_map(params![folder_prefix], |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        CachedRow {
-                            size: row.get(1)?,
-                            mtime: row.get(2)?,
-                            rating: row.get(3)?,
-                            ai_caption: row.get(4)?,
-                            ocr_text: row.get(5)?,
-                            hash: row.get(6)?,
-                            captured_at: row.get(7)?,
-                            camera_model: row.get(8)?,
-                            location: row.get(9)?,
-                            lat: row.get(10)?,
-                            lon: row.get(11)?,
-                            dhash: row.get(12)?,
-                            sharpness: row.get(13)?,
-                            staged_target: row.get(14)?,
-                            exif_checked: row.get(15)?,
-                            flag: row.get(16)?,
-                            color_label: row.get(17)?,
-                            rotation: row.get(18)?,
-                            in_basket: row.get::<_, i32>(19).unwrap_or(0) != 0,
-                            width: row.get::<_, u32>(20).unwrap_or(0),
-                            height: row.get::<_, u32>(21).unwrap_or(0),
-                            focal_length: row.get(22).ok().flatten(),
-                            aperture: row.get(23).ok().flatten(),
-                            shutter_speed: row.get(24).ok().flatten(),
-                            iso: row.get(25).ok().flatten(),
-                            lens_model: row.get(26).ok().flatten(),
-                            damaged: row.get::<_, i32>(27).unwrap_or(0) != 0,
-                            thumb_edge: row.get::<_, u32>(28).unwrap_or(0),
-                            duration_ms: row.get(29).ok().flatten(),
-                            video_codec: row.get(30).ok().flatten(),
-                        },
-                    ))
-                })
-                .map_err(|e| e.to_string())?;
-            for r in rows.flatten() {
-                cache_map.insert(r.0, r.1);
-            }
-        }
-
-        let mut tags_map: HashMap<String, Vec<String>> = HashMap::new();
-        {
-            let mut stmt = conn
-                .prepare(
-                    "SELECT pt.hash, pt.tag FROM photo_tags pt
-                     JOIN photos p ON pt.hash = p.hash
-                     WHERE p.current_path LIKE ?1 ESCAPE '!'
-                     ORDER BY pt.tag ASC",
-                )
-                .map_err(|e| e.to_string())?;
-            let rows = stmt
-                .query_map(params![folder_prefix], |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-                })
-                .map_err(|e| e.to_string())?;
-            for r in rows.flatten() {
-                tags_map.entry(r.0).or_default().push(r.1);
-            }
-        }
-
-        let mut people_map: HashMap<String, Vec<String>> = HashMap::new();
-        {
-            let mut stmt = conn
-                .prepare(
-                    "SELECT pp.hash, pp.person_name FROM photo_people pp
-                     JOIN photos p ON pp.hash = p.hash
-                     WHERE p.current_path LIKE ?1 ESCAPE '!'
-                     ORDER BY pp.person_name ASC",
-                )
-                .map_err(|e| e.to_string())?;
-            let rows = stmt
-                .query_map(params![folder_prefix], |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-                })
-                .map_err(|e| e.to_string())?;
-            for r in rows.flatten() {
-                people_map.entry(r.0).or_default().push(r.1);
-            }
-        }
-
-        let mut faces_map: HashMap<String, Vec<FaceInstance>> = HashMap::new();
-        {
-            if let Ok(mut stmt) = conn.prepare(
-                "SELECT pf.face_id, pf.hash, pf.bbox_x, pf.bbox_y, pf.bbox_w, pf.bbox_h, pf.person_name, pf.face_thumb, pf.confidence,
-                        pf.eyes_open, pf.face_sharpness
-                 FROM photo_faces pf
-                 JOIN photos p ON pf.hash = p.hash
-                 WHERE p.current_path LIKE ?1 ESCAPE '!'
-                 ORDER BY pf.bbox_x ASC",
-            ) {
-                if let Ok(rows) = stmt.query_map(params![folder_prefix], |row| {
-                    Ok(FaceInstance {
-                        face_id: row.get(0)?,
-                        hash: row.get(1)?,
-                        bbox_x: row.get(2)?,
-                        bbox_y: row.get(3)?,
-                        bbox_w: row.get(4)?,
-                        bbox_h: row.get(5)?,
-                        person_name: row.get(6)?,
-                        face_thumb: row.get(7)?,
-                        confidence: row.get(8)?,
-                        eyes_open: row.get(9)?,
-                        face_sharpness: row.get(10)?,
-                    })
-                }) {
-                    for f in rows.flatten() {
-                        faces_map.entry(f.hash.clone()).or_default().push(f);
-                    }
-                }
-            }
-        }
+        let LibraryIndex { cache: cache_map, tags: tags_map, people: people_map, faces: faces_map } =
+            load_library_index(&conn, &folder_prefix)?;
 
         let cache_ms = elapsed_ms(scan_started);
         let walk_started = Instant::now();
@@ -967,38 +1100,7 @@ pub async fn scan_folder(app: SharedHost, folder_path: String, force_reprocess: 
             .map(|(p, _, _, _, _)| p)
             .collect();
 
-        let mut raw_stem_map: HashMap<(String, String), String> = HashMap::new();
-        for p in &photos {
-            let disk_p = p.pair_raw_path.as_deref().unwrap_or(&p.path);
-            let path_obj = Path::new(disk_p);
-            let stem = path_obj
-                .file_stem()
-                .map(|s| s.to_string_lossy().to_lowercase())
-                .unwrap_or_default();
-            let ext = path_obj
-                .extension()
-                .map(|e| e.to_string_lossy().to_lowercase())
-                .unwrap_or_default();
-            if !stem.is_empty() && is_raw_or_heic_ext(&ext) {
-                raw_stem_map.insert((p.subfolder.clone(), stem), disk_p.to_string());
-            }
-        }
-        for p in &mut photos {
-            let path_obj = Path::new(&p.name);
-            let stem = path_obj
-                .file_stem()
-                .map(|s| s.to_string_lossy().to_lowercase())
-                .unwrap_or_default();
-            let ext = path_obj
-                .extension()
-                .map(|e| e.to_string_lossy().to_lowercase())
-                .unwrap_or_default();
-            if matches!(ext.as_str(), "jpg" | "jpeg") {
-                if let Some(raw_p) = raw_stem_map.get(&(p.subfolder.clone(), stem)) {
-                    p.pair_raw_path = Some(raw_p.clone());
-                }
-            }
-        }
+        pair_raw_jpegs(&mut photos);
 
         let _ = emit_to(&app, 
             "scan-progress",

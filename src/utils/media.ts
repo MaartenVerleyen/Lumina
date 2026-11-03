@@ -28,6 +28,24 @@ export function isPlayableInWebView(p: Pick<PhotoItem, "name" | "video_codec">):
   return PLAYABLE_CONTAINER.test(p.name) && !!p.video_codec && PLAYABLE_CODECS.has(p.video_codec.toLowerCase());
 }
 
+// The codec string a browser's canPlayType understands, for the codecs above
+const CODEC_MIME: Record<string, string> = {
+  avc1: 'video/mp4; codecs="avc1.42E01E"',
+  avc3: 'video/mp4; codecs="avc3.42E01E"',
+  hvc1: 'video/mp4; codecs="hvc1.1.6.L93.B0"',
+  hev1: 'video/mp4; codecs="hev1.1.6.L93.B0"',
+  av01: 'video/mp4; codecs="av01.0.05M.08"',
+  vp09: 'video/mp4; codecs="vp09.00.10.08"',
+};
+
+// In a browser (the web client) the browser decides: Firefox plays no HEVC, Chrome only with the system's
+// decoder. `canPlay` is the browser's video.canPlayType.
+export function isPlayableInBrowser(p: Pick<PhotoItem, "name" | "video_codec">, canPlay: (mime: string) => string): boolean {
+  if (!isPlayableInWebView(p)) return false;
+  const mime = CODEC_MIME[p.video_codec!.toLowerCase()];
+  return !!mime && canPlay(mime) !== "";
+}
+
 // Codec fourcc as people know it
 export function codecLabel(codec: string | null | undefined): string {
   switch ((codec ?? "").toLowerCase()) {

@@ -52,3 +52,12 @@ test("a Live Photo's photo and clip go together", () => {
   assert.equal(isLiveClip(items[1]), true);
   assert.equal(isLiveClip(items[0]), false);
 });
+
+test("in a browser a video plays directly only when the browser can play its codec", async () => {
+  const { isPlayableInBrowser } = await import("../src/utils/media.ts");
+  const firefox = (mime: string) => (mime.includes("hvc1") || mime.includes("hev1") ? "" : "probably");
+  assert.equal(isPlayableInBrowser({ name: "a.mp4", video_codec: "avc1" }, firefox), true);
+  assert.equal(isPlayableInBrowser({ name: "a.mov", video_codec: "hvc1" }, firefox), false);
+  assert.equal(isPlayableInBrowser({ name: "a.mov", video_codec: "hvc1" }, () => "maybe"), true);
+  assert.equal(isPlayableInBrowser({ name: "a.mts", video_codec: "avc1" }, () => "probably"), false);
+});

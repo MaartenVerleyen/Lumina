@@ -35,6 +35,7 @@ src-tauri/                Cargo workspace root, and the desktop app crate ("Lumi
   src/lib.rs              Tauri setup and command registration
   src/engine_commands.rs  thin #[tauri::command] wrappers around lumina-core functions
   src/system.rs           desktop-only: open in Explorer, clipboard, splash screen
+  src/media_server.rs     Linux only: local videos over HTTP on 127.0.0.1 (WebKitGTK can't stream asset://)
   src/prepare.rs          model download for the installer
   crates/lumina-core/     the engine, no Tauri: db, libraries, scan, thumbs, decode, video_frames, ffmpeg,
                           face_* (SCRFD + ArcFace via ONNX Runtime), clip, ai (Ollama), albums, files,
@@ -75,7 +76,7 @@ cargo build --release -p lumina-server
 
 # Frontend (from the repository root)
 npm ci
-npm test                                     # 68 tests
+npm test                                     # 78 tests
 npx tsc --noEmit -p .
 
 # Desktop app in development, on the test data (never on the real library)
@@ -154,13 +155,13 @@ scan means the models did not run.
    CPU on any card with 10 GB or less, ~30 s per photo instead of ~4. Caption model `qwen3-vl:8b-instruct`
    (~4 s per photo, 34/37 layers on the GPU); `qwen3-vl:8b` is the thinking variant and named more things
    that weren't there on a 12-photo test set; `4b-instruct` is 1.5 s but invented details on 2 of 12.
-5. Done, except local video: `npm run tauri dev` on Linux (WebKitGTK) opens the test library with
-   thumbnails, 137 faces and smart search on `GPU (CUDA)`, on Wayland and on X11 (under X11 with NVIDIA
-   the app turns off WebKit's DMA-BUF renderer itself, `system::linux_webkit_workarounds`). Video needs
-   `gst-plugins-good` (without it WebKit's web process aborts) and still doesn't play from a local library:
-   WebKitGTK can't stream Tauri's `asset://` URLs (tauri#3725). Fixed in phase 2 by serving the Linux
-   desktop's local videos over the `/media/...` routes on 127.0.0.1 (see `docs/plans/phase-2-server.md`);
-   the Windows desktop keeps `asset://`, where video plays.
+5. Done: `npm run tauri dev` on Linux (WebKitGTK) opens the test library with thumbnails, 137 faces and
+   smart search on `GPU (CUDA)`, on Wayland and on X11 (under X11 with NVIDIA the app turns off WebKit's
+   DMA-BUF renderer itself, `system::linux_webkit_workarounds`). Video needs `gst-plugins-good` (without
+   it WebKit's web process aborts). WebKitGTK can't stream Tauri's `asset://` URLs (tauri#3725), so on
+   Linux the app serves local videos from 127.0.0.1 itself (`src-tauri/src/media_server.rs`: a random port,
+   a token per run, video files inside the asset scope only; the CSP in `tauri.linux.conf.json`); photos,
+   thumbnails and faces stay on `asset://`, and the Windows desktop keeps `asset://` for everything.
 
 ## Style
 

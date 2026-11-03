@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import { call } from "../../api";
+import { call, inDesktopApp } from "../../api";
 import { confirmDialog, type ConfirmKind } from "../../confirm";
 import { PhotoItem, SessionLogEntry, BulkPopover, PhotoActionSnapshot, ViewMode } from "../../types/lumina";
 import { expandWithRawPairs } from "../../utils/rawPairs";
@@ -101,7 +101,8 @@ export function useLibraryCore() {
     if (!splashClosedRef.current) {
       splashClosedRef.current = true;
       setIsAppReady(true);
-      call("close_splashscreen").catch(() => {});
+      // The desktop's native splash window (a browser has none)
+      if (inDesktopApp) call("close_splashscreen").catch(() => {});
     }
   }, []);
 

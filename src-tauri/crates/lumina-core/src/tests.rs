@@ -2227,3 +2227,50 @@ fn watcher_ignores_reads_and_sees_a_new_photo() {
     watch::watch_libraries(events, Vec::new()).unwrap();
     let _ = fs::remove_dir_all(&dir);
 }
+
+// ----------------- LISTING FROM THE DATABASE -----------------
+
+// A host on a data folder of its own, without events
+struct DirHost(PathBuf);
+impl Host for DirHost {
+    fn data_dir(&self) -> PathBuf {
+        self.0.clone()
+    }
+    fn emit_value(&self, _event: &str, _payload: JsonValue) {}
+}
+
+// The server lists a library from the database (no walk): it must give the same photos as a scan
+#[test]
+fn listing_from_the_database_matches_a_scan() {
+    let base = std::env::temp_dir().join(format!("lumina_listing_test_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&base);
+    let (library, data) = (base.join("Library"), base.join("Data"));
+    fs::create_dir_all(library.join("Trip")).unwrap();
+    for (i, path) in [library.join("a.jpg"), library.join("Trip").join("b.jpg"), library.join("Trip").join("c.png")].iter().enumerate() {
+        let img = image::RgbImage::from_fn(64, 48, |x, y| image::Rgb([(x * 4) as u8, (y * 5) as u8, (i * 80) as u8]));
+        img.save(path).unwrap();
+    }
+    let host: SharedHost = Arc::new(DirHost(data.clone()));
+    // The engine migrates once per process; this database is new
+    db::migrate(&open_global_db(&*host).unwrap()).unwrap();
+
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    let scanned = rt.block_on(scan::scan_folder(host.clone(), library.to_string_lossy().to_string(), None)).unwrap();
+    let listed = scan::list_library_photos(&*host, &library.to_string_lossy()).unwrap();
+
+    let comparable = |photos: &[PhotoItem]| -> Vec<JsonValue> {
+        photos
+            .iter()
+            .map(|p| {
+                let mut v = serde_json::to_value(p).unwrap();
+                v.as_object_mut().unwrap().remove("thumb_ready");
+                v
+            })
+            .collect()
+    };
+    assert_eq!(scanned.len(), 3);
+    assert_eq!(comparable(&listed), comparable(&scanned));
+    assert_eq!(listed.iter().map(|p| p.subfolder.as_str()).collect::<Vec<_>>(), vec!["Root", "Trip", "Trip"]);
+    drop(rt);
+    let _ = fs::remove_dir_all(&base);
+}

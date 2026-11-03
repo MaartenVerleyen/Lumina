@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { call } from "./api";
+import { platform } from "./api/platform";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useLibraryState } from "./hooks/useLibraryState";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
@@ -506,7 +507,7 @@ export default function App() {
         aiBatchProgress={lib.aiBatchProgress}
         handleStopAiBatch={lib.handleStopAiBatch}
         handleOpenFolder={lib.handleOpenFolder}
-        onOpenImport={() => lib.openImport()}
+        onOpenImport={platform.localFiles ? () => lib.openImport() : undefined}
         handleRescanFolder={lib.handleRescanFolder}
         handleRescanAndProcessFolder={lib.handleRescanAndProcessFolder}
         handleOpenHealthDashboard={lib.handleOpenHealthDashboard}
@@ -634,7 +635,7 @@ export default function App() {
               onRenameTrip={lib.handleRenameTrip}
               pickHighlights={lib.pickHighlights}
               bestOfFocus={bestOfFocus}
-              onShareGallery={(title, hashes) => lib.openGallery(title, hashes)}
+              onShareGallery={platform.localFiles ? (title, hashes) => lib.openGallery(title, hashes) : undefined}
               onHighlights={(title, hashes, count, focus) =>
                 lib.openHighlights(
                   title,
@@ -764,7 +765,7 @@ export default function App() {
             albums={lib.albums}
             handleAddToAlbum={lib.handleAddToAlbum}
             handleCreateAlbum={lib.handleCreateAlbum}
-            onExport={() => lib.openExport()}
+            onExport={platform.localFiles ? () => lib.openExport() : undefined}
           />
           </>
           )}
@@ -855,21 +856,21 @@ export default function App() {
       <PhotoContextMenu
         position={photoMenuPos}
         onClose={() => setPhotoMenuPos(null)}
-        onOpenDefault={() => {
+        onOpenDefault={!platform.localFiles ? undefined : () => {
           if (contextPhoto) {
             lib.handleOpenInDefaultViewer(
               diskPathOf(contextPhoto)
             );
           }
         }}
-        onRevealInFolder={() => {
+        onRevealInFolder={!platform.localFiles ? undefined : () => {
           if (contextPhoto) {
             lib.handleRevealInFileManager(
               diskPathOf(contextPhoto)
             );
           }
         }}
-        onCopyFullImage={async () => {
+        onCopyFullImage={!platform.localFiles ? undefined : async () => {
           if (!contextPhoto) return;
           try {
             await call("copy_image_to_clipboard", { path: contextPhoto.path });
@@ -884,7 +885,7 @@ export default function App() {
             lib.setError(String(err));
           }
         }}
-        onCopyPath={() => {
+        onCopyPath={!platform.localFiles ? undefined : () => {
           if (!contextPhoto) return;
           const diskPath = diskPathOf(contextPhoto);
           navigator.clipboard?.writeText(diskPath).catch(() => {});
@@ -899,10 +900,10 @@ export default function App() {
         onFindSimilar={() => {
           if (contextPhoto) lib.handleFindSimilar(contextPhoto);
         }}
-        onExport={() => {
+        onExport={!platform.localFiles ? undefined : () => {
           if (contextPhoto) lib.openExport(contextMenuTargets(contextPhoto.hash));
         }}
-        onShareGallery={() => {
+        onShareGallery={!platform.localFiles ? undefined : () => {
           if (contextPhoto) lib.openGallery(scopeTitle(lib), contextMenuTargets(contextPhoto.hash));
         }}
         albums={lib.albums}
@@ -928,7 +929,7 @@ export default function App() {
         position={folderMenuPos}
         folderPath={contextFolderRel}
         onClose={() => setFolderMenuPos(null)}
-        onRevealFolder={() => {
+        onRevealFolder={!platform.localFiles ? undefined : () => {
           if (!lib.folder) return;
           const target =
             contextFolderRel === "Root" || !contextFolderRel
@@ -936,7 +937,7 @@ export default function App() {
               : `${lib.folder}/${contextFolderRel.replace(/ \/ /g, "/")}`;
           lib.handleRevealInFileManager(target);
         }}
-        onCreateSubfolder={() => {
+        onCreateSubfolder={!platform.localFiles ? undefined : () => {
           const prefix =
             contextFolderRel && contextFolderRel !== "Root"
               ? `${contextFolderRel.replace(/ \/ /g, "/")}/`
@@ -1036,7 +1037,7 @@ export default function App() {
         onCount={lib.setHighlightsCount}
         onShowInGrid={lib.showHighlightsInGrid}
         onSaveAsAlbum={lib.saveHighlightsAsAlbum}
-        onShareGallery={() => {
+        onShareGallery={!platform.localFiles ? undefined : () => {
           if (!lib.highlights?.hashes) return;
           const { title, hashes } = lib.highlights;
           lib.setHighlights(null);

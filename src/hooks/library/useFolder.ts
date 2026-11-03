@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { call, subscribe } from "../../api";
-import { open } from "../../api/platform";
+import { open, platform } from "../../api/platform";
 import { PhotoItem, ThumbBatchProgress, ThumbBatchItem, ExifRefreshResult, PerfLogEvent, TrashResult, TrashSummary, ScanProgressEvent } from "../../types/lumina";
 import { formatBytes } from "../../utils/photoHelpers";
 import { RAW_OR_HEIC_NAME } from "../../utils/rawPairs";
@@ -221,6 +221,12 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
   }
 
   async function handleOpenFolder() {
+    // The web client has no folders to pick: back to the list of the server's libraries
+    if (!platform.fileDialogs) {
+      setFolder("");
+      setPhotos([]);
+      return;
+    }
     try {
       const selected = await open({ directory: true, multiple: false });
       if (selected && typeof selected === "string") {

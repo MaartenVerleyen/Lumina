@@ -83,14 +83,16 @@ ask before pushing.
   - `GET /media/face/{face_id}`: `faces/{face_id}.jpg` (the frontend has the crop's path; its file name is
     the face id).
   - Every lookup goes through the database by hash or id. Never build a file path from request text.
-  - **The Linux desktop uses the same routes for its local videos.** WebKitGTK can't play video from
+  - **The Linux desktop serves its local videos over HTTP too.** WebKitGTK can't play video from
     Tauri's `asset://` URLs (tauri#3725; tested 2026-11-03: `FormatError`, while GStreamer plays the file
-    and a fetch of the URL works), and serving the file over HTTP from 127.0.0.1 does work. So the
-    desktop app on Linux starts these `/media/...` routes on 127.0.0.1 only, on a random port, with a
-    secret token per session in every URL, serving only the opened libraries and the app's data folder.
-    `mediaUrl` in the local transport uses it for videos on Linux. Only for that: local files on the
-    Windows desktop (the standalone install) keep `convertFileSrc` (`asset://`, which plays there), and
-    files from a server already come over these routes.
+    and a fetch of the URL works), and serving the file over HTTP from 127.0.0.1 does work. Decided
+    with Maarten: a small server in the desktop crate, Linux only (`src-tauri/src/media_server.rs`), not
+    the server's routes (those look files up by id in the server's database). It listens on 127.0.0.1
+    only, on a random port, with a secret token per run in every URL (`/video/{token}?path=...`), and
+    serves only video files inside the asset protocol's scope (the opened libraries and the app's data
+    folder). `mediaUrl` in the local transport uses it for videos and playable copies on Linux. Only for
+    that: local files on the Windows desktop (the standalone install) keep `convertFileSrc` (`asset://`,
+    which plays there), and files from a server already come over the `/media/...` routes.
 - **Events:** `GET /api/events` upgrades to a WebSocket and sends `{event, payload}` for every engine
   event (`ServerHost` already has a broadcast channel). Authenticated like the rest.
 - **Remote transport** `src/api/remote.ts`, implementing `Transport`:
@@ -110,6 +112,14 @@ ask before pushing.
   checking for Tauri all over the code.
 - **Login screen** in the web client: shown when `/api/auth/me` answers 401; name and password; after
   login, the normal app. A small account menu with the name, role and Log out.
+- **Phone layout** (added after the first phone test: the full layout is unusable on a phone): a phone in
+  a browser (narrower than 768 px, or a touch screen lower than 500 px, so held sideways too) gets
+  `src/components/mobile/MobileApp.tsx` instead of `App`, on the same `useLibraryState`. Photos by month
+  (newest first), People, Albums and trips, Map, search with the Smart switch, and a full-screen viewer:
+  swipe sideways for the next photo, down to close, up for the details; pinch or double-tap to zoom; the
+  phone's back button closes it. The account sheet can switch to the full layout (remembered in that
+  browser) and the full layout's account menu back. Browsing only; editing on a phone comes with
+  milestone 3 if it's wanted there.
 - **Paths in arguments:** some commands take paths the client got from the server (`ai_analyze_photo`
   `imagePathForAi`, `detect_faces_in_photo`, `ensure_high_res_preview` `sourcePath`, ...). The server
   checks that such a path is the stored path of a photo in a library (look it up), and refuses anything

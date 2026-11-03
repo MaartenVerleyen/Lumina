@@ -152,7 +152,10 @@ async fn rpc_answers_404_for_unknown_commands_and_400_for_bad_arguments() {
     let admin = login(&s.app, "ada").await;
     let (status, _, body) = send(&s.app, post("/api/rpc/open_in_default_app", json!({"path": "/"}), Some(&admin))).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
-    assert_eq!(body, json!({"error": "Unknown command: open_in_default_app"}));
+    assert_eq!(body, json!({"error": "open_in_default_app isn't available on the server"}));
+    let (status, _, body) = send(&s.app, post("/api/rpc/no_such_command", json!({}), Some(&admin))).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body, json!({"error": "Unknown command: no_such_command"}));
     let (status, _, body) = send(&s.app, post("/api/rpc/create_album", json!({"title": "x"}), Some(&admin))).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert!(body["error"].as_str().unwrap().contains("name"), "{body}");
@@ -229,4 +232,189 @@ fn the_client_address_comes_from_x_forwarded_for_only_behind_a_local_proxy_or_do
     assert_eq!(client_addr(Some(docker_gateway), &headers), "100.64.0.7");
     assert_eq!(client_addr(Some(tailnet), &headers), "100.71.44.14", "a direct client can't choose its address");
     assert_eq!(client_addr(Some(local), &HeaderMap::new()), "127.0.0.1");
+}
+
+// ---- Milestone 2: libraries, media, and the frontend's commands ----
+
+// A library with one photo (a.jpg), its thumbnail and one face crop, in the test server's database
+fn add_library(s: &TestServer) -> (String, String) {
+    let root = s.dir.join("Library");
+    std::fs::create_dir_all(&root).unwrap();
+    let photo = root.join("a.jpg");
+    std::fs::write(&photo, vec![7u8; 4000]).unwrap();
+    let data = s.dir.clone();
+    std::fs::create_dir_all(data.join("thumbnails")).unwrap();
+    std::fs::write(data.join("thumbnails").join("abc123.jpg"), b"thumbnail bytes").unwrap();
+    std::fs::create_dir_all(data.join("faces")).unwrap();
+    let face_file = data.join("faces").join("abc123_10_20.jpg");
+    std::fs::write(&face_file, b"face bytes").unwrap();
+    let host = ServerHost::new(data);
+    let conn = db::open_global_db(&host).unwrap();
+    let root_str = root.to_string_lossy().to_string();
+    lumina_core::libraries::open(&conn, &root_str).unwrap();
+    conn.execute("INSERT INTO photos (hash, current_path) VALUES ('abc123', ?1)", [photo.to_string_lossy().to_string()]).unwrap();
+    conn.execute(
+        "INSERT INTO photo_faces (face_id, hash, bbox_x, bbox_y, bbox_w, bbox_h, face_thumb, embedding) VALUES ('abc123_10_20', 'abc123', 0.1, 0.2, 0.1, 0.1, ?1, '')",
+        [face_file.to_string_lossy().to_string()],
+    )
+    .unwrap();
+    (root_str, photo.to_string_lossy().to_string())
+}
+
+#[tokio::test]
+async fn media_is_served_by_id_through_the_database() {
+    let s = server("media");
+    add_library(&s);
+    assert_eq!(send(&s.app, get("/media/thumb/abc123", None)).await.0, StatusCode::UNAUTHORIZED);
+    let viewer = login(&s.app, "vera").await;
+
+    let (status, headers, body) = send(&s.app, get("/media/thumb/abc123", Some(&viewer))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, Value::String("thumbnail bytes".into()));
+    assert_eq!(headers.get(header::CONTENT_TYPE).unwrap(), "image/jpeg");
+    assert_eq!(headers.get(header::CACHE_CONTROL).unwrap(), "private, max-age=3600");
+
+    let (status, _, body) = send(&s.app, get("/media/face/abc123_10_20.jpg", Some(&viewer))).await;
+    assert_eq!((status, body), (StatusCode::OK, Value::String("face bytes".into())));
+
+    // The file itself, and part of it (videos seek this way)
+    let (status, _, _) = send(&s.app, get("/media/original/abc123", Some(&viewer))).await;
+    assert_eq!(status, StatusCode::OK);
+    let range = HttpRequest::get("/media/original/abc123")
+        .header(header::COOKIE, &viewer)
+        .header(header::RANGE, "bytes=100-199")
+        .body(Body::empty())
+        .unwrap();
+    let (status, headers, _) = send(&s.app, range).await;
+    assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+    assert_eq!(headers.get(header::CONTENT_RANGE).unwrap(), "bytes 100-199/4000");
+
+    // Only what the database knows: no other hash, no path pieces, no playable copy that wasn't made
+    for path in ["/media/thumb/nothere", "/media/thumb/..%2F..%2Fetc%2Fpasswd", "/media/original/abc123.jpg", "/media/preview/abc123", "/media/face/nothere"] {
+        assert_eq!(send(&s.app, get(path, Some(&viewer))).await.0, StatusCode::NOT_FOUND, "{path}");
+    }
+}
+
+#[tokio::test]
+async fn libraries_are_listed_and_opened_from_the_database() {
+    let s = server("libraries");
+    let (root, photo) = add_library(&s);
+    let viewer = login(&s.app, "vera").await;
+    let (status, _, libs) = send(&s.app, post("/api/rpc/list_libraries", json!({}), Some(&viewer))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(libs[0]["root"], json!(root));
+    assert_eq!(libs[0]["photos"], json!(1));
+
+    let (status, _, photos) = send(&s.app, post("/api/rpc/scan_folder", json!({"folderPath": root}), Some(&viewer))).await;
+    assert_eq!(status, StatusCode::OK, "{photos}");
+    assert_eq!(photos[0]["hash"], "abc123");
+    assert_eq!(photos[0]["path"], json!(photo));
+    let elsewhere = s.dir.join("thumbnails").to_string_lossy().to_string();
+    let (status, _, _) = send(&s.app, post("/api/rpc/scan_folder", json!({"folderPath": elsewhere}), Some(&viewer))).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "only the server's own libraries");
+
+    // A path sent back must be the photo's own
+    let (status, _, body) = send(
+        &s.app,
+        post("/api/rpc/ensure_high_res_preview", json!({"hash": "abc123", "sourcePath": "/etc/passwd"}), Some(&viewer)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body, json!({"error": "Not the path of that photo"}));
+}
+
+// Every command the frontend calls (`call("name"` or `call<T>("name"` in src/) is on the server, or on the list
+// of commands that have no place there, or on the list of commands still to come. The last list shrinks to
+// nothing by the end of phase 2.
+// Editor and admin commands: milestone 3 (restore_library and inspect_backup: milestone 5)
+const STILL_TO_COME: &[&str] = &[
+    "add_person_to_photos", "add_tag_batch", "add_to_album", "ai_analyze_photo",
+    "assign_face_region_and_automatch", "assign_faces_to_person_batch", "cancel_ai_analysis",
+    "cancel_face_scan", "cancel_semantic_index", "cancel_thumbnail_pass", "clear_all_staged",
+    "clear_video_cache", "commit_staged_operations", "delete_album", "delete_saved_search",
+    "detect_faces_in_photo", "empty_library_trash_to_os", "export_xmp_sidecars", "find_duplicates",
+    "find_similar_faces", "get_library_health_stats", "get_outdated_face_photos",
+    "get_pending_face_match_counts", "get_rejected_faces_for_person", "get_unknown_face_clusters",
+    "ignore_faces", "inspect_backup", "measure_face_quality", "ollama_tuning_status", "preload_ollama_vram",
+    "prune_orphaned_cache", "pull_ollama_model", "reject_face_candidates_batch", "remove_face_box",
+    "remove_from_album", "remove_person_from_photo", "remove_person_from_photos", "remove_tag",
+    "remove_tag_batch", "rename_album", "rename_person", "rescan_exif_batch", "restore_library",
+    "run_caption_batch", "save_search", "scan_library_faces_batch", "set_manual_location", "set_person_cover",
+    "set_person_hidden", "set_person_starred", "set_photo_basket", "set_photo_color_label", "set_photo_flag",
+    "set_photo_rotation", "set_photos_rating", "set_photos_rotation_exact", "set_trip_name",
+    "shift_capture_timestamps", "stage_duplicate_extras", "stage_photo_move", "stage_photos_move",
+    "start_semantic_index", "trash_summary", "unassign_faces_batch", "unload_ollama_vram",
+    "unreject_face_candidates_batch", "video_cache_info",
+];
+
+fn frontend_commands() -> std::collections::BTreeSet<String> {
+    fn walk(dir: &std::path::Path, out: &mut std::collections::BTreeSet<String>) {
+        for entry in std::fs::read_dir(dir).unwrap().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, out);
+            } else if path.extension().is_some_and(|e| e == "ts" || e == "tsx") {
+                let text = std::fs::read_to_string(&path).unwrap();
+                let bytes = text.as_bytes();
+                let mut i = 0;
+                while let Some(pos) = text[i..].find("call") {
+                    let start = i + pos;
+                    i = start + 4;
+                    if start > 0 && (bytes[start - 1].is_ascii_alphanumeric() || bytes[start - 1] == b'_') {
+                        continue;
+                    }
+                    let mut j = i;
+                    if bytes.get(j) == Some(&b'<') {
+                        let mut depth = 0;
+                        while j < bytes.len() {
+                            match bytes[j] {
+                                b'<' => depth += 1,
+                                b'>' => {
+                                    depth -= 1;
+                                    if depth == 0 {
+                                        j += 1;
+                                        break;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            j += 1;
+                        }
+                    }
+                    if bytes.get(j) != Some(&b'(') {
+                        continue;
+                    }
+                    let rest = text[j + 1..].trim_start();
+                    if let Some(name) = rest.strip_prefix('"').and_then(|r| r.split('"').next()) {
+                        if !name.is_empty() && name.bytes().all(|b| b.is_ascii_lowercase() || b == b'_') {
+                            out.insert(name.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../src");
+    let mut out = std::collections::BTreeSet::new();
+    walk(&src, &mut out);
+    out
+}
+
+#[test]
+fn every_command_the_frontend_calls_is_accounted_for() {
+    let calls = frontend_commands();
+    assert!(calls.len() > 80, "found only {} commands: is the frontend at ../../../src?", calls.len());
+    let missing: Vec<&String> = calls
+        .iter()
+        .filter(|c| {
+            super::rpc::lookup(c).is_none()
+                && !super::rpc::NOT_ON_SERVER.contains(&c.as_str())
+                && !STILL_TO_COME.contains(&c.as_str())
+        })
+        .collect();
+    assert!(missing.is_empty(), "not on the server and not listed: {missing:?}");
+    // And the lists name only commands that exist in the frontend or the plan
+    for c in STILL_TO_COME {
+        assert!(super::rpc::lookup(c).is_none(), "{c} is on the server now: take it off STILL_TO_COME");
+    }
 }

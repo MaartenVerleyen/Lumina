@@ -10,6 +10,7 @@ pub use types::*;
 mod engine_commands;
 mod system;
 mod prepare;
+mod media_server;
 
 use db::*;
 use storage::*;
@@ -46,6 +47,8 @@ pub fn run() {
                 LazyLock::force(&BG_POOL);
             });
             import::start_drive_watch(Arc::new(app.handle().clone()));
+            #[cfg(target_os = "linux")]
+            media_server::start(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -156,6 +159,7 @@ pub fn run() {
             engine_commands::export_library_csv,
             system::copy_image_to_clipboard,
             engine_commands::ensure_high_res_preview,
+            media_server::local_media_server,
             system::close_splashscreen
         ])
         .run(tauri::generate_context!())

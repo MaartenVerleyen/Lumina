@@ -1,6 +1,9 @@
 // The server on the network: the web client's files, login, and the engine's commands as
 // POST /api/rpc/{command}. It listens on 127.0.0.1 only; `tailscale serve` puts HTTPS in front of it.
 mod auth;
+mod events;
+mod lookup;
+mod media;
 mod rpc;
 mod web;
 
@@ -41,6 +44,13 @@ impl ApiError {
     }
 }
 
+// The engine's own error text: 500
+impl From<String> for ApiError {
+    fn from(message: String) -> ApiError {
+        ApiError(StatusCode::INTERNAL_SERVER_ERROR, message)
+    }
+}
+
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         (self.0, Json(serde_json::json!({ "error": self.1 }))).into_response()
@@ -63,11 +73,15 @@ pub fn router(state: Shared) -> Router {
         .route("/auth/logout", post(auth::logout))
         .route("/auth/me", get(auth::me))
         .route("/rpc/{command}", post(rpc::call))
+        .route("/events", get(events::events))
         .fallback(|| async { ApiError::new(StatusCode::NOT_FOUND, "Unknown API route") })
         .layer(middleware::from_fn_with_state(state.clone(), require_session))
         .layer(middleware::from_fn(require_lumina_header));
-    // Photos, thumbnails, faces and videos come in milestone 2; for now only the session check is real
     let media = Router::new()
+        .route("/thumb/{hash}", get(media::thumb))
+        .route("/original/{hash}", get(media::original))
+        .route("/preview/{hash}", get(media::preview))
+        .route("/face/{face_id}", get(media::face))
         .fallback(|| async { ApiError::new(StatusCode::NOT_FOUND, "No such media") })
         .layer(middleware::from_fn_with_state(state.clone(), require_session));
     let app = web::attach(Router::new().nest("/api", api).nest("/media", media), state.web_dir.as_deref())

@@ -1,5 +1,6 @@
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { VIDEO_NAME } from "../utils/media.ts";
 
 // An engine event as handlers receive it (the same shape as Tauri's, so handlers read `event.payload`)
 export interface EngineEvent<T> {
@@ -28,8 +29,27 @@ export interface Transport {
   mediaUrl(ref: MediaRef): string;
 }
 
+// Linux: WebKitGTK can't stream video from asset:// URLs (tauri#3725), so the app serves local videos from
+// 127.0.0.1 (src-tauri/src/media_server.rs). Elsewhere the app answers null and videos stay on asset://.
+export interface LocalMediaServer {
+  base: string;
+  token: string;
+}
+let mediaServer: LocalMediaServer | null = null;
+if (typeof window !== "undefined" && "__TAURI_INTERNALS__" in window) {
+  invoke<LocalMediaServer | null>("local_media_server")
+    .then((s) => (mediaServer = s))
+    .catch(() => {});
+}
+
+export function localMediaUrl(ref: MediaRef, server: LocalMediaServer | null): string {
+  const video = ref.kind === "preview" || (ref.kind === "original" && VIDEO_NAME.test(ref.path));
+  if (server && video) return `${server.base}/video/${server.token}?path=${encodeURIComponent(ref.path)}`;
+  return convertFileSrc(ref.path);
+}
+
 export const localTransport: Transport = {
   call: (command, args) => invoke(command, args),
   subscribe: (event, handler) => listen(event, handler),
-  mediaUrl: (ref) => convertFileSrc(ref.path),
+  mediaUrl: (ref) => localMediaUrl(ref, mediaServer),
 };

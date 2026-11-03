@@ -20,9 +20,10 @@ argon2 = "0.5"
 rand = "0.9"
 sha2 = "0.10"
 rpassword = "7"
+# ServeFile is a tower service, called with oneshot
+tower = { version = "0.5", features = ["util"] }
 # The cookie's Max-Age (the cookie crate uses time's Duration)
 time = "0.3"
 
 [dev-dependencies]
-tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"

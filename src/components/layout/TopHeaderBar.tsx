@@ -1,4 +1,6 @@
 import { useState, useRef, useEffect, RefObject } from "react";
+import { AccountMenu } from "../auth/AccountMenu";
+import { platform } from "../../api/platform";
 import { confirmDialog } from "../../confirm";
 import { call } from "../../api";
 import luminaMark from "../../assets/lumina-mark.svg";
@@ -181,7 +183,8 @@ export default function TopHeaderBar({
   const [tuningState, setTuningState] = useState<"idle" | "working" | "done" | "error">("idle");
   const [tuningError, setTuningError] = useState("");
   useEffect(() => {
-    if (!isAiMenuOpen) return;
+    // The server's Ollama is set up in its container, not from a browser
+    if (!isAiMenuOpen || !platform.localFiles) return;
     call<{ flash_attention: string | null; can_enable: boolean }>("ollama_tuning_status")
       .then((s) => setFlashAttention({ value: s.flash_attention, canEnable: s.can_enable }))
       .catch(() => {});
@@ -653,7 +656,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                       : `Stop (${aiBatchProgress.current}/${aiBatchProgress.total})`}
                   </span>
                 </button>
-              ) : ollamaStatus && !ollamaStatus.running ? (
+              ) : platform.localFiles && ollamaStatus && !ollamaStatus.running ? (
                 <button
                   onClick={startOllama}
                   disabled={isStartingOllama}
@@ -766,7 +769,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                     <span className="text-[11px] text-emerald-400 font-mono">
                       {ollamaStatus.active_vram_model ? "VRAM Active" : "Online"}
                     </span>
-                  ) : (
+                  ) : platform.localFiles ? (
                     <button
                       onClick={startOllama}
                       disabled={isStartingOllama}
@@ -774,6 +777,8 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                     >
                       {isStartingOllama ? "Starting…" : "Start Ollama"}
                     </button>
+                  ) : (
+                    <span className="text-[11px] text-red-300 font-mono">Offline</span>
                   )}
                 </div>
 
@@ -1071,6 +1076,8 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
             </div>
           )}
         </div>
+
+        <AccountMenu />
 
         <button
           onClick={() => setIsRightCollapsed((p) => !p)}

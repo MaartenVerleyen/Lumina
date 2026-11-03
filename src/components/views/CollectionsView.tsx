@@ -33,7 +33,8 @@ interface CollectionsViewProps {
   pickHighlights: (source: PhotoItem[], count: number, focus?: HighlightFocus) => Promise<string[]>;
   // What Best of focuses on (the starred people)
   bestOfFocus: HighlightFocus;
-  onShareGallery: (title: string, hashes: string[]) => void;
+  // Absent in the web client (a gallery is written to a folder on this computer)
+  onShareGallery?: (title: string, hashes: string[]) => void;
 }
 
 // Up to four thumbnails of photos in the open folder, as a 2x2 (or single) cover
@@ -291,7 +292,9 @@ export default function CollectionsView({
               onOpen={() => onOpenAlbum(a.id)}
               menu={[
                 { label: "Highlights", run: () => onHighlights(a.name, a.hashes.filter((h) => photoByHash.has(h))) },
-                { label: "Share as web gallery", run: () => onShareGallery(a.name, a.hashes.filter((h) => photoByHash.has(h))) },
+                ...(onShareGallery
+                  ? [{ label: "Share as web gallery", run: () => onShareGallery(a.name, a.hashes.filter((h) => photoByHash.has(h))) }]
+                  : []),
                 { label: "Rename", run: () => setRenaming({ kind: "album", id: String(a.id), value: a.name }) },
                 { label: "Delete album", danger: true, run: () => onDeleteAlbum(a.id) },
               ]}
@@ -419,7 +422,9 @@ export default function CollectionsView({
                   onOpen={() => onOpenTrip(e.id)}
                   menu={[
                     { label: "Highlights", run: () => onHighlights(e.label, tripsById.get(e.id)?.hashes ?? []) },
-                    { label: "Share as web gallery", run: () => onShareGallery(e.label, tripsById.get(e.id)?.hashes ?? []) },
+                    ...(onShareGallery
+                      ? [{ label: "Share as web gallery", run: () => onShareGallery(e.label, tripsById.get(e.id)?.hashes ?? []) }]
+                      : []),
                     { label: "Rename", run: () => setRenaming({ kind: "trip", id: e.id, value: "" }) },
                   ]}
                   renaming={renaming?.kind === "trip" && renaming.id === e.id}

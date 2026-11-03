@@ -36,6 +36,7 @@ pub fn with_security_headers(router: axum::Router) -> axum::Router {
     router
         .layer(header("content-security-policy", CONTENT_SECURITY_POLICY))
         .layer(header("x-content-type-options", "nosniff"))
-        .layer(header("referrer-policy", "no-referrer"))
+        // OpenStreetMap's tile servers refuse tiles without a Referer: send the origin only, never the path
+        .layer(header("referrer-policy", "strict-origin"))
         .layer(header("x-frame-options", "DENY"))
 }

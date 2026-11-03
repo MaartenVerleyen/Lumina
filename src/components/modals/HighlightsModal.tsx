@@ -13,7 +13,8 @@ interface HighlightsModalProps {
   onCount: (count: number) => void;
   onShowInGrid: () => void;
   onSaveAsAlbum: () => void;
-  onShareGallery: () => void;
+  // Absent in the web client (a gallery is written to a folder on this computer)
+  onShareGallery?: () => void;
   onOpenPhoto: (hash: string) => void;
 }
 
@@ -117,13 +118,15 @@ export default function HighlightsModal({
         <div className="flex items-center justify-between gap-3 px-6 py-3.5 border-t border-zinc-800 text-[12px]">
           <span className="text-zinc-500">{picks.length > 0 && `${picks.length} photos, oldest first`}</span>
           <div className="flex items-center gap-2">
-            <button
-              onClick={onShareGallery}
-              disabled={picks.length === 0}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-zinc-200 disabled:opacity-40"
-            >
-              <Globe className="w-3.5 h-3.5 text-emerald-400" /> Share as web page
-            </button>
+            {onShareGallery && (
+              <button
+                onClick={onShareGallery}
+                disabled={picks.length === 0}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-zinc-200 disabled:opacity-40"
+              >
+                <Globe className="w-3.5 h-3.5 text-emerald-400" /> Share as web page
+              </button>
+            )}
             <button
               onClick={onSaveAsAlbum}
               disabled={picks.length === 0}

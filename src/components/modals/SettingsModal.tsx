@@ -1,6 +1,6 @@
 import { useEffect, useState, ReactNode } from "react";
 import { call } from "../../api";
-import { getVersion, open as openDialog, openUrl } from "../../api/platform";
+import { getVersion, open as openDialog, openUrl, platform } from "../../api/platform";
 import { confirmDialog } from "../../confirm";
 import {
   Brain,
@@ -195,12 +195,15 @@ export default function SettingsModal({
     if (!isOpen) return;
     setSection(initialSection);
     getVersion().then(setVersion).catch(() => {});
-    call<string>("get_app_data_dir").then(setDataDir).catch(() => {});
-    defaultBackupDir().then(setBackupDefault).catch(() => {});
+    // The data folder and backups are this computer's (the web client has neither)
+    if (platform.localFiles) {
+      call<string>("get_app_data_dir").then(setDataDir).catch(() => {});
+      defaultBackupDir().then(setBackupDefault).catch(() => {});
+    }
   }, [isOpen]);
 
   useEffect(() => {
-    if (!isOpen || section !== "ai") return;
+    if (!isOpen || section !== "ai" || !platform.localFiles) return;
     call<{ flash_attention: string | null; can_enable: boolean }>("ollama_tuning_status")
       .then((s) => setFlash({ on: ["1", "true"].includes((s.flash_attention || "").toLowerCase()), canEnable: s.can_enable }))
       .catch(() => setFlash(null));
@@ -286,7 +289,7 @@ export default function SettingsModal({
             <SettingsIcon className="w-4 h-4 text-emerald-400" />
             Settings
           </div>
-          {SECTIONS.map((s) => (
+          {SECTIONS.filter((s) => s.id !== "updates" || platform.updater).map((s) => (
             <button
               key={s.id}
               onClick={() => setSection(s.id)}
@@ -403,15 +406,17 @@ export default function SettingsModal({
               <>
                 <Group title="Open library">
                   <Row label={lib.folder ? lib.folder.split(/[\\/]/).pop() || lib.folder : "No library open"} hint={lib.folder || "Open a folder of photos to start."}>
-                    {lib.folder && <Button onClick={() => lib.handleRevealInFileManager(lib.folder)}>Show in Explorer</Button>}
+                    {lib.folder && platform.localFiles && <Button onClick={() => lib.handleRevealInFileManager(lib.folder)}>Show in Explorer</Button>}
                     <Button primary onClick={then(lib.handleOpenFolder)}>
-                      {lib.folder ? "Open another…" : "Open folder…"}
+                      {platform.localFiles ? (lib.folder ? "Open another…" : "Open folder…") : "Libraries…"}
                     </Button>
                   </Row>
                   {hasPhotos && (
                     <Row label="Photos" hint={`${lib.photos.length.toLocaleString()} photos · ${lib.stagedPhotos.length} staged change(s)`} />
                   )}
                 </Group>
+                {platform.localFiles && (
+                <>
                 <Group title="Import and changes">
                   <Row label="Import photos" hint="From a memory card, USB drive or folder, sorted into dated folders.">
                     <Button primary disabled={Boolean(lib.importProgress)} onClick={then(() => lib.openImport())}>
@@ -494,6 +499,8 @@ export default function SettingsModal({
                 <Group title="Videos">
                   <VideoCacheRow />
                 </Group>
+                </>
+                )}
               </>
             )}
 
@@ -505,7 +512,7 @@ export default function SettingsModal({
                     hint="Captions, tags and text in photos are written by a vision model running in Ollama on this PC."
                   >
                     <Status ok={Boolean(ollama?.running)}>{ollama?.running ? "Running" : "Not running"}</Status>
-                    {!ollama?.running && (
+                    {!ollama?.running && platform.localFiles && (
                       <Button primary disabled={aiBusy !== ""} onClick={startOllama}>
                         {aiBusy === "starting" ? "Starting…" : "Start Ollama"}
                       </Button>
@@ -530,6 +537,7 @@ export default function SettingsModal({
                       </Button>
                     )}
                   </Row>
+                  {platform.localFiles && (
                   <Row label="Faster captions" hint="Ollama's flash attention: about 10–15% faster, same results.">
                     {flash === null ? (
                       <Status ok={false}>Unknown</Status>
@@ -541,6 +549,7 @@ export default function SettingsModal({
                       </Button>
                     )}
                   </Row>
+                  )}
                 </Group>
               </>
             )}
@@ -660,12 +669,18 @@ export default function SettingsModal({
                   </div>
                 </div>
                 <Group title="Your data">
-                  <Row label="Library data" hint={dataDir || "…"}>
-                    <Button disabled={!dataDir} onClick={() => lib.handleRevealInFileManager(dataDir)}>
-                      Open folder
-                    </Button>
-                  </Row>
-                  <Row label="Privacy" hint="Everything runs on this PC. Photos, names and captions are never uploaded." />
+                  {platform.localFiles ? (
+                    <>
+                      <Row label="Library data" hint={dataDir || "…"}>
+                        <Button disabled={!dataDir} onClick={() => lib.handleRevealInFileManager(dataDir)}>
+                          Open folder
+                        </Button>
+                      </Row>
+                      <Row label="Privacy" hint="Everything runs on this PC. Photos, names and captions are never uploaded." />
+                    </>
+                  ) : (
+                    <Row label="Privacy" hint="Photos, names and captions stay on this Lumina server. Only people with an account on it can see them." />
+                  )}
                 </Group>
                 <Group title="Open source">
                   <Row label="Source code and issues" hint={REPO_URL.replace("https://", "")}>

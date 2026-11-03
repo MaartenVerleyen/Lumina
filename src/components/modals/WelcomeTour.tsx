@@ -18,6 +18,7 @@ import {
   X,
 } from "lucide-react";
 import { useDialogFocus } from "../../hooks/useDialogFocus";
+import { platform } from "../../api/platform";
 import { ReleaseNotes } from "../../utils/welcome";
 import luminaMark from "../../assets/lumina-mark.svg";
 import photosShot from "../../assets/tour/photos.jpg";
@@ -249,7 +250,11 @@ export default function WelcomeTour({ isOpen, version, notes, hidden, hasFolder,
                 <ul className="flex flex-col gap-3 text-[13px]">
                   <li className="flex gap-3 items-start">
                     <Lock className="w-4 h-4 mt-0.5 text-emerald-400 shrink-0" />
-                    <span className="text-zinc-300">Everything runs on this PC. Your photos are never uploaded.</span>
+                    <span className="text-zinc-300">
+                      {platform.localFiles
+                        ? "Everything runs on this PC. Your photos are never uploaded."
+                        : "Everything runs on your own Lumina server. Your photos never leave it."}
+                    </span>
                   </li>
                   <li className="flex gap-3 items-start">
                     <ShieldCheck className="w-4 h-4 mt-0.5 text-emerald-400 shrink-0" />

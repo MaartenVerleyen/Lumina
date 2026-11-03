@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
+import { platform } from "../../api/platform";
 import { call, mediaUrl, subscribe } from "../../api";
 import { Film, Loader2 } from "lucide-react";
 import { PhotoItem } from "../../types/lumina";
 import { thumbSrc } from "../../utils/photoHelpers";
 import { diskPathOf } from "../../utils/rawPairs";
-import { isPlayableInWebView } from "../../utils/media";
+import { isPlayableInBrowser, isPlayableInWebView } from "../../utils/media";
 
 // The Loupe's video: played from the original when the app can, otherwise from a converted copy made on
 // request (ffmpeg is downloaded the first time)
@@ -16,7 +17,10 @@ type Conversion =
   | { state: "failed"; error: string };
 
 export default function LoupeVideo({ photo }: { photo: PhotoItem }) {
-  const direct = isPlayableInWebView(photo);
+  // The desktop's webview plays what isPlayableInWebView names; in a browser the browser decides
+  const direct = platform.localFiles
+    ? isPlayableInWebView(photo)
+    : isPlayableInBrowser(photo, (mime) => document.createElement("video").canPlayType(mime));
   // A converted copy made earlier (or just now)
   const [copyPath, setCopyPath] = useState<string | null>(null);
   const [conversion, setConversion] = useState<Conversion>({ state: "idle" });
@@ -138,12 +142,14 @@ export default function LoupeVideo({ photo }: { photo: PhotoItem }) {
               >
                 {conversion.state === "failed" ? "Try again" : "Make playable copy"}
               </button>
-              <button
-                onClick={() => call("open_in_default_app", { path: diskPathOf(photo) })}
-                className="px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300"
-              >
-                Open in player
-              </button>
+              {platform.localFiles && (
+                <button
+                  onClick={() => call("open_in_default_app", { path: diskPathOf(photo) })}
+                  className="px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300"
+                >
+                  Open in player
+                </button>
+              )}
             </div>
           </>
         )}

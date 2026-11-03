@@ -31,6 +31,13 @@
 ::-webkit-scrollbar-thumb:hover {
   background: #10b981;
 }
+/* The same colours in Firefox (the web client), which has no ::-webkit-scrollbar */
+@supports not selector(::-webkit-scrollbar) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #26334d #090a0f;
+  }
+}
 
 body {
   margin: 0;

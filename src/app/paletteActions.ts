@@ -1,4 +1,5 @@
 import type { RefObject } from "react";
+import { platform } from "../api/platform";
 import type { PaletteAction } from "../components/modals/CommandPalette";
 import type { SettingsSection } from "../components/modals/SettingsModal";
 import { UNKNOWN_FACES } from "../components/modals/FaceMatchReviewModal";
@@ -164,5 +165,9 @@ export function buildPaletteActions({
     { id: "updates", group: "Help", label: "Check for updates", keywords: "new version upgrade", run: () => { openSettings("updates"); checkForUpdates(); } },
     { id: "welcome", group: "Help", label: "Welcome tour", keywords: "help intro what's new guide", run: openWelcomeTour },
   ];
-  return paletteActions;
+  if (platform.localFiles) return paletteActions;
+  return paletteActions.filter((a) => !NEEDS_THIS_COMPUTER.has(a.id) && !a.id.startsWith("recent-"));
 }
+
+// Actions on this computer's folders, files and updater: not in the web client
+const NEEDS_THIS_COMPUTER = new Set(["open-folder", "import", "backup", "restore", "csv", "gallery", "export", "updates"]);

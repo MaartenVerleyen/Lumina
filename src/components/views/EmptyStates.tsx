@@ -1,11 +1,63 @@
-import type { RefObject } from "react";
-import { Clock, FolderInput, FolderOpen, Search } from "lucide-react";
+import { useEffect, useState, type RefObject } from "react";
+import { Clock, FolderInput, FolderOpen, Images, Search } from "lucide-react";
 import type { LibraryState } from "../../hooks/useLibraryState";
+import { call } from "../../api";
+import { platform } from "../../api/platform";
 
 type GridRef = RefObject<HTMLDivElement | null>;
 
+interface ServerLibrary {
+  root: string;
+  name: string;
+  photos: number;
+}
+
+// In the web client: the server's libraries, where the desktop picks a folder. With just one it opens it.
+function ServerLibraries({ lib, gridContainerRef }: { lib: LibraryState; gridContainerRef: GridRef }) {
+  const [libraries, setLibraries] = useState<ServerLibrary[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    call<ServerLibrary[]>("list_libraries")
+      .then((list) => {
+        setLibraries(list);
+        if (list.length === 1) lib.handleLoadFolderPath(list[0].root);
+      })
+      .catch((e) => setError(String(e)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return (
+    <div ref={gridContainerRef} className="flex-1 overflow-y-auto p-6 flex items-center justify-center">
+      <div className="max-w-xl w-full rounded-2xl border border-zinc-800 bg-panel/90 p-8 flex flex-col items-center text-center">
+        <div className="w-14 h-14 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center mb-4">
+          <Images className="w-7 h-7 text-emerald-400" />
+        </div>
+        <h2 className="text-lg font-bold text-zinc-100">Photo libraries on this server</h2>
+        {error && <p className="text-xs text-red-400 mt-2">{error}</p>}
+        {libraries?.length === 0 && (
+          <p className="text-xs text-zinc-400 mt-2">The server has no libraries yet.</p>
+        )}
+        <div className="w-full mt-5 flex flex-col gap-1.5">
+          {libraries?.map((l) => (
+            <button
+              key={l.root}
+              onClick={() => lib.handleLoadFolderPath(l.root)}
+              className="w-full px-3 py-2.5 rounded-lg bg-zinc-900/80 hover:bg-zinc-800 border border-zinc-800 text-sm text-zinc-200 hover:text-white flex items-center justify-between transition"
+            >
+              <span className="truncate font-semibold">{l.name || l.root}</span>
+              <span className="text-[11px] text-zinc-500 ml-2 shrink-0">
+                {l.photos} photo{l.photos === 1 ? "" : "s"} · <span className="text-emerald-400 font-semibold">Open →</span>
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // No library open yet: open a folder (or drop one on the window), or pick a recent one
 export function NoLibrary({ lib, gridContainerRef }: { lib: LibraryState; gridContainerRef: GridRef }) {
+  if (!platform.localFiles) return <ServerLibraries lib={lib} gridContainerRef={gridContainerRef} />;
   return (
     <div
       ref={gridContainerRef}

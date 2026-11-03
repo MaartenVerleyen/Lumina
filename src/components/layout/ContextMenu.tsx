@@ -23,9 +23,12 @@ export interface ContextMenuPosition {
 interface PhotoContextMenuProps {
   position: ContextMenuPosition | null;
   onClose: () => void;
-  onOpenDefault: () => void;
-  onRevealInFolder: () => void;
-  onCopyFullImage: () => void;
+  // Absent in the web client (it acts on this computer's files)
+  onOpenDefault?: () => void;
+  // Absent in the web client (it acts on this computer's files)
+  onRevealInFolder?: () => void;
+  // Absent in the web client (it acts on this computer's files)
+  onCopyFullImage?: () => void;
   onStageTrash: () => void;
   // Optional callbacks for quick Pick & Copy Path
   onPickPhoto?: () => void;
@@ -95,38 +98,44 @@ export function PhotoContextMenu({
       }}
       className="fixed z-[99999] w-56 bg-raised/95 backdrop-blur-md border border-zinc-700/80 rounded-xl shadow-2xl p-1 text-xs select-none animate-in fade-in zoom-in-95"
     >
-      <button
-        onClick={() => {
-          onOpenDefault();
-          onClose();
-        }}
-        className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-zinc-800 text-zinc-200 transition text-left"
-      >
-        <Eye className="w-3.5 h-3.5 text-emerald-400" />
-        <span>Open in Default Viewer</span>
-      </button>
+      {onOpenDefault && (
+        <button
+          onClick={() => {
+            onOpenDefault();
+            onClose();
+          }}
+          className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-zinc-800 text-zinc-200 transition text-left"
+        >
+          <Eye className="w-3.5 h-3.5 text-emerald-400" />
+          <span>Open in Default Viewer</span>
+        </button>
+      )}
 
-      <button
-        onClick={() => {
-          onRevealInFolder();
-          onClose();
-        }}
-        className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-zinc-800 text-zinc-200 transition text-left"
-      >
-        <ExternalLink className="w-3.5 h-3.5 text-cyan-400" />
-        <span>Reveal in File Explorer</span>
-      </button>
+      {onRevealInFolder && (
+        <button
+          onClick={() => {
+            onRevealInFolder();
+            onClose();
+          }}
+          className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-zinc-800 text-zinc-200 transition text-left"
+        >
+          <ExternalLink className="w-3.5 h-3.5 text-cyan-400" />
+          <span>Reveal in File Explorer</span>
+        </button>
+      )}
 
-      <button
-        onClick={() => {
-          onCopyFullImage();
-          onClose();
-        }}
-        className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-zinc-800 text-zinc-200 transition text-left"
-      >
-        <Copy className="w-3.5 h-3.5 text-indigo-400" />
-        <span>Copy Image (Full Resolution)</span>
-      </button>
+      {onCopyFullImage && (
+        <button
+          onClick={() => {
+            onCopyFullImage();
+            onClose();
+          }}
+          className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-zinc-800 text-zinc-200 transition text-left"
+        >
+          <Copy className="w-3.5 h-3.5 text-indigo-400" />
+          <span>Copy Image (Full Resolution)</span>
+        </button>
+      )}
 
       {onCopyPath && (
         <button
@@ -283,8 +292,10 @@ interface FolderContextMenuProps {
   position: ContextMenuPosition | null;
   folderPath: string;
   onClose: () => void;
-  onRevealFolder: () => void;
-  onCreateSubfolder: () => void;
+  // Absent in the web client (it acts on this computer's files)
+  onRevealFolder?: () => void;
+  // Absent in the web client (it acts on this computer's files)
+  onCreateSubfolder?: () => void;
 }
 
 export function FolderContextMenu({
@@ -328,27 +339,31 @@ export function FolderContextMenu({
         📂 {folderPath || "Root"}
       </div>
 
-      <button
-        onClick={() => {
-          onRevealFolder();
-          onClose();
-        }}
-        className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-zinc-800 text-zinc-200 transition text-left"
-      >
-        <Folder className="w-3.5 h-3.5 text-emerald-400" />
-        <span>Open Folder in Explorer</span>
-      </button>
+      {onRevealFolder && (
+        <button
+          onClick={() => {
+            onRevealFolder();
+            onClose();
+          }}
+          className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-zinc-800 text-zinc-200 transition text-left"
+        >
+          <Folder className="w-3.5 h-3.5 text-emerald-400" />
+          <span>Open Folder in Explorer</span>
+        </button>
+      )}
 
-      <button
-        onClick={() => {
-          onCreateSubfolder();
-          onClose();
-        }}
-        className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-zinc-800 text-zinc-200 transition text-left"
-      >
-        <FolderPlus className="w-3.5 h-3.5 text-indigo-400" />
-        <span>Create New Subfolder Here...</span>
-      </button>
+      {onCreateSubfolder && (
+        <button
+          onClick={() => {
+            onCreateSubfolder();
+            onClose();
+          }}
+          className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-zinc-800 text-zinc-200 transition text-left"
+        >
+          <FolderPlus className="w-3.5 h-3.5 text-indigo-400" />
+          <span>Create New Subfolder Here...</span>
+        </button>
+      )}
     </div>
   );
 }

@@ -10,6 +10,11 @@ const host = process.env.TAURI_DEV_HOST;
 export default defineConfig(() => ({
   plugins: [react(), tailwindcss()],
 
+  // The web client shows the app's version without asking Tauri (src/api/platform.ts)
+  define: {
+    __APP_VERSION__: JSON.stringify(process.env.npm_package_version ?? "dev"),
+  },
+
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent Vite from obscuring rust errors

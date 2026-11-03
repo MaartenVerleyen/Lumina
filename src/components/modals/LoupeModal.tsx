@@ -1,4 +1,5 @@
 import { thumbSrc } from "../../utils/photoHelpers";
+import { platform } from "../../api/platform";
 import { useState, useRef, useEffect } from "react";
 import { call, mediaUrl } from "../../api";
 import { diskPathOf } from "../../utils/rawPairs";
@@ -223,7 +224,8 @@ export default function LoupeModal({
         </div>
 
         <div className="flex items-center gap-2">
-          {/* Open External & Reveal in Explorer */}
+          {/* Open External & Reveal in Explorer (files on this computer only) */}
+          {platform.localFiles && (
           <div className="flex items-center gap-1 bg-zinc-900/90 border border-zinc-800 px-2 py-1 rounded-xl text-xs">
             <button
               onClick={() => call("open_in_default_app", { path: diskPathOf(activePhoto) })}
@@ -242,6 +244,7 @@ export default function LoupeModal({
               <span>Explorer</span>
             </button>
           </div>
+          )}
 
           {/* Zoom Controls (photos only: a video has its own player controls) */}
           <div
