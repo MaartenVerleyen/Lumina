@@ -43,8 +43,17 @@ async function withRetries<T>(f: () => Promise<T>): Promise<T> {
   }
 }
 
+// Whatever goes wrong ends the run with its reason, never a button stuck at 0 %
 async function run(files: File[]) {
   if (state.running || files.length === 0) return;
+  try {
+    await runFiles(files);
+  } catch (e) {
+    set({ running: false, stage: "", failed: [...state.failed, { name: "", error: `Upload stopped: ${String((e as Error)?.message ?? e)}` }] });
+  }
+}
+
+async function runFiles(files: File[]) {
   const bytesTotal = files.reduce((n, f) => n + f.size, 0);
   set({ running: true, files: files.length, done: 0, skipped: 0, failed: [], stage: "Reading files", bytesTotal, bytesDone: 0 });
   const hasher = await createBLAKE3();

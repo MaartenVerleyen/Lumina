@@ -10,7 +10,8 @@ use tower_http::set_header::SetResponseHeaderLayer;
 
 // Close to the desktop's (src-tauri/tauri.conf.json), with the page's own origin in place of Tauri's ipc: and
 // asset: schemes. 'self' covers the WebSocket to the same host as well. Map tiles come from OpenStreetMap.
-pub const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; \
+// 'wasm-unsafe-eval' lets the page compile WebAssembly (BLAKE3 for uploads, hash-wasm), not run eval().
+pub const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; \
 img-src 'self' data: blob: https://*.tile.openstreetmap.org; media-src 'self' blob:; connect-src 'self'; \
 font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'";
 

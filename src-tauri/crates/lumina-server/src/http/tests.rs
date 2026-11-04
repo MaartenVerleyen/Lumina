@@ -257,7 +257,7 @@ async fn the_web_client_is_served_with_its_security_headers() {
         assert_eq!(status, StatusCode::OK, "{path}");
         assert!(body.as_str().unwrap().contains("<title>Lumina</title>"), "{path}: index.html for app routes");
         let csp = headers.get("content-security-policy").unwrap().to_str().unwrap();
-        assert!(csp.contains("script-src 'self'") && csp.contains("frame-ancestors 'none'"));
+        assert!(csp.contains("script-src 'self' 'wasm-unsafe-eval';") && csp.contains("frame-ancestors 'none'"));
         assert_eq!(headers.get("x-content-type-options").unwrap(), "nosniff");
     }
     // API answers carry them too, and an unknown API route is not the web client
