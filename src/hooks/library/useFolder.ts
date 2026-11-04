@@ -241,8 +241,9 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
   }
 
   async function handleOpenFolder() {
-    // The web client has no folders to pick: back to the list of the server's libraries
-    if (!platform.fileDialogs) {
+    // The web client has no folders to pick, and a Mac doesn't open folders yet: back to the list of the
+    // servers' libraries
+    if (!platform.fileDialogs || !platform.fullApp) {
       setFolder("");
       setPhotos([]);
       return;

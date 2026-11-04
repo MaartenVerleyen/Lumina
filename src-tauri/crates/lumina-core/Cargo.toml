@@ -53,8 +53,12 @@ windows = { version = "0.62", features = [
 # The `#[implement]` macro (Recycle Bin progress sink) expands to `::windows_core` paths
 windows-core = "0.62"
 
-[target.'cfg(not(windows))'.dependencies]
+[target.'cfg(target_os = "linux")'.dependencies]
 ort = { version = "=2.0.0-rc.15", features = ["cuda"] }
+
+# macOS: ONNX Runtime's prebuilt for Apple Silicon comes with CoreML (there is none for Intel Macs)
+[target.'cfg(target_os = "macos")'.dependencies]
+ort = { version = "=2.0.0-rc.15", features = ["coreml"] }
 
 [target.'cfg(unix)'.dependencies]
 # Local time for file dates (localtime_r)

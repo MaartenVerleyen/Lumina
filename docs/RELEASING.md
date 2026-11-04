@@ -30,6 +30,19 @@ through `latest.json`.
    ```
    This needs the GitHub CLI, signed in once with `gh auth login`.
 
+## Linux and Mac
+
+Publishing the release starts the GitHub workflow `.github/workflows/desktop.yml`. It builds the same tag for
+Linux (AppImage and .deb, on Ubuntu 24.04) and the Mac (Apple Silicon .dmg), adds the files to the release,
+and adds `linux-x86_64` and `darwin-aarch64` to `latest.json` once the release script has put it up (about
+20 minutes after publishing). Follow it under Actions on GitHub.
+
+- Updates on Linux and Mac need the update key as the repository secret `TAURI_SIGNING_PRIVATE_KEY` (the
+  contents of the key file; Settings → Secrets and variables → Actions). Without it the builds are still
+  added, without update signatures, and `latest.json` keeps Windows only.
+- To try a build without touching any release: Actions → Desktop builds → Run workflow, with a branch or tag.
+  The files are kept as the run's artifacts for 14 days.
+
 ## The update key
 
 Lumina only installs updates signed with the update key. Its public half is in `src-tauri/tauri.conf.json`

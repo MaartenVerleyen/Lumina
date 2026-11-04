@@ -72,20 +72,27 @@ pub struct FaceQuality {
 static ORT_ENV: LazyLock<Option<ort::environment::Environment>> =
     LazyLock::new(|| ort::init().with_name("lumina").build().ok());
 
-// The GPU: DirectML on Windows (any vendor), CUDA elsewhere (the server's NVIDIA card)
+// The GPU: DirectML on Windows (any vendor), CUDA on Linux (the server's NVIDIA card), CoreML on a Mac
 #[cfg(windows)]
 pub const GPU_DEVICE: &str = "GPU (DirectML)";
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 pub const GPU_DEVICE: &str = "GPU (CUDA)";
+#[cfg(target_os = "macos")]
+pub const GPU_DEVICE: &str = "GPU (CoreML)";
 
 #[cfg(windows)]
 pub(crate) fn gpu_provider() -> ort::ep::ExecutionProviderDispatch {
     ort::ep::DirectML::default().build().error_on_failure()
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 pub(crate) fn gpu_provider() -> ort::ep::ExecutionProviderDispatch {
     ort::ep::CUDA::default().build().error_on_failure()
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn gpu_provider() -> ort::ep::ExecutionProviderDispatch {
+    ort::ep::CoreML::default().build().error_on_failure()
 }
 
 pub fn build_session(path: &Path, gpu: bool) -> Result<Session, String> {

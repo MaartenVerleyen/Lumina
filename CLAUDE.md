@@ -162,7 +162,10 @@ scan means the models did not run.
   client's Upload button), downloads (selection → Download) with BLAKE3 checks, and "On this PC" badges, filter
   and "Remove from this PC". Checked on Windows against a lumina-server on 127.0.0.1; still to check over
   Tailscale with two accounts, and on Linux (keyring needs D-Bus' Secret Service; whether WebKitGTK streams
-  server videos from lumina-remote:// as it can't from asset://). Open: milestone 5, Mac and Linux builds.
+  server videos from lumina-remote:// as it can't from asset://). Milestone 5 (written, first run pending):
+  `.github/workflows/desktop.yml` builds Linux (AppImage, .deb) and Mac (Apple Silicon .dmg; ONNX Runtime
+  has no Intel Mac build; CoreML as the Mac's GPU) when a release is published, and on demand; the Mac app is
+  client-only for now (`platform.fullApp`). See docs/RELEASING.md.
 - **Phase 4:** clients help with the server's AI backlog on request, and analyse photos before uploading.
 - **Phase 5:** Android app (Tauri) with automatic backup (Kotlin WorkManager).
 

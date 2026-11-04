@@ -1,0 +1,160 @@
+# Lumina for Linux (AppImage, .deb) and macOS (Apple Silicon .dmg), built on GitHub.
+#
+# Windows releases are still made on the release PC with scripts/release.ps1 (see docs/RELEASING.md). When
+# that release is published, this workflow builds the Linux and Mac versions of the same tag, adds them to
+# the release, and adds them to its latest.json so installed copies on Linux and macOS update too.
+#
+# Run it by hand (Actions → Desktop builds → Run workflow) to try a build without touching any release: the
+# files are kept as the run's artifacts only.
+#
+# Updates need the update key as the repository secret TAURI_SIGNING_PRIVATE_KEY (the contents of
+# lumina-updater.key; Settings → Secrets and variables → Actions). Without it the apps are built without
+# update signatures and latest.json is left as it is.
+name: Desktop builds
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch or tag to build
+        default: lumina-5
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: desktop-${{ github.event.release.tag_name || inputs.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Ubuntu 24.04, like the server's Docker image: the CUDA build of ONNX Runtime needs its glibc
+          - os: ubuntu-24.04
+            platform: linux-x86_64
+          # Apple Silicon only: ONNX Runtime has no prebuilt build for Intel Macs
+          - os: macos-14
+            platform: darwin-aarch64
+    runs-on: ${{ matrix.os }}
+    env:
+      REF: ${{ github.event.release.tag_name || inputs.ref }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.REF }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev \
+            libssl-dev libdbus-1-dev patchelf file
+
+      - run: npm ci
+
+      - name: Build
+        shell: bash
+        run: |
+          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo '{"bundle":{"createUpdaterArtifacts":true}}' > "$RUNNER_TEMP/release.json"
+          else
+            echo "::warning::No TAURI_SIGNING_PRIVATE_KEY secret: building without update signatures"
+            echo '{}' > "$RUNNER_TEMP/release.json"
+          fi
+          if [ "$RUNNER_OS" = "Linux" ]; then bundles="appimage,deb"; else bundles="app,dmg"; fi
+          npx tauri build --bundles "$bundles" --config "$RUNNER_TEMP/release.json"
+
+      # The files under plain names: Lumina_<version>_<arch>.<kind>
+      - name: Collect
+        shell: bash
+        run: |
+          version=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          out="$RUNNER_TEMP/out"; mkdir -p "$out"
+          b=src-tauri/target/release/bundle
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            cp $b/appimage/*.AppImage "$out/Lumina_${version}_amd64.AppImage"
+            cp $b/deb/*.deb "$out/Lumina_${version}_amd64.deb"
+            if ls $b/appimage/*.AppImage.sig >/dev/null 2>&1; then cp $b/appimage/*.AppImage.sig "$out/Lumina_${version}_amd64.AppImage.sig"; fi
+          else
+            cp $b/dmg/*.dmg "$out/Lumina_${version}_aarch64.dmg"
+            if ls $b/macos/*.app.tar.gz >/dev/null 2>&1; then
+              cp $b/macos/*.app.tar.gz "$out/Lumina_${version}_aarch64.app.tar.gz"
+              cp $b/macos/*.app.tar.gz.sig "$out/Lumina_${version}_aarch64.app.tar.gz.sig"
+            fi
+          fi
+          ls -la "$out"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lumina-${{ matrix.platform }}
+          path: ${{ runner.temp }}/out/*
+          retention-days: 14
+
+      - name: Add to the release
+        if: github.event_name == 'release'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$REF" "$RUNNER_TEMP"/out/* --clobber --repo "$GITHUB_REPOSITORY"
+
+  # latest.json gets the Linux and Mac entries, once the Windows release script has put it up
+  updater:
+    needs: build
+    if: github.event_name == 'release'
+    runs-on: ubuntu-24.04
+    env:
+      TAG: ${{ github.event.release.tag_name }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: files
+          merge-multiple: true
+
+      - name: Update latest.json
+        shell: bash
+        run: |
+          ls -la files
+          if ! ls files/*.sig >/dev/null 2>&1; then
+            echo "::warning::No update signatures (no TAURI_SIGNING_PRIVATE_KEY secret): latest.json stays as it is"
+            exit 0
+          fi
+          # The release script uploads latest.json last; wait for it (up to 30 minutes)
+          for i in $(seq 1 60); do
+            gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern latest.json --dir . --clobber && break
+            sleep 30
+          done
+          [ -f latest.json ] || { echo "::error::latest.json never appeared on the release"; exit 1; }
+          base="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG"
+          entry() { jq -n --arg url "$base/$1" --arg sig "$(cat "files/$1.sig")" '{signature: $sig, url: $url}'; }
+          linux=$(ls files | grep -E '\.AppImage$' | head -1)
+          mac=$(ls files | grep -E '\.app\.tar\.gz$' | head -1)
+          cp latest.json latest.new.json
+          if [ -n "$linux" ] && [ -f "files/$linux.sig" ]; then
+            jq --argjson e "$(entry "$linux")" '.platforms["linux-x86_64"] = $e' latest.new.json > t.json && mv t.json latest.new.json
+          fi
+          if [ -n "$mac" ] && [ -f "files/$mac.sig" ]; then
+            jq --argjson e "$(entry "$mac")" '.platforms["darwin-aarch64"] = $e' latest.new.json > t.json && mv t.json latest.new.json
+          fi
+          mv latest.new.json latest.json
+          cat latest.json
+          gh release upload "$TAG" latest.json --clobber --repo "$GITHUB_REPOSITORY"

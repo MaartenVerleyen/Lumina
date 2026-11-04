@@ -8,5 +8,15 @@
         "media-src": "'self' asset: http://asset.localhost lumina-remote: http://lumina-remote.localhost blob: http://localhost:1420 http://127.0.0.1:*"
       }
     }
+  },
+  "bundle": {
+    "linux": {
+      "deb": {
+        "depends": [
+          "gstreamer1.0-plugins-good",
+          "ffmpeg"
+        ]
+      }
+    }
   }
 }

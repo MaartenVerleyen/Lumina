@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { openLibraryServer, callLocal, subscribeLocal } from "../api";
-import { open, pictureDir, join } from "../api/platform";
+import { open, pictureDir, join, platform } from "../api/platform";
 import { confirmDialog } from "../confirm";
 import type { LibraryState } from "../hooks/useLibraryState";
 import type { Access } from "../components/auth/ServerGate";
@@ -81,6 +81,7 @@ export function useClientMode(lib: LibraryState, access: Access) {
   // Files or folders dropped on the window: uploaded when a server's library is open, opened otherwise
   function onDropPaths(paths: string[]) {
     if (server) upload(paths);
+    else if (!platform.fullApp) lib.setAutoMatchNotice("Open a library on a server first, then drop photos on the window to upload them.");
     else if (paths[0]) lib.handleLoadFolderPath(paths[0]);
   }
 

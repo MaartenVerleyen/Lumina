@@ -163,6 +163,16 @@ Videos: MP4, MOV, M4V, 3GP, AVI, MTS, M2TS and MPG.
 - The face models and the smart-search models (about 500 MB) download automatically the first time you use
   those features. Downloads are checked against pinned SHA-256 hashes.
 
+### Linux and Mac
+
+- **Linux:** each release has an AppImage (updates itself) and a .deb for Debian and Ubuntu. Lumina uses the
+  system's ffmpeg for video frames and HEIC, and GStreamer's "good" plugins to play videos (the .deb installs
+  both; with the AppImage, install `ffmpeg` and `gst-plugins-good` yourself). Built on Ubuntu 24.04, so it
+  needs a system at least that recent.
+- **Mac (Apple Silicon):** the .dmg works with the photo libraries on a Lumina server for now; opening folders
+  on the Mac itself comes later. The app isn't signed by Apple yet: the first time, right-click Lumina in
+  Applications and choose **Open**, then **Open** again. Intel Macs aren't supported.
+
 ## Development
 
 Prerequisites: Node.js 18+, the Rust toolchain ([rustup.rs](https://rustup.rs)) and the

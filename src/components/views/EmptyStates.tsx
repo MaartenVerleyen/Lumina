@@ -4,6 +4,7 @@ import type { LibraryState } from "../../hooks/useLibraryState";
 import { call, inDesktopApp, rememberLibraryRoles, subscribe, type Role } from "../../api";
 import { useAccount } from "../auth/ServerGate";
 import { ConnectServerForm, ServerLibraryList } from "../servers/Servers";
+import { platform } from "../../api/platform";
 import { useServers } from "../../hooks/useServers";
 
 type GridRef = RefObject<HTMLDivElement | null>;
@@ -102,6 +103,13 @@ function DesktopStart({ lib, gridContainerRef }: { lib: LibraryState; gridContai
         <h2 className="text-lg font-bold text-zinc-100">
           Welcome to Lumina Photo Studio
         </h2>
+        {!platform.fullApp && (
+          <p className="text-xs text-zinc-400 mt-1 max-w-md leading-relaxed">
+            On a Mac, Lumina works with the photo libraries on a Lumina server for now. Connect to one below.
+          </p>
+        )}
+        {platform.fullApp && (
+        <>
         <p className="text-xs text-zinc-400 mt-1 max-w-md leading-relaxed">
           Drag and drop any photo folder onto this window, or click below to open your
           collection. Supports JPEG, PNG, WebP, HEIC, and Camera RAW (.CR2, .CR3, .NEF,
@@ -146,6 +154,8 @@ function DesktopStart({ lib, gridContainerRef }: { lib: LibraryState; gridContai
               ))}
             </div>
           </div>
+        )}
+        </>
         )}
 
         {/* Client mode: libraries of the Lumina servers this app is connected to */}

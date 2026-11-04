@@ -13,7 +13,13 @@ import { inDesktopApp, openLibraryIsLocal } from "./index";
 
 export type { Update } from "@tauri-apps/plugin-updater";
 
+// A Mac runs the desktop app as a client of a Lumina server for now: its own decoding (HEIC, video frames
+// through ffmpeg) isn't checked yet, so it doesn't open folders on the Mac itself
+const onMac = typeof navigator !== "undefined" && /Macintosh|Mac OS X/.test(navigator.userAgent);
+
 export const platform = {
+  // The full app: libraries in folders on this computer (everywhere but a Mac, for now)
+  fullApp: inDesktopApp && !onMac,
   // Native dialogs to pick files and folders on this computer
   fileDialogs: inDesktopApp,
   // The open library is on this computer's own drives (scan, open in Explorer, import from a card, export,
