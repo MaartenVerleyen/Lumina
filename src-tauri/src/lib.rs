@@ -96,6 +96,7 @@ pub fn run() {
             engine_commands::shift_capture_timestamps,
             engine_commands::export_xmp_sidecars,
             engine_commands::get_library_health_stats,
+            engine_commands::forget_missing_files,
             engine_commands::prune_orphaned_cache,
             engine_commands::get_people,
             engine_commands::add_person_to_photos,
@@ -200,6 +201,7 @@ pub fn run() {
             client_db::set_device_basket,
             client_db::local_libraries,
             client_db::list_local_library,
+            client_db::local_copy_ids,
             system::close_splashscreen
         ])
         .run(tauri::generate_context!())

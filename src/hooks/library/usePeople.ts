@@ -198,7 +198,10 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
             `${prog.faces_found} faces found — analyzing potential matches in background...`
           );
         }
+        // A server's own scan (after an upload, say) isn't one this window started: no notice for it
+        const ours = !event.server && platform.libraryJobs;
         refreshPeople(folder, false).then(() => {
+          if (!ours) return;
           setAutoMatchNotice(
             `Face Scan complete: detected ${prog.faces_found} face(s) & updated potential match badges!`
           );

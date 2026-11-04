@@ -1128,8 +1128,14 @@ async fn a_file_uploads_in_three_chunks_and_lands_in_the_users_folder_indexed() 
     assert_eq!(photo["hash"], json!(content_hash(&bytes)));
     let mtime = landed.metadata().unwrap().modified().unwrap().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
     assert_eq!(mtime, 1_700_000_000, "the file keeps its own time");
-    let (event, payload) = events.recv().await.unwrap();
-    assert_eq!((event.as_str(), &payload["hashes"]), ("photos-changed", &json!([content_hash(&bytes)])));
+    // The upload's thumbnail pass may report first
+    let payload = loop {
+        let (event, payload) = events.recv().await.unwrap();
+        if event == "photos-changed" {
+            break payload;
+        }
+    };
+    assert_eq!(payload["hashes"], json!([content_hash(&bytes)]));
 
     // Now the server has it
     let (_, _, check) = send(&s.app, post("/api/upload/check", json!({"files": [{"hash": content_hash(&bytes), "size": bytes.len(), "name": "x.jpg"}]}), Some(&ed))).await;

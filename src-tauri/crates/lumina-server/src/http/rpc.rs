@@ -533,6 +533,10 @@ commands! {
         files::get_library_health_stats(host, root).await.map_err(ApiError::from)
     };
     Admin async prune_orphaned_cache() |host, scope| files::prune_orphaned_cache(host).await;
+    Admin [Target::Root(root_folder.clone())] async forget_missing_files(root_folder: String) |host, scope| {
+        let root = lookup::library_root(&host, &root_folder)?;
+        files::forget_missing_files(host, root).await.map_err(ApiError::from)
+    } => after Ok(Changed { people: true, albums: true, ..Default::default() });
     Admin blocking video_cache_info() |host, scope| Ok::<_, String>(ffmpeg::video_cache_info(host));
     Admin blocking clear_video_cache() |host, scope| Ok::<_, String>(ffmpeg::clear_video_cache(host));
     // A rescan walks the library's folders (the listing above doesn't)

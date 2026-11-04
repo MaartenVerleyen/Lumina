@@ -612,7 +612,59 @@ fn get_library_health_stats_blocking(app: &dyn Host, root_folder: Option<String>
         camera_breakdown,
         damaged_count,
         damaged_files,
+        missing_count: missing_files(&conn, &prefix).len(),
     })
+}
+
+// Photos under the prefix whose file isn't there any more
+fn missing_files(conn: &Connection, prefix: &str) -> Vec<String> {
+    let Ok(mut stmt) = conn.prepare("SELECT hash, current_path FROM photos WHERE current_path LIKE ?1 ESCAPE '!'") else {
+        return Vec::new();
+    };
+    let rows = stmt.query_map(params![prefix], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)));
+    rows.map(|rows| rows.flatten().filter(|(_, path)| !Path::new(path).exists()).map(|(hash, _)| hash).collect())
+        .unwrap_or_default()
+}
+
+// Library Health → Forget files that are gone: the rows of photos whose file was deleted outside Lumina, with
+// their tags, people, faces, album places and smart-search vectors. A file that comes back later is a new
+// photo. Refused while the library's folder itself is missing (a drive that isn't connected).
+pub async fn forget_missing_files(app: SharedHost, root_folder: String) -> Result<usize, String> {
+    tokio::task::spawn_blocking(move || {
+        if !Path::new(&root_folder).is_dir() {
+            return Err(format!("{root_folder} isn't there (a drive that isn't connected?): nothing was forgotten"));
+        }
+        let mut conn = open_global_db(&app)?;
+        let gone = missing_files(&conn, &make_folder_prefix(Some(&root_folder)));
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        for hash in &gone {
+            tx.execute(
+                "DELETE FROM face_rejections WHERE face_id IN (SELECT face_id FROM photo_faces WHERE hash = ?1)",
+                params![hash],
+            )
+            .map_err(|e| e.to_string())?;
+            for table in ["photo_tags", "photo_people", "album_photos", "photo_faces", "photo_clip", "photo_clip_frames", "photos"] {
+                // Older databases may lack a table; the photo's own row must go
+                let done = tx.execute(&format!("DELETE FROM {table} WHERE hash = ?1"), params![hash]);
+                if table == "photos" {
+                    done.map_err(|e| e.to_string())?;
+                }
+            }
+        }
+        tx.commit().map_err(|e| e.to_string())?;
+        // People named only in those photos go too
+        let empty: Vec<String> = {
+            let mut stmt = conn.prepare("SELECT name FROM people").map_err(|e| e.to_string())?;
+            let rows = stmt.query_map([], |r| r.get::<_, String>(0)).map_err(|e| e.to_string())?;
+            rows.flatten().collect()
+        };
+        for name in empty {
+            face_engine::forget_unused_person(&conn, &name);
+        }
+        Ok(gone.len())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 pub async fn prune_orphaned_cache(app: SharedHost) -> Result<usize, String> {

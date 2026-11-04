@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { call } from "../../api";
+import { confirmDialog } from "../../confirm";
 import { LibraryHealthStats, XmpExportResult } from "../../types/lumina";
 import type { LibraryCore } from "./core";
 
@@ -48,6 +49,25 @@ export function useHealth(core: LibraryCore) {
     }
   }
 
+  // The rows of files deleted outside Lumina go, with their ratings, tags, names and album places
+  async function handleForgetMissing() {
+    if (!folder || !healthStats || healthStats.missing_count === 0) return;
+    const n = healthStats.missing_count;
+    const ok = await confirmDialog(
+      `${n} photo${n === 1 ? " is" : "s are"} no longer in the folder (deleted, or moved outside Lumina to a place it doesn't know). Forget ${n === 1 ? "it" : "them"}, with ${n === 1 ? "its" : "their"} ratings, tags, names and album places? A file that comes back later is a new photo.`,
+      { title: "Forget files that are gone", okLabel: "Forget", kind: "danger" }
+    );
+    if (!ok) return;
+    try {
+      const forgotten = await call<number>("forget_missing_files", { rootFolder: folder });
+      setHealthStats(await call<LibraryHealthStats>("get_library_health_stats", { rootFolder: folder }));
+      addLog("DISK", `Forgot ${forgotten} photo(s) whose file is gone`);
+      setAutoMatchNotice(`Forgot ${forgotten} photo${forgotten === 1 ? "" : "s"} whose file is gone.`);
+    } catch (err) {
+      setError(String(err));
+    }
+  }
+
   async function handlePruneCache() {
     try {
       const removed = await call<number>("prune_orphaned_cache");
@@ -70,5 +90,6 @@ export function useHealth(core: LibraryCore) {
     handleOpenHealthDashboard,
     handleExportXmp,
     handlePruneCache,
+    handleForgetMissing,
   };
 }

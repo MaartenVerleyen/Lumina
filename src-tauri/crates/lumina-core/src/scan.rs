@@ -993,10 +993,20 @@ pub async fn scan_library(app: SharedHost, folder_path: String, force_reprocess:
                     && (is_video || !is_old_creation_time_date(&file_path, &c.captured_at, &metadata))
                 {
                     needs_db_upsert = false;
+                    // A RAW indexed before Lumina read its sensor size shows its thumbnail's (a NEF's 160 x 120):
+                    // the size is read once and written with the row's own values
+                    let (mut width, mut height) = (c.width, c.height);
+                    if width <= 320 && height <= 320 && exif_meta::is_tiff_raw(&file_path) {
+                        if let Some((w, h)) = exif_meta::raw_sensor_size(&file_path, None).filter(|(w, h)| w * h > width * height) {
+                            let turned = matches!(read_exif_orientation(&file_path), 5..=8) && w >= h;
+                            (width, height) = if turned { (h, w) } else { (w, h) };
+                            needs_db_upsert = true;
+                        }
+                    }
                     (
                         c.hash.clone(),
-                        c.width,
-                        c.height,
+                        width,
+                        height,
                         c.rating,
                         c.flag.clone(),
                         c.color_label.clone(),

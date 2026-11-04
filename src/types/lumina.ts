@@ -181,6 +181,8 @@ export interface LibraryHealthStats {
   camera_breakdown: [string, number][];
   damaged_count: number;
   damaged_files: string[];
+  // Rows of files deleted outside Lumina (kept so a moved file keeps its values)
+  missing_count: number;
 }
 
 export type AutoStagePreset =

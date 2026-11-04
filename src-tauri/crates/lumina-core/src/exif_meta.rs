@@ -317,6 +317,85 @@ pub struct FullExifPass {
 }
 
 // Single-Pass Header & EXIF Reader: extracts dimensions, orientation, GPS, date & telemetry
+// RAW formats built on TIFF: their first image is often a small thumbnail (a NEF's is 160 x 120), the
+// sensor image sits in a sub-directory or a later one
+const TIFF_RAW_EXTENSIONS: &[&str] = &["nef", "arw", "dng", "cr2", "pef", "orf", "rw2"];
+
+pub fn is_tiff_raw(path: &Path) -> bool {
+    let ext = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+    TIFF_RAW_EXTENSIONS.contains(&ext.as_str())
+}
+
+// The largest image a TIFF file lists (width x height), walking IFD0, the IFDs chained after it and their
+// SubIFDs. None when the bytes aren't TIFF or the directories lie beyond them.
+pub fn tiff_largest_image(bytes: &[u8]) -> Option<(u32, u32)> {
+    let le = match bytes.get(0..2)? {
+        b"II" => true,
+        b"MM" => false,
+        _ => return None,
+    };
+    let u16_at = |o: usize| -> Option<u32> {
+        let b = bytes.get(o..o + 2)?;
+        Some(if le { u16::from_le_bytes([b[0], b[1]]) } else { u16::from_be_bytes([b[0], b[1]]) } as u32)
+    };
+    let u32_at = |o: usize| -> Option<u32> {
+        let b: [u8; 4] = bytes.get(o..o + 4)?.try_into().ok()?;
+        Some(if le { u32::from_le_bytes(b) } else { u32::from_be_bytes(b) })
+    };
+    // 42 for TIFF; Olympus ("RO", "RS") and Panasonic (0x55) use their own
+    if !matches!(u16_at(2)?, 42 | 0x4F52 | 0x5352 | 0x55) {
+        return None;
+    }
+    let mut todo = vec![u32_at(4)? as usize];
+    let mut seen = HashSet::new();
+    let mut best: Option<(u32, u32)> = None;
+    while let Some(ifd) = todo.pop() {
+        if ifd == 0 || seen.len() >= 64 || !seen.insert(ifd) {
+            continue;
+        }
+        let Some(entries) = u16_at(ifd) else { continue };
+        let (mut w, mut h) = (0, 0);
+        for i in 0..entries as usize {
+            let e = ifd + 2 + i * 12;
+            let (Some(tag), Some(kind), Some(count)) = (u16_at(e), u16_at(e + 2), u32_at(e + 4)) else { break };
+            // A SHORT or LONG value, in the entry when it fits, else at the offset it holds
+            let value = |n: usize| -> Option<u32> {
+                match kind {
+                    3 if count <= 2 => u16_at(e + 8 + n * 2),
+                    3 => u16_at(u32_at(e + 8)? as usize + n * 2),
+                    4 | 13 if count <= 1 => u32_at(e + 8),
+                    4 | 13 => u32_at(u32_at(e + 8)? as usize + n * 4),
+                    _ => None,
+                }
+            };
+            match tag {
+                0x0100 => w = value(0).unwrap_or(0),
+                0x0101 => h = value(0).unwrap_or(0),
+                0x014A => todo.extend((0..count.min(16) as usize).filter_map(value).map(|o| o as usize)),
+                _ => {}
+            }
+        }
+        if w > 0 && h > 0 && best.is_none_or(|(bw, bh)| w as u64 * h as u64 > bw as u64 * bh as u64) {
+            best = Some((w, h));
+        }
+        if let Some(next) = u32_at(ifd + 2 + entries as usize * 12) {
+            todo.push(next as usize);
+        }
+    }
+    best
+}
+
+// The sensor size of a TIFF-based RAW (unrotated), from the bytes at hand or the file's first megabyte
+pub fn raw_sensor_size(path: &Path, head: Option<&[u8]>) -> Option<(u32, u32)> {
+    if !is_tiff_raw(path) {
+        return None;
+    }
+    head.and_then(tiff_largest_image).or_else(|| {
+        let mut file = File::open(path).ok()?;
+        tiff_largest_image(&crate::decode::read_file_prefix(&mut file, 1024 * 1024).ok()?)
+    })
+}
+
 pub fn extract_all_exif_single_pass(file_path: &Path) -> FullExifPass {
     extract_all_exif_with_head(file_path, None)
 }
@@ -350,6 +429,10 @@ pub fn extract_all_exif_with_head(file_path: &Path, head: Option<&[u8]>) -> Full
             .ok()
     });
     if let Some((w, h)) = head_dims.or_else(|| image::image_dimensions(file_path).ok()) {
+        width = w;
+        height = h;
+    }
+    if let Some((w, h)) = raw_sensor_size(file_path, head) {
         width = w;
         height = h;
     }

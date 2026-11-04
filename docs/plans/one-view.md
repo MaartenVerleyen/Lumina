@@ -363,6 +363,10 @@ The phone app (phase 5) then adds the camera roll as a local source, with this s
   same place (box overlap at least 0.3, same frame in a video). Faces not looked for yet: the names wait in
   `backup_faces`, and the server's update puts them on after its face scan (`apply_waiting_faces`), with
   `photos-changed` and `people-changed`.
+- A second copy of a file on this PC has a path-salted id of its own, while the server knows the photo by its
+  content. The upload queue records which server photo each file is (`client.db` `local_copies`, for files
+  uploaded and for files the server had already), and All photos shows such a copy as that photo
+  (`local_copy_ids`, `mergeSources(lists, sameAs)`); edits and events of this PC's engine use its own id.
 - Only an editor's values go along (`apply_backup_values` is an editor command); an account that may upload
   but not edit backs up the files, and the button says the values stay on this PC.
 - The backup report is the notice when the queue finishes: uploaded, already on the server, failed, and for

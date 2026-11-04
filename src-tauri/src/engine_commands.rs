@@ -345,6 +345,11 @@ pub async fn get_library_health_stats(app: AppHandle, root_folder: Option<String
 }
 
 #[tauri::command]
+pub async fn forget_missing_files(app: AppHandle, root_folder: String) -> Result<usize, String> {
+    files::forget_missing_files(Arc::new(app), root_folder).await
+}
+
+#[tauri::command]
 pub async fn prune_orphaned_cache(app: AppHandle) -> Result<usize, String> {
     files::prune_orphaned_cache(Arc::new(app)).await
 }

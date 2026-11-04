@@ -23,6 +23,7 @@ import {
   mergeHits,
   mergePeople,
   mergeSources,
+  withLocalIds,
   mergeStatus,
   sourceKey,
   splitByHome,
@@ -264,9 +265,25 @@ interface AllState {
   placed: Map<string, Placed>;
   // Face crop path → engine
   faces: Map<string, string>;
+  // Copies on this computer known there by another id (mergeSources), and the other way round
+  localIds: Map<string, string>;
+  fromLocal: Map<string, string>;
 }
 
-let all: AllState = { sources: new Map(), copies: new Map(), localValues: new Map(), placed: new Map(), faces: new Map() };
+let all: AllState = {
+  sources: new Map(),
+  copies: new Map(),
+  localValues: new Map(),
+  placed: new Map(),
+  faces: new Map(),
+  localIds: new Map(),
+  fromLocal: new Map(),
+};
+
+// The photo All photos shows for a copy this computer's engine names (its events use its own ids)
+export function allPhotosIdOf(localHash: string): string {
+  return all.fromLocal.get(localHash) ?? localHash;
+}
 
 function allServers(): string[] {
   return [...new Set([...all.sources.values()].map((s) => s.server).filter((s): s is string => s !== null))];
@@ -377,7 +394,9 @@ async function loadAll(check?: string[]): Promise<PhotoItem[]> {
       }
     })
   );
-  const merged = mergeSources(lists);
+  // Second copies of a file here that a backup found on a server, under the server's id
+  const sameAs = new Map(serverTransport ? [] : await callLocal<[string, string][]>("local_copy_ids").catch(() => []));
+  const merged = mergeSources(lists, sameAs);
   const sourceMap = new Map(sources.map((s) => [sourceKey(s), s]));
   const placed = new Map<string, Placed>();
   const faces = new Map<string, string>();
@@ -386,7 +405,8 @@ async function loadAll(check?: string[]): Promise<PhotoItem[]> {
     const shown = sourceMap.get(merged.copies.get(p.hash)!.shown)!;
     for (const f of p.faces ?? []) if (f.face_thumb) faces.set(f.face_thumb, engineOf(shown));
   }
-  all = { sources: sourceMap, copies: merged.copies, localValues: merged.localValues, placed, faces };
+  const fromLocal = new Map([...merged.localIds].map(([id, own]) => [own, id]));
+  all = { sources: sourceMap, copies: merged.copies, localValues: merged.localValues, placed, faces, localIds: merged.localIds, fromLocal };
   accessChanged();
   if (watchAllPhotos) await watchAllPhotosFolders().catch((err) => console.error("All photos: could not watch this computer's folders", err));
   await copyDown(merged.photos);
@@ -402,7 +422,7 @@ async function copyDown(photos: PhotoItem[]) {
   });
   for (const edit of copyDownEdits(homes, all.localValues)) {
     try {
-      await localTransport.call(edit.command, edit.args);
+      await localTransport.call(edit.command, withLocalIds(edit.args, all.localIds));
     } catch (err) {
       console.error(`All photos: could not copy ${edit.command} to this computer`, err);
       return;
@@ -449,11 +469,16 @@ function readOnlyLeft(hashes: string[]) {
 
 async function editAll<T>(command: string, args: Record<string, unknown>, hashes: string[]): Promise<T> {
   const { byEngine, readOnly, alsoLocal } = splitByHome(hashes, all.copies, all.sources);
-  const results = await Promise.all([...byEngine].map(([engine, part]) => engineTransport(engine).call<T>(command, { ...args, hashes: part })));
+  const results = await Promise.all(
+    [...byEngine].map(([engine, part]) => {
+      const partArgs = { ...args, hashes: part };
+      return engineTransport(engine).call<T>(command, engine === "" ? withLocalIds(partArgs, all.localIds) : partArgs);
+    })
+  );
   for (const [engine, part] of byEngine) if (engine === "") afterLocalEdit(command, args, part);
   if (FOLLOWED_BY_LOCAL_COPY.has(command) && alsoLocal.length > 0) {
     try {
-      await localTransport.call(command, { ...args, hashes: alsoLocal });
+      await localTransport.call(command, withLocalIds({ ...args, hashes: alsoLocal }, all.localIds));
       afterLocalEdit(command, args, alsoLocal);
     } catch (err) {
       console.error(`All photos: the copy on this computer didn't follow ${command}`, err);
@@ -526,7 +551,8 @@ async function callAll<T>(command: string, args: Record<string, unknown>): Promi
   if (Array.isArray(args.hashes)) return editAll<T>(command, args, args.hashes as string[]);
   if (typeof args.hash === "string") {
     const engine = engineOfShown(args.hash);
-    if (engine !== undefined) return engineTransport(engine).call<T>(command, args);
+    const hash = engine === "" ? all.localIds.get(args.hash) ?? args.hash : args.hash;
+    if (engine !== undefined) return engineTransport(engine).call<T>(command, { ...args, hash });
   }
   if ("rootFolder" in args || "folderPath" in args || "root" in args || Array.isArray(args.ops)) {
     throw new Error("Open the library on its own for this: All photos shows several libraries at once.");

@@ -1146,6 +1146,7 @@ export default function App() {
         healthStats={lib.healthStats}
         isExportingXmp={lib.isExportingXmp}
         handlePruneCache={lib.handlePruneCache}
+        handleForgetMissing={lib.handleForgetMissing}
         handleExportXmp={lib.handleExportXmp}
       />
 

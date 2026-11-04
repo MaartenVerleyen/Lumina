@@ -8,6 +8,7 @@ import {
   mergeSources,
   sourceKey,
   splitByHome,
+  withLocalIds,
   whereabouts,
   type Source,
 } from "../src/api/allPhotos.ts";
@@ -76,6 +77,24 @@ test("a photo only shared with you has no home; your own copy of it is the home"
   const kept = merged.photos.find((p) => p.hash === "kept")!;
   assert.equal(kept.home, sourceKey(pc));
   assert.equal(kept.rating, 3);
+});
+
+test("a second copy of a file on this PC joins the server's photo it was backed up as", () => {
+  // "dup" is a path-salted id: the same content as "both" sits in another folder here
+  const merged = mergeSources(
+    [
+      { source: pc, photos: [photo("dup", { rating: 1, subfolder: "Copy" })] },
+      { source: cachy, photos: [photo("both", { rating: 4 })] },
+    ],
+    new Map([["dup", "both"]])
+  );
+  assert.equal(merged.photos.length, 1);
+  assert.equal(merged.photos[0].hash, "both");
+  assert.deepEqual(merged.photos[0].copies, [sourceKey(pc), sourceKey(cachy)]);
+  assert.equal(merged.localIds.get("both"), "dup");
+  assert.equal(merged.localValues.get("both")!.rating, 1);
+  // This computer's engine is asked about its own id
+  assert.deepEqual(withLocalIds({ hashes: ["both", "other"], rating: 4 }, merged.localIds), { hashes: ["dup", "other"], rating: 4 });
 });
 
 test("burst groups of two libraries don't run into each other", () => {

@@ -528,6 +528,106 @@ fn backed_up_values_land_on_the_servers_copy() {
     assert_eq!(list_of(&server, "SELECT hash FROM backup_faces"), Vec::<String>::new());
 }
 
+// A NEF-like TIFF: IFD0 is a 160 x 120 thumbnail, the sensor image (6048 x 4024) sits in its SubIFD
+#[test]
+fn a_tiff_raws_size_is_its_largest_image() {
+    fn ifd(entries: &[(u16, u16, u32)], next: u32) -> Vec<u8> {
+        let mut b = (entries.len() as u16).to_le_bytes().to_vec();
+        for &(tag, kind, value) in entries {
+            b.extend(tag.to_le_bytes());
+            b.extend(kind.to_le_bytes());
+            b.extend(1u32.to_le_bytes());
+            b.extend(value.to_le_bytes());
+        }
+        b.extend(next.to_le_bytes());
+        b
+    }
+    let mut tiff = b"II".to_vec();
+    tiff.extend(42u16.to_le_bytes());
+    tiff.extend(8u32.to_le_bytes());
+    let first = ifd(&[(0x0100, 3, 160), (0x0101, 3, 120), (0x014A, 4, 0)], 0);
+    let sub_at = 8 + first.len() as u32;
+    tiff.extend(ifd(&[(0x0100, 3, 160), (0x0101, 3, 120), (0x014A, 4, sub_at)], 0));
+    tiff.extend(ifd(&[(0x0100, 4, 6048), (0x0101, 4, 4024)], 0));
+    assert_eq!(exif_meta::tiff_largest_image(&tiff), Some((6048, 4024)));
+    assert_eq!(exif_meta::tiff_largest_image(b"\xFF\xD8\xFF\xE0 not a tiff"), None);
+    assert!(exif_meta::is_tiff_raw(Path::new("C:/x/Nikon Z 6.NEF")) && !exif_meta::is_tiff_raw(Path::new("a.jpg")));
+}
+
+// Library Health → Forget files that are gone: the rows of deleted files go with what hangs on them, people
+// left on no photo go from the list, and a library whose folder is missing (a drive not connected) is left as it is
+#[test]
+fn files_that_are_gone_are_forgotten_with_their_values() {
+    let base = std::env::temp_dir().join(format!("lumina_forget_gone_test_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&base);
+    let (library, data) = (base.join("Library"), base.join("Data"));
+    fs::create_dir_all(&library).unwrap();
+    fs::write(library.join("here.jpg"), b"x").unwrap();
+    let host: SharedHost = Arc::new(DirHost(data.clone()));
+    let conn = open_global_db(&*host).unwrap();
+    db::migrate(&conn).unwrap();
+    db::ensure_album_tables(&conn);
+    let (here, gone) = (library.join("here.jpg"), library.join("gone.jpg"));
+    conn.execute(
+        "INSERT INTO photos (hash, current_path) VALUES ('here', ?1), ('gone', ?2)",
+        params![here.to_string_lossy(), gone.to_string_lossy()],
+    )
+    .unwrap();
+    conn.execute_batch(
+        "INSERT INTO photo_tags VALUES ('here', 'sea'), ('gone', 'sea');
+         INSERT INTO people (name) VALUES ('Emma'), ('Only gone'), ('Starred gone');
+         UPDATE people SET starred = 1 WHERE name = 'Starred gone';
+         INSERT INTO photo_people VALUES ('here', 'Emma'), ('gone', 'Emma'), ('gone', 'Only gone'), ('gone', 'Starred gone');
+         INSERT INTO photo_faces (face_id, hash, bbox_x, bbox_y, bbox_w, bbox_h, person_name, face_thumb, embedding)
+            VALUES ('gone_1_1', 'gone', 0.1, 0.1, 0.1, 0.1, 'Only gone', '', '[]');
+         INSERT INTO albums (name) VALUES ('Trip');
+         INSERT INTO album_photos (album_id, hash) VALUES (1, 'gone');",
+    )
+    .unwrap();
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    let stats = rt.block_on(files::get_library_health_stats(host.clone(), Some(library.to_string_lossy().to_string()))).unwrap();
+    assert_eq!(stats.missing_count, 1);
+    assert!(rt.block_on(files::forget_missing_files(host.clone(), base.join("Unplugged").to_string_lossy().to_string())).is_err());
+    assert_eq!(rt.block_on(files::forget_missing_files(host.clone(), library.to_string_lossy().to_string())).unwrap(), 1);
+
+    let count = |sql: &str| conn.query_row(sql, [], |r| r.get::<_, i64>(0)).unwrap();
+    assert_eq!(count("SELECT COUNT(*) FROM photos"), 1);
+    assert_eq!(count("SELECT COUNT(*) FROM photo_tags"), 1);
+    assert_eq!(count("SELECT COUNT(*) FROM photo_faces"), 0);
+    assert_eq!(count("SELECT COUNT(*) FROM album_photos"), 0);
+    let mut stmt = conn.prepare("SELECT name FROM people ORDER BY name").unwrap();
+    let people: Vec<String> = stmt.query_map([], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect();
+    assert_eq!(people, vec!["Emma", "Starred gone"], "a starred person stays");
+    drop(stmt);
+    drop(rt);
+    drop(conn);
+    let _ = fs::remove_dir_all(&base);
+}
+
+// Taking the last name off a face (or off a photo) leaves no empty person behind
+#[test]
+fn a_person_left_on_no_photo_leaves_the_list() {
+    let conn = Connection::open_in_memory().unwrap();
+    db::migrate(&conn).unwrap();
+    conn.execute_batch(
+        "INSERT INTO photos (hash, current_path) VALUES ('p', '/p.jpg');
+         INSERT INTO people (name) VALUES ('Ann'), ('Bob');
+         INSERT INTO photo_faces (face_id, hash, bbox_x, bbox_y, bbox_w, bbox_h, person_name, face_thumb, embedding)
+            VALUES ('p_1_1', 'p', 0.1, 0.1, 0.1, 0.1, 'Ann', '', '[]'), ('p_5_5', 'p', 0.5, 0.5, 0.1, 0.1, 'Bob', '', '[]');
+         INSERT INTO photo_people VALUES ('p', 'Ann'), ('p', 'Bob');
+         UPDATE photo_faces SET person_name = NULL WHERE face_id = 'p_1_1';",
+    )
+    .unwrap();
+    face_engine::sync_photo_people_from_faces(&conn, "p", Some("ann"));
+    let names = |conn: &Connection| -> Vec<String> {
+        let mut stmt = conn.prepare("SELECT name FROM people ORDER BY name").unwrap();
+        stmt.query_map([], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect()
+    };
+    assert_eq!(names(&conn), vec!["Bob"]);
+    face_engine::forget_unused_person(&conn, "Bob");
+    assert_eq!(names(&conn), vec!["Bob"], "Bob still has his face");
+}
+
 #[test]
 fn bbox_iou_basics() {
     let a = (0.1, 0.1, 0.2, 0.2);

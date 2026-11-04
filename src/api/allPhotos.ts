@@ -37,6 +37,8 @@ export interface Merged {
   copies: Map<string, Copies>;
   // The values of each copy on this computer, for keeping them in step with a server home
   localValues: Map<string, LocalValues>;
+  // A copy on this computer known here by another id than the photo's (see `sameAs`): its own id
+  localIds: Map<string, string>;
 }
 
 export interface LocalValues {
@@ -61,18 +63,22 @@ function treePath(source: Source, subfolder: string): string {
 // Burst and duplicate group numbers are per source: they get a range per source so they don't meet
 const GROUP_RANGE = 1_000_000;
 
-export function mergeSources(lists: { source: Source; photos: PhotoItem[] }[]): Merged {
+// `sameAs`: a copy on this computer that is a server's photo under another id (a second copy of a file here
+// gets an id of its own; the upload queue recorded which server photo it is), by its id here
+export function mergeSources(lists: { source: Source; photos: PhotoItem[] }[], sameAs: Map<string, string> = new Map()): Merged {
   const byHash = new Map<string, { source: Source; index: number; photo: PhotoItem }[]>();
   lists.forEach(({ source, photos }, index) => {
     for (const photo of photos) {
-      let entry = byHash.get(photo.hash);
-      if (!entry) byHash.set(photo.hash, (entry = []));
+      const id = (source.server === null && sameAs.get(photo.hash)) || photo.hash;
+      let entry = byHash.get(id);
+      if (!entry) byHash.set(id, (entry = []));
       entry.push({ source, index, photo });
     }
   });
   const photos: PhotoItem[] = [];
   const copies = new Map<string, Copies>();
   const localValues = new Map<string, LocalValues>();
+  const localIds = new Map<string, string>();
   for (const [hash, found] of byHash) {
     const ordered = [...found].sort((a, b) => rank(a.source) - rank(b.source));
     const shown = ordered[0];
@@ -81,12 +87,14 @@ export function mergeSources(lists: { source: Source; photos: PhotoItem[] }[]): 
     if (local) {
       const p = local.photo;
       localValues.set(hash, { rating: p.rating, flag: p.flag, color_label: p.color_label, tags: [...p.tags] });
+      if (p.hash !== hash) localIds.set(hash, p.hash);
     }
-    const keys = found.map((f) => sourceKey(f.source));
+    const keys = [...new Set(found.map((f) => sourceKey(f.source)))];
     copies.set(hash, { copies: keys, home, shown: sourceKey(shown.source) });
     const group = shown.photo.duplicate_group;
     photos.push({
       ...shown.photo,
+      hash,
       subfolder: treePath(shown.source, shown.photo.subfolder),
       also_in: found.filter((f) => f !== shown).map((f) => treePath(f.source, f.photo.subfolder)),
       duplicate_group: group == null ? group : shown.index * GROUP_RANGE + group,
@@ -94,7 +102,13 @@ export function mergeSources(lists: { source: Source; photos: PhotoItem[] }[]): 
       home,
     });
   }
-  return { photos, copies, localValues };
+  return { photos, copies, localValues, localIds };
+}
+
+// An edit for this computer's engine, with the ids it knows its copies by
+export function withLocalIds(args: Record<string, unknown>, localIds: Map<string, string>): Record<string, unknown> {
+  if (!Array.isArray(args.hashes)) return args;
+  return { ...args, hashes: (args.hashes as string[]).map((h) => localIds.get(h) ?? h) };
 }
 
 // The hashes of an edit, per engine of their home; photos without a home can't be changed

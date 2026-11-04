@@ -8,6 +8,7 @@ interface HealthXmpModalProps {
   healthStats: LibraryHealthStats | null;
   isExportingXmp: boolean;
   handlePruneCache: () => Promise<void>;
+  handleForgetMissing?: () => Promise<void>;
   handleExportXmp: (onlySelected: boolean) => Promise<void>;
 }
 
@@ -17,6 +18,7 @@ export default function HealthXmpModal({
   healthStats,
   isExportingXmp,
   handlePruneCache,
+  handleForgetMissing,
   handleExportXmp,
 }: HealthXmpModalProps) {
   const dialogRef = useDialogFocus<HTMLDivElement>(isOpen);
@@ -99,6 +101,22 @@ export default function HealthXmpModal({
                     </span>
                   )}
                 </div>
+              </div>
+            )}
+
+            {healthStats.missing_count > 0 && handleForgetMissing && (
+              <div className="p-3.5 bg-zinc-900/60 border border-zinc-800 rounded-xl flex items-center justify-between gap-3">
+                <span className="text-zinc-400 text-[11px]">
+                  {healthStats.missing_count} photo{healthStats.missing_count === 1 ? "'s file is" : "s' files are"} gone from
+                  the folder. Lumina keeps {healthStats.missing_count === 1 ? "its" : "their"} ratings, tags and names in case a
+                  file was moved and turns up again.
+                </span>
+                <button
+                  onClick={handleForgetMissing}
+                  className="shrink-0 py-1.5 px-3 bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 rounded-xl text-zinc-200 font-medium transition"
+                >
+                  Forget them
+                </button>
               </div>
             )}
 

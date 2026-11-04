@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import {
   ALL_PHOTOS,
+  allPhotosIdOf,
   allPhotosShownIn,
   allPhotosSources,
   call,
@@ -149,7 +150,11 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
       const batchMap = new Map<string, ThumbBatchItem>();
       // In All photos a library's batch updates the photos the window shows from that library; its duplicate
       // groups are numbered for that library alone
-      for (const it of items) if (!all || allPhotosShownIn(it.hash, batchFolder, event)) batchMap.set(it.hash, it);
+      for (const it of items) {
+        // This computer's engine names a second copy of a file by its own id
+        const hash = all && !event.server ? allPhotosIdOf(it.hash) : it.hash;
+        if (!all || allPhotosShownIn(hash, batchFolder, event)) batchMap.set(hash, it);
+      }
       const hasDupUpdate = !all && duplicate_groups && Object.keys(duplicate_groups).length > 0;
 
       setPhotos((prev) =>

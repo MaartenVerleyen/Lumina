@@ -184,6 +184,9 @@ pub struct LibraryHealthStats {
     pub damaged_count: usize,
     // First 50 damaged file paths, for the Library Health list
     pub damaged_files: Vec<String>,
+    // Rows whose file is gone (deleted outside Lumina): kept so a file moved elsewhere keeps its values when
+    // it is found again; Library Health can forget them
+    pub missing_count: usize,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]

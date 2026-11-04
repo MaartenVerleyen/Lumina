@@ -544,10 +544,18 @@ function RightInspector({
                       onClick={async (e) => {
                         e.stopPropagation();
                         const removedPerson = f.person_name;
-                        const rem = await call<FaceInstance[]>("remove_face_box", {
-                          faceId: f.face_id,
-                          hash: activePhoto.hash,
-                        });
+                        // A named face loses its name and stays a face; an unnamed one isn't a face: its box goes
+                        const rem = removedPerson
+                          ? (
+                              await call<Record<string, FaceInstance[]>>("unassign_faces_batch", {
+                                faceIds: [f.face_id],
+                                personName: removedPerson,
+                              })
+                            )[activePhoto.hash] ?? activePhoto.faces.map((x) => (x.face_id === f.face_id ? { ...x, person_name: null } : x))
+                          : await call<FaceInstance[]>("remove_face_box", {
+                              faceId: f.face_id,
+                              hash: activePhoto.hash,
+                            });
                         const remainingNames = new Set(
                           rem
                             .map((x) => x.person_name?.trim().toLowerCase())
@@ -567,14 +575,16 @@ function RightInspector({
                           })
                         );
                         if (selectedFaceId === f.face_id) {
-                          setSelectedFaceId(rem[0]?.face_id ?? null);
-                          setFaceNameInput(rem[0]?.person_name || "");
+                          // An unnamed face stays chosen, ready for another name
+                          setSelectedFaceId(removedPerson ? f.face_id : rem[0]?.face_id ?? null);
+                          setFaceNameInput(removedPerson ? "" : rem[0]?.person_name || "");
                         }
                         if (refreshPeople) {
                           await refreshPeople();
                         }
                       }}
                       className="text-zinc-500 hover:text-red-400 ml-0.5 text-xs"
+                      title={f.person_name ? `Remove the name "${f.person_name}" from this face` : "Not a face: remove this box"}
                     >
                       <X className="w-3 h-3" />
                     </button>

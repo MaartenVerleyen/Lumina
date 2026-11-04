@@ -195,7 +195,22 @@ pub fn sync_photo_people_from_faces(conn: &Connection, hash: &str, previous_face
                 params![hash, clean_prev],
             );
         }
+        forget_unused_person(conn, clean_prev);
     }
+}
+
+// A person left on no photo and no face (the last name taken off) goes from the people list: People shows
+// no one without photos, and the row would linger forever. One the user starred or hid stays.
+pub fn forget_unused_person(conn: &Connection, name: &str) {
+    if name.trim().is_empty() {
+        return;
+    }
+    let _ = conn.execute(
+        "DELETE FROM people WHERE lower(name) = lower(?1) AND COALESCE(starred, 0) = 0 AND COALESCE(hidden, 0) = 0
+           AND NOT EXISTS (SELECT 1 FROM photo_people WHERE lower(person_name) = lower(?1))
+           AND NOT EXISTS (SELECT 1 FROM photo_faces WHERE lower(person_name) = lower(?1))",
+        params![name.trim()],
+    );
 }
 
 pub fn get_faces_for_hash(conn: &Connection, hash: &str) -> Vec<FaceInstance> {

@@ -88,7 +88,9 @@ pub fn remove_person_from_photos(app: SharedHost, hashes: Vec<String>, name: Str
             stmt.execute(params![h, name]).map_err(|e| e.to_string())?;
         }
     }
-    tx.commit().map_err(|e| e.to_string())
+    tx.commit().map_err(|e| e.to_string())?;
+    face_engine::forget_unused_person(&conn, &name);
+    Ok(())
 }
 
 pub fn remove_person_from_photo(app: SharedHost, hash: String, name: String) -> Result<Vec<String>, String> {
@@ -102,6 +104,8 @@ pub fn remove_person_from_photo(app: SharedHost, hash: String, name: String) -> 
         "UPDATE photo_faces SET person_name = NULL WHERE hash = ?1 AND person_name = ?2",
         params![hash, name],
     );
+
+    face_engine::forget_unused_person(&conn, &name);
 
     let mut stmt = conn
         .prepare("SELECT person_name FROM photo_people WHERE hash = ?1 ORDER BY person_name ASC")

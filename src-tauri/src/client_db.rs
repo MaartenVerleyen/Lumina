@@ -174,3 +174,34 @@ pub fn local_libraries(app: AppHandle) -> Result<Vec<lumina_core::libraries::Lib
 pub async fn list_local_library(app: AppHandle, root: String) -> Result<Vec<PhotoItem>, String> {
     tauri::async_runtime::spawn_blocking(move || scan::list_library_photos(&app, &root)).await.map_err(|e| e.to_string())?
 }
+
+// Files on this PC that are a copy of a server's photo under another id: a second copy of a file on this PC
+// gets a path-salted id, while the server knows it by its content. The upload queue records which server
+// photo each file is (uploaded, or found there already); All photos shows such a pair as one photo.
+// Answers (id here, id on the server).
+#[tauri::command]
+pub async fn local_copy_ids(app: AppHandle) -> Result<Vec<(String, String)>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let conn = open(&app)?;
+        let servers: Vec<String> = {
+            let mut stmt = conn.prepare("SELECT DISTINCT server FROM local_copies").map_err(|e| e.to_string())?;
+            let rows = stmt.query_map([], |r| r.get::<_, String>(0)).map_err(|e| e.to_string())?;
+            rows.filter_map(Result::ok).collect()
+        };
+        let library = open_global_db(&app)?;
+        let mut here = library.prepare("SELECT hash FROM photos WHERE current_path = ?1").map_err(|e| e.to_string())?;
+        let mut pairs = Vec::new();
+        for server in servers {
+            for (hash, path) in copies(&conn, &server)? {
+                if let Ok(own) = here.query_row([path.to_string_lossy()], |r| r.get::<_, String>(0)) {
+                    if own != hash {
+                        pairs.push((own, hash));
+                    }
+                }
+            }
+        }
+        Ok(pairs)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
