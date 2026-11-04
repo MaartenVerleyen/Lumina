@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
-import { call, isOwnChange, RECONNECTED, subscribe } from "../../api";
+import { call, isOwnChange, openLibraryServer, RECONNECTED, subscribe } from "../../api";
 import { Album, SavedSearch } from "../../types/lumina";
 import { MatchContext } from "../../utils/searchQuery";
 import { computeTrips, tripLabel } from "../../utils/trips";
@@ -9,6 +9,7 @@ import type { FilterState } from "./useFilterState";
 // Trips found from dates and places, albums and smart albums (saved searches)
 export function useCollections(core: LibraryCore, filters: FilterState) {
   const {
+    folder,
     photos,
     photoByHash,
     resolveTargets,
@@ -20,6 +21,9 @@ export function useCollections(core: LibraryCore, filters: FilterState) {
     setActiveBulkPopover,
   } = core;
   const { activeAlbumId, setActiveAlbumId, searchQuery, setSearchQuery } = filters;
+  // Albums, smart albums and trip names belong to the engine of the open library: this computer's, or a
+  // server's, so they load again when a library of another server (or of this computer) opens
+  const server = openLibraryServer();
   // Albums and smart albums (saved searches); `activeAlbumId` filters the grid to one album
   const [albums, setAlbums] = useState<Album[]>([]);
   const [savedSearches, setSavedSearches] = useState<SavedSearch[]>([]);
@@ -28,7 +32,7 @@ export function useCollections(core: LibraryCore, filters: FilterState) {
   const [tripNames, setTripNames] = useState<Record<string, string>>({});
   useEffect(() => {
     call<Record<string, string>>("get_trip_names").then(setTripNames).catch(() => {});
-  }, []);
+  }, [folder, server]);
   const trips = useMemo(() => computeTrips(photos), [photos]);
   const tripOfHash = useMemo(() => {
     const m = new Map<string, string>();
@@ -77,7 +81,7 @@ export function useCollections(core: LibraryCore, filters: FilterState) {
 
   useEffect(() => {
     refreshAlbums();
-  }, [refreshAlbums]);
+  }, [refreshAlbums, folder, server]);
 
   // Another user changed albums, saved searches or trip names on the server
   useEffect(() => {

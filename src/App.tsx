@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import { call, inDesktopApp, OPEN_ADMIN_EVENT } from "./api";
+import { call, inDesktopApp, OPEN_ADMIN_EVENT, openLibraryIsLocal } from "./api";
 import { platform } from "./api/platform";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useLibraryState } from "./hooks/useLibraryState";
@@ -655,7 +655,9 @@ export default function App() {
               onDeleteAlbum={lib.handleDeleteAlbum}
               onDeleteSavedSearch={lib.handleDeleteSavedSearch}
               onRenameTrip={lib.handleRenameTrip}
-              onShareAlbum={!inDesktopApp && access.edit ? setShareAlbum : undefined}
+              // Albums are shared with the accounts of the server the library is on (the web client's, or one
+              // the desktop app opened a library of)
+              onShareAlbum={!openLibraryIsLocal() && access.edit ? setShareAlbum : undefined}
               pickHighlights={lib.pickHighlights}
               bestOfFocus={bestOfFocus}
               onShareGallery={platform.localFiles ? (title, hashes) => lib.openGallery(title, hashes) : undefined}

@@ -18,7 +18,9 @@ export default function FilterBar({
   const access = useAccess();
   return (
     <>
+      {/* Any search, plain text too, can be saved as a smart album from here */}
       {(lib.parsedSearch.terms.length > 0 ||
+        lib.searchQuery.trim() !== "" ||
         lib.activeAlbumId !== null ||
         lib.activeEvent !== "ALL" ||
         lib.peopleFilter !== null ||
