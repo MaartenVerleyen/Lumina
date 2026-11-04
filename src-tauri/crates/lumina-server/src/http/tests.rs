@@ -692,6 +692,39 @@ async fn a_guest_gets_no_events_about_other_photos() {
     }
 }
 
+// Thumbnails, faces and captions the server makes on its own reach open windows as photos-changed: a guest
+// for the shared photos only, someone who sees everything for captions (the rest came with the progress event)
+#[tokio::test]
+async fn the_servers_own_work_reaches_open_windows() {
+    use lumina_core::host::Host;
+    let s = server("ownwork");
+    two_libraries(&s);
+    let mut events = s.host.subscribe();
+    s.host.emit_value("ai-batch-progress", json!({"done": false, "results": [{"hash": "b1"}, {"hash": "b2"}]}));
+    s.host.emit_value("face-scan-progress", json!({"done": false, "batch_faces": {"a1": [], "b2": []}}));
+    s.host.emit_value("thumb-batch-ready", json!({"items": [{"hash": "b2"}]}));
+    s.host.emit_value("semantic-progress", json!({"done": true}));
+    let mut changed = Vec::new();
+    while let Ok((name, payload)) = events.try_recv() {
+        if name == "photos-changed" {
+            changed.push(payload);
+        }
+    }
+    assert_eq!(changed.len(), 3);
+    assert_eq!(changed[0]["hashes"], json!(["b1", "b2"]));
+    assert_eq!(changed[0]["by"], "server");
+
+    let conn = db::open_global_db(&*s.host).unwrap();
+    for (name, wanted) in [("gus", [Some(json!(["b2"])), Some(json!(["b2"])), Some(json!(["b2"]))]), ("ada", [Some(json!(["b1", "b2"])), None, None])] {
+        let user = accounts::find_user(&conn, name).unwrap().unwrap();
+        let scope = super::events::load_scope(&s.host, &user).await.unwrap();
+        for (payload, wanted) in changed.iter().zip(wanted) {
+            let got = super::events::for_user(&s.host, &scope, "photos-changed", payload.clone()).await.map(|p| p["hashes"].clone());
+            assert_eq!(got, wanted, "{name} after {}", payload["after"]);
+        }
+    }
+}
+
 #[tokio::test]
 async fn roles_per_library_let_someone_edit_their_own_and_only_look_at_what_is_shared() {
     let s = server("perlibrary");
@@ -1112,4 +1145,18 @@ async fn a_partial_upload_untouched_for_a_week_is_given_up() {
     send(&s.app, post("/api/upload", start_body("new.jpg", &jpeg(41)), Some(&ed))).await;
     assert!(!part.exists());
     assert_eq!(send(&s.app, get(&format!("/api/upload/{old}"), Some(&ed))).await.0, StatusCode::NOT_FOUND);
+}
+
+// Thumbnails and face crops are named by their place in the data folder, not where it is on the server; a
+// library inside the data folder keeps its full paths
+#[tokio::test]
+async fn answers_name_cache_files_without_the_data_folder() {
+    let s = server("datadir");
+    let (_, bob, _) = two_libraries(&s);
+    let vera = login(&s.app, "vera").await;
+    let (_, _, photos) = send(&s.app, post("/api/rpc/scan_folder", json!({"folderPath": bob}), Some(&vera))).await;
+    let b2 = photos.as_array().unwrap().iter().find(|p| p["hash"] == "b2").unwrap();
+    assert_eq!(b2["thumb_path"], json!(format!("thumbnails{}b2.jpg", std::path::MAIN_SEPARATOR)));
+    assert_eq!(b2["faces"][0]["face_thumb"], json!(format!("faces{}b2_1_1.jpg", std::path::MAIN_SEPARATOR)));
+    assert_eq!(b2["path"], json!(std::path::Path::new(&bob).join("b2.jpg").to_string_lossy()));
 }

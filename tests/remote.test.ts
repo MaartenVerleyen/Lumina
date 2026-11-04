@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createRemoteTransport, faceIdFromPath, mediaPath } from "../src/api/remote.ts";
+import { createRemoteTransport, faceIdFromPath, mediaPath, RECONNECTED } from "../src/api/remote.ts";
 
 test("media URLs name the file by id, never by the server's path", () => {
   assert.equal(mediaPath({ kind: "thumb", hash: "abc123", path: "/data/thumbnails/abc123.jpg" }), "/media/thumb/abc123");
@@ -116,11 +116,18 @@ test("a dropped WebSocket reconnects while anyone listens", async () => {
     WebSocket: FakeSocket as unknown as typeof WebSocket,
   });
   const off = await t.subscribe("scan-progress", () => {});
+  let reconnected = 0;
+  const offReconnected = await t.subscribe(RECONNECTED, () => reconnected++);
   assert.equal(FakeSocket.all[0].url, "ws://127.0.0.1:8080/api/events");
+  FakeSocket.all[0].onopen?.();
+  assert.equal(reconnected, 0, "the first connection is not a reconnect");
   FakeSocket.all[0].onclose?.();
   await new Promise((r) => setTimeout(r, 1100));
   assert.equal(FakeSocket.all.length, 2, "a new socket after the first pause");
+  FakeSocket.all[1].onopen?.();
+  assert.equal(reconnected, 1, "the window hears that it missed events");
   off();
+  offReconnected();
   assert.equal(FakeSocket.all[1].closed, true, "the last subscriber leaving closes it");
   t.close();
 });

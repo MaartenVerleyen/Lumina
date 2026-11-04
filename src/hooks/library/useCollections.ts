@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
-import { call, isOwnChange, subscribe } from "../../api";
+import { call, isOwnChange, RECONNECTED, subscribe } from "../../api";
 import { Album, SavedSearch } from "../../types/lumina";
 import { MatchContext } from "../../utils/searchQuery";
 import { computeTrips, tripLabel } from "../../utils/trips";
@@ -81,13 +81,18 @@ export function useCollections(core: LibraryCore, filters: FilterState) {
 
   // Another user changed albums, saved searches or trip names on the server
   useEffect(() => {
-    const off = subscribe<{ origin?: string }>("albums-changed", (e) => {
-      if (isOwnChange(e.payload)) return;
+    const refresh = () => {
       refreshAlbums();
       call<Record<string, string>>("get_trip_names").then(setTripNames).catch(() => {});
+    };
+    const off = subscribe<{ origin?: string }>("albums-changed", (e) => {
+      if (!isOwnChange(e.payload)) refresh();
     });
+    // Or did while the event socket was down
+    const offReconnected = subscribe(RECONNECTED, refresh);
     return () => {
       off.then((f) => f());
+      offReconnected.then((f) => f());
     };
   }, [refreshAlbums]);
 

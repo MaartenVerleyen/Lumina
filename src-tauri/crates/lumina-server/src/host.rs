@@ -37,6 +37,16 @@ impl ServerHost {
         self.events.subscribe()
     }
 
+    // Answers and events name thumbnails, previews and face crops by their place in the data folder
+    // ("faces/<id>.jpg"), not by where that folder is on the server: clients fetch them by hash or face id
+    pub fn hide_data_dir(&self, value: &mut JsonValue) {
+        let dir = self.data_dir.to_string_lossy();
+        let dir = dir.trim_end_matches(['/', '\\']);
+        if !dir.is_empty() {
+            strip_prefix_in(value, dir);
+        }
+    }
+
     fn log(&self, event: &str, payload: &JsonValue) {
         if !LOGGED.contains(&event) {
             return;
@@ -51,6 +61,25 @@ impl ServerHost {
             last.insert(event.to_string(), now);
         }
         println!("{}", describe(event, payload));
+    }
+}
+
+// The engine's own files in the data folder; a library may live in there too, and keeps its full paths
+const CACHE_FOLDERS: &[&str] = &["thumbnails", "previews", "faces", "frames", "transcodes"];
+
+fn strip_prefix_in(value: &mut JsonValue, dir: &str) {
+    match value {
+        JsonValue::String(s) => {
+            if let Some(rest) = s.strip_prefix(dir).and_then(|r| r.strip_prefix(['/', '\\'])) {
+                let folder = rest.split(['/', '\\']).next().unwrap_or("");
+                if CACHE_FOLDERS.contains(&folder) && rest.len() > folder.len() {
+                    *s = rest.to_string();
+                }
+            }
+        }
+        JsonValue::Array(items) => items.iter_mut().for_each(|v| strip_prefix_in(v, dir)),
+        JsonValue::Object(map) => map.values_mut().for_each(|v| strip_prefix_in(v, dir)),
+        _ => {}
     }
 }
 
@@ -84,6 +113,31 @@ impl Host for ServerHost {
 
     fn emit_value(&self, event: &str, payload: JsonValue) {
         self.log(event, &payload);
+        let finished = finished_photos(event, &payload);
         let _ = self.events.send((event.to_string(), payload));
+        if !finished.is_empty() {
+            let _ = self.events.send(("photos-changed".to_string(), analysed(event, finished)));
+        }
     }
+}
+
+// The photos a progress event says are done with (thumbnail, faces, caption). Open windows learn about the
+// server's own work from photos-changed like from anyone's edit: only a window that runs a batch itself
+// listens to ai-batch-progress, and guests get no progress events at all.
+pub(crate) fn finished_photos(event: &str, payload: &JsonValue) -> Vec<String> {
+    let hashes_of = |list: &JsonValue| -> Vec<String> {
+        list.as_array().into_iter().flatten().filter_map(|i| i["hash"].as_str().map(str::to_string)).collect()
+    };
+    match event {
+        "thumb-batch-ready" => hashes_of(&payload["items"]),
+        "ai-batch-progress" => hashes_of(&payload["results"]),
+        "face-scan-progress" => payload["batch_faces"].as_object().map(|faces| faces.keys().cloned().collect()).unwrap_or_default(),
+        _ => Vec::new(),
+    }
+}
+
+// photos-changed for them, by the server; `after` names the progress event, which users who see the whole
+// server already get in full (the socket leaves those out for them, except for captions)
+fn analysed(event: &str, hashes: Vec<String>) -> JsonValue {
+    serde_json::json!({ "hashes": hashes, "by": "server", "origin": "server", "after": event })
 }

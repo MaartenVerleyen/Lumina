@@ -6,6 +6,7 @@ import {
   openLibraryRole,
   openLibraryServer,
   openServerUser,
+  RECONNECTED,
   rememberLibraryRoles,
   setOpenLibrary,
   subscribe,
@@ -544,6 +545,16 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
   useEffect(() => {
     const off = subscribe("albums-changed", () => {
       if (openLibraryRole() === "guest" && folderRef.current) silentRescanRef.current();
+    });
+    return () => {
+      off.then((f) => f());
+    };
+  }, []);
+
+  // The server's event socket was down for a while: whatever changed meanwhile is fetched by listing again
+  useEffect(() => {
+    const off = subscribe(RECONNECTED, () => {
+      if (folderRef.current) silentRescanRef.current();
     });
     return () => {
       off.then((f) => f());

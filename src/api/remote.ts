@@ -17,6 +17,11 @@ export interface RemoteOptions {
   clientId?: string;
 }
 
+// Sent by the client itself when its event socket connects again after a drop (the web client here, the
+// desktop app from src-tauri/src/remote.rs): events from while it was down are lost, so the open library,
+// people and albums are fetched again
+export const RECONNECTED = "events-reconnected";
+
 // Lowest to highest. A guest sees only albums shared with them; a viewer everything, read-only; an uploader
 // can also upload (phase 3); an editor rates, tags, names faces and makes albums; an admin does everything.
 export const ROLES = ["guest", "viewer", "uploader", "editor", "admin"] as const;
@@ -107,6 +112,17 @@ export function createRemoteTransport(options: RemoteOptions = {}): Transport & 
   let retryDelay = 1000;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
   let closed = false;
+  let connectedBefore = false;
+
+  function deliver(event: string, payload: unknown) {
+    for (const handler of handlers.get(event) ?? []) {
+      try {
+        handler({ payload });
+      } catch (e) {
+        console.error(`Handler for ${event} failed`, e);
+      }
+    }
+  }
 
   function socketUrl(): string {
     if (base) return base.replace(/^http/, "ws") + "/api/events";
@@ -125,6 +141,9 @@ export function createRemoteTransport(options: RemoteOptions = {}): Transport & 
     socket = ws;
     ws.onopen = () => {
       retryDelay = 1000;
+      // What happened while the socket was down never comes: the window looks again (see RECONNECTED)
+      if (connectedBefore) deliver(RECONNECTED, null);
+      connectedBefore = true;
     };
     ws.onmessage = (msg: MessageEvent) => {
       let data: { event?: unknown; payload?: unknown };
@@ -134,13 +153,7 @@ export function createRemoteTransport(options: RemoteOptions = {}): Transport & 
         return;
       }
       if (typeof data.event !== "string") return;
-      for (const handler of handlers.get(data.event) ?? []) {
-        try {
-          handler({ payload: data.payload });
-        } catch (e) {
-          console.error(`Handler for ${data.event} failed`, e);
-        }
-      }
+      deliver(data.event, data.payload);
     };
     ws.onclose = () => {
       socket = null;

@@ -44,6 +44,8 @@ const REFRESH_EVENTS: &[&str] = &["people-changed", "albums-changed", "shares-ch
 // The ones after which what a user may see can differ: the session and scope are looked at again first
 const SCOPE_EVENTS: &[&str] = &["albums-changed", "shares-changed", "roles-changed"];
 const SESSION_RECHECK: Duration = Duration::from_secs(1);
+// Progress events whose per-photo results the grid applies by itself (thumbnails, faces)
+const ALREADY_SENT: &[&str] = &["thumb-batch-ready", "face-scan-progress"];
 
 pub(super) async fn load_scope(host: &Arc<ServerHost>, user: &User) -> Option<Arc<Scope>> {
     let (host, user) = (host.clone(), user.clone());
@@ -61,6 +63,11 @@ async fn session_user(host: &Arc<ServerHost>, token: &str) -> Option<User> {
 
 // What of this event this user may get (None: nothing)
 pub(super) async fn for_user(host: &Arc<ServerHost>, scope: &Arc<Scope>, name: &str, payload: JsonValue) -> Option<JsonValue> {
+    // The server's photos-changed after thumbnails and faces repeats what a user who sees everything already
+    // got with the progress event; captions only reach their windows this way
+    if scope.sees_all() && name == "photos-changed" && ALREADY_SENT.contains(&payload["after"].as_str().unwrap_or("")) {
+        return None;
+    }
     if scope.sees_all() || REFRESH_EVENTS.contains(&name) {
         return Some(payload);
     }
@@ -150,7 +157,7 @@ async fn forward(
     _user: User,
     token: String,
 ) {
-    let Some(mut listener) = Listener::open(host, token).await else {
+    let Some(mut listener) = Listener::open(host.clone(), token).await else {
         let _ = socket.send(Message::Close(None)).await;
         return;
     };
@@ -160,7 +167,8 @@ async fn forward(
         tokio::select! {
             event = rx.recv() => match event {
                 Ok((name, payload)) => match listener.event(&name, payload).await {
-                    Step::Send(payload) => {
+                    Step::Send(mut payload) => {
+                        host.hide_data_dir(&mut payload);
                         let text = serde_json::json!({ "event": name, "payload": payload }).to_string();
                         if socket.send(Message::Text(text.into())).await.is_err() {
                             return;

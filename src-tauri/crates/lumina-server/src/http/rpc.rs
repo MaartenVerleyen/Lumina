@@ -646,7 +646,7 @@ pub async fn call(
     } else {
         serde_json::from_slice(&body).map_err(|e| ApiError::new(StatusCode::BAD_REQUEST, format!("Bad JSON: {e}")))?
     };
-    let (value, changed) = (cmd.call)(host, Arc::new(scope), args).await.map_err(|e| {
+    let (mut value, changed) = (cmd.call)(host, Arc::new(scope), args).await.map_err(|e| {
         // "This needs the editor role" from the scope check, named after the command
         if e.0 == StatusCode::FORBIDDEN && e.1.starts_with("This needs") { ApiError(e.0, e.1.replacen("This", &command, 1)) } else { e }
     })?;
@@ -655,6 +655,7 @@ pub async fn call(
         let origin = headers.get("x-lumina-client").and_then(|v| v.to_str().ok()).unwrap_or("").chars().take(64).collect();
         announce(&state, &user, cmd.name, changed, origin).await;
     }
+    state.host.hide_data_dir(&mut value);
     Ok(Json(value))
 }
 

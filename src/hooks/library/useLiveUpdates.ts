@@ -5,7 +5,8 @@ import type { LibraryCore } from "./core";
 import { mergeFreshPhoto } from "../../utils/freshPhoto";
 
 // Changes other users make on the server (ratings, tags, people, ...) reach this window as photos-changed
-// events: the photos named are fetched again, a few events at a time. The desktop app never gets these.
+// events: the photos named are fetched again, a few events at a time. So do thumbnails, faces and captions
+// the server makes itself. Only a library on a server sends these.
 export function useLiveUpdates(core: LibraryCore) {
   const { setPhotos } = core;
   useEffect(() => {

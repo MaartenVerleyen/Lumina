@@ -163,13 +163,15 @@ fn run_thumbnail_pass(
         started,
         total,
         format!(
-            "{}/s · {} readers ({}) + {} decoders · {} reused cached thumbs · HEIC {} via WIC{} · {} videos in {} ms · db {} ms · {} failed · {} damaged",
+            "{}/s · {} readers ({}) + {} decoders · {} reused cached thumbs · HEIC {} via {}{} · {} videos in {} ms · db {} ms · {} failed · {} damaged",
             per_second(total, total_ms),
             io_threads,
             drive_kind,
             decode_threads,
             stats.reused,
             stats.heic,
+            // decode.rs: Windows decodes HEIC with WIC, Linux and macOS with ffmpeg
+            if cfg!(windows) { "WIC" } else { "ffmpeg" },
             if powershell_heic > 0 { format!(" ({powershell_heic} via PowerShell)") } else { String::new() },
             videos.len(),
             video_ms,

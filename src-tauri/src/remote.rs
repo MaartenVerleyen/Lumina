@@ -356,9 +356,10 @@ fn start_socket(app: &AppHandle, id: &str) {
     let (app2, id2) = (app.clone(), id.to_string());
     let handle = tauri::async_runtime::spawn(async move {
         let mut delay = Duration::from_secs(1);
+        let mut connected_before = false;
         loop {
             let Some(token) = remote(&app2).token(&id2) else { return };
-            match listen_once(&app2, &id2, &token).await {
+            match listen_once(&app2, &id2, &token, &mut connected_before).await {
                 Ok(()) => delay = Duration::from_secs(1),
                 Err(SocketEnd::SignedOut) => {
                     signed_out(&app2, &id2);
@@ -380,7 +381,7 @@ enum SocketEnd {
     Failed,
 }
 
-async fn listen_once(app: &AppHandle, id: &str, token: &str) -> Result<(), SocketEnd> {
+async fn listen_once(app: &AppHandle, id: &str, token: &str, connected_before: &mut bool) -> Result<(), SocketEnd> {
     use tungstenite::client::IntoClientRequest;
     let server = remote(app).server(id).map_err(|_| SocketEnd::SignedOut)?;
     let ws_url = format!("{}/api/events", server.url.replacen("http", "ws", 1));
@@ -392,6 +393,12 @@ async fn listen_once(app: &AppHandle, id: &str, token: &str) -> Result<(), Socke
         Err(_) => return Err(SocketEnd::Failed),
     };
     let _ = app.emit("remote-connected", json!({ "server": id }));
+    // Events from while the socket was down are lost: the window fetches what it shows again (RECONNECTED in
+    // src/api/remote.ts)
+    if *connected_before {
+        let _ = app.emit("remote-event", json!({ "server": id, "event": "events-reconnected", "payload": null }));
+    }
+    *connected_before = true;
     while let Some(msg) = ws.next().await {
         match msg {
             Ok(tungstenite::Message::Text(text)) => {

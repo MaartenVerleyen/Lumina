@@ -2281,6 +2281,13 @@ fn listing_from_the_database_matches_a_scan() {
     let by_hash = scan::photos_by_hash(&*host, &wanted).unwrap();
     assert_eq!(comparable(&by_hash), comparable(&[listed[2].clone(), listed[0].clone()]));
     assert!(scan::photos_by_hash(&*host, &[]).unwrap().is_empty());
+
+    // A file deleted outside Lumina: neither a scan nor the listing shows it, though its row stays
+    fs::remove_file(library.join("Trip").join("c.png")).unwrap();
+    let rescanned = rt.block_on(scan::scan_folder(host.clone(), library.to_string_lossy().to_string(), None)).unwrap();
+    let relisted = scan::list_library_photos(&*host, &library.to_string_lossy()).unwrap();
+    assert_eq!(rescanned.len(), 2);
+    assert_eq!(comparable(&relisted), comparable(&rescanned));
     drop(rt);
     let _ = fs::remove_dir_all(&base);
 }

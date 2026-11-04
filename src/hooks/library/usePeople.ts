@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { platform } from "../../api/platform";
 import { useAccess } from "../../components/auth/ServerGate";
-import { call, isOwnChange, subscribe } from "../../api";
+import { call, isOwnChange, RECONNECTED, subscribe } from "../../api";
 import { PhotoItem, PersonItem, FaceScanProgress, FaceMatchEvent, FaceInstance, FaceModelDownloadProgress, FaceQualityProgress } from "../../types/lumina";
 import { diskPathOf } from "../../utils/rawPairs";
 import { isLiveClip, isVideo } from "../../utils/media";
@@ -101,8 +101,11 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
     const off = subscribe<{ origin?: string }>("people-changed", (e) => {
       if (!isOwnChange(e.payload)) refreshPeopleRef.current();
     });
+    // Or did while the event socket was down
+    const offReconnected = subscribe(RECONNECTED, () => refreshPeopleRef.current());
     return () => {
       off.then((f) => f());
+      offReconnected.then((f) => f());
     };
   }, []);
 

@@ -574,8 +574,14 @@ pub fn list_library_photos<H: Host + ?Sized>(app: &H, root: &str) -> Result<Vec<
     let index = load_library_index(&conn, &make_folder_prefix(Some(&root_path.to_string_lossy())))?;
     let app_dir = get_app_storage_dir(app);
     let (thumbs_dir, previews_dir) = (app_dir.join("thumbnails"), app_dir.join("previews"));
-    let mut photos: Vec<PhotoItem> =
-        index.cache.iter().map(|(path, c)| photo_item(&root_path, path, c, &index, &thumbs_dir, &previews_dir)).collect();
+    // A file that is gone keeps its row (its ratings and names come back with it), but isn't listed, as a
+    // scan of the folder wouldn't find it either
+    let mut photos: Vec<PhotoItem> = index
+        .cache
+        .iter()
+        .filter(|(path, _)| Path::new(path.as_str()).exists())
+        .map(|(path, c)| photo_item(&root_path, path, c, &index, &thumbs_dir, &previews_dir))
+        .collect();
     photos.sort_by(|a, b| a.subfolder.cmp(&b.subfolder).then(a.name.cmp(&b.name)));
     pair_raw_jpegs(&mut photos);
     link_live_photos(&mut photos);
