@@ -100,6 +100,9 @@ interface TopHeaderBarProps {
   onOpenImport?: () => void;
   // Client mode: open a server's library, upload to the open one, and its server's short name
   onOpenServerLibrary?: (root: string, server: string) => void;
+  // Libraries on this computer opened before, to switch back to from a server's (desktop app)
+  recentFolders?: string[];
+  onOpenRecentFolder?: (path: string) => void;
   onUpload?: () => void;
   serverLabel?: string;
   handleRescanFolder: () => Promise<void>;
@@ -162,6 +165,8 @@ export default function TopHeaderBar({
   handleOpenFolder,
   onOpenImport,
   onOpenServerLibrary,
+  recentFolders = [],
+  onOpenRecentFolder,
   onUpload,
   serverLabel,
   handleRescanFolder,
@@ -359,7 +364,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                 <div>
                   <div className="font-medium text-zinc-200">{serverLabel ? "Open a Folder on This PC..." : "Switch Library Folder..."}</div>
                   <div className="text-[11px] text-zinc-500 truncate max-w-[180px]">
-                    {folder}
+                    {serverLabel ? "Choose a folder" : folder}
                   </div>
                 </div>
               </button>
@@ -392,6 +397,29 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                     <div className="text-[11px] text-zinc-500">To {serverLabel}; or drop files and folders on the window</div>
                   </div>
                 </button>
+              )}
+              {onOpenRecentFolder && recentFolders.length > 0 && (
+                <div className="px-1 py-1.5 flex flex-col gap-1">
+                  <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-500 flex items-center gap-1.5 px-1">
+                    <HardDrive className="w-3 h-3" /> On this PC
+                  </div>
+                  {recentFolders.map((path) => (
+                    <button
+                      key={path}
+                      onClick={() => {
+                        setIsLibraryMenuOpen(false);
+                        onOpenRecentFolder(path);
+                      }}
+                      className={`w-full rounded-lg text-left px-2 py-1.5 hover:bg-zinc-800/80 transition ${
+                        !serverLabel && path === folder ? "text-emerald-200" : "text-zinc-200"
+                      }`}
+                      title={path}
+                    >
+                      <div className="truncate text-[13px] font-medium">{path.split(/[\\/]/).filter(Boolean).pop() || path}</div>
+                      <div className="truncate text-[11px] text-zinc-500">{path}</div>
+                    </button>
+                  ))}
+                </div>
               )}
               {onOpenServerLibrary && (
                 <div className="px-1 py-1.5">

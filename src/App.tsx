@@ -528,6 +528,8 @@ export default function App() {
         handleOpenFolder={lib.handleOpenFolder}
         onOpenImport={platform.localFiles ? () => lib.openImport() : undefined}
         onOpenServerLibrary={inDesktopApp ? (root, server) => lib.handleLoadFolderPath(root, server) : undefined}
+        recentFolders={lib.recentFolders}
+        onOpenRecentFolder={platform.fullApp ? (path) => lib.handleLoadFolderPath(path) : undefined}
         onUpload={client.pickAndUpload}
         serverLabel={client.server ? client.serverLabel : undefined}
         handleRescanFolder={lib.handleRescanFolder}
