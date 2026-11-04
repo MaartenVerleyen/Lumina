@@ -510,11 +510,18 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
     }
   }
 
+  const rescanAgainRef = useRef<string[] | null>(null);
   // Rescans without the progress dialog and keeps the selection; returns the photos, or null when it couldn't.
   // All photos lists its libraries again and checks on disk only the folders in `check` (where files changed).
+  // One asked for while another runs isn't dropped: it runs once that one ends (its folders to check added
+  // up), since what it was asked for can be newer than what the running one sees.
   async function silentRescan(check: string[] = []): Promise<PhotoItem[] | null> {
     const target = folderRef.current;
-    if (!target || isScanningFolder || silentScanRef.current) return null;
+    if (!target || isScanningFolder) return null;
+    if (silentScanRef.current) {
+      rescanAgainRef.current = [...(rescanAgainRef.current ?? []), ...check];
+      return null;
+    }
     silentScanRef.current = true;
     try {
       const args = target === ALL_PHOTOS ? { folderPath: target, forceReprocess: false, check } : { folderPath: target, forceReprocess: false };
@@ -526,6 +533,9 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
       return null;
     } finally {
       silentScanRef.current = false;
+      const again = rescanAgainRef.current;
+      rescanAgainRef.current = null;
+      if (again && isSameFolder(target, folderRef.current)) void silentRescanRef.current(again);
     }
   }
 

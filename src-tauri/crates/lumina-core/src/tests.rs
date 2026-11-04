@@ -2280,6 +2280,11 @@ fn listing_from_the_database_matches_a_scan() {
     db::migrate(&open_global_db(&*host).unwrap()).unwrap();
 
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    rt.block_on(scan::scan_folder(host.clone(), library.to_string_lossy().to_string(), None)).unwrap();
+    // The scan's thumbnail pass writes dHashes as it goes: compare once it's done (a rescan then has them)
+    while thumbs::thumbnail_passes_running() {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
     let scanned = rt.block_on(scan::scan_folder(host.clone(), library.to_string_lossy().to_string(), None)).unwrap();
     let listed = scan::list_library_photos(&*host, &library.to_string_lossy()).unwrap();
 
@@ -2300,7 +2305,17 @@ fn listing_from_the_database_matches_a_scan() {
     // A few photos by hash come back as the listing has them, in the order asked, and unknown hashes are left out
     let wanted = vec![listed[2].hash.clone(), "no-such-hash".to_string(), listed[0].hash.clone()];
     let by_hash = scan::photos_by_hash(&*host, &wanted).unwrap();
-    assert_eq!(comparable(&by_hash), comparable(&[listed[2].clone(), listed[0].clone()]));
+    // Duplicate groups belong to the whole library: photos fetched by hash come without them
+    let ungrouped = |photos: &[PhotoItem]| -> Vec<JsonValue> {
+        comparable(photos)
+            .into_iter()
+            .map(|mut v| {
+                v.as_object_mut().unwrap().remove("duplicate_group");
+                v
+            })
+            .collect()
+    };
+    assert_eq!(ungrouped(&by_hash), ungrouped(&[listed[2].clone(), listed[0].clone()]));
     assert!(scan::photos_by_hash(&*host, &[]).unwrap().is_empty());
 
     // A file deleted outside Lumina: neither a scan nor the listing shows it, though its row stays

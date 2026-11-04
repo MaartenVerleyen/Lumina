@@ -2,7 +2,7 @@
 // the other: index the files, thumbnails and video frames, faces, eyes and focus, smart search, and
 // captions when a caption model is configured. Every step only does what is still missing.
 use crate::host::ServerHost;
-use lumina_core::host::SharedHost;
+use lumina_core::host::{Host, SharedHost};
 use lumina_core::types::PhotoItem;
 use lumina_core::{ai, clip, db, face_engine, face_ort, face_quality, face_scan, scan, thumbs};
 use serde_json::Value as JsonValue;
@@ -170,6 +170,9 @@ impl Pipeline {
     async fn update_steps(&self, root: &str) -> Result<(), String> {
         println!("[library] {root}: indexing");
         let photos = scan::scan_folder(self.shared(), root.to_string(), None).await?;
+        // The watcher's event went out before the new files were indexed: windows that listed the library
+        // then list it again now (the serve loop takes no notice of what an update sends)
+        self.host.emit_value("library-files-changed", serde_json::json!(root));
         while thumbs::thumbnail_passes_running() {
             tokio::time::sleep(Duration::from_millis(250)).await;
         }

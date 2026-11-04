@@ -140,6 +140,8 @@ async fn serve(config: &Config, host: Arc<ServerHost>) -> Result<(), String> {
             eprintln!("[library] {root}: {e}");
         }
     }
+    // What the first updates sent is not a change to the libraries
+    changes = changes.resubscribe();
     watch::watch_libraries(host.clone(), roots.clone())?;
     println!("Watching {} for changes (Ctrl+C stops)", roots.join(", "));
 
