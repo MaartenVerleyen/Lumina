@@ -19,7 +19,7 @@ use crate::restore;
 use crate::{accounts, changes};
 use lumina_core::types::PersonItem;
 use std::sync::Arc;
-use lumina_core::{ai, albums, backup, clip, db, decode, duplicates, face_engine, face_quality, face_review, face_scan, ffmpeg, files, highlights, libraries, library, people, scan};
+use lumina_core::{ai, albums, backup, clip, db, decode, duplicates, face_engine, face_quality, face_review, face_scan, ffmpeg, files, highlights, libraries, library, people, photo_meta, scan};
 use serde::de::DeserializeOwned;
 use serde_json::Value as JsonValue;
 use std::future::Future;
@@ -418,6 +418,17 @@ commands! {
         let root = optional_root(&host, root_folder)?;
         face_scan::get_outdated_face_photos(host, root).await.map_err(ApiError::from)
     };
+
+    // Backup (docs/plans/one-view.md): the values a device had for photos it uploaded, put on where the
+    // server's copy has none (names on faces the server finds there, also later)
+    Editor [Target::Photos(items.iter().map(|m| m.hash.clone()).collect())] blocking apply_backup_values(items: Vec<photo_meta::PhotoMeta>) |host, scope|
+        photo_meta::apply(&mut db::open_global_db(&*host)?, &items)
+        => after {
+            let mut changed = Changed::photos(items.iter().map(|m| m.hash.clone()));
+            changed.people = items.iter().any(|m| !m.faces.is_empty() || !m.people.is_empty());
+            changed.albums = items.iter().any(|m| !m.albums.is_empty());
+            Ok(changed)
+        };
 
     // Albums, saved searches and trips. An album may hold photos of several libraries: changing it needs
     // the role on each of them

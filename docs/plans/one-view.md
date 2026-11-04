@@ -347,6 +347,33 @@ The phone app (phase 5) then adds the camera roll as a local source, with this s
   within seconds; the basket stays on this PC; smart search "rocket launch" finds the same 12 photos;
   People shows cachy's people with their faces; the local library opened alone is as before.
 
+### Milestone 2 (2026-11-04, checked on Windows against a lumina-server on 127.0.0.1)
+
+- **Back up now** sits next to the Where filter in All photos when a server this account may upload to is in
+  the view. It backs up every photo that isn't backed up, or, with more than one photo selected, those of the
+  selection (a Live Photo's clip goes with its photo). With several such servers a list picks the server.
+- The desktop's upload queue (`transfers.rs`, `back_up`) takes the photos by id and uploads their originals
+  (a RAW's own file, not its preview). Each file carries its values on this PC (`photo_meta::collect`: rating,
+  flag, label, caption, tags, album names, named faces with box and video frame, people without a face). Once
+  the file is on the server, or was there already, the queue sends the values (`apply_backup_values`), also
+  after a restart or a lost connection.
+- The server (`photo_meta::apply`) sets the rating, flag, label and caption only where its copy has none, adds
+  tags (none are taken away), puts the photo in the album of the same name (made if missing, names compared
+  without case), and uses its own spelling of a person's name. A name goes to the unnamed face found at the
+  same place (box overlap at least 0.3, same frame in a video). Faces not looked for yet: the names wait in
+  `backup_faces`, and the server's update puts them on after its face scan (`apply_waiting_faces`), with
+  `photos-changed` and `people-changed`.
+- Only an editor's values go along (`apply_backup_values` is an editor command); an account that may upload
+  but not edit backs up the files, and the button says the values stay on this PC.
+- The backup report is the notice when the queue finishes: uploaded, already on the server, failed, and for
+  how many photos the values went along, how many names wait for the faces, and photos with a named face
+  the server didn't find. All photos then lists its sources again, so the marks change.
+- Checked: four photos of the test library (two JPEGs and a NEF with a named face each, a video with a named
+  face in frame 0, one photo rated 4 with a tag and in an album, one flagged) backed up to a new server: the
+  values and the album landed, the server's AI tags stayed with the ones from this PC, the NEF arrived as
+  itself, the four names went on after the server's face scan (the video's on frame 0 only), and "Not backed
+  up" dropped from 94 to 90.
+
 ## Done when
 
 - On Maarten's desktop, All photos counts 61,500 photos for the example above. The Where filter's counts

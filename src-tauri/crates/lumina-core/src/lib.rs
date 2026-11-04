@@ -43,6 +43,7 @@ pub mod import;
 pub mod libraries;
 pub mod library;
 pub mod people;
+pub mod photo_meta;
 pub mod perf;
 pub mod recycle;
 pub mod scan;

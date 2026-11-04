@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { openLibraryServer, callLocal, subscribeLocal } from "../api";
+import { openLibraryIsAll, openLibraryServer, callLocal, subscribeLocal } from "../api";
 import { open, pictureDir, join, platform } from "../api/platform";
 import { confirmDialog } from "../confirm";
 import type { LibraryState } from "../hooks/useLibraryState";
@@ -39,6 +39,8 @@ export function useClientMode(lib: LibraryState, access: Access) {
         if (p.failed > 0) lib.setError(text);
         else lib.setAutoMatchNotice(text + ".");
         clearTransfers(kind).catch(() => {});
+        // A backup: the photos it sent are on the server now, so their marks change
+        if (kind === "upload" && openLibraryIsAll()) void lib.silentRescan();
       }
       wasRunning.current[kind] = p.running;
     }

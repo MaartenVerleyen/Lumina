@@ -444,6 +444,90 @@ fn embedding_blob_round_trips() {
 
 // ----------------- FACE REJECTIONS SURVIVE RE-DETECTION -----------------
 
+// Backup: a photo's values on this PC go to the server's copy without overwriting what it has, albums and
+// people by name in the server's spelling, names on the faces the server finds at the same place (in a
+// video, the same frame), also when it finds them only later
+#[test]
+fn backed_up_values_land_on_the_servers_copy() {
+    let device = Connection::open_in_memory().unwrap();
+    db::migrate(&device).unwrap();
+    db::ensure_album_tables(&device);
+    device
+        .execute_batch(
+            "INSERT INTO photos (hash, current_path, rating, flag, color_label, ai_caption) VALUES
+                ('p1', '/pc/p1.jpg', 4, 'pick', 'red', 'A rocket on the pad'),
+                ('v1', '/pc/v1.mp4', 0, NULL, NULL, ''),
+                ('p2', '/pc/p2.jpg', 1, NULL, NULL, '');
+             INSERT INTO photo_tags VALUES ('p1', 'sea'), ('p1', 'launch');
+             INSERT INTO albums (name) VALUES ('Wedding');
+             INSERT INTO album_photos (album_id, hash) VALUES (1, 'p1');
+             INSERT INTO photo_faces (face_id, hash, bbox_x, bbox_y, bbox_w, bbox_h, person_name, face_thumb, embedding) VALUES
+                ('p1_10_10', 'p1', 0.10, 0.10, 0.2, 0.2, 'Emma', '', '[]'),
+                ('v1_f2_50_50', 'v1', 0.50, 0.50, 0.1, 0.1, 'Bob', '', '[]');
+             INSERT INTO photo_people VALUES ('p1', 'Emma'), ('p1', 'Grandpa'), ('v1', 'Bob');",
+        )
+        .unwrap();
+    let metas = photo_meta::collect(&device, &["p1".into(), "v1".into(), "p2".into(), "gone".into()]).unwrap();
+    assert_eq!(metas.len(), 3);
+    assert_eq!(metas[0].tags, vec!["launch", "sea"]);
+    assert_eq!(metas[0].albums, vec!["Wedding"]);
+    assert_eq!(metas[0].people, vec!["Grandpa"], "Emma comes with her face");
+    assert_eq!(metas[1].faces[0].frame, Some(2));
+
+    let mut server = Connection::open_in_memory().unwrap();
+    db::migrate(&server).unwrap();
+    db::ensure_album_tables(&server);
+    server
+        .execute_batch(
+            "INSERT INTO photos (hash, current_path, rating, faces_engine) VALUES
+                ('p1', '/srv/p1.jpg', 2, 'v2'), ('v1', '/srv/v1.mp4', 0, NULL);
+             INSERT INTO photo_tags VALUES ('p1', 'screenshot');
+             INSERT INTO albums (name) VALUES ('wedding');
+             INSERT INTO people (name) VALUES ('emma');
+             INSERT INTO photo_faces (face_id, hash, bbox_x, bbox_y, bbox_w, bbox_h, person_name, face_thumb, embedding) VALUES
+                ('p1_11_10', 'p1', 0.11, 0.10, 0.2, 0.2, NULL, 'faces/p1_11_10.jpg', '[]'),
+                ('p1_60_60', 'p1', 0.60, 0.60, 0.2, 0.2, 'Ann', '', '[]');",
+        )
+        .unwrap();
+    let report = photo_meta::apply(&mut server, &metas).unwrap();
+    assert_eq!(report.photos, 2);
+    assert_eq!(report.missing, vec!["p2"]);
+    assert_eq!((report.faces_named, report.faces_waiting), (1, 1));
+    assert!(report.faces_unplaced.is_empty());
+
+    let (rating, flag, label, caption): (i64, Option<String>, Option<String>, String) = server
+        .query_row("SELECT rating, flag, color_label, ai_caption FROM photos WHERE hash = 'p1'", [], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+        })
+        .unwrap();
+    assert_eq!(rating, 2, "the server's rating stays");
+    assert_eq!((flag.as_deref(), label.as_deref(), caption.as_str()), (Some("pick"), Some("red"), "A rocket on the pad"));
+    fn list_of(conn: &Connection, sql: &str) -> Vec<String> {
+        let mut stmt = conn.prepare(sql).unwrap();
+        stmt.query_map([], |r| r.get::<_, String>(0)).unwrap().map(|r| r.unwrap()).collect()
+    }
+    let list = |sql: &str| list_of(&server, sql);
+    assert_eq!(list("SELECT tag FROM photo_tags WHERE hash = 'p1' ORDER BY tag"), vec!["launch", "screenshot", "sea"]);
+    assert_eq!(list("SELECT a.name FROM album_photos ap JOIN albums a ON a.id = ap.album_id"), vec!["wedding"]);
+    assert_eq!(list("SELECT person_name FROM photo_faces WHERE hash = 'p1' ORDER BY face_id"), vec!["emma", "Ann"]);
+    assert_eq!(list("SELECT person_name FROM photo_people WHERE hash = 'p1' ORDER BY person_name"), vec!["Grandpa", "emma"]);
+    assert_eq!(list("SELECT cover_face_thumb FROM people WHERE name = 'emma'"), vec!["faces/p1_11_10.jpg"]);
+
+    // Nothing to place before the video's faces are found; then the name goes to the face in its frame
+    assert!(photo_meta::apply_waiting_faces(&mut server).unwrap().is_empty());
+    server
+        .execute_batch(
+            "INSERT INTO photo_faces (face_id, hash, bbox_x, bbox_y, bbox_w, bbox_h, person_name, face_thumb, embedding) VALUES
+                ('v1_f0_50_50', 'v1', 0.50, 0.50, 0.1, 0.1, NULL, '', '[]'),
+                ('v1_f2_51_50', 'v1', 0.51, 0.50, 0.1, 0.1, NULL, '', '[]');
+             UPDATE photos SET faces_engine = 'v2' WHERE hash = 'v1';",
+        )
+        .unwrap();
+    assert_eq!(photo_meta::apply_waiting_faces(&mut server).unwrap(), vec!["v1"]);
+    assert_eq!(list_of(&server, "SELECT COALESCE(person_name, '-') FROM photo_faces WHERE hash = 'v1' ORDER BY face_id"), vec!["-", "Bob"]);
+    assert_eq!(list_of(&server, "SELECT hash FROM backup_faces"), Vec::<String>::new());
+}
+
 #[test]
 fn bbox_iou_basics() {
     let a = (0.1, 0.1, 0.2, 0.2);

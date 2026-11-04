@@ -48,7 +48,8 @@ src-tauri/                Cargo workspace root, and the desktop app crate ("Lumi
                           device's basket (never on a server), this PC's libraries for All photos
   crates/lumina-core/     the engine, no Tauri: db, libraries, scan, thumbs, decode, video_frames, ffmpeg,
                           face_* (SCRFD + ArcFace via ONNX Runtime), clip, ai (Ollama), albums, files,
-                          backup, import, watch, ...; tests.rs holds the engine tests
+                          backup, photo_meta (a photo's values taken along when it is backed up to a server),
+                          import, watch, ...; tests.rs holds the engine tests
   crates/lumina-server/   headless server binary (serve / scan / libraries / restore-backup / users):
                           accounts.rs (users, sessions), http/ (axum: login, RPC table with roles, web client)
 server/                   Dockerfile and docker-compose.yml (CUDA + ffmpeg + Ollama)
@@ -172,9 +173,10 @@ scan means the models did not run.
   has no Intel Mac build; CoreML as the Mac's GPU) when a release is published, and on demand; the Mac app is
   client-only for now (`platform.fullApp`). See docs/RELEASING.md.
 - **One view (on `lumina-5`; the brief is `docs/plans/one-view.md`):** All photos, this PC's folders and the
-  servers' libraries in one grid. Milestone 1 done on Windows (the merged grid with marks and the Where filter,
-  edits per home, the device's basket); next: backup with metadata, albums and people across sources, following
-  shared albums.
+  servers' libraries in one grid. Milestone 1 done on Windows and Linux (the merged grid with marks and the Where
+  filter, edits per home, the device's basket); milestone 2 done on Windows against a lumina-server on 127.0.0.1
+  (Back up now: uploads with their values, `apply_backup_values`, names waiting in `backup_faces` until the server
+  has found the faces); next: albums and people across sources, following shared albums.
 - **Phase 4:** clients help with the server's AI backlog on request, and analyse photos before uploading.
 - **Phase 5:** Android app (Tauri) with automatic backup (Kotlin WorkManager).
 

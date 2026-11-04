@@ -4,10 +4,14 @@
 // When the server can't be reached the queue waits (2 s, 4 s, ... 60 s) and tries again, for as long as it
 // takes; a file the server refuses is marked failed with the server's reason. Progress goes to the window
 // twice a second as `upload-progress` / `download-progress`.
+// A backup (All photos → Back up now) queues uploads that carry the photo's values on this PC (rating, tags,
+// albums, people names: lumina_core::photo_meta); once the file is on the server, or was there already, the
+// values are sent along (`apply_backup_values`), also after a restart.
 use crate::client_db;
 use crate::remote::{self, remote};
 use crate::transfer::{self, Conn, Failure, UploadFile};
 use crate::*;
+use lumina_core::photo_meta;
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::AtomicU64;
@@ -57,6 +61,21 @@ struct Item {
     state: ItemState,
     #[serde(default)]
     error: Option<String>,
+    // Backup: the photo's values on this PC (a photo_meta::PhotoMeta), and whether the server has had them
+    #[serde(default)]
+    values: Option<serde_json::Value>,
+    #[serde(default)]
+    values_sent: bool,
+}
+
+// A backed-up file whose values still have to go to the server
+fn values_due(i: &Item) -> bool {
+    i.values.is_some() && !i.values_sent && matches!(i.state, ItemState::Done | ItemState::Skipped)
+}
+
+// Something is left to do for this file
+fn unfinished(i: &Item) -> bool {
+    i.state == ItemState::Waiting || values_due(i)
 }
 
 #[derive(Serialize, Clone, Default)]
@@ -73,6 +92,13 @@ pub struct Progress {
     // "Reading files", "Asking the server what it has", "Uploading", or why it waits
     stage: String,
     failures: Vec<FailedFile>,
+    // Backup: photos whose values went on, or didn't (the reason is with the file); names put on faces,
+    // waiting for the server to find the faces, and photos with a named face the server didn't find
+    values_sent: usize,
+    values_failed: usize,
+    names_placed: usize,
+    names_waiting: usize,
+    names_unplaced: usize,
 }
 
 #[derive(Serialize, Clone)]
@@ -90,6 +116,8 @@ pub struct Queue {
     stage: Mutex<String>,
     // Bytes moved so far per file in flight, by the file's place in the list
     inflight: Mutex<HashMap<usize, (String, Arc<AtomicU64>)>>,
+    // Backup: names placed, waiting and not placed since the list started (not saved)
+    names: Mutex<(usize, usize, usize)>,
     file: PathBuf,
 }
 
@@ -111,6 +139,7 @@ impl Queue {
             dirty: AtomicBool::new(false),
             stage: Mutex::new(String::new()),
             inflight: Mutex::new(HashMap::new()),
+            names: Mutex::new((0, 0, 0)),
             file,
         }
     }
@@ -140,6 +169,13 @@ impl Queue {
         let mut p = Progress { running: self.running.load(Ordering::Relaxed), files: items.len(), stage: self.stage.lock().unwrap().clone(), ..Default::default() };
         for (i, item) in items.iter().enumerate() {
             p.bytes_total += item.size;
+            if item.values.is_some() && item.values_sent && item.state != ItemState::Failed {
+                if item.error.is_some() {
+                    p.values_failed += 1;
+                } else {
+                    p.values_sent += 1;
+                }
+            }
             match item.state {
                 ItemState::Done => {
                     p.done += 1;
@@ -163,6 +199,7 @@ impl Queue {
             }
         }
         p.current = inflight.values().map(|(name, _)| name.clone()).collect();
+        (p.names_placed, p.names_waiting, p.names_unplaced) = *self.names.lock().unwrap();
         p
     }
 
@@ -196,7 +233,7 @@ fn transfers(app: &AppHandle) -> &Transfers {
 pub fn resume(app: &AppHandle) {
     let t = transfers(app);
     for q in [&t.uploads, &t.downloads] {
-        if q.items.lock().unwrap().iter().any(|i| i.state == ItemState::Waiting) {
+        if q.items.lock().unwrap().iter().any(unfinished) {
             start(app, q.clone());
         }
     }
@@ -236,7 +273,7 @@ fn start(app: &AppHandle, q: Arc<Queue>) {
                 Kind::Upload => upload_pass(&app2, &q).await,
                 Kind::Download => download_pass(&app2, &q).await,
             };
-            let waiting = q.items.lock().unwrap().iter().any(|i| i.state == ItemState::Waiting);
+            let waiting = q.items.lock().unwrap().iter().any(unfinished);
             if q.cancel.load(Ordering::SeqCst) || !waiting {
                 q.set_stage("");
                 break;
@@ -354,7 +391,7 @@ async fn upload_pass(app: &AppHandle, q: &Arc<Queue>) -> Pass {
     // 3. Send what's missing, two at a time
     let todo = waiting(q, |i| i.checked);
     if todo.is_empty() {
-        return Pass::Finished;
+        return send_values(app, q, &client).await;
     }
     q.set_stage("Uploading");
     let outcome: Mutex<Option<Pass>> = Mutex::new(None);
@@ -392,7 +429,11 @@ async fn upload_pass(app: &AppHandle, q: &Arc<Queue>) -> Pass {
                     Ok(photo) => {
                         let hash = photo["hash"].as_str().map(str::to_string).or(item.hash.clone()).unwrap_or_default();
                         let _ = client_db::add_copy(app, &item.server, &hash, &path, item.size);
-                        q.update(i, |it| it.state = ItemState::Done);
+                        // The server's id for it (another copy of the same photo there gets its own)
+                        q.update(i, |it| {
+                            it.state = ItemState::Done;
+                            it.hash = Some(hash);
+                        });
                     }
                     Err(Failure::Refused(e)) => q.update(i, |it| {
                         it.state = ItemState::Failed;
@@ -410,7 +451,67 @@ async fn upload_pass(app: &AppHandle, q: &Arc<Queue>) -> Pass {
             }
         })
         .await;
-    outcome.into_inner().unwrap().unwrap_or(Pass::Finished)
+    match outcome.into_inner().unwrap() {
+        Some(pass) => pass,
+        None => send_values(app, q, &client).await,
+    }
+}
+
+// 4. A backup's values, for the files that are on the server now (sent, or there already)
+async fn send_values(app: &AppHandle, q: &Arc<Queue>, client: &str) -> Pass {
+    let due: Vec<(usize, Item)> =
+        q.items.lock().unwrap().iter().enumerate().filter(|(_, i)| values_due(i)).map(|(n, i)| (n, i.clone())).collect();
+    let servers: HashSet<String> = due.iter().map(|(_, i)| i.server.clone()).collect();
+    for server in servers {
+        let mine: Vec<&(usize, Item)> = due.iter().filter(|(_, i)| i.server == server).collect();
+        for batch in mine.chunks(200) {
+            if q.cancel.load(Ordering::SeqCst) {
+                return Pass::Finished;
+            }
+            q.set_stage("Putting ratings, tags, albums and names on the server's copies");
+            let items: Vec<serde_json::Value> = batch
+                .iter()
+                .filter_map(|(_, i)| {
+                    let mut values = i.values.clone()?;
+                    values["hash"] = serde_json::json!(i.hash.clone()?);
+                    Some(values)
+                })
+                .collect();
+            let args = serde_json::json!({ "items": items });
+            match remote::server_call(app.clone(), server.clone(), "apply_backup_values".into(), Some(args), Some(client.to_string())).await {
+                Ok(answer) => {
+                    let report: photo_meta::ApplyReport = serde_json::from_value(answer).unwrap_or_default();
+                    {
+                        let mut names = q.names.lock().unwrap();
+                        names.0 += report.faces_named;
+                        names.1 += report.faces_waiting;
+                        names.2 += report.faces_unplaced.len();
+                    }
+                    for (i, item) in batch {
+                        let missing = item.hash.as_ref().is_some_and(|h| report.missing.contains(h));
+                        q.update(*i, |it| {
+                            it.values_sent = true;
+                            if missing {
+                                it.error = Some("The server doesn't list this photo, so its values weren't put on".into());
+                            }
+                        });
+                    }
+                }
+                Err(_) if remote(app).token(&server).is_none() => return Pass::SignedOut(server),
+                Err(e) if e.starts_with("Can't reach the server") => return Pass::Unreachable(e),
+                // Refused (a role below editor, say): the files are there, without their values
+                Err(e) => {
+                    for (i, _) in batch {
+                        q.update(*i, |it| {
+                            it.values_sent = true;
+                            it.error = Some(format!("Its ratings, tags and names weren't put on: {e}"));
+                        });
+                    }
+                }
+            }
+        }
+    }
+    Pass::Finished
 }
 
 async fn download_pass(app: &AppHandle, q: &Arc<Queue>) -> Pass {
@@ -467,7 +568,8 @@ async fn download_pass(app: &AppHandle, q: &Arc<Queue>) -> Pass {
 // closed) doesn't count in its progress. A running queue keeps its list, whose places are in use.
 fn forget_finished(q: &Queue, items: &mut Vec<Item>) {
     if !q.running.load(Ordering::SeqCst) {
-        items.retain(|i| i.state == ItemState::Waiting);
+        items.retain(unfinished);
+        *q.names.lock().unwrap() = (0, 0, 0);
     }
 }
 
@@ -534,6 +636,73 @@ pub async fn upload_paths(app: AppHandle, server: String, paths: Vec<String>) ->
                 checked: false,
                 state: ItemState::Waiting,
                 error: None,
+                values: None,
+                values_sent: false,
+            });
+            queued += 1;
+        }
+        drop(items);
+        q.save();
+        Ok::<_, String>(Queued { queued, ignored })
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    start(&app, transfers(&app).uploads.clone());
+    Ok(queued)
+}
+
+// All photos → Back up now: these photos of this PC's libraries to the server, each with its values here
+// when `with_values` (an editor there; an uploader's backup sends the files only)
+#[tauri::command]
+pub async fn back_up(app: AppHandle, server: String, hashes: Vec<String>, with_values: bool) -> Result<Queued, String> {
+    remote(&app).server(&server)?;
+    let app2 = app.clone();
+    let queued = tauri::async_runtime::spawn_blocking(move || {
+        let conn = open_global_db(&app2)?;
+        // The originals (a RAW's or HEIC's own file, not the preview the grid shows)
+        let mut photos: Vec<(String, String)> = Vec::new();
+        for hash in &hashes {
+            if let Ok(path) = conn.query_row("SELECT current_path FROM photos WHERE hash = ?1", [hash], |r| r.get::<_, String>(0)) {
+                photos.push((hash.clone(), path));
+            }
+        }
+        let values: HashMap<String, serde_json::Value> = if with_values {
+            photo_meta::collect(&conn, &hashes)?
+                .into_iter()
+                .filter_map(|m| Some((m.hash.clone(), serde_json::to_value(&m).ok()?)))
+                .collect()
+        } else {
+            HashMap::new()
+        };
+        let q = transfers(&app2).uploads.clone();
+        let mut items = q.items.lock().unwrap();
+        forget_finished(&q, &mut items);
+        let already: HashSet<(String, String)> =
+            items.iter().filter(|i| unfinished(i)).filter_map(|i| Some((i.server.clone(), i.path.clone()?))).collect();
+        let (mut queued, mut ignored) = (0, hashes.len() - photos.len());
+        for (hash, file) in photos {
+            let path = PathBuf::from(&file);
+            if already.contains(&(server.clone(), file.clone())) {
+                continue;
+            }
+            let Ok(meta) = fs::metadata(&path) else {
+                ignored += 1;
+                continue;
+            };
+            items.push(Item {
+                server: server.clone(),
+                name: path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
+                path: Some(file),
+                dir: None,
+                size: meta.len(),
+                modified: modified_secs(&meta),
+                hash: None,
+                full_hash: None,
+                checked: false,
+                state: ItemState::Waiting,
+                error: None,
+                values: values.get(&hash).cloned(),
+                values_sent: false,
             });
             queued += 1;
         }
@@ -576,6 +745,8 @@ pub fn download_originals(app: AppHandle, server: String, photos: Vec<(String, S
             checked: true,
             state: ItemState::Waiting,
             error: None,
+            values: None,
+            values_sent: false,
         });
         queued += 1;
     }
@@ -622,7 +793,8 @@ pub fn clear_transfers(app: AppHandle, kind: String) -> Result<(), String> {
         // Places in the list are in use while it runs
         return Ok(());
     }
-    q.items.lock().unwrap().retain(|i| i.state == ItemState::Waiting);
+    q.items.lock().unwrap().retain(unfinished);
+    *q.names.lock().unwrap() = (0, 0, 0);
     q.save();
     let _ = app.emit(q.event(), q.progress());
     Ok(())

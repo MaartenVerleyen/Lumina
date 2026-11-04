@@ -18,6 +18,13 @@ export interface TransferProgress {
   current: string[];
   stage: string;
   failures: { name: string; error: string }[];
+  // Backup: photos whose ratings, tags, albums and names went on at the server, or didn't; names put on
+  // faces, waiting for the server to find the faces, and photos with a named face it didn't find
+  values_sent: number;
+  values_failed: number;
+  names_placed: number;
+  names_waiting: number;
+  names_unplaced: number;
 }
 
 export type TransferKind = "upload" | "download";
@@ -73,6 +80,12 @@ export function uploadPaths(server: string, paths: string[]) {
   return callLocal<{ queued: number; ignored: number }>("upload_paths", { server, paths });
 }
 
+// All photos → Back up now: photos of this PC's libraries to a server, with their values here when the
+// account may edit there
+export function backUp(server: string, hashes: string[], withValues: boolean) {
+  return callLocal<{ queued: number; ignored: number }>("back_up", { server, hashes, withValues });
+}
+
 export function downloadOriginals(server: string, photos: { hash: string; name: string }[], folder: string) {
   return callLocal<number>("download_originals", { server, photos: photos.map((p) => [p.hash, p.name]), folder });
 }
@@ -88,9 +101,22 @@ export function transferSummary(kind: TransferKind, p: TransferProgress): string
     `${what} ${p.done} of ${p.files} file${p.files === 1 ? "" : "s"}`,
     p.skipped > 0 ? `${p.skipped} already on the server` : "",
     p.failed > 0 ? `${p.failed} failed (${p.failures[0]?.name}: ${p.failures[0]?.error})` : "",
+    ...(kind === "upload" ? backupSummary(p) : []),
   ]
     .filter(Boolean)
     .join(" · ");
+}
+
+// What a backup did with the photos' values, for the line above
+export function backupSummary(p: TransferProgress): string[] {
+  const photos = (n: number) => `${n} photo${n === 1 ? "" : "s"}`;
+  const names = (n: number) => `${n} name${n === 1 ? "" : "s"}`;
+  return [
+    p.values_sent > 0 ? `ratings, tags and names went along for ${photos(p.values_sent)}` : "",
+    p.values_failed > 0 ? `not for ${photos(p.values_failed)}` : "",
+    p.names_waiting > 0 ? `${names(p.names_waiting)} go on once the server has found the faces` : "",
+    p.names_unplaced > 0 ? `${photos(p.names_unplaced)} have a named face the server didn't find` : "",
+  ];
 }
 
 // The queues as jobs in the status bar while they run, or while they wait to carry on (signed out, say).

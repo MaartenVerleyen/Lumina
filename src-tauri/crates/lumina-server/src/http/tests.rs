@@ -521,6 +521,40 @@ async fn an_edit_is_announced_recorded_and_readable_by_others() {
     assert!(events.try_recv().is_err());
 }
 
+// Backup: an editor's device sends its values for photos it uploaded; they go on where the server has
+// none, the face found at the same place gets its name, and other windows hear of photos, people and albums
+#[tokio::test]
+async fn backed_up_values_go_on_the_photos_and_are_announced() {
+    let s = server("backup_values");
+    add_library(&s);
+    {
+        let conn = db::open_global_db(&*s.host).unwrap();
+        conn.execute("UPDATE photos SET rating = 3, faces_engine = 'v2' WHERE hash = 'abc123'", []).unwrap();
+    }
+    let editor = login(&s.app, "ed").await;
+    let mut events = s.host.subscribe();
+    let item = json!({
+        "hash": "abc123", "rating": 5, "flag": "pick", "tags": ["Beach"], "albums": ["Holiday"],
+        "faces": [{"name": "Anna", "x": 0.11, "y": 0.2, "w": 0.1, "h": 0.1}]
+    });
+    // A photo the server doesn't have (its upload never arrived) is named in the answer, the rest goes on
+    let (status, _, report) = send(&s.app, post("/api/rpc/apply_backup_values", json!({"items": [item, {"hash": "nope"}]}), Some(&editor))).await;
+    assert_eq!(status, StatusCode::OK, "{report}");
+    assert_eq!((report["photos"].as_u64(), report["faces_named"].as_u64()), (Some(1), Some(1)));
+    assert_eq!(report["missing"], json!(["nope"]));
+
+    let mut seen = Vec::new();
+    while let Ok((event, _)) = events.try_recv() {
+        seen.push(event);
+    }
+    assert_eq!(seen, ["albums-changed", "photos-changed", "people-changed"]);
+    let (_, _, photos) = send(&s.app, post("/api/rpc/get_photos", json!({"hashes": ["abc123"]}), Some(&editor))).await;
+    assert_eq!(photos[0]["rating"], 3, "the server's rating stays");
+    assert_eq!(photos[0]["flag"], "pick");
+    assert_eq!(photos[0]["tags"], json!(["beach"]));
+    assert_eq!(photos[0]["people"], json!(["Anna"]));
+}
+
 #[tokio::test]
 async fn a_rename_announces_every_photo_of_that_person() {
     let s = server("rename");

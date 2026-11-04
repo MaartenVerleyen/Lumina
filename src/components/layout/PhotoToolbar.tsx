@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowUpDown, Calendar, Check, ChevronDown, Columns, Copy, FilterX, Folder, FolderSync, Layers, SlidersHorizontal, Trophy, X } from "lucide-react";
+import { ArrowUpDown, Calendar, Check, ChevronDown, CloudUpload, Columns, Copy, FilterX, Folder, FolderSync, Layers, SlidersHorizontal, Trophy, X } from "lucide-react";
 import type { LibraryState } from "../../hooks/useLibraryState";
 import { useAccess } from "../auth/ServerGate";
 import { AutoStagePreset, OrientationFilter, SortOption } from "../../types/lumina";
@@ -7,6 +7,7 @@ import { allPhotosCanBackUp, allPhotosSources, openLibraryIsAll, openLibraryServ
 import { whereabouts, type Whereabouts } from "../../api/allPhotos";
 import { libraryName } from "../../utils/photoHelpers";
 import { useOnDeviceSet } from "../../hooks/useOnDevice";
+import { backUp } from "../../hooks/useTransfers";
 
 const SORTS: { value: SortOption; label: string; pro?: boolean }[] = [
   { value: "DATE_DESC", label: "Date captured (newest)" },
@@ -178,6 +179,7 @@ export default function PhotoToolbar({ lib }: { lib: LibraryState }) {
 
         <OnDeviceFilter lib={lib} />
         <WhereFilter lib={lib} />
+        <BackUpButton lib={lib} />
 
         {lib.totalBurstGroups > 0 && (
           <button
@@ -410,6 +412,81 @@ const WHERE: { value: "all" | Whereabouts | "on-pc"; text: string; matches: (w: 
   { value: "on-pc", text: "On this PC", matches: (w) => w !== "server-only" },
   { value: "server-only", text: "Only on the server", matches: (w) => w === "server-only" },
 ];
+
+// All photos: sends the photos that are only on this PC to a server, with their ratings, tags, albums and
+// people names when the account may edit there (docs/plans/one-view.md, Backup). A selection of more than one
+// photo backs up those of it that aren't backed up; otherwise every one of them.
+function BackUpButton({ lib }: { lib: LibraryState }) {
+  const [busy, setBusy] = useState(false);
+  const [chosenServer, setChosenServer] = useState<string | null>(null);
+  if (!openLibraryIsAll() || !allPhotosCanBackUp()) return null;
+  const sources = allPhotosSources();
+  const notBackedUp = lib.photos.filter((p) => whereabouts(p, sources, true) === "not-backed-up");
+  if (notBackedUp.length === 0) return null;
+
+  // One entry per server this account may upload to; its libraries' names say which it is
+  const servers = new Map<string, { label: string; editable: boolean }>();
+  for (const s of sources.values()) {
+    if (s.server === null || !s.uploadable) continue;
+    const known = servers.get(s.server);
+    // A source is labelled "<server>: <library>" (a server's name can hold a colon itself: 127.0.0.1:8091)
+    const label = s.label.includes(": ") ? s.label.slice(0, s.label.lastIndexOf(": ")) : s.label;
+    servers.set(s.server, { label: known?.label ?? label, editable: !!known?.editable || s.editable });
+  }
+  const server = chosenServer && servers.has(chosenServer) ? chosenServer : [...servers.keys()][0];
+  const target = servers.get(server)!;
+
+  const inSelection = (p: (typeof notBackedUp)[number]) =>
+    lib.selectedHashes.has(p.hash) || (!!p.live_photo_hash && lib.selectedHashes.has(p.live_photo_hash));
+  const selected = lib.selectedHashes.size > 1 ? notBackedUp.filter(inSelection) : [];
+  const photos = selected.length > 0 ? selected : notBackedUp;
+  const count = `${photos.length} photo${photos.length === 1 ? "" : "s"}`;
+
+  const run = async () => {
+    setBusy(true);
+    try {
+      const r = await backUp(server, photos.map((p) => p.hash), target.editable);
+      const skipped = r.ignored > 0 ? ` (${r.ignored} not found on this PC)` : "";
+      lib.setAutoMatchNotice(`Backing up ${r.queued} photo${r.queued === 1 ? "" : "s"} to ${target.label}${skipped}.`);
+    } catch (err) {
+      lib.setError(`Couldn't start the backup: ${err}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-1">
+      {servers.size > 1 && (
+        <select
+          value={server}
+          onChange={(e) => setChosenServer(e.target.value)}
+          className="bg-zinc-900 border border-zinc-800 rounded-lg text-[11px] text-zinc-300 px-1.5 py-0.5"
+          aria-label="Server to back up to"
+        >
+          {[...servers].map(([id, s]) => (
+            <option key={id} value={id}>
+              {s.label}
+            </option>
+          ))}
+        </select>
+      )}
+      <button
+        onClick={run}
+        disabled={busy}
+        title={
+          target.editable
+            ? `Upload ${count} to ${target.label}, with their ratings, tags, albums and people names`
+            : `Upload ${count} to ${target.label} (you may upload there, not edit: ratings, tags and names stay on this PC)`
+        }
+        className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-semibold border border-amber-500/40 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 disabled:opacity-50 transition"
+      >
+        <CloudUpload className="w-3.5 h-3.5" />
+        Back up {selected.length > 0 ? `${count} selected` : count}
+      </button>
+    </div>
+  );
+}
 
 function WhereFilter({ lib }: { lib: LibraryState }) {
   const isAll = openLibraryIsAll();

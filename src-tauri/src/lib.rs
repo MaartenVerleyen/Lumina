@@ -187,6 +187,7 @@ pub fn run() {
             remote::set_remote_cache_limit,
             remote::clear_remote_cache,
             transfers::upload_paths,
+            transfers::back_up,
             transfers::download_originals,
             transfers::transfer_progress,
             transfers::cancel_transfers,

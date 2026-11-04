@@ -4,7 +4,7 @@
 use crate::host::ServerHost;
 use lumina_core::host::{Host, SharedHost};
 use lumina_core::types::PhotoItem;
-use lumina_core::{ai, clip, db, face_engine, face_ort, face_quality, face_scan, scan, thumbs};
+use lumina_core::{ai, clip, db, face_engine, face_ort, face_quality, face_scan, photo_meta, scan, thumbs};
 use serde_json::Value as JsonValue;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -178,9 +178,24 @@ impl Pipeline {
         }
         self.make_room_for_onnx().await;
         self.faces(root, &photos).await?;
+        self.backed_up_names().await?;
         self.smart_search(root).await?;
         if self.caption_model.is_some() {
             self.captions(root, &photos).await?;
+        }
+        Ok(())
+    }
+
+    // Names a device backed up for faces the server hadn't found yet go on now that it has looked
+    async fn backed_up_names(&self) -> Result<(), String> {
+        let host = self.host.clone();
+        let named = tokio::task::spawn_blocking(move || photo_meta::apply_waiting_faces(&mut db::open_global_db(&*host)?))
+            .await
+            .map_err(|e| e.to_string())??;
+        if !named.is_empty() {
+            println!("[library] backed-up names on the faces of {} photos", named.len());
+            self.host.emit_value("photos-changed", serde_json::json!({ "hashes": named, "by": "server", "origin": "" }));
+            self.host.emit_value("people-changed", serde_json::json!({ "by": "server", "origin": "" }));
         }
         Ok(())
     }
