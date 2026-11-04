@@ -352,14 +352,20 @@ pub fn decode_via_windows_wic(file_path: &Path, max_dim: u32) -> Option<(Dynamic
 // ffmpeg applies the image's rotation itself.
 pub fn decode_with_ffmpeg(ffmpeg: &Path, file_path: &Path, max_dim: u32) -> Option<DynamicImage> {
     let scale = format!("scale='min(iw,{max_dim})':'min(ih,{max_dim})':force_original_aspect_ratio=decrease");
-    let out = crate::ffmpeg::ffmpeg_command(ffmpeg)
-        .arg("-i")
-        .arg(file_path)
-        .args(["-frames:v", "1", "-vf", &scale, "-f", "image2pipe", "-c:v", "png", "-"])
-        .stderr(std::process::Stdio::null())
-        .output()
-        .ok()?;
-    image::load_from_memory_with_format(&out.stdout, ImageFormat::Png).ok()
+    let run = |filter: [&str; 2]| {
+        let out = crate::ffmpeg::ffmpeg_command(ffmpeg)
+            .arg("-i")
+            .arg(file_path)
+            .args(filter)
+            .args(["-frames:v", "1", "-f", "image2pipe", "-c:v", "png", "-"])
+            .stderr(std::process::Stdio::null())
+            .output()
+            .ok()?;
+        image::load_from_memory_with_format(&out.stdout, ImageFormat::Png).ok()
+    };
+    // An iPhone photo is a grid of tiles that ffmpeg (7.1 and newer) joins in a filter graph of its own; a
+    // plain -vf can't be added to that one, so ffmpeg writes nothing and the scale goes into the grid's graph
+    run(["-vf", &scale]).or_else(|| run(["-filter_complex", &format!("[0:g:0]{scale}")]))
 }
 
 // Large camera JPEGs (≥ ~1.5 MB) decode via DCT scaling when only `min_edge` pixels are needed; smaller ones

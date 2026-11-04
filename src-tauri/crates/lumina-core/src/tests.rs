@@ -2360,6 +2360,23 @@ fn ffmpeg_heic_matches_wic() {
     assert!(diff < 4.0);
 }
 
+// An iPhone HEIC (a grid of tiles, often with an HDR gain map) through the system's ffmpeg: whole and the
+// right shape, not the empty output a plain -vf gives on a grid.
+//   LUMINA_DIAG_FILE=<an iPhone .heic>
+#[test]
+#[ignore]
+fn ffmpeg_decodes_an_iphone_heic() {
+    let file = PathBuf::from(std::env::var("LUMINA_DIAG_FILE").expect("LUMINA_DIAG_FILE"));
+    let ffmpeg = crate::ffmpeg::system_ffmpeg().expect("ffmpeg on PATH");
+    let img = decode::decode_with_ffmpeg(&ffmpeg, &file, 512).expect("ffmpeg decoded nothing");
+    let (w, h) = img.dimensions();
+    eprintln!("{} -> {w}x{h}", file.display());
+    assert_eq!(w.max(h), 512);
+    let luma = img.to_luma8();
+    let mean = luma.pixels().map(|p| p.0[0] as f64).sum::<f64>() / (w * h) as f64;
+    assert!(mean > 8.0, "the picture is black (mean luma {mean:.1})");
+}
+
 // ----------------- FOLDER WATCH -----------------
 
 #[test]
