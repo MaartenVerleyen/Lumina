@@ -2362,7 +2362,8 @@ fn ffmpeg_heic_matches_wic() {
 
 // An iPhone HEIC (a grid of tiles, often with an HDR gain map) through the system's ffmpeg: whole and the
 // right shape, not the empty output a plain -vf gives on a grid.
-//   LUMINA_DIAG_FILE=<an iPhone .heic>
+//   LUMINA_DIAG_FILE=<an iPhone .heic>   (Linux: Windows decodes HEIC with WIC and has no system ffmpeg)
+#[cfg(not(windows))]
 #[test]
 #[ignore]
 fn ffmpeg_decodes_an_iphone_heic() {
