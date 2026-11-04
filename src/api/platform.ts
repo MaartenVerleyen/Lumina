@@ -1,27 +1,33 @@
 // What this app can do on the computer it runs on, beyond the engine: file and folder pickers, opening links,
 // the updater, well-known folders, files dropped on the window. The desktop app has all of them; the web
 // client has none: these stand-ins keep a browser from calling Tauri, and the flags let the UI hide what
-// needs them. Components import them from here only.
+// needs them. A server's library open in the desktop app is like the web client for the library's own
+// files and jobs. Components import them from here only.
 import * as dialog from "@tauri-apps/plugin-dialog";
 import * as opener from "@tauri-apps/plugin-opener";
 import * as updater from "@tauri-apps/plugin-updater";
 import * as app from "@tauri-apps/api/app";
 import * as paths from "@tauri-apps/api/path";
 import * as webview from "@tauri-apps/api/webview";
-import { inDesktopApp } from "./index";
+import { inDesktopApp, openLibraryIsLocal } from "./index";
 
 export type { Update } from "@tauri-apps/plugin-updater";
 
 export const platform = {
   // Native dialogs to pick files and folders on this computer
   fileDialogs: inDesktopApp,
-  // Libraries on this computer's own drives (scan, open in Explorer, import from a card, export, back up)
-  localFiles: inDesktopApp,
+  // The open library is on this computer's own drives (scan, open in Explorer, import from a card, export,
+  // back up)
+  get localFiles() {
+    return openLibraryIsLocal();
+  },
   // Updates through the built-in updater (a server updates with its image)
   updater: inDesktopApp,
   // The library's background work runs in this app (face scans and their upgrades, eyes and focus, the smart
-  // search index). A server's own pipeline does all of that, so its web client never starts them.
-  libraryJobs: inDesktopApp,
+  // search index). A server's own pipeline does all of that, so its clients never start them.
+  get libraryJobs() {
+    return openLibraryIsLocal();
+  },
 };
 
 const noComputer = () => Promise.reject("Not available in the browser");

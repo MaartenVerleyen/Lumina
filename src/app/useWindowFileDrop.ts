@@ -1,15 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import { getCurrentWebview } from "../api/platform";
 
-// A folder (or file) dropped on the window from Explorer opens as the library; `isDraggingOverWindow`
-// drives the full-window drop overlay.
-export function useWindowFileDrop(handleLoadFolderPath: (path: string) => void) {
+// Files or folders dropped on the window from Explorer: a folder opens as the library, or, with a server's
+// library open, they are uploaded to it (useClientMode). `isDraggingOverWindow` drives the drop overlay.
+export function useWindowFileDrop(onDrop: (paths: string[]) => void) {
   const [isDraggingOverWindow, setIsDraggingOverWindow] = useState<boolean>(false);
 
   // Global Tauri Drag & Drop Folder/File Listener: registered once (re-registering every render leaked
   // listeners, so one drop could start several concurrent folder loads)
-  const loadFolderRef = useRef(handleLoadFolderPath);
-  loadFolderRef.current = handleLoadFolderPath;
+  const onDropRef = useRef(onDrop);
+  onDropRef.current = onDrop;
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     let disposed = false;
@@ -20,10 +20,8 @@ export function useWindowFileDrop(handleLoadFolderPath: (path: string) => void) 
             setIsDraggingOverWindow(true);
           } else if (event.payload.type === "drop") {
             setIsDraggingOverWindow(false);
-            const droppedPath = event.payload.paths?.[0];
-            if (droppedPath) {
-              loadFolderRef.current(droppedPath);
-            }
+            const paths = event.payload.paths ?? [];
+            if (paths.length > 0) onDropRef.current(paths);
           } else {
             setIsDraggingOverWindow(false);
           }

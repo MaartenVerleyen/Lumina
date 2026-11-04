@@ -1,5 +1,6 @@
 import { useEffect, useState, ReactNode } from "react";
-import { call } from "../../api";
+import { call, inDesktopApp } from "../../api";
+import { ServersSettings } from "../servers/Servers";
 import { useAccess } from "../auth/ServerGate";
 import { getVersion, open as openDialog, openUrl, platform } from "../../api/platform";
 import { confirmDialog } from "../../confirm";
@@ -11,6 +12,7 @@ import {
   RefreshCw,
   ScanFace,
   Search,
+  Server,
   Settings as SettingsIcon,
   X,
 } from "lucide-react";
@@ -24,11 +26,12 @@ import type { Updater } from "../../hooks/useUpdater";
 import { defaultBackupDir } from "../../hooks/library/useBackup";
 import { DEFAULT_AI_MODEL } from "../../hooks/library/shared";
 
-export type SettingsSection = "general" | "library" | "ai" | "faces" | "search" | "updates" | "about";
+export type SettingsSection = "general" | "library" | "servers" | "ai" | "faces" | "search" | "updates" | "about";
 
 const SECTIONS: { id: SettingsSection; label: string; icon: typeof Info }[] = [
   { id: "general", label: "General", icon: LayoutGrid },
   { id: "library", label: "Library", icon: FolderOpen },
+  { id: "servers", label: "Servers", icon: Server },
   { id: "ai", label: "AI captions", icon: Brain },
   { id: "faces", label: "Faces", icon: ScanFace },
   { id: "search", label: "Smart search", icon: Search },
@@ -291,7 +294,7 @@ export default function SettingsModal({
             <SettingsIcon className="w-4 h-4 text-emerald-400" />
             Settings
           </div>
-          {SECTIONS.filter((s) => s.id !== "updates" || platform.updater).map((s) => (
+          {SECTIONS.filter((s) => (s.id !== "updates" || platform.updater) && (s.id !== "servers" || inDesktopApp)).map((s) => (
             <button
               key={s.id}
               onClick={() => setSection(s.id)}
@@ -667,6 +670,8 @@ export default function SettingsModal({
                 </Group>
               </>
             )}
+
+            {section === "servers" && <ServersSettings />}
 
             {section === "about" && (
               <>

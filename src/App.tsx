@@ -46,6 +46,7 @@ import { PhotoItem } from "./types/lumina";
 import { FolderOpen, Loader2 } from "lucide-react";
 import { usePaneLayout } from "./app/usePaneLayout";
 import { useWindowFileDrop } from "./app/useWindowFileDrop";
+import { useClientMode } from "./app/useClientMode";
 import { useAppKeys } from "./app/useAppKeys";
 import { backgroundJobsOf } from "./app/backgroundJobs";
 import { useSearchSuggestions } from "./app/useSearchSuggestions";
@@ -106,7 +107,8 @@ export default function App() {
   const gridContainerRef = useRef<HTMLDivElement>(null);
   const centerMainRef = useRef<HTMLElement>(null);
 
-  const isDraggingOverWindow = useWindowFileDrop(lib.handleLoadFolderPath);
+  const client = useClientMode(lib, access);
+  const isDraggingOverWindow = useWindowFileDrop(client.onDropPaths);
 
 
   // Context Menu State (Photos & Folders)
@@ -428,7 +430,7 @@ export default function App() {
   const onCardPointerDown: typeof startPhotoDrag = access.edit ? startPhotoDrag : () => {};
   const dragPhoto = drag ? lib.visiblePhotos.find((p) => p.hash === drag.thumbHash) : undefined;
 
-  const jobs = backgroundJobsOf(lib);
+  const jobs = [...backgroundJobsOf(lib), ...client.jobs];
 
   const getSearchSuggestions = useSearchSuggestions(lib);
 
@@ -525,6 +527,9 @@ export default function App() {
         handleStopAiBatch={lib.handleStopAiBatch}
         handleOpenFolder={lib.handleOpenFolder}
         onOpenImport={platform.localFiles ? () => lib.openImport() : undefined}
+        onOpenServerLibrary={inDesktopApp ? (root, server) => lib.handleLoadFolderPath(root, server) : undefined}
+        onUpload={client.pickAndUpload}
+        serverLabel={client.server ? client.serverLabel : undefined}
         handleRescanFolder={lib.handleRescanFolder}
         handleRescanAndProcessFolder={lib.handleRescanAndProcessFolder}
         handleOpenHealthDashboard={lib.handleOpenHealthDashboard}
@@ -784,6 +789,8 @@ export default function App() {
             handleAddToAlbum={lib.handleAddToAlbum}
             handleCreateAlbum={lib.handleCreateAlbum}
             onExport={platform.localFiles ? () => lib.openExport() : undefined}
+            onDownload={client.downloadSelection}
+            onRemoveLocal={client.removeLocalSelection}
           />
           </>
           )}

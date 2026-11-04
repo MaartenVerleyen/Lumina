@@ -14,6 +14,8 @@ export interface BackgroundJob {
   onCancel?: () => void;
   cancelLabel?: string;
   cancelling?: boolean;
+  // A second button next to Cancel ("Try again" for failed uploads)
+  action?: { label: string; onClick: () => void };
 }
 
 interface BottomStatusBarProps {
@@ -136,6 +138,14 @@ export default function BottomStatusBar({
                     <div key={job.id} className="p-2 rounded-lg bg-zinc-900/80 border border-zinc-800 flex flex-col gap-1.5">
                       <div className="flex items-center justify-between gap-2 text-xs">
                         <span className="text-zinc-200 font-medium truncate">{job.label}</span>
+                        {job.action && (
+                          <button
+                            onClick={job.action.onClick}
+                            className="ml-auto px-2 py-0.5 rounded bg-zinc-800 hover:bg-emerald-950/70 text-zinc-300 hover:text-emerald-200 text-[11px] shrink-0"
+                          >
+                            {job.action.label}
+                          </button>
+                        )}
                         {job.onCancel && (
                           <button
                             onClick={job.onCancel}

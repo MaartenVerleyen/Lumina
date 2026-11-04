@@ -2239,9 +2239,13 @@ impl Host for DirHost {
     fn emit_value(&self, _event: &str, _payload: JsonValue) {}
 }
 
+// A scan supersedes any other one running (SCAN_GENERATION), so tests that scan take turns
+static SCAN_TESTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 // The server lists a library from the database (no walk): it must give the same photos as a scan
 #[test]
 fn listing_from_the_database_matches_a_scan() {
+    let _turn = SCAN_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     let base = std::env::temp_dir().join(format!("lumina_listing_test_{}", std::process::id()));
     let _ = fs::remove_dir_all(&base);
     let (library, data) = (base.join("Library"), base.join("Data"));
@@ -2285,6 +2289,7 @@ fn listing_from_the_database_matches_a_scan() {
 // own (salted) hash, and both are found again by content
 #[test]
 fn a_new_file_is_indexed_alone_and_found_by_content() {
+    let _turn = SCAN_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     let base = std::env::temp_dir().join(format!("lumina_new_file_test_{}", std::process::id()));
     let _ = fs::remove_dir_all(&base);
     let (library, data) = (base.join("Library"), base.join("Data"));

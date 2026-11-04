@@ -3,6 +3,8 @@ import { ArrowUpDown, Calendar, Check, ChevronDown, Columns, Copy, FilterX, Fold
 import type { LibraryState } from "../../hooks/useLibraryState";
 import { useAccess } from "../auth/ServerGate";
 import { AutoStagePreset, OrientationFilter, SortOption } from "../../types/lumina";
+import { openLibraryServer } from "../../api";
+import { useOnDeviceSet } from "../../hooks/useOnDevice";
 
 const SORTS: { value: SortOption; label: string; pro?: boolean }[] = [
   { value: "DATE_DESC", label: "Date captured (newest)" },
@@ -171,6 +173,8 @@ export default function PhotoToolbar({ lib }: { lib: LibraryState }) {
             ))}
           </div>
         )}
+
+        <OnDeviceFilter lib={lib} />
 
         {lib.totalBurstGroups > 0 && (
           <button
@@ -343,6 +347,54 @@ export default function PhotoToolbar({ lib }: { lib: LibraryState }) {
         </Menu>
         )}
       </div>
+    </div>
+  );
+}
+
+const ON_DEVICE = "On this PC";
+const SERVER_ONLY = "Only on the server";
+
+// A server's library in the desktop app: all photos, the ones with their original on this PC, or the others.
+// It is the grid's named photo-set filter (the chip shows it), kept up to date as downloads finish.
+function OnDeviceFilter({ lib }: { lib: LibraryState }) {
+  const onDevice = useOnDeviceSet();
+  const server = openLibraryServer();
+  const label = lib.hashFilter?.label;
+  const current = label === ON_DEVICE ? "device" : label === SERVER_ONLY ? "server" : "all";
+  const apply = (which: "all" | "device" | "server") => {
+    if (which === "all") {
+      if (current !== "all") lib.setHashFilter(null);
+    } else if (which === "device") {
+      lib.setHashFilter({ label: ON_DEVICE, hashes: new Set(onDevice) });
+    } else {
+      lib.setHashFilter({ label: SERVER_ONLY, hashes: new Set(lib.photos.filter((p) => !onDevice.has(p.hash)).map((p) => p.hash)) });
+    }
+  };
+  useEffect(() => {
+    if (current !== "all") apply(current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onDevice]);
+  if (!server) return null;
+  return (
+    <div className="flex bg-zinc-900 border border-zinc-800 rounded-lg p-0.5 text-[11px]" role="group" aria-label="Where the originals are">
+      {(
+        [
+          ["all", "Everywhere"],
+          ["device", ON_DEVICE],
+          ["server", SERVER_ONLY],
+        ] as const
+      ).map(([value, text]) => (
+        <button
+          key={value}
+          onClick={() => apply(value)}
+          aria-pressed={current === value}
+          className={`px-2 py-0.5 rounded-md transition ${
+            current === value ? "bg-sky-500/20 text-sky-300 font-semibold" : "text-zinc-400 hover:text-zinc-200"
+          }`}
+        >
+          {text}
+        </button>
+      ))}
     </div>
   );
 }

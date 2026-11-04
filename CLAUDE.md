@@ -27,7 +27,9 @@ More: `docs/ARCHITECTURE.md` (data model, threading, backups), `docs/RELEASING.m
 ```
 src/                      React frontend
   api/                    the only place that talks to the engine: call(), subscribe(), mediaUrl()
-                          (transport.ts, index.ts) and platform.ts (dialogs, updater, folders, file drop)
+                          (transport.ts, index.ts) and platform.ts (dialogs, updater, folders, file drop);
+                          desktopRemote.ts (a server's library in the desktop app), remote.ts (the web
+                          client's server), webUpload.ts (uploads from a browser)
   hooks/library/*         state and actions per area (useFolder, usePeople, useAi, ...)
   components/, utils/     UI and pure helpers
 tests/*.test.ts           frontend tests (node --test)
@@ -37,6 +39,11 @@ src-tauri/                Cargo workspace root, and the desktop app crate ("Lumi
   src/system.rs           desktop-only: open in Explorer, clipboard, splash screen
   src/media_server.rs     Linux only: local videos over HTTP on 127.0.0.1 (WebKitGTK can't stream asset://)
   src/prepare.rs          model download for the installer
+  src/remote.rs           client mode: servers, sign-in (token in the OS credential store), server_call, the
+                          event socket per server (`remote-event`), the lumina-remote:// media protocol + cache
+  src/transfer.rs         the upload/download protocol (tests against a stand-in server: transfer_tests.rs)
+  src/transfers.rs        the upload and download queues (saved, resumed, retried; `upload-progress` ...)
+  src/client_db.rs        client.db in the app data folder: local copies of server photos ("On this PC")
   crates/lumina-core/     the engine, no Tauri: db, libraries, scan, thumbs, decode, video_frames, ffmpeg,
                           face_* (SCRFD + ArcFace via ONNX Runtime), clip, ai (Ollama), albums, files,
                           backup, import, watch, ...; tests.rs holds the engine tests
@@ -76,7 +83,7 @@ cargo build --release -p lumina-server
 
 # Frontend (from the repository root)
 npm ci
-npm test                                     # 82 tests
+npm test                                     # 89 tests
 npx tsc --noEmit -p .
 
 # Desktop app in development, on the test data (never on the real library)
@@ -147,11 +154,15 @@ scan means the models did not run.
   names, WebSocket events, `/media/{thumb|original|preview|face}/…` (the kinds of `MediaRef` in
   `src/api/transport.ts`), accounts with roles (viewer, uploader, editor, admin) and shared albums, a jobs
   table, the web client served from `/`, restore of a `.luminabackup` in the admin UI.
-- **Phase 3 (on `lumina-5`; the brief is `docs/plans/phase-3-client.md`; milestone 1, the server's upload and
-  download routes, is done on Linux; milestones 2–4 are the Windows desktop client):** desktop client
-  mode (connect to a server), uploads to `uploads/<name>/` (hash first, resumable), downloads, an "available on
-  this device" badge and filter, and shared folders from another server next to local libraries
-  (`transportFor` picks the connection per library). Mac and Linux desktop builds.
+- **Phase 3 (on `lumina-5`; the brief is `docs/plans/phase-3-client.md`):** milestone 1 (the server's upload
+  and download routes) done on Linux; milestones 2–4 done on Windows: the desktop app connects to servers
+  (Settings → Servers, or the start screen) and opens their libraries next to local folders (the open library
+  is a root plus its server, `setOpenLibrary(root, server)`; calls, events and media follow it, commands about
+  this computer stay local, `LOCAL_COMMANDS`), uploads (drop on the window, or Library → Upload Photos; the web
+  client's Upload button), downloads (selection → Download) with BLAKE3 checks, and "On this PC" badges, filter
+  and "Remove from this PC". Checked on Windows against a lumina-server on 127.0.0.1; still to check over
+  Tailscale with two accounts, and on Linux (keyring needs D-Bus' Secret Service; whether WebKitGTK streams
+  server videos from lumina-remote:// as it can't from asset://). Open: milestone 5, Mac and Linux builds.
 - **Phase 4:** clients help with the server's AI backlog on request, and analyse photos before uploading.
 - **Phase 5:** Android app (Tauri) with automatic backup (Kotlin WorkManager).
 

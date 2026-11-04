@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -11,6 +11,10 @@ mod engine_commands;
 mod system;
 mod prepare;
 mod media_server;
+mod remote;
+mod client_db;
+mod transfer;
+mod transfers;
 
 use db::*;
 use storage::*;
@@ -33,6 +37,13 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        // Client mode: a server's thumbnails, photos and videos, fetched with the session token (remote.rs)
+        .register_asynchronous_uri_scheme_protocol("lumina-remote", |ctx, request, responder| {
+            let app = ctx.app_handle().clone();
+            tauri::async_runtime::spawn(async move {
+                responder.respond(remote::serve_media(app, request).await);
+            });
+        })
         .setup(|app| {
             // A restore chosen in Settings is moved in before anything opens the database
             backup::apply_pending_restore(&get_app_storage_dir(app.handle()));
@@ -49,6 +60,11 @@ pub fn run() {
             import::start_drive_watch(Arc::new(app.handle().clone()));
             #[cfg(target_os = "linux")]
             media_server::start(app.handle().clone());
+            // Servers this app is signed in to: their events, and uploads or downloads still waiting
+            app.manage(Arc::new(remote::Remote::load(get_app_storage_dir(app.handle()))));
+            app.manage(transfers::init(app.handle()));
+            remote::start(app.handle());
+            transfers::resume(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -160,6 +176,24 @@ pub fn run() {
             system::copy_image_to_clipboard,
             engine_commands::ensure_high_res_preview,
             media_server::local_media_server,
+            remote::server_list,
+            remote::server_login,
+            remote::server_logout,
+            remote::server_remove,
+            remote::server_me,
+            remote::server_call,
+            remote::remote_cache_info,
+            remote::set_remote_cache_limit,
+            remote::clear_remote_cache,
+            transfers::upload_paths,
+            transfers::download_originals,
+            transfers::transfer_progress,
+            transfers::cancel_transfers,
+            transfers::clear_transfers,
+            transfers::retry_transfers,
+            transfers::client_id,
+            client_db::on_device,
+            client_db::remove_local_copies,
             system::close_splashscreen
         ])
         .run(tauri::generate_context!())

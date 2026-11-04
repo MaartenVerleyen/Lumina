@@ -1,9 +1,10 @@
 import { useEffect, useState, type RefObject } from "react";
-import { Clock, FolderInput, FolderOpen, Images, Search } from "lucide-react";
+import { Clock, FolderInput, FolderOpen, Images, Search, Server } from "lucide-react";
 import type { LibraryState } from "../../hooks/useLibraryState";
-import { call, rememberLibraryRoles, subscribe, type Role } from "../../api";
+import { call, inDesktopApp, rememberLibraryRoles, subscribe, type Role } from "../../api";
 import { useAccount } from "../auth/ServerGate";
-import { platform } from "../../api/platform";
+import { ConnectServerForm, ServerLibraryList } from "../servers/Servers";
+import { useServers } from "../../hooks/useServers";
 
 type GridRef = RefObject<HTMLDivElement | null>;
 
@@ -79,7 +80,16 @@ function ServerLibraries({ lib, gridContainerRef }: { lib: LibraryState; gridCon
 
 // No library open yet: open a folder (or drop one on the window), or pick a recent one
 export function NoLibrary({ lib, gridContainerRef }: { lib: LibraryState; gridContainerRef: GridRef }) {
-  if (!platform.localFiles) return <ServerLibraries lib={lib} gridContainerRef={gridContainerRef} />;
+  // The web client lists its server's libraries; the desktop app (also with a server's library open) offers
+  // folders on this PC and the libraries of every server it is connected to
+  if (!inDesktopApp) return <ServerLibraries lib={lib} gridContainerRef={gridContainerRef} />;
+  return <DesktopStart lib={lib} gridContainerRef={gridContainerRef} />;
+}
+
+// The desktop app with nothing open: a folder on this PC (the full app), or a library on a Lumina server
+function DesktopStart({ lib, gridContainerRef }: { lib: LibraryState; gridContainerRef: GridRef }) {
+  const { servers } = useServers();
+  const [connecting, setConnecting] = useState(false);
   return (
     <div
       ref={gridContainerRef}
@@ -137,6 +147,22 @@ export function NoLibrary({ lib, gridContainerRef }: { lib: LibraryState; gridCo
             </div>
           </div>
         )}
+
+        {/* Client mode: libraries of the Lumina servers this app is connected to */}
+        <div className="w-full mt-6 pt-5 border-t border-zinc-800/80 flex flex-col gap-3 text-left">
+          <ServerLibraryList onOpen={(root, server) => lib.handleLoadFolderPath(root, server)} />
+          {connecting ? (
+            <ConnectServerForm onDone={() => setConnecting(false)} />
+          ) : (
+            <button
+              onClick={() => setConnecting(true)}
+              className="self-start px-3 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs text-zinc-300 hover:text-white flex items-center gap-1.5 transition"
+            >
+              <Server className="w-3.5 h-3.5 text-emerald-400" />
+              {servers.length === 0 ? "Connect to a Lumina server…" : "Connect to another server…"}
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

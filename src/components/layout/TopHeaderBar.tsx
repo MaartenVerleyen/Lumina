@@ -1,5 +1,7 @@
 import { useState, useRef, useEffect, RefObject } from "react";
 import { AccountMenu } from "../auth/AccountMenu";
+import { ServerLibraryList } from "../servers/Servers";
+import { WebUploadButton } from "../servers/WebUpload";
 import { platform } from "../../api/platform";
 import { useAccess } from "../auth/ServerGate";
 import { confirmDialog } from "../../confirm";
@@ -49,6 +51,7 @@ import {
   Sliders,
   FileText,
   Library,
+  Upload,
 } from "lucide-react";
 
 interface TopHeaderBarProps {
@@ -95,6 +98,10 @@ interface TopHeaderBarProps {
   handleStopAiBatch: () => Promise<void>;
   handleOpenFolder: () => Promise<void>;
   onOpenImport?: () => void;
+  // Client mode: open a server's library, upload to the open one, and its server's short name
+  onOpenServerLibrary?: (root: string, server: string) => void;
+  onUpload?: () => void;
+  serverLabel?: string;
   handleRescanFolder: () => Promise<void>;
   handleRescanAndProcessFolder: () => Promise<void>;
   handleOpenHealthDashboard: () => Promise<void>;
@@ -154,6 +161,9 @@ export default function TopHeaderBar({
   handleStopAiBatch,
   handleOpenFolder,
   onOpenImport,
+  onOpenServerLibrary,
+  onUpload,
+  serverLabel,
   handleRescanFolder,
   handleRescanAndProcessFolder,
   handleOpenHealthDashboard,
@@ -318,6 +328,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
             >
               <FolderOpen className="w-3.5 h-3.5 text-emerald-400" />
               <span>{folder ? folder.split(/[\\/]/).pop() : "Open Library"}</span>
+              {folder && serverLabel && <span className="text-[11px] text-zinc-500">on {serverLabel}</span>}
             </button>
             {folder && (
               <button
@@ -346,7 +357,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
               >
                 <FolderOpen className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
                 <div>
-                  <div className="font-medium text-zinc-200">Switch Library Folder...</div>
+                  <div className="font-medium text-zinc-200">{serverLabel ? "Open a Folder on This PC..." : "Switch Library Folder..."}</div>
                   <div className="text-[11px] text-zinc-500 truncate max-w-[180px]">
                     {folder}
                   </div>
@@ -366,6 +377,32 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                     <div className="text-[11px] text-zinc-500">From a memory card, drive or folder</div>
                   </div>
                 </button>
+              )}
+              {onUpload && (
+                <button
+                  onClick={() => {
+                    setIsLibraryMenuOpen(false);
+                    onUpload();
+                  }}
+                  className="w-full flex items-start gap-2.5 p-2 rounded-lg hover:bg-zinc-800/80 text-left transition"
+                >
+                  <Upload className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                  <div>
+                    <div className="font-medium text-zinc-200">Upload Photos...</div>
+                    <div className="text-[11px] text-zinc-500">To {serverLabel}; or drop files and folders on the window</div>
+                  </div>
+                </button>
+              )}
+              {onOpenServerLibrary && (
+                <div className="px-1 py-1.5">
+                  <ServerLibraryList
+                    compact
+                    onOpen={(root, server) => {
+                      setIsLibraryMenuOpen(false);
+                      onOpenServerLibrary(root, server);
+                    }}
+                  />
+                </div>
               )}
               <div className="h-[1px] bg-zinc-800/80 my-1" />
               <button
@@ -1097,6 +1134,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
           )}
         </div>
 
+        {!platform.fileDialogs && <WebUploadButton className="!rounded-lg !p-1.5 [&_svg]:!w-4 [&_svg]:!h-4" />}
         <AccountMenu />
 
         <button

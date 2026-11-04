@@ -7,9 +7,11 @@ import {
   LOGGED_OUT_EVENT,
   openLibraryIsLocal,
   openLibraryRole,
+  openServerUser,
   serverAuth,
   subscribeAccess,
   type RemoteUser,
+  type Role,
 } from "../../api";
 
 // Who is logged in to the server (the web client only; null in the desktop app)
@@ -33,17 +35,22 @@ export interface Access {
   edit: boolean;
   // Files on disk (commit moves, empty _Trash), caches, the long jobs, users
   admin: boolean;
+  // Send photos to the server (uploader and up)
+  upload: boolean;
 }
 
-const EVERYTHING: Access = { edit: true, admin: true };
+const EVERYTHING: Access = { edit: true, admin: true, upload: true };
 
 export function useAccess(): Access {
   const account = useAccount();
   useSyncExternalStore(subscribeAccess, accessSnapshot);
   if (openLibraryIsLocal()) return EVERYTHING;
-  const admin = hasRole(account?.user, "admin");
-  const role = openLibraryRole() ?? account?.user.role;
-  return { edit: admin || hasRole(role ? { role } : null, "editor"), admin };
+  // The web client's account, or the one the desktop app uses on the open library's server
+  const user = account?.user ?? openServerUser();
+  const admin = hasRole(user, "admin");
+  const role = openLibraryRole() ?? user?.role;
+  const at = (wanted: Role) => admin || hasRole(role ? { role } : null, wanted);
+  return { edit: at("editor"), admin, upload: at("uploader") };
 }
 
 // The web client shows the app only to a logged-in user: it asks the server who is logged in, shows the

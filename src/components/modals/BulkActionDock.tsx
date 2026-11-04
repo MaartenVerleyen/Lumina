@@ -22,6 +22,7 @@ import {
   XCircle,
   BookImage,
   Download,
+  HardDriveDownload,
 } from "lucide-react";
 
 // Number field that accepts a leading "-" while typing: the text is kept as typed and the parent
@@ -51,6 +52,9 @@ function SignedIntInput({ value, onChange }: { value: number; onChange: (n: numb
 
 interface BulkActionDockProps {
   onExport?: () => void;
+  // A server's library open in the desktop app: download the originals, or remove the copies on this PC
+  onDownload?: () => void;
+  onRemoveLocal?: () => void;
   albums?: Album[];
   handleAddToAlbum?: (id: number, targetHashes?: string[]) => Promise<void>;
   handleCreateAlbum?: (name: string, addHashes?: string[]) => Promise<number | null>;
@@ -90,6 +94,8 @@ interface BulkActionDockProps {
 
 export default function BulkActionDock({
   onExport,
+  onDownload,
+  onRemoveLocal,
   albums,
   handleAddToAlbum,
   handleCreateAlbum,
@@ -520,6 +526,27 @@ export default function BulkActionDock({
           >
             <Download className="w-3.5 h-3.5 text-emerald-400" />
             <span>Export</span>
+          </button>
+        )}
+
+        {onDownload && (
+          <button
+            onClick={onDownload}
+            className="flex items-center gap-1 text-zinc-300 hover:text-white"
+            title="Download the originals of the selected photos to this PC"
+          >
+            <HardDriveDownload className="w-3.5 h-3.5 text-emerald-400" />
+            <span>Download</span>
+          </button>
+        )}
+        {onRemoveLocal && (
+          <button
+            onClick={onRemoveLocal}
+            className="flex items-center gap-1 text-zinc-300 hover:text-white"
+            title="Move the copies on this PC to the Recycle Bin (only for photos the server has)"
+          >
+            <Trash2 className="w-3.5 h-3.5 text-zinc-400" />
+            <span>Remove from this PC</span>
           </button>
         )}
 

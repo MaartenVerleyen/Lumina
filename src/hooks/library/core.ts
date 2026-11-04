@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import { call, inDesktopApp } from "../../api";
+import { call, inDesktopApp, libraryRefFromString } from "../../api";
 import { confirmDialog, type ConfirmKind } from "../../confirm";
 import { PhotoItem, SessionLogEntry, BulkPopover, PhotoActionSnapshot, ViewMode } from "../../types/lumina";
 import { expandWithRawPairs } from "../../utils/rawPairs";
@@ -14,7 +14,8 @@ export function useLibraryCore() {
   const splashClosedRef = useRef<boolean>(false);
   const [folder, setFolder] = useState<string>(() => {
     try {
-      return localStorage.getItem("lumina_active_folder") || "";
+      // A server's library is remembered with its server's name; the folder is its root
+      return libraryRefFromString(localStorage.getItem("lumina_active_folder") || "").root;
     } catch {
       return "";
     }

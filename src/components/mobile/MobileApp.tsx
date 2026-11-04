@@ -9,6 +9,7 @@ import { usePhoneLayout } from "../../app/usePhoneLayout";
 import ConfirmDialog from "../modals/ConfirmDialog";
 import PhotoMap from "../views/PhotoMap";
 import { NoLibrary } from "../views/EmptyStates";
+import { WebUploadButton } from "../servers/WebUpload";
 import MobileGrid from "./MobileGrid";
 import MobileViewer from "./MobileViewer";
 import luminaMark from "../../assets/lumina-mark.svg";
@@ -102,6 +103,7 @@ export default function MobileApp() {
             <button onClick={() => setSearching(true)} className="p-2.5 rounded-full text-zinc-300 active:bg-white/10" aria-label="Search">
               <Search className="w-5 h-5" />
             </button>
+            <WebUploadButton />
             <AccountButton />
           </div>
         )}

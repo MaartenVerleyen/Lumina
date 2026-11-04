@@ -1,5 +1,16 @@
 import { useState, useEffect, useRef } from "react";
-import { call, openLibraryRole, rememberLibraryRoles, setOpenLibrary, subscribe, type Role } from "../../api";
+import {
+  call,
+  libraryRefFromString,
+  libraryRefToString,
+  openLibraryRole,
+  openLibraryServer,
+  openServerUser,
+  rememberLibraryRoles,
+  setOpenLibrary,
+  subscribe,
+  type Role,
+} from "../../api";
 import { useAccount } from "../../components/auth/ServerGate";
 import { open, platform } from "../../api/platform";
 import { PhotoItem, ThumbBatchProgress, ThumbBatchItem, ExifRefreshResult, PerfLogEvent, TrashResult, TrashSummary, ScanProgressEvent } from "../../types/lumina";
@@ -49,10 +60,12 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
   const watchQuietUntilRef = useRef(0);
   const { watchLibrary } = useSettings();
 
-  function saveRecentFolder(path: string) {
+  function saveRecentFolder(path: string, server: string | null) {
     try {
-      localStorage.setItem("lumina_active_folder", path);
+      localStorage.setItem("lumina_active_folder", libraryRefToString({ server, root: path }));
     } catch {}
+    // Recent folders are folders on this computer; a server's libraries are listed per server
+    if (server) return;
     setRecentFolders((prev) => {
       const next = [path, ...prev.filter((p) => p !== path)].slice(0, 6);
       try {
@@ -104,7 +117,8 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
       try {
         const savedActive = localStorage.getItem("lumina_active_folder");
         if (savedActive && photos.length === 0) {
-          handleLoadFolderPath(savedActive);
+          const ref = libraryRefFromString(savedActive);
+          if (ref.root) handleLoadFolderPath(ref.root, ref.server);
         }
       } catch {}
     }
@@ -173,12 +187,16 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
   // Only the most recent folder load may apply its result (a slower earlier scan must not win)
   const folderLoadRequestRef = useRef(0);
 
-  async function handleLoadFolderPath(targetPath: string) {
+  // Opens a library: a folder on this computer, or (server set) a library of a server the app is connected to
+  async function handleLoadFolderPath(targetPath: string, server: string | null = null) {
     if (!targetPath) return;
     const requestId = ++folderLoadRequestRef.current;
     const isSuperseded = () => requestId !== folderLoadRequestRef.current;
     const previousFolder = folder;
+    const previousServer = openLibraryServer();
     try {
+      // Calls from here on go to the library's own engine
+      setOpenLibrary(targetPath, server);
       setFolder(targetPath);
       setSelectedHashes(new Set());
       setActiveHash(null);
@@ -200,7 +218,7 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
       });
       if (isSuperseded()) return;
       // Remember the folder only once it actually opened, so a bad path is never restored on next launch
-      saveRecentFolder(targetPath);
+      saveRecentFolder(targetPath, server);
       setPhotos(res);
       setIsScanningFolder(false);
       setScanProgress(null);
@@ -213,6 +231,7 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
     } catch (err) {
       if (isSuperseded()) return;
       // Keep showing the previous folder's photos under the previous folder's name
+      setOpenLibrary(previousFolder || null, previousServer);
       setFolder(previousFolder);
       setIsScanningFolder(false);
       setScanProgress(null);
@@ -499,7 +518,8 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
 
   // Watch the open library for photos added, changed or removed outside Lumina (Settings → Library)
   useEffect(() => {
-    call("watch_library", { root: watchLibrary && folder ? folder : null }).catch((err) =>
+    // A server watches its own libraries; the app's watcher only follows a folder on this computer
+    call("watch_library", { root: watchLibrary && folder && platform.localFiles ? folder : null }).catch((err) =>
       addLog("LIBRARY", "Could not watch the library folder for changes", String(err))
     );
   }, [folder, watchLibrary]);
@@ -529,15 +549,15 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
     };
   }, []);
 
-  // Rights follow the open library (see useAccess)
+  // Rights follow the open library (see useAccess); handleLoadFolderPath names its server
   useEffect(() => {
-    setOpenLibrary(folder || null);
+    if (!folder) setOpenLibrary(null);
   }, [folder]);
 
   // An album was shared with this user (or no longer is), or an admin changed their role: what they may see
   // changed, so the library is listed again, and the roles per library fetched again
   const account = useAccount();
-  const myName = account?.user.name;
+  const myName = account?.user.name ?? openServerUser()?.name;
   useEffect(() => {
     if (!myName) return;
     const offs = ["shares-changed", "roles-changed"].map((name) =>

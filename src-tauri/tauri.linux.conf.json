@@ -2,10 +2,10 @@
   "app": {
     "security": {
       "csp": {
-        "media-src": "'self' asset: http://asset.localhost blob: http://127.0.0.1:*"
+        "media-src": "'self' asset: http://asset.localhost lumina-remote: http://lumina-remote.localhost blob: http://127.0.0.1:*"
       },
       "devCsp": {
-        "media-src": "'self' asset: http://asset.localhost blob: http://localhost:1420 http://127.0.0.1:*"
+        "media-src": "'self' asset: http://asset.localhost lumina-remote: http://lumina-remote.localhost blob: http://localhost:1420 http://127.0.0.1:*"
       }
     }
   }

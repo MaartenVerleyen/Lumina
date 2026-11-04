@@ -23,7 +23,9 @@ import {
   Focus,
   Film,
   Play,
+  HardDrive,
 } from "lucide-react";
+import { useIsOnDevice } from "../../hooks/useOnDevice";
 
 export type { GridStyle, CardDetails } from "../../settings";
 import type { GridStyle, CardDetails } from "../../settings";
@@ -389,6 +391,7 @@ const PhotoCard = memo(function PhotoCard({
 
         {/* Top-Left Badges */}
         <div className="absolute top-2 left-2 flex items-center gap-1 z-20 flex-wrap">
+          <OnDeviceBadge hash={photo.hash} />
           {photo.in_basket && (
             <span
               className="p-1 rounded bg-cyan-950/90 border border-cyan-400/60 text-cyan-300 backdrop-blur shadow"
@@ -565,3 +568,13 @@ const PhotoCard = memo(function PhotoCard({
     </div>
   );
 });
+
+// A server's photo whose original is on this PC (client mode)
+function OnDeviceBadge({ hash }: { hash: string }) {
+  if (!useIsOnDevice(hash)) return null;
+  return (
+    <span className="p-1 rounded bg-zinc-950/85 border border-sky-400/50 text-sky-300 backdrop-blur shadow" title="On this PC">
+      <HardDrive className="w-3 h-3" />
+    </span>
+  );
+}
