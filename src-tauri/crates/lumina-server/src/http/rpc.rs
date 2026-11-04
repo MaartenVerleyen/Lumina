@@ -211,7 +211,13 @@ fn libraries_for(host: &ServerHost, scope: &Scope) -> Result<JsonValue, ApiError
     let mut out = Vec::new();
     for l in libraries::list(&conn)? {
         let role = scope.role_on(l.id);
-        let photos = if role >= Role::Viewer { l.photos } else { access::visible_photos(&conn, scope, Some(l.id))?.len() };
+        let present = libraries::present_photos(&conn, l.id)?;
+        let photos = if role >= Role::Viewer {
+            present.len()
+        } else {
+            let visible = access::visible_photos(&conn, scope, Some(l.id))?;
+            present.iter().filter(|h| visible.contains(*h)).count()
+        };
         if role >= Role::Viewer || photos > 0 {
             out.push(serde_json::json!({ "id": l.id, "root": l.root, "name": l.name, "photos": photos, "role": role.as_str() }));
         }

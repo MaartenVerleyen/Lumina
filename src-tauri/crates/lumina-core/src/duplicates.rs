@@ -405,7 +405,8 @@ fn load_rows(conn: &Connection, root_folder: Option<&str>) -> Result<Vec<DupRow>
             })
         })
         .map_err(|e| e.to_string())?;
-    Ok(rows.flatten().collect())
+    // A file that is gone keeps its row but isn't listed: it can't be a copy to keep or to move away
+    Ok(rows.flatten().filter(|r| Path::new(&r.path).exists()).collect())
 }
 
 pub async fn find_duplicates(app: SharedHost, root_folder: Option<String>) -> Result<Vec<DuplicateSet>, String> {

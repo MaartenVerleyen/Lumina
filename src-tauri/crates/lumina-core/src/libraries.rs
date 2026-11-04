@@ -164,6 +164,16 @@ pub fn list(conn: &Connection) -> Result<Vec<Library>, String> {
     Ok(rows.flatten().collect())
 }
 
+// The photos of a library whose file is there. A file that is gone keeps its row (its ratings and names
+// come back with it) but isn't listed, so a library's count leaves it out too.
+pub fn present_photos(conn: &Connection, id: i64) -> Result<Vec<String>, String> {
+    let mut stmt = conn.prepare("SELECT hash, current_path FROM photos WHERE library_id = ?1").map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+        .map_err(|e| e.to_string())?;
+    Ok(rows.flatten().filter(|(_, path)| std::path::Path::new(path).exists()).map(|(hash, _)| hash).collect())
+}
+
 // The library now lives at `new_root` (same files, another place): every photo's full path follows.
 // Returns how many photos moved with it.
 pub fn relocate(conn: &mut Connection, id: i64, new_root: &str) -> Result<usize, String> {

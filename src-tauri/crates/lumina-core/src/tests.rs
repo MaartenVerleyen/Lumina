@@ -2288,6 +2288,13 @@ fn listing_from_the_database_matches_a_scan() {
     let relisted = scan::list_library_photos(&*host, &library.to_string_lossy()).unwrap();
     assert_eq!(rescanned.len(), 2);
     assert_eq!(comparable(&relisted), comparable(&rescanned));
+    // The library's count and the duplicate search leave it out as well
+    let conn = open_global_db(&*host).unwrap();
+    let library_id: i64 = conn.query_row("SELECT id FROM libraries", [], |r| r.get(0)).unwrap();
+    assert_eq!(conn.query_row("SELECT COUNT(*) FROM photos", [], |r| r.get::<_, i64>(0)).unwrap(), 3);
+    assert_eq!(libraries::present_photos(&conn, library_id).unwrap().len(), 2);
+    let (_, read) = duplicates::find_duplicate_sets(&conn, Some(&library.to_string_lossy()), &data.join("thumbnails")).unwrap();
+    assert_eq!(read, 2);
     drop(rt);
     let _ = fs::remove_dir_all(&base);
 }

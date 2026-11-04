@@ -69,7 +69,7 @@ pub async fn status(host: &ServerHost) -> Result<JsonValue, ApiError> {
             ),
             root: l.root,
             name: l.name,
-            photos: l.photos,
+            photos: libraries::present_photos(&conn, l.id)?.len(),
             thumbnails_missing,
         });
     }
