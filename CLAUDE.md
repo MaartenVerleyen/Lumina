@@ -29,7 +29,8 @@ src/                      React frontend
   api/                    the only place that talks to the engine: call(), subscribe(), mediaUrl()
                           (transport.ts, index.ts) and platform.ts (dialogs, updater, folders, file drop);
                           desktopRemote.ts (a server's library in the desktop app), remote.ts (the web
-                          client's server), webUpload.ts (uploads from a browser)
+                          client's server), webUpload.ts (uploads from a browser); allPhotos.ts (All photos:
+                          several libraries merged by hash, edits split per photo's home; routed in index.ts)
   hooks/library/*         state and actions per area (useFolder, usePeople, useAi, ...)
   components/, utils/     UI and pure helpers
 tests/*.test.ts           frontend tests (node --test)
@@ -43,7 +44,8 @@ src-tauri/                Cargo workspace root, and the desktop app crate ("Lumi
                           event socket per server (`remote-event`), the lumina-remote:// media protocol + cache
   src/transfer.rs         the upload/download protocol (tests against a stand-in server: transfer_tests.rs)
   src/transfers.rs        the upload and download queues (saved, resumed, retried; `upload-progress` ...)
-  src/client_db.rs        client.db in the app data folder: local copies of server photos ("On this PC")
+  src/client_db.rs        client.db in the app data folder: local copies of server photos ("On this PC"), the
+                          device's basket (never on a server), this PC's libraries for All photos
   crates/lumina-core/     the engine, no Tauri: db, libraries, scan, thumbs, decode, video_frames, ffmpeg,
                           face_* (SCRFD + ArcFace via ONNX Runtime), clip, ai (Ollama), albums, files,
                           backup, import, watch, ...; tests.rs holds the engine tests
@@ -169,6 +171,10 @@ scan means the models did not run.
   `.github/workflows/desktop.yml` builds Linux (AppImage, .deb) and Mac (Apple Silicon .dmg; ONNX Runtime
   has no Intel Mac build; CoreML as the Mac's GPU) when a release is published, and on demand; the Mac app is
   client-only for now (`platform.fullApp`). See docs/RELEASING.md.
+- **One view (on `lumina-5`; the brief is `docs/plans/one-view.md`):** All photos, this PC's folders and the
+  servers' libraries in one grid. Milestone 1 done on Windows (the merged grid with marks and the Where filter,
+  edits per home, the device's basket); next: backup with metadata, albums and people across sources, following
+  shared albums.
 - **Phase 4:** clients help with the server's AI backlog on request, and analyse photos before uploading.
 - **Phase 5:** Android app (Tauri) with automatic backup (Kotlin WorkManager).
 

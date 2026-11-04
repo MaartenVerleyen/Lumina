@@ -1,8 +1,13 @@
 import { useState, useEffect, useRef } from "react";
 import {
+  ALL_PHOTOS,
+  allPhotosShownIn,
+  allPhotosSources,
   call,
+  isOpenLibraryRoot,
   libraryRefFromString,
   libraryRefToString,
+  openLibraryIsAll,
   openLibraryRole,
   openLibraryServer,
   openServerUser,
@@ -65,8 +70,9 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
     try {
       localStorage.setItem("lumina_active_folder", libraryRefToString({ server, root: path }));
     } catch {}
-    // Recent folders are folders on this computer; a server's libraries are listed per server
-    if (server) return;
+    // Recent folders are folders on this computer; a server's libraries are listed per server, and All
+    // photos has its own place in the menu
+    if (server || path === ALL_PHOTOS) return;
     setRecentFolders((prev) => {
       const next = [path, ...prev.filter((p) => p !== path)].slice(0, 6);
       try {
@@ -136,12 +142,15 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
     const unlisten = subscribe<ThumbBatchProgress>("thumb-batch-ready", (event) => {
       const { items, duplicate_groups, completed, total, folder: batchFolder } = event.payload;
       // A batch from a folder we've since left would overwrite this folder's duplicate groups
-      if (!isSameFolder(batchFolder, folderRef.current)) return;
-      setProgress(completed < total ? { completed, total } : null);
+      if (!isOpenLibraryRoot(batchFolder)) return;
+      const all = openLibraryIsAll();
+      if (!all) setProgress(completed < total ? { completed, total } : null);
 
       const batchMap = new Map<string, ThumbBatchItem>();
-      for (const it of items) batchMap.set(it.hash, it);
-      const hasDupUpdate = duplicate_groups && Object.keys(duplicate_groups).length > 0;
+      // In All photos a library's batch updates the photos the window shows from that library; its duplicate
+      // groups are numbered for that library alone
+      for (const it of items) if (!all || allPhotosShownIn(it.hash, batchFolder)) batchMap.set(it.hash, it);
+      const hasDupUpdate = !all && duplicate_groups && Object.keys(duplicate_groups).length > 0;
 
       setPhotos((prev) =>
         prev.map((p) => {
@@ -501,13 +510,15 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
     }
   }
 
-  // Rescans without the progress dialog and keeps the selection; returns the photos, or null when it couldn't
-  async function silentRescan(): Promise<PhotoItem[] | null> {
+  // Rescans without the progress dialog and keeps the selection; returns the photos, or null when it couldn't.
+  // All photos lists its libraries again and checks on disk only the folders in `check` (where files changed).
+  async function silentRescan(check: string[] = []): Promise<PhotoItem[] | null> {
     const target = folderRef.current;
     if (!target || isScanningFolder || silentScanRef.current) return null;
     silentScanRef.current = true;
     try {
-      const res = await call<PhotoItem[]>("scan_folder", { folderPath: target, forceReprocess: false });
+      const args = target === ALL_PHOTOS ? { folderPath: target, forceReprocess: false, check } : { folderPath: target, forceReprocess: false };
+      const res = await call<PhotoItem[]>("scan_folder", args);
       if (!isSameFolder(target, folderRef.current)) return null;
       setPhotos(res);
       return res;
@@ -520,8 +531,10 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
 
   // Watch the open library for photos added, changed or removed outside Lumina (Settings → Library)
   useEffect(() => {
-    // A server watches its own libraries; the app's watcher only follows a folder on this computer
-    call("watch_library", { root: watchLibrary && folder && platform.localFiles ? folder : null }).catch((err) =>
+    // A server watches its own libraries; the app's watcher only follows folders on this computer (All photos'
+    // too, in the desktop app)
+    const local = platform.localFiles || (folder === ALL_PHOTOS && platform.fullApp);
+    call("watch_library", { root: watchLibrary && folder && local ? folder : null }).catch((err) =>
       addLog("LIBRARY", "Could not watch the library folder for changes", String(err))
     );
   }, [folder, watchLibrary]);
@@ -530,8 +543,8 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
   silentRescanRef.current = silentRescan;
   useEffect(() => {
     const unlisten = subscribe<string>("library-files-changed", (event) => {
-      if (!isSameFolder(event.payload, folderRef.current) || Date.now() < watchQuietUntilRef.current) return;
-      silentRescanRef.current().then((res) => {
+      if (!isOpenLibraryRoot(event.payload) || Date.now() < watchQuietUntilRef.current) return;
+      silentRescanRef.current([event.payload]).then((res) => {
         if (res) addLog("LIBRARY", `Picked up changes made outside Lumina (${res.length} items)`);
       });
     });
@@ -544,7 +557,8 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
   // what they see changes, so their window lists the library again
   useEffect(() => {
     const off = subscribe("albums-changed", () => {
-      if (openLibraryRole() === "guest" && folderRef.current) silentRescanRef.current();
+      const sharedOnly = openLibraryIsAll() ? [...allPhotosSources().values()].some((s) => s.server !== null && !s.editable) : openLibraryRole() === "guest";
+      if (sharedOnly && folderRef.current) silentRescanRef.current();
     });
     return () => {
       off.then((f) => f());
@@ -571,10 +585,14 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
   const account = useAccount();
   const myName = account?.user.name ?? openServerUser()?.name;
   useEffect(() => {
-    if (!myName) return;
     const offs = ["shares-changed", "roles-changed"].map((name) =>
       subscribe<{ users?: string[] }>(name, (event) => {
-        if (!(event.payload.users ?? []).some((u) => u.toLowerCase() === myName.toLowerCase())) return;
+        // All photos (signed in to several servers, maybe under several names) lists everything again
+        if (openLibraryIsAll()) {
+          silentRescanRef.current();
+          return;
+        }
+        if (!myName || !(event.payload.users ?? []).some((u) => u.toLowerCase() === myName.toLowerCase())) return;
         call<{ root: string; role: Role }[]>("list_libraries")
           .then((list) => {
             rememberLibraryRoles(list);

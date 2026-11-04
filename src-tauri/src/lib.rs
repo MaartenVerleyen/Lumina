@@ -165,6 +165,7 @@ pub fn run() {
             engine_commands::start_import,
             engine_commands::cancel_import,
             engine_commands::watch_library,
+            engine_commands::watch_libraries,
             engine_commands::measure_face_quality,
             engine_commands::pick_highlights,
             engine_commands::export_gallery,
@@ -194,6 +195,10 @@ pub fn run() {
             transfers::client_id,
             client_db::on_device,
             client_db::remove_local_copies,
+            client_db::device_basket,
+            client_db::set_device_basket,
+            client_db::local_libraries,
+            client_db::list_local_library,
             system::close_splashscreen
         ])
         .run(tauri::generate_context!())

@@ -55,3 +55,13 @@ test("the open library is remembered with its server", () => {
   const remote = { server: "cachy.ts.net", root: "/photos" };
   assert.deepEqual(libraryRefFromString(libraryRefToString(remote)), remote);
 });
+
+test("All photos hears the events of every server in it, and no other", () => {
+  const events = createRemoteEvents(() => ["a.ts.net", "b.ts.net"]);
+  const got: unknown[] = [];
+  events.subscribe("photos-changed", (e) => got.push(e.payload));
+  events.deliver({ server: "a.ts.net", event: "photos-changed", payload: 1 });
+  events.deliver({ server: "b.ts.net", event: "photos-changed", payload: 2 });
+  events.deliver({ server: "c.ts.net", event: "photos-changed", payload: 3 });
+  assert.deepEqual(got, [1, 2]);
+});

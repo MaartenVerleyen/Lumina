@@ -318,6 +318,35 @@ This changes how the frontend talks to the engine, so it needs Maarten's agreeme
 
 The phone app (phase 5) then adds the camera roll as a local source, with this same view.
 
+## What was built
+
+### Milestone 1 (2026-11-04, checked on Windows against cachy)
+
+- `src/api/allPhotos.ts` (pure: merge, split per home, copying values back, marks; `tests/allPhotos.test.ts`)
+  and the routing in `src/api/index.ts`: the open library `ALL_PHOTOS` sends a photo edit (`hashes`) to the
+  engine of each photo's home, a copy on this PC follows edits of a server home, and photos without a home
+  are left alone with a note (`READ_ONLY_EVENT`) and fetched again. `get_people`, `semantic_status` and
+  `semantic_search` ask every source and merge; a command about one folder (`rootFolder`, moves) says to open
+  the library on its own. Media come from the engine of the copy the window shows.
+- This PC's folders are checked on disk when All photos opens, one after another, as a single folder is.
+  Scans now take turns per library (`scan::ScanTurn`): a scan with `keepOthers` stops only an earlier scan of
+  the same library, so the folders' thumbnail passes run side by side; opening one folder still stops them
+  all. The watcher follows every folder on this PC in the view (`watch_libraries`); a change checks only that
+  folder on disk and lists the others from the database (`list_local_library`).
+- The Where filter sits in the toolbar next to the media filter (Everywhere · Not backed up · On this PC ·
+  Only on the server), as the "On this PC" filter of a server library does.
+- People of several sources with the same name show as one already (milestone 3 adds names of your own and
+  naming per home). Collections shows a note instead of albums until milestone 3.
+- The basket is the device's for every library (`client.db`; the browser's local storage in the web
+  client); the first start moves the local libraries' basket in. The server no longer has
+  `set_photo_basket`; its `in_basket` column is left as it is, unused.
+- Settings → All photos lists the sources with a switch each. The Library menu opens All photos (desktop
+  app; the web client's entry comes with milestone 3).
+- Checked: 94 photos here and 96 on cachy give 99 (91 in both); the Where counts add up; a rating given in
+  All photos lands on cachy and in `C:\LuminaTest\Library`; a rating set on cachy reaches the copy here
+  within seconds; the basket stays on this PC; smart search "rocket launch" finds the same 12 photos;
+  People shows cachy's people with their faces; the local library opened alone is as before.
+
 ## Done when
 
 - On Maarten's desktop, All photos counts 61,500 photos for the example above. The Where filter's counts

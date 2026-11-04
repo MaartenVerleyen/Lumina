@@ -3,7 +3,9 @@ import { ArrowUpDown, Calendar, Check, ChevronDown, Columns, Copy, FilterX, Fold
 import type { LibraryState } from "../../hooks/useLibraryState";
 import { useAccess } from "../auth/ServerGate";
 import { AutoStagePreset, OrientationFilter, SortOption } from "../../types/lumina";
-import { openLibraryServer } from "../../api";
+import { allPhotosCanBackUp, allPhotosSources, openLibraryIsAll, openLibraryServer } from "../../api";
+import { whereabouts, type Whereabouts } from "../../api/allPhotos";
+import { libraryName } from "../../utils/photoHelpers";
 import { useOnDeviceSet } from "../../hooks/useOnDevice";
 
 const SORTS: { value: SortOption; label: string; pro?: boolean }[] = [
@@ -85,7 +87,7 @@ export function scopeTitle(lib: LibraryState): string {
   if (lib.activeEvent !== "ALL") return lib.autoEvents.find((e) => e.id === lib.activeEvent)?.label ?? "Trip";
   if (lib.activeSubfolder !== "ALL") return lib.activeSubfolder.split(" / ").pop() || lib.activeSubfolder;
   if (lib.searchQuery.trim()) return `"${lib.searchQuery.trim()}"`;
-  return lib.folder.split(/[\\/]/).filter(Boolean).pop() || "All photos";
+  return (lib.folder && libraryName(lib.folder)) || "All photos";
 }
 
 // The bar above the photo grid: Timeline, bursts, Compare, Highlights and two menus (View, Organize)
@@ -175,6 +177,7 @@ export default function PhotoToolbar({ lib }: { lib: LibraryState }) {
         )}
 
         <OnDeviceFilter lib={lib} />
+        <WhereFilter lib={lib} />
 
         {lib.totalBurstGroups > 0 && (
           <button
@@ -393,6 +396,57 @@ function OnDeviceFilter({ lib }: { lib: LibraryState }) {
           }`}
         >
           {text}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// All photos: where the photos are. Each choice is the grid's named photo-set filter, worked out again when
+// the photos change (a backup, a download).
+const WHERE: { value: "all" | Whereabouts | "on-pc"; text: string; matches: (w: Whereabouts) => boolean }[] = [
+  { value: "all", text: "Everywhere", matches: () => true },
+  { value: "not-backed-up", text: "Not backed up", matches: (w) => w === "not-backed-up" },
+  { value: "on-pc", text: "On this PC", matches: (w) => w !== "server-only" },
+  { value: "server-only", text: "Only on the server", matches: (w) => w === "server-only" },
+];
+
+function WhereFilter({ lib }: { lib: LibraryState }) {
+  const isAll = openLibraryIsAll();
+  const canBackUp = allPhotosCanBackUp();
+  const label = lib.hashFilter?.label;
+  const current = WHERE.find((w) => w.value !== "all" && w.text === label)?.value ?? "all";
+  const apply = (value: (typeof WHERE)[number]["value"]) => {
+    const choice = WHERE.find((w) => w.value === value)!;
+    if (value === "all") {
+      if (current !== "all") lib.setHashFilter(null);
+      return;
+    }
+    const sources = allPhotosSources();
+    const hashes = lib.photos.filter((p) => choice.matches(whereabouts(p, sources, canBackUp))).map((p) => p.hash);
+    lib.setHashFilter({ label: choice.text, hashes: new Set(hashes) });
+  };
+  useEffect(() => {
+    if (isAll && current !== "all") apply(current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lib.photos]);
+  if (!isAll) return null;
+  return (
+    <div className="flex bg-zinc-900 border border-zinc-800 rounded-lg p-0.5 text-[11px]" role="group" aria-label="Where the photos are">
+      {WHERE.filter((w) => canBackUp || w.value !== "not-backed-up").map((w) => (
+        <button
+          key={w.value}
+          onClick={() => apply(w.value)}
+          aria-pressed={current === w.value}
+          className={`px-2 py-0.5 rounded-md transition ${
+            current === w.value
+              ? w.value === "not-backed-up"
+                ? "bg-amber-500/20 text-amber-300 font-semibold"
+                : "bg-sky-500/20 text-sky-300 font-semibold"
+              : "text-zinc-400 hover:text-zinc-200"
+          }`}
+        >
+          {w.text}
         </button>
       ))}
     </div>

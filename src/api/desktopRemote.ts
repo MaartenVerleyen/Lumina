@@ -70,13 +70,13 @@ export interface RemoteEventMessage {
 }
 
 // Every server's events arrive on one channel; a handler gets those of the server whose library is open
-// (`current()` says which, at the moment the event arrives)
+// (`current()` says which, at the moment the event arrives; All photos has several)
 export interface RemoteEvents {
   subscribe<T>(event: string, handler: (event: EngineEvent<T>) => void): Promise<() => void>;
   deliver(message: RemoteEventMessage): void;
 }
 
-export function createRemoteEvents(current: () => string | null): RemoteEvents {
+export function createRemoteEvents(current: () => string | null | readonly string[]): RemoteEvents {
   const handlers = new Map<string, Set<(event: EngineEvent<unknown>) => void>>();
   return {
     subscribe<T>(event: string, handler: (event: EngineEvent<T>) => void) {
@@ -89,7 +89,8 @@ export function createRemoteEvents(current: () => string | null): RemoteEvents {
       });
     },
     deliver(message) {
-      if (!message || message.server !== current()) return;
+      const open = current();
+      if (!message || !(Array.isArray(open) ? open.includes(message.server) : message.server === open)) return;
       for (const handler of handlers.get(message.event) ?? []) {
         try {
           handler({ payload: message.payload });

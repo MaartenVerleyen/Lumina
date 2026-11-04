@@ -4,7 +4,9 @@ import {
   accessSnapshot,
   hasRole,
   inDesktopApp,
+  allPhotosSources,
   LOGGED_OUT_EVENT,
+  openLibraryIsAll,
   openLibraryIsLocal,
   openLibraryRole,
   openServerUser,
@@ -45,6 +47,12 @@ export function useAccess(): Access {
   const account = useAccount();
   useSyncExternalStore(subscribeAccess, accessSnapshot);
   if (openLibraryIsLocal()) return EVERYTHING;
+  // All photos: editing works where a photo's home allows it (the rest is left alone, with a note); files,
+  // jobs and users belong to one library opened on its own
+  if (openLibraryIsAll()) {
+    const sources = [...allPhotosSources().values()];
+    return { edit: sources.some((s) => s.editable), admin: false, upload: sources.some((s) => s.server !== null && s.uploadable) };
+  }
   // The web client's account, or the one the desktop app uses on the open library's server
   const user = account?.user ?? openServerUser();
   const admin = hasRole(user, "admin");

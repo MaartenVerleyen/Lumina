@@ -2242,6 +2242,27 @@ impl Host for DirHost {
 // A scan supersedes any other one running (SCAN_GENERATION), so tests that scan take turns
 static SCAN_TESTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+// All photos checks several libraries at once: a scan of one doesn't stop another's (nor its thumbnail
+// pass), a newer scan of the same library does, and opening a folder stops them all
+#[test]
+fn scans_of_two_libraries_run_side_by_side() {
+    let _turn = SCAN_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+    let photos = scan::begin_scan("/side-by-side/Photos", false);
+    let phone = scan::begin_scan("/side-by-side/Old phone", false);
+    assert!(!photos.superseded() && !phone.superseded());
+
+    let photos_again = scan::begin_scan("/side-by-side/Photos/", false);
+    assert!(photos.superseded(), "a newer scan of the same library");
+    assert!(!phone.superseded() && !photos_again.superseded());
+    let upload = scan::current_turn("/side-by-side/Old phone");
+    assert!(!upload.superseded(), "work that joins a library's turn supersedes nothing");
+    assert!(!phone.superseded());
+
+    let opened = scan::begin_scan("/side-by-side/Elsewhere", true);
+    assert!(photos_again.superseded() && phone.superseded() && upload.superseded());
+    assert!(!opened.superseded());
+}
+
 // The server lists a library from the database (no walk): it must give the same photos as a scan
 #[test]
 fn listing_from_the_database_matches_a_scan() {

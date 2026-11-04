@@ -75,8 +75,13 @@ pub fn cancel_thumbnail_pass() {
 }
 
 #[tauri::command]
-pub async fn scan_folder(app: AppHandle, folder_path: String, force_reprocess: Option<bool>) -> Result<Vec<PhotoItem>, String> {
-    scan::scan_folder(Arc::new(app), folder_path, force_reprocess).await
+pub async fn scan_folder(
+    app: AppHandle,
+    folder_path: String,
+    force_reprocess: Option<bool>,
+    keep_others: Option<bool>,
+) -> Result<Vec<PhotoItem>, String> {
+    scan::scan_library(Arc::new(app), folder_path, force_reprocess, !keep_others.unwrap_or(false)).await
 }
 
 #[tauri::command]
@@ -507,6 +512,12 @@ pub fn set_person_cover(app: AppHandle, name: String, face_id: String) -> Result
 #[tauri::command]
 pub fn watch_library(app: AppHandle, root: Option<String>) -> Result<(), String> {
     watch::watch_library(Arc::new(app), root)
+}
+
+// All photos watches every folder on this computer in it
+#[tauri::command]
+pub fn watch_libraries(app: AppHandle, roots: Vec<String>) -> Result<(), String> {
+    watch::watch_libraries(Arc::new(app), roots)
 }
 
 #[tauri::command]

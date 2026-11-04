@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import { call, inDesktopApp, OPEN_ADMIN_EVENT, openLibraryIsLocal } from "./api";
+import { ALL_PHOTOS, call, inDesktopApp, OPEN_ADMIN_EVENT, openLibraryIsLocal, READ_ONLY_EVENT } from "./api";
 import { platform } from "./api/platform";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useLibraryState } from "./hooks/useLibraryState";
@@ -130,6 +130,16 @@ export default function App() {
     window.addEventListener(OPEN_ADMIN_EVENT, open);
     return () => window.removeEventListener(OPEN_ADMIN_EVENT, open);
   }, []);
+  // All photos: an edit left photos shared with this user alone (they can look, not change)
+  const { setAutoMatchNotice } = lib;
+  useEffect(() => {
+    const note = (e: Event) => {
+      const n = (e as CustomEvent<number>).detail;
+      setAutoMatchNotice(`${n} photo${n === 1 ? " is" : "s are"} shared with you and can't be changed.`);
+    };
+    window.addEventListener(READ_ONLY_EVENT, note);
+    return () => window.removeEventListener(READ_ONLY_EVENT, note);
+  }, [setAutoMatchNotice]);
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("general");
 
@@ -529,6 +539,7 @@ export default function App() {
         onOpenImport={platform.localFiles ? () => lib.openImport() : undefined}
         onOpenServerLibrary={inDesktopApp ? (root, server) => lib.handleLoadFolderPath(root, server) : undefined}
         recentFolders={lib.recentFolders}
+        onOpenAllPhotos={inDesktopApp ? () => lib.handleLoadFolderPath(ALL_PHOTOS) : undefined}
         onOpenRecentFolder={platform.fullApp ? (path) => lib.handleLoadFolderPath(path) : undefined}
         onUpload={client.pickAndUpload}
         serverLabel={client.server ? client.serverLabel : undefined}

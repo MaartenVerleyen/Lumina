@@ -328,9 +328,6 @@ commands! {
     Editor [Target::Photos(ops.iter().map(|o| o.hash.clone()).collect())] blocking set_photos_rotation_exact(ops: Vec<library::RotationResetInput>) |host, scope|
         library::set_photos_rotation_exact(host, ops)
         => after Ok(Changed::photos(ops.into_iter().map(|o| o.hash)));
-    Editor [Target::Photos(hashes.clone())] blocking set_photo_basket(hashes: Vec<String>, in_basket: bool) |host, scope|
-        library::set_photo_basket(host, hashes, in_basket)
-        => after Ok(Changed::photos(hashes));
     Editor [Target::Photos(hashes.clone())] blocking add_tag_batch(hashes: Vec<String>, tag: String) |host, scope|
         library::add_tag_batch(host, hashes, tag)
         => after Ok(Changed::photos(hashes));
@@ -632,6 +629,8 @@ pub const NOT_ON_SERVER: &[&str] = &[
     "export_library_csv",
     "start_ollama_service",
     "enable_ollama_flash_attention",
+    // The basket belongs to each device (the window keeps it), not to a server's library
+    "set_photo_basket",
 ];
 
 pub fn lookup(name: &str) -> Option<&'static Command> {

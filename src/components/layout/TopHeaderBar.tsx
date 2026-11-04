@@ -5,7 +5,8 @@ import { WebUploadButton } from "../servers/WebUpload";
 import { platform } from "../../api/platform";
 import { useAccess } from "../auth/ServerGate";
 import { confirmDialog } from "../../confirm";
-import { call } from "../../api";
+import { ALL_PHOTOS, call } from "../../api";
+import { libraryName } from "../../utils/photoHelpers";
 import luminaMark from "../../assets/lumina-mark.svg";
 import type { GridStyle, CardDetails } from "../views/VirtualPhotoGrid";
 import { completeTerm, termBeingTyped, TermKey } from "../../utils/searchQuery";
@@ -52,6 +53,7 @@ import {
   FileText,
   Library,
   Upload,
+  Layers,
 } from "lucide-react";
 
 interface TopHeaderBarProps {
@@ -102,6 +104,8 @@ interface TopHeaderBarProps {
   onOpenServerLibrary?: (root: string, server: string) => void;
   // Libraries on this computer opened before, to switch back to from a server's (desktop app)
   recentFolders?: string[];
+  // This PC's folders and the servers' libraries in one view
+  onOpenAllPhotos?: () => void;
   onOpenRecentFolder?: (path: string) => void;
   onUpload?: () => void;
   serverLabel?: string;
@@ -167,6 +171,7 @@ export default function TopHeaderBar({
   onOpenServerLibrary,
   recentFolders = [],
   onOpenRecentFolder,
+  onOpenAllPhotos,
   onUpload,
   serverLabel,
   handleRescanFolder,
@@ -332,7 +337,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
               title={folder || "Open a photo library folder"}
             >
               <FolderOpen className="w-3.5 h-3.5 text-emerald-400" />
-              <span>{folder ? folder.split(/[\\/]/).pop() : "Open Library"}</span>
+              <span>{folder ? libraryName(folder) : "Open Library"}</span>
               {folder && serverLabel && <span className="text-[11px] text-zinc-500">on {serverLabel}</span>}
             </button>
             {folder && (
@@ -353,6 +358,23 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
 
           {isLibraryMenuOpen && (
             <div className="absolute left-0 top-full mt-1.5 w-64 bg-raised border border-zinc-700/80 rounded-xl shadow-2xl p-1.5 z-50 text-xs">
+              {onOpenAllPhotos && (
+                <button
+                  onClick={() => {
+                    setIsLibraryMenuOpen(false);
+                    onOpenAllPhotos();
+                  }}
+                  className={`w-full flex items-start gap-2.5 p-2 rounded-lg hover:bg-zinc-800/80 text-left transition ${
+                    folder === ALL_PHOTOS ? "bg-zinc-800/60" : ""
+                  }`}
+                >
+                  <Layers className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                  <div>
+                    <div className="font-medium text-zinc-200">All photos</div>
+                    <div className="text-[11px] text-zinc-500">This PC and your servers in one view</div>
+                  </div>
+                </button>
+              )}
               <button
                 onClick={() => {
                   setIsLibraryMenuOpen(false);
@@ -362,9 +384,9 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
               >
                 <FolderOpen className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
                 <div>
-                  <div className="font-medium text-zinc-200">{serverLabel ? "Open a Folder on This PC..." : "Switch Library Folder..."}</div>
+                  <div className="font-medium text-zinc-200">{serverLabel || folder === ALL_PHOTOS ? "Open a Folder on This PC..." : "Switch Library Folder..."}</div>
                   <div className="text-[11px] text-zinc-500 truncate max-w-[180px]">
-                    {serverLabel ? "Choose a folder" : folder}
+                    {serverLabel || folder === ALL_PHOTOS ? "Choose a folder" : folder}
                   </div>
                 </div>
               </button>

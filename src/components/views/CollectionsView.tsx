@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useAccess } from "../auth/ServerGate";
+import { openLibraryIsAll } from "../../api";
 import { BookImage, Calendar, Check, MoreHorizontal, Plane, Plus, Search, Sparkles, Trophy } from "lucide-react";
 import { Album, PhotoItem, SavedSearch } from "../../types/lumina";
 import { Trip } from "../../utils/trips";
@@ -284,6 +285,19 @@ export default function CollectionsView({
         </div>
       </div>
 
+      {/* Albums stay with their library: All photos lists them per library in a later step */}
+      {openLibraryIsAll() ? (
+        <section className="flex flex-col gap-2">
+          <h2 className="text-xs font-bold text-zinc-400 uppercase tracking-wider flex items-center gap-2">
+            <BookImage className="w-4 h-4 text-indigo-400" /> Albums
+          </h2>
+          <p className="text-[12px] text-zinc-500">
+            Albums and smart albums belong to their library. Open a library on its own (Library menu) to see and
+            change its albums.
+          </p>
+        </section>
+      ) : (
+      <>
       <section className="flex flex-col gap-3">
         <h2 className="text-xs font-bold text-zinc-400 uppercase tracking-wider flex items-center gap-2">
           <BookImage className="w-4 h-4 text-indigo-400" /> Albums ({albums.length})
@@ -389,6 +403,8 @@ export default function CollectionsView({
             </div>
           )}
         </section>
+      )}
+      </>
       )}
 
       {years.length > 0 && (

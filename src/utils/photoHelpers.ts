@@ -1,10 +1,22 @@
-import { mediaUrl } from "../api";
+import { ALL_PHOTOS, mediaUrl } from "../api";
 import { PhotoItem, FolderTreeNode, AutoStagePreset } from "../types/lumina";
+
+// What the open library is called: a folder's own name, or All photos
+export function libraryName(folder: string): string {
+  if (folder === ALL_PHOTOS) return "All photos";
+  return folder.split(/[\\/]/).filter(Boolean).pop() || folder;
+}
+
+// The folders a photo is in: its own, and in All photos those of its other copies
+export function foldersOf(p: Pick<PhotoItem, "subfolder" | "also_in">): string[] {
+  return p.also_in && p.also_in.length > 0 ? [p.subfolder, ...p.also_in] : [p.subfolder];
+}
 
 export function buildFolderTree(photos: PhotoItem[]): { rootCount: number; nodes: FolderTreeNode[] } {
   const directCounts = new Map<string, number>();
   for (const p of photos) {
-    directCounts.set(p.subfolder, (directCounts.get(p.subfolder) || 0) + 1);
+    // In All photos a photo is in the folder of each of its copies
+    for (const sub of foldersOf(p)) directCounts.set(sub, (directCounts.get(sub) || 0) + 1);
   }
 
   const rootCount = directCounts.get("Root") || 0;

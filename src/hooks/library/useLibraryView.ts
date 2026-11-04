@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { call } from "../../api";
 import { PhotoItem, TimelineBucket } from "../../types/lumina";
-import { buildFolderTree } from "../../utils/photoHelpers";
+import { buildFolderTree, foldersOf } from "../../utils/photoHelpers";
 import { diskPathOf, RAW_OR_HEIC_NAME } from "../../utils/rawPairs";
 import { matchesTerms } from "../../utils/searchQuery";
 import { matchesPeopleExpr } from "../../utils/peopleQuery";
@@ -226,10 +226,7 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
         if (activeSubfolder === "Root") {
           if (p.subfolder !== "Root") return false;
         } else {
-          if (
-            p.subfolder !== activeSubfolder &&
-            !p.subfolder.startsWith(activeSubfolder + " / ")
-          ) {
+          if (!foldersOf(p).some((sub) => sub === activeSubfolder || sub.startsWith(activeSubfolder + " / "))) {
             return false;
           }
         }

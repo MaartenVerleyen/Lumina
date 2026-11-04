@@ -1,0 +1,175 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import {
+  copyDownEdits,
+  includedSources,
+  mergeHits,
+  mergePeople,
+  mergeSources,
+  sourceKey,
+  splitByHome,
+  whereabouts,
+  type Source,
+} from "../src/api/allPhotos.ts";
+import type { PersonItem, PhotoItem } from "../src/types/lumina.ts";
+
+const photo = (hash: string, extra: Partial<PhotoItem> = {}): PhotoItem =>
+  ({
+    hash,
+    name: `${hash}.jpg`,
+    subfolder: "Root",
+    path: `/${hash}.jpg`,
+    thumb_path: "",
+    size_kb: 1,
+    width: 1,
+    height: 1,
+    thumb_ready: true,
+    rating: 0,
+    flag: null,
+    color_label: null,
+    rotation: 0,
+    in_basket: false,
+    tags: [],
+    people: [],
+    faces: [],
+    ai_caption: "",
+    ocr_text: "",
+    captured_at: "",
+    camera_model: "",
+    location: "",
+    dhash: "",
+    sharpness: 0,
+    damaged: false,
+    ...extra,
+  }) as PhotoItem;
+
+// The household of the brief: D:\Photos on this PC, cachy's library (editor), and a library shared read-only
+const pc: Source = { server: null, root: "D:\\Photos", label: "D:\\Photos", editable: true, uploadable: false };
+const cachy: Source = { server: "cachy", root: "/photos", label: "cachy: photos", editable: true, uploadable: true };
+const shared: Source = { server: "dads", root: "/lib", label: "dads: lib", editable: false, uploadable: false };
+const sources = new Map([pc, cachy, shared].map((s) => [sourceKey(s), s]));
+
+test("a photo in two places shows once, with the server's values, and sits in both folders", () => {
+  const merged = mergeSources([
+    { source: pc, photos: [photo("both", { rating: 2, subfolder: "2024", tags: ["sea"] }), photo("mine")] },
+    { source: cachy, photos: [photo("both", { rating: 4, subfolder: "uploads / maarten" }), photo("theirs")] },
+  ]);
+  assert.equal(merged.photos.length, 3);
+  const both = merged.photos.find((p) => p.hash === "both")!;
+  assert.equal(both.rating, 4);
+  assert.equal(both.home, sourceKey(cachy));
+  assert.equal(both.subfolder, "cachy: photos / uploads / maarten");
+  assert.deepEqual(both.also_in, ["D:\\Photos / 2024"]);
+  assert.deepEqual(both.copies, [sourceKey(pc), sourceKey(cachy)]);
+  // The copy on this PC is remembered as it is, to bring it in step
+  assert.deepEqual(merged.localValues.get("both"), { rating: 2, flag: null, color_label: null, tags: ["sea"] });
+  assert.equal(merged.photos.find((p) => p.hash === "mine")!.subfolder, "D:\\Photos");
+});
+
+test("a photo only shared with you has no home; your own copy of it is the home", () => {
+  const merged = mergeSources([
+    { source: shared, photos: [photo("look"), photo("kept")] },
+    { source: pc, photos: [photo("kept", { rating: 3 })] },
+  ]);
+  assert.equal(merged.photos.find((p) => p.hash === "look")!.home, null);
+  assert.equal(merged.copies.get("look")!.shown, sourceKey(shared));
+  const kept = merged.photos.find((p) => p.hash === "kept")!;
+  assert.equal(kept.home, sourceKey(pc));
+  assert.equal(kept.rating, 3);
+});
+
+test("burst groups of two libraries don't run into each other", () => {
+  const merged = mergeSources([
+    { source: pc, photos: [photo("a", { duplicate_group: 1 })] },
+    { source: cachy, photos: [photo("b", { duplicate_group: 1 })] },
+  ]);
+  const groups = merged.photos.map((p) => p.duplicate_group);
+  assert.notEqual(groups[0], groups[1]);
+});
+
+test("an edit goes to each photo's home, its copy here follows, and shared photos are left alone", () => {
+  const merged = mergeSources([
+    { source: pc, photos: [photo("both"), photo("mine")] },
+    { source: cachy, photos: [photo("both"), photo("theirs")] },
+    { source: shared, photos: [photo("look")] },
+  ]);
+  const split = splitByHome(["both", "mine", "theirs", "look"], merged.copies, sources);
+  assert.deepEqual(split.byEngine.get("cachy"), ["both", "theirs"]);
+  assert.deepEqual(split.byEngine.get(""), ["mine"]);
+  assert.equal(split.byEngine.has("dads"), false);
+  assert.deepEqual(split.readOnly, ["look"]);
+  assert.deepEqual(split.alsoLocal, ["both"]);
+});
+
+test("copies here take the server's rating, flag, label and tags, in a few grouped calls", () => {
+  const local = new Map([
+    ["a", { rating: 2, flag: null, color_label: null, tags: ["sea", "old"] }],
+    ["b", { rating: 2, flag: null, color_label: null, tags: [] }],
+    ["c", { rating: 5, flag: "pick" as const, color_label: "red" as const, tags: [] }],
+  ]);
+  const edits = copyDownEdits(
+    [
+      photo("a", { rating: 4, tags: ["sea", "new"] }),
+      photo("b", { rating: 4, flag: "pick" }),
+      photo("c", { rating: 5, flag: "pick", color_label: "red" }),
+    ],
+    local
+  );
+  assert.deepEqual(edits, [
+    { command: "set_photos_rating", args: { hashes: ["a", "b"], rating: 4 } },
+    { command: "set_photo_flag", args: { hashes: ["b"], flag: "pick" } },
+    { command: "add_tag_batch", args: { hashes: ["a"], tag: "new" } },
+    { command: "remove_tag_batch", args: { hashes: ["a"], tag: "old" } },
+  ]);
+  assert.deepEqual(copyDownEdits([photo("x", { rating: 3 })], local), []);
+});
+
+test("the same name in two libraries is one person, with the photos of both", () => {
+  const person = (name: string, photo_count: number, extra: Partial<PersonItem> = {}): PersonItem => ({
+    id: 1,
+    name,
+    photo_count,
+    cover_thumb: "",
+    hidden: false,
+    starred: false,
+    ...extra,
+  });
+  const merged = mergePeople([
+    [person("Emma", 10, { cover_thumb: "faces/e.jpg" }), person("Me", 4)],
+    [person("emma", 5, { starred: true }), person("Maarten", 2)],
+  ]);
+  assert.deepEqual(
+    merged.map((p) => [p.name, p.photo_count, p.cover_thumb, p.starred]),
+    [
+      ["Emma", 15, "faces/e.jpg", true],
+      ["Me", 4, "", false],
+      ["Maarten", 2, "", false],
+    ]
+  );
+});
+
+test("smart search hits from two engines count once, with the best score", () => {
+  assert.deepEqual(
+    mergeHits([
+      [{ hash: "a", score: 0.3 }, { hash: "b", score: 0.2 }],
+      [{ hash: "a", score: 0.5 }],
+    ]),
+    [
+      { hash: "a", score: 0.5 },
+      { hash: "b", score: 0.2 },
+    ]
+  );
+});
+
+test("marks: not backed up only where there is a server to back up to", () => {
+  const at = (...keys: Source[]) => ({ copies: keys.map(sourceKey) });
+  assert.equal(whereabouts(at(pc), sources, true), "not-backed-up");
+  assert.equal(whereabouts(at(pc), sources, false), "this-pc");
+  assert.equal(whereabouts(at(pc, cachy), sources, true), "both");
+  assert.equal(whereabouts(at(cachy), sources, true), "server-only");
+  assert.equal(whereabouts(at(shared), sources, false), "server-only");
+});
+
+test("a library switched off in Settings is left out", () => {
+  assert.deepEqual(includedSources([pc, cachy, shared], [sourceKey(shared)]), [pc, cachy]);
+});

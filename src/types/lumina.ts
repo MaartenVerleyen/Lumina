@@ -95,6 +95,11 @@ export interface PhotoItem {
   live_video_hash?: string | null;
   live_video_path?: string | null;
   live_photo_hash?: string | null;
+  // All photos (src/api/allPhotos.ts): the sources holding a copy, the one whose values are shown and edited
+  // (null: read-only), and the folders of the other copies, so the folder tree finds the photo there too
+  copies?: string[];
+  home?: string | null;
+  also_in?: string[];
 }
 
 export interface PersonItem {

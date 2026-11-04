@@ -1,4 +1,4 @@
-import { RefObject, memo, useState } from "react";
+import { RefObject, memo, useState, type ReactNode } from "react";
 import { Virtualizer } from "@tanstack/react-virtual";
 import { PhotoItem } from "../../types/lumina";
 import { GridLayout, LayoutRow } from "../../utils/gridLayout";
@@ -24,8 +24,13 @@ import {
   Film,
   Play,
   HardDrive,
+  Cloud,
+  CloudOff,
+  Eye,
 } from "lucide-react";
 import { useIsOnDevice } from "../../hooks/useOnDevice";
+import { allPhotosCanBackUp, allPhotosSources } from "../../api";
+import { whereabouts } from "../../api/allPhotos";
 
 export type { GridStyle, CardDetails } from "../../settings";
 import type { GridStyle, CardDetails } from "../../settings";
@@ -392,6 +397,7 @@ const PhotoCard = memo(function PhotoCard({
         {/* Top-Left Badges */}
         <div className="absolute top-2 left-2 flex items-center gap-1 z-20 flex-wrap">
           <OnDeviceBadge hash={photo.hash} />
+          {photo.copies && <WhereBadge photo={photo} />}
           {photo.in_basket && (
             <span
               className="p-1 rounded bg-cyan-950/90 border border-cyan-400/60 text-cyan-300 backdrop-blur shadow"
@@ -568,6 +574,21 @@ const PhotoCard = memo(function PhotoCard({
     </div>
   );
 });
+
+// All photos: where the photo is. A photo in both places, or on this PC with no server to back up to, has no
+// mark; one only on a server is marked, and shared photos (read-only) say so.
+function WhereBadge({ photo }: { photo: PhotoItem }) {
+  const where = whereabouts(photo, allPhotosSources(), allPhotosCanBackUp());
+  const mark = (className: string, title: string, icon: ReactNode) => (
+    <span className={`p-1 rounded bg-zinc-950/85 border backdrop-blur shadow ${className}`} title={title}>
+      {icon}
+    </span>
+  );
+  if (where === "not-backed-up") return mark("border-amber-400/60 text-amber-300", "Not backed up: only on this PC", <CloudOff className="w-3 h-3" />);
+  if (where !== "server-only") return null;
+  if (!photo.home) return mark("border-violet-400/50 text-violet-300", "Shared with you: you can look, not change", <Eye className="w-3 h-3" />);
+  return mark("border-sky-400/50 text-sky-300", "On the server only", <Cloud className="w-3 h-3" />);
+}
 
 // A server's photo whose original is on this PC (client mode)
 function OnDeviceBadge({ hash }: { hash: string }) {

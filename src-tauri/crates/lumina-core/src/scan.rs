@@ -159,6 +159,60 @@ pub fn link_live_photos(photos: &mut [PhotoItem]) {
 
 pub static SCAN_GENERATION: AtomicU64 = AtomicU64::new(0);
 
+// Each library's own scan number, next to SCAN_GENERATION (which a scan of one open library moves on)
+static LIBRARY_GENERATIONS: LazyLock<Mutex<HashMap<String, u64>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn library_generation(key: &str) -> u64 {
+    LIBRARY_GENERATIONS.lock().map(|m| m.get(key).copied().unwrap_or(0)).unwrap_or(0)
+}
+
+// Where a scan or thumbnail pass stands: it is superseded by a scan that runs alone (opening a folder, the
+// Cancel buttons) and by a newer scan of the same library, not by one of another library
+#[derive(Clone, Debug)]
+pub struct ScanTurn {
+    all: u64,
+    library: String,
+    own: u64,
+}
+
+impl ScanTurn {
+    pub fn superseded(&self) -> bool {
+        SCAN_GENERATION.load(Ordering::Acquire) != self.all || library_generation(&self.library) != self.own
+    }
+}
+
+// C:\Photos, c:/photos/ and C:\Photos\ are one library on Windows
+fn library_key(root: &str) -> String {
+    let normalized = libraries::normalize_root(root);
+    if cfg!(windows) { normalized.to_lowercase() } else { normalized }
+}
+
+// A new scan of `root`. One that runs alone also supersedes every other library's scan and thumbnail pass,
+// as opening a folder always did; All photos checks its libraries side by side, so it doesn't.
+pub fn begin_scan(root: &str, alone: bool) -> ScanTurn {
+    let all = if alone {
+        SCAN_GENERATION.fetch_add(1, Ordering::AcqRel) + 1
+    } else {
+        SCAN_GENERATION.load(Ordering::Acquire)
+    };
+    let library = library_key(root);
+    let own = match LIBRARY_GENERATIONS.lock() {
+        Ok(mut map) => {
+            let generation = map.entry(library.clone()).or_insert(0);
+            *generation += 1;
+            *generation
+        }
+        Err(_) => 0,
+    };
+    ScanTurn { all, library, own }
+}
+
+// The turn running now in `root`: work that supersedes no scan, and stops when a newer one starts
+pub fn current_turn(root: &str) -> ScanTurn {
+    let library = library_key(root);
+    ScanTurn { all: SCAN_GENERATION.load(Ordering::Acquire), own: library_generation(&library), library }
+}
+
 // Error text the UI recognises as "the user cancelled the folder scan" (not a failure to report)
 pub const SCAN_CANCELLED: &str = "Folder scan cancelled";
 
@@ -768,8 +822,8 @@ pub fn index_new_file(app: SharedHost, root: &str, path: &Path) -> Result<PhotoI
     let mut indexed: Vec<IndexedFile> = vec![(item, orig, size_bytes, modified_time, true)];
     save_indexed(&mut conn, &mut indexed, &thumbs_dir, &previews_dir, false);
     let saved = indexed.remove(0).0;
-    // The running generation: this pass neither stops a scan nor is stopped by it before it starts
-    spawn_thumbnail_pass(app.clone(), vec![saved.clone()], root_path, SCAN_GENERATION.load(Ordering::Acquire), false, HashSet::new());
+    let turn = current_turn(&root_path.to_string_lossy());
+    spawn_thumbnail_pass(app.clone(), vec![saved.clone()], root_path, turn, false, HashSet::new());
     photos_by_hash(&*app, &[saved.hash.clone()])?
         .into_iter()
         .next()
@@ -782,9 +836,14 @@ pub async fn list_library(app: SharedHost, root: String) -> Result<Vec<PhotoItem
 
 
 pub async fn scan_folder(app: SharedHost, folder_path: String, force_reprocess: Option<bool>) -> Result<Vec<PhotoItem>, String> {
+    scan_library(app, folder_path, force_reprocess, true).await
+}
+
+// `alone`: this scan supersedes every other scan and thumbnail pass still running (opening one library);
+// otherwise only an earlier one of the same library (All photos checks several libraries at once)
+pub async fn scan_library(app: SharedHost, folder_path: String, force_reprocess: Option<bool>, alone: bool) -> Result<Vec<PhotoItem>, String> {
     let force = force_reprocess.unwrap_or(false);
-    // Every scan supersedes any background thumbnail pass still running from an earlier scan
-    let generation = SCAN_GENERATION.fetch_add(1, Ordering::AcqRel) + 1;
+    let turn = begin_scan(&folder_path, alone);
     tokio::task::spawn_blocking(move || {
         let scan_started = Instant::now();
         // One spelling per folder (C:/Photos and C:\Photos are the same library)
@@ -803,7 +862,7 @@ pub async fn scan_folder(app: SharedHost, folder_path: String, force_reprocess: 
         }
         // The webview may only load files from the app's own data folder and from libraries the user opened
         app.allow_media_dir(&root_path);
-        let is_cancelled = || SCAN_GENERATION.load(Ordering::Acquire) != generation;
+        let is_cancelled = || turn.superseded();
 
         let app_dir = get_app_storage_dir(&app);
         let thumbs_dir = app_dir.join("thumbnails");
@@ -1311,7 +1370,7 @@ pub async fn scan_folder(app: SharedHost, folder_path: String, force_reprocess: 
             .collect();
 
         if !needs_processing.is_empty() {
-            spawn_thumbnail_pass(app.clone(), needs_processing, root_path.clone(), generation, force, upgrade);
+            spawn_thumbnail_pass(app.clone(), needs_processing, root_path.clone(), turn, force, upgrade);
         }
 
         Ok(photos)

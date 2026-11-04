@@ -1,5 +1,7 @@
 import { useEffect, useState, ReactNode } from "react";
-import { call, inDesktopApp } from "../../api";
+import { ALL_PHOTOS, allPhotosCandidates, call, excludedSources, inDesktopApp, setExcludedSources, type Source } from "../../api";
+import { sourceKey } from "../../api/allPhotos";
+import { libraryName } from "../../utils/photoHelpers";
 import { ServersSettings } from "../servers/Servers";
 import { useAccess } from "../auth/ServerGate";
 import { getVersion, open as openDialog, openUrl, platform } from "../../api/platform";
@@ -8,6 +10,7 @@ import {
   Brain,
   FolderOpen,
   Info,
+  Layers,
   LayoutGrid,
   RefreshCw,
   ScanFace,
@@ -26,11 +29,12 @@ import type { Updater } from "../../hooks/useUpdater";
 import { defaultBackupDir } from "../../hooks/library/useBackup";
 import { DEFAULT_AI_MODEL } from "../../hooks/library/shared";
 
-export type SettingsSection = "general" | "library" | "servers" | "ai" | "faces" | "search" | "updates" | "about";
+export type SettingsSection = "general" | "library" | "allphotos" | "servers" | "ai" | "faces" | "search" | "updates" | "about";
 
 const SECTIONS: { id: SettingsSection; label: string; icon: typeof Info }[] = [
   { id: "general", label: "General", icon: LayoutGrid },
   { id: "library", label: "Library", icon: FolderOpen },
+  { id: "allphotos", label: "All photos", icon: Layers },
   { id: "servers", label: "Servers", icon: Server },
   { id: "ai", label: "AI captions", icon: Brain },
   { id: "faces", label: "Faces", icon: ScanFace },
@@ -40,6 +44,56 @@ const SECTIONS: { id: SettingsSection; label: string; icon: typeof Info }[] = [
 ];
 
 const REPO_URL = "https://github.com/MaartenVerleyen/Lumina";
+
+// Settings → All photos: which folders on this computer and which server libraries the view shows. Every
+// folder opened here and every library of a server the app is signed in to is on it; switch one off to leave it
+// out (a scratch folder, say).
+function AllPhotosSettings({ lib }: { lib: LibraryState }) {
+  const [candidates, setCandidates] = useState<Source[] | null>(null);
+  const [excluded, setExcluded] = useState<string[]>(excludedSources);
+  useEffect(() => {
+    allPhotosCandidates()
+      .then(setCandidates)
+      .catch(() => setCandidates([]));
+  }, []);
+  const toggle = (key: string, on: boolean) => {
+    const next = on ? excluded.filter((k) => k !== key) : [...excluded, key];
+    setExcluded(next);
+    setExcludedSources(next);
+    if (lib.folder === ALL_PHOTOS) void lib.silentRescan();
+  };
+  const local = candidates?.filter((c) => c.server === null) ?? [];
+  const remote = candidates?.filter((c) => c.server !== null) ?? [];
+  const row = (c: Source) => {
+    const key = sourceKey(c);
+    return (
+      <Row
+        key={key}
+        label={c.label}
+        hint={c.server === null ? "On this PC" : c.editable ? "On the server: you can edit" : "On the server: shared with you, look only"}
+      >
+        <Switch checked={!excluded.includes(key)} onChange={(on) => toggle(key, on)} label={`Show ${c.label} in All photos`} />
+      </Row>
+    );
+  };
+  return (
+    <>
+      <p className="text-[12px] text-zinc-400 leading-relaxed px-1">
+        All photos shows these libraries in one grid, each photo once, marked when it isn't backed up or is only on the
+        server. Open it from the Library menu.
+      </p>
+      {candidates === null ? (
+        <div className="text-[12px] text-zinc-500 px-1">Listing libraries…</div>
+      ) : (
+        <>
+          {local.length > 0 && <Group title="On this PC">{local.map(row)}</Group>}
+          {remote.length > 0 && <Group title="On servers">{remote.map(row)}</Group>}
+          {candidates.length === 0 && <div className="text-[12px] text-zinc-500 px-1">No libraries yet: open a folder or connect to a server.</div>}
+        </>
+      )}
+    </>
+  );
+}
 
 // ---------- small building blocks ----------
 
@@ -410,7 +464,7 @@ export default function SettingsModal({
             {section === "library" && (
               <>
                 <Group title="Open library">
-                  <Row label={lib.folder ? lib.folder.split(/[\\/]/).pop() || lib.folder : "No library open"} hint={lib.folder || "Open a folder of photos to start."}>
+                  <Row label={lib.folder ? libraryName(lib.folder) : "No library open"} hint={(lib.folder !== ALL_PHOTOS && lib.folder) || "Open a folder of photos to start."}>
                     {lib.folder && platform.localFiles && <Button onClick={() => lib.handleRevealInFileManager(lib.folder)}>Show in Explorer</Button>}
                     <Button primary onClick={then(lib.handleOpenFolder)}>
                       {platform.localFiles ? (lib.folder ? "Open another…" : "Open folder…") : "Libraries…"}
@@ -670,6 +724,8 @@ export default function SettingsModal({
                 </Group>
               </>
             )}
+
+            {section === "allphotos" && <AllPhotosSettings lib={lib} />}
 
             {section === "servers" && <ServersSettings />}
 

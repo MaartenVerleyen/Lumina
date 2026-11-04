@@ -50,13 +50,13 @@ pub fn spawn_thumbnail_pass(
     app: SharedHost,
     items: Vec<PhotoItem>,
     root: PathBuf,
-    generation: u64,
+    turn: ScanTurn,
     force: bool,
     upgrade: HashSet<String>,
 ) {
     THUMB_PASSES.fetch_add(1, Ordering::AcqRel);
     std::thread::spawn(move || {
-        run_thumbnail_pass(&app, &items, &root, generation, force, &upgrade);
+        run_thumbnail_pass(&app, &items, &root, &turn, force, &upgrade);
         THUMB_PASSES.fetch_sub(1, Ordering::AcqRel);
     });
 }
@@ -72,12 +72,12 @@ fn run_thumbnail_pass(
     app: &dyn Host,
     items: &[PhotoItem],
     root: &Path,
-    generation: u64,
+    turn: &ScanTurn,
     force: bool,
     upgrade: &HashSet<String>,
 ) {
     let started = Instant::now();
-    let is_superseded = move || SCAN_GENERATION.load(Ordering::Acquire) != generation;
+    let is_superseded = || turn.superseded();
     let total = items.len();
     let folder = root.to_string_lossy().to_string();
     let (io_threads, drive_kind) = index_io_threads(root);

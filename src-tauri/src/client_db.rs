@@ -22,7 +22,11 @@ pub fn open(app: &AppHandle) -> Result<Connection, String> {
              size INTEGER NOT NULL,
              verified_at INTEGER NOT NULL,
              PRIMARY KEY (server, hash, path)
-         );",
+         );
+         -- The basket of this device, for photos of any library, here or on a server: it is never sent
+         -- to a server, so each device (and each person) has their own
+         CREATE TABLE IF NOT EXISTS basket (hash TEXT PRIMARY KEY);
+         CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);",
     )
     .map_err(|e| e.to_string())?;
     Ok(conn)
@@ -125,4 +129,48 @@ pub async fn remove_local_copies(app: AppHandle, server: String, hashes: Vec<Str
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+// The photos in this device's basket. The first time, the basket of the libraries on this computer (kept in
+// the library database before) moves in.
+#[tauri::command]
+pub fn device_basket(app: AppHandle) -> Result<Vec<String>, String> {
+    let conn = open(&app)?;
+    let moved: bool = conn.query_row("SELECT 1 FROM meta WHERE key = 'basket_moved'", [], |_| Ok(true)).unwrap_or(false);
+    if !moved {
+        let library = open_global_db(&app)?;
+        let mut stmt = library.prepare("SELECT hash FROM photos WHERE in_basket = 1").map_err(|e| e.to_string())?;
+        let hashes: Vec<String> = stmt.query_map([], |r| r.get(0)).map_err(|e| e.to_string())?.filter_map(Result::ok).collect();
+        for h in &hashes {
+            conn.execute("INSERT OR IGNORE INTO basket (hash) VALUES (?1)", [h]).map_err(|e| e.to_string())?;
+        }
+        conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('basket_moved', '1')", []).map_err(|e| e.to_string())?;
+    }
+    let mut stmt = conn.prepare("SELECT hash FROM basket").map_err(|e| e.to_string())?;
+    let hashes = stmt.query_map([], |r| r.get(0)).map_err(|e| e.to_string())?.filter_map(Result::ok).collect();
+    Ok(hashes)
+}
+
+#[tauri::command]
+pub fn set_device_basket(app: AppHandle, hashes: Vec<String>, in_basket: bool) -> Result<(), String> {
+    let mut conn = open(&app)?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    for h in &hashes {
+        let sql = if in_basket { "INSERT OR IGNORE INTO basket (hash) VALUES (?1)" } else { "DELETE FROM basket WHERE hash = ?1" };
+        tx.execute(sql, [h]).map_err(|e| e.to_string())?;
+    }
+    tx.commit().map_err(|e| e.to_string())
+}
+
+// The libraries on this computer (every folder opened here): All photos shows them unless taken off its list
+#[tauri::command]
+pub fn local_libraries(app: AppHandle) -> Result<Vec<lumina_core::libraries::Library>, String> {
+    lumina_core::libraries::list(&open_global_db(&app)?)
+}
+
+// A library on this computer as its database has it, without walking the folder: All photos lists every
+// library this way (a scan of one folder would stop another's scan and thumbnail pass)
+#[tauri::command]
+pub async fn list_local_library(app: AppHandle, root: String) -> Result<Vec<PhotoItem>, String> {
+    tauri::async_runtime::spawn_blocking(move || scan::list_library_photos(&app, &root)).await.map_err(|e| e.to_string())?
 }
