@@ -2,10 +2,12 @@
 // server itself: the app's Rust side holds the session token and does every request (src-tauri/src/remote.rs).
 //   call       invoke("server_call", {server, command, args, client})
 //   subscribe  the app relays each server's WebSocket events as `remote-event` {server, event, payload}
-//   mediaUrl   the app's lumina-remote protocol: /{server}/{kind}/{id}, thumbnails cached on disk
+//   mediaUrl   the app's lumina-remote protocol: /{server}/{kind}/{id}, thumbnails cached on disk; on Linux
+//              videos come from the app's local video server instead (WebKitGTK stalls on them otherwise)
 // No Tauri imports here: index.ts passes them in, and the tests run this under Node.
 import type { EngineEvent, MediaRef, Transport } from "./transport";
 import { faceIdFromPath } from "./remote.ts";
+import { isVideoRef } from "../utils/media.ts";
 
 // Commands the desktop always runs itself: they act on this computer (files, clipboard, a card reader, the
 // app's own windows), and a server refuses them (lumina-server's NOT_ON_SERVER). The client's own commands
@@ -48,6 +50,8 @@ export interface DesktopDeps {
   invoke<T>(command: string, args?: Record<string, unknown>): Promise<T>;
   // Tauri's convertFileSrc(path, protocol)
   convertFileSrc(path: string, protocol: string): string;
+  // The app's local video server (Linux), or null
+  videoServer?(): { base: string; token: string } | null;
 }
 
 export function createDesktopRemoteTransport(
@@ -59,7 +63,12 @@ export function createDesktopRemoteTransport(
   return {
     call: (command, args) => deps.invoke("server_call", { server, command, args: args ?? {}, client: clientId }),
     subscribe: (event, handler) => events.subscribe(event, handler),
-    mediaUrl: (ref) => deps.convertFileSrc(remoteMediaKey(server, ref), "lumina-remote"),
+    mediaUrl: (ref) => {
+      const key = remoteMediaKey(server, ref);
+      const local = deps.videoServer?.();
+      if (local && isVideoRef(ref)) return `${local.base}/remote/${local.token}?key=${encodeURIComponent(key)}`;
+      return deps.convertFileSrc(key, "lumina-remote");
+    },
   };
 }
 
@@ -93,7 +102,7 @@ export function createRemoteEvents(current: () => string | null | readonly strin
       if (!message || !(Array.isArray(open) ? open.includes(message.server) : message.server === open)) return;
       for (const handler of handlers.get(message.event) ?? []) {
         try {
-          handler({ payload: message.payload });
+          handler({ payload: message.payload, server: message.server });
         } catch (e) {
           console.error(`Handler for ${message.event} failed`, e);
         }

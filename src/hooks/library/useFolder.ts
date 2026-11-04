@@ -142,14 +142,14 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
     const unlisten = subscribe<ThumbBatchProgress>("thumb-batch-ready", (event) => {
       const { items, duplicate_groups, completed, total, folder: batchFolder } = event.payload;
       // A batch from a folder we've since left would overwrite this folder's duplicate groups
-      if (!isOpenLibraryRoot(batchFolder)) return;
+      if (!isOpenLibraryRoot(batchFolder, event)) return;
       const all = openLibraryIsAll();
       if (!all) setProgress(completed < total ? { completed, total } : null);
 
       const batchMap = new Map<string, ThumbBatchItem>();
       // In All photos a library's batch updates the photos the window shows from that library; its duplicate
       // groups are numbered for that library alone
-      for (const it of items) if (!all || allPhotosShownIn(it.hash, batchFolder)) batchMap.set(it.hash, it);
+      for (const it of items) if (!all || allPhotosShownIn(it.hash, batchFolder, event)) batchMap.set(it.hash, it);
       const hasDupUpdate = !all && duplicate_groups && Object.keys(duplicate_groups).length > 0;
 
       setPhotos((prev) =>
@@ -543,8 +543,9 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
   silentRescanRef.current = silentRescan;
   useEffect(() => {
     const unlisten = subscribe<string>("library-files-changed", (event) => {
-      if (!isOpenLibraryRoot(event.payload) || Date.now() < watchQuietUntilRef.current) return;
-      silentRescanRef.current([event.payload]).then((res) => {
+      if (!isOpenLibraryRoot(event.payload, event) || Date.now() < watchQuietUntilRef.current) return;
+      // A server checks its own disk; only a change on this computer needs a scan here
+      silentRescanRef.current(event.server ? [] : [event.payload]).then((res) => {
         if (res) addLog("LIBRARY", `Picked up changes made outside Lumina (${res.length} items)`);
       });
     });

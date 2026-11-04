@@ -59,9 +59,33 @@ test("the open library is remembered with its server", () => {
 test("All photos hears the events of every server in it, and no other", () => {
   const events = createRemoteEvents(() => ["a.ts.net", "b.ts.net"]);
   const got: unknown[] = [];
-  events.subscribe("photos-changed", (e) => got.push(e.payload));
+  events.subscribe("photos-changed", (e) => got.push([e.server, e.payload]));
   events.deliver({ server: "a.ts.net", event: "photos-changed", payload: 1 });
   events.deliver({ server: "b.ts.net", event: "photos-changed", payload: 2 });
   events.deliver({ server: "c.ts.net", event: "photos-changed", payload: 3 });
-  assert.deepEqual(got, [1, 2]);
+  // Each says its server: a folder on this PC can have the same path as a server's library
+  assert.deepEqual(got, [
+    ["a.ts.net", 1],
+    ["b.ts.net", 2],
+  ]);
+});
+
+test("on Linux a server's videos play through the app's local video server; photos stay on lumina-remote", () => {
+  const t = createDesktopRemoteTransport(
+    "cachy.ts.net",
+    {
+      invoke: async () => null as never,
+      convertFileSrc: (path, protocol) => `${protocol}://localhost/${encodeURIComponent(path)}`,
+      videoServer: () => ({ base: "http://127.0.0.1:4321", token: "t0k" }),
+    },
+    createRemoteEvents(() => "cachy.ts.net"),
+    "linux1"
+  );
+  assert.equal(
+    t.mediaUrl({ kind: "original", hash: "v1", path: "/photos/launch.MP4" }),
+    "http://127.0.0.1:4321/remote/t0k?key=cachy.ts.net%2Foriginal%2Fv1"
+  );
+  assert.equal(t.mediaUrl({ kind: "preview", hash: "v2", path: "" }), "http://127.0.0.1:4321/remote/t0k?key=cachy.ts.net%2Fpreview%2Fv2");
+  assert.equal(t.mediaUrl({ kind: "original", hash: "p1", path: "/photos/a.jpg" }), "lumina-remote://localhost/cachy.ts.net%2Foriginal%2Fp1");
+  assert.equal(t.mediaUrl({ kind: "thumb", hash: "v1", path: "/photos/launch.MP4" }), "lumina-remote://localhost/cachy.ts.net%2Fthumb%2Fv1");
 });

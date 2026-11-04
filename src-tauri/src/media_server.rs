@@ -2,7 +2,8 @@
 // local videos over plain HTTP from 127.0.0.1 instead, with range requests like any web server. Windows
 // keeps asset://, where WebView2 plays video. Only video files are served, only from the folders the
 // asset protocol may already show (the opened libraries and the app's data folder), and only with this
-// run's token, so another program or web page on the PC can't read files through it.
+// run's token, so another program or web page on the PC can't read files through it. A server's videos
+// stall the same way on lumina-remote://, so they come through here as well (/remote), with the same token.
 
 #[cfg(target_os = "linux")]
 static ADDRESS: std::sync::OnceLock<(String, String)> = std::sync::OnceLock::new();
@@ -38,6 +39,7 @@ pub fn start(app: tauri::AppHandle) {
 
     let router = axum::Router::new()
         .route("/video/{token}", axum::routing::get(serve_video))
+        .route("/remote/{token}", axum::routing::get(serve_remote_video))
         .with_state(Server { app, token });
     tauri::async_runtime::spawn(async move {
         match tokio::net::TcpListener::from_std(listener) {
@@ -101,4 +103,36 @@ async fn serve_video(
         }
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
+}
+
+// A server's video (?key=<server>/<kind>/<id>, as lumina-remote:// names it), fetched with this app's session
+// and streamed through with its range, so the player can seek
+#[cfg(target_os = "linux")]
+async fn serve_remote_video(
+    axum::extract::State(server): axum::extract::State<Server>,
+    axum::extract::Path(token): axum::extract::Path<String>,
+    axum::extract::Query(query): axum::extract::Query<std::collections::HashMap<String, String>>,
+    headers: axum::http::HeaderMap,
+) -> axum::response::Response {
+    use axum::http::{header, StatusCode};
+    use axum::response::IntoResponse;
+
+    let Some(key) = query.get("key") else { return StatusCode::NOT_FOUND.into_response() };
+    if token != server.token {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let range = headers.get(header::RANGE).and_then(|v| v.to_str().ok());
+    let resp = match crate::remote::video_response(&server.app, key, range).await {
+        Ok(resp) => resp,
+        Err(status) => return StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY).into_response(),
+    };
+    let mut builder = axum::http::Response::builder().status(resp.status()).header(header::CACHE_CONTROL, "no-store");
+    for name in [header::CONTENT_TYPE, header::CONTENT_LENGTH, header::CONTENT_RANGE, header::ACCEPT_RANGES] {
+        if let Some(value) = resp.headers().get(&name) {
+            builder = builder.header(name, value.clone());
+        }
+    }
+    builder
+        .body(axum::body::Body::from_stream(resp.bytes_stream()))
+        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
 }

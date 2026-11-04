@@ -47,6 +47,16 @@ body {
   overflow: hidden;
 }
 
+/* Form controls follow the dark page: WebKitGTK otherwise draws a dropdown with the light GTK theme,
+   white under the light text Lumina gives it */
+:root {
+  color-scheme: dark;
+}
+select option {
+  background-color: #10121a;
+  color: #e4e4e7;
+}
+
 /* Fix Leaflet tile darkroom blend */
 .leaflet-container {
   background-color: #0c1220 !important;

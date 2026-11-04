@@ -1,8 +1,14 @@
 import type { PhotoItem } from "../types/lumina";
+import type { MediaRef } from "../api/transport";
 
 // Videos in the library: how they are told apart from photos, shown and played
 
 export const VIDEO_NAME = /\.(mp4|mov|m4v|3gp|avi|mts|m2ts|mpg|mpeg)$/i;
+
+// A video the player streams: a playable copy, or an original with a video's name
+export function isVideoRef(ref: MediaRef): boolean {
+  return ref.kind === "preview" || (ref.kind === "original" && VIDEO_NAME.test(ref.path));
+}
 
 export function isVideo(p: Pick<PhotoItem, "media_type" | "name">): boolean {
   return p.media_type === "video" || (!p.media_type && VIDEO_NAME.test(p.name));

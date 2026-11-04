@@ -3,7 +3,7 @@
 // from. In the desktop app a library can be on a server too (client mode, desktopRemote.ts): calls, events
 // and media then follow the open library, except the commands that are about this computer.
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
-import { localTransport, type EngineEvent, type MediaRef, type Transport } from "./transport.ts";
+import { localMediaServer, localTransport, type EngineEvent, type MediaRef, type Transport } from "./transport.ts";
 import {
   createDesktopRemoteTransport,
   createRemoteEvents,
@@ -70,7 +70,7 @@ if (inDesktopApp) {
 function desktopRemote(server: string): Transport {
   let t = desktopRemotes.get(server);
   if (!t) {
-    t = createDesktopRemoteTransport(server, { invoke, convertFileSrc }, remoteEvents, desktopClientId);
+    t = createDesktopRemoteTransport(server, { invoke, convertFileSrc, videoServer: localMediaServer }, remoteEvents, desktopClientId);
     desktopRemotes.set(server, t);
   }
   return t;
@@ -539,15 +539,23 @@ const sameRoot = (a: string, b: string) => {
   return norm(a) === norm(b);
 };
 
+// Where an event came from: its server, or null for this computer's engine (the web client hears only its
+// server). A folder on this PC and a server library can have the same path, so the root alone doesn't say.
+function eventEngine(event: EngineEvent<unknown>): string | null {
+  return serverTransport ? WEB_SERVER : event.server ?? null;
+}
+
+const fromSource = (s: Source, root: string, event: EngineEvent<unknown>) => s.server === eventEngine(event) && sameRoot(s.root, root);
+
 // An event about the library at `root` concerns the window: it is the open library, or one of All photos'
-export function isOpenLibraryRoot(root: string): boolean {
-  if (openLibrary === ALL_PHOTOS) return [...all.sources.values()].some((s) => sameRoot(s.root, root));
-  return !!openLibrary && sameRoot(root, openLibrary);
+export function isOpenLibraryRoot(root: string, event: EngineEvent<unknown>): boolean {
+  if (openLibrary === ALL_PHOTOS) return [...all.sources.values()].some((s) => fromSource(s, root, event));
+  return !!openLibrary && sameRoot(root, openLibrary) && (!!serverTransport || eventEngine(event) === openServer);
 }
 
 // All photos shows this photo from the library at `root` (a progress event from that library may update it)
-export function allPhotosShownIn(hash: string, root: string): boolean {
+export function allPhotosShownIn(hash: string, root: string, event: EngineEvent<unknown>): boolean {
   const c = all.copies.get(hash);
   const s = c ? all.sources.get(c.shown) : undefined;
-  return !!s && sameRoot(s.root, root);
+  return !!s && fromSource(s, root, event);
 }

@@ -1,10 +1,12 @@
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { VIDEO_NAME } from "../utils/media.ts";
+import { isVideoRef } from "../utils/media.ts";
 
 // An engine event as handlers receive it (the same shape as Tauri's, so handlers read `event.payload`)
 export interface EngineEvent<T> {
   payload: T;
+  // The server it came from (the desktop app relays several); absent from this computer's engine
+  server?: string;
 }
 
 // A file the window shows. It says what the file is, not only where it is: an engine on this PC serves
@@ -42,9 +44,13 @@ if (typeof window !== "undefined" && "__TAURI_INTERNALS__" in window) {
     .catch(() => {});
 }
 
+// The local video server, once the app has answered (null on Windows and Mac)
+export function localMediaServer(): LocalMediaServer | null {
+  return mediaServer;
+}
+
 export function localMediaUrl(ref: MediaRef, server: LocalMediaServer | null): string {
-  const video = ref.kind === "preview" || (ref.kind === "original" && VIDEO_NAME.test(ref.path));
-  if (server && video) return `${server.base}/video/${server.token}?path=${encodeURIComponent(ref.path)}`;
+  if (server && isVideoRef(ref)) return `${server.base}/video/${server.token}?path=${encodeURIComponent(ref.path)}`;
   return convertFileSrc(ref.path);
 }
 

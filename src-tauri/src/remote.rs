@@ -488,6 +488,27 @@ fn bounded_range(range: &str) -> String {
     }
 }
 
+// A server's video for the window's local video server (media_server.rs): WebKitGTK stalls on a video from
+// lumina-remote:// after its first range, as it does on asset://. `key` is the protocol's
+// <server>/<kind>/<id>; the range goes as asked, and the caller streams the answer.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub async fn video_response(app: &AppHandle, key: &str, range: Option<&str>) -> Result<reqwest::Response, u16> {
+    let mut parts = key.splitn(3, '/');
+    let (Some(server), Some(kind), Some(id)) = (parts.next(), parts.next(), parts.next()) else { return Err(400) };
+    if !matches!(kind, "original" | "preview") || !plain(id) {
+        return Err(400);
+    }
+    let mut req = remote(app).request(server, reqwest::Method::GET, &format!("/media/{kind}/{id}")).map_err(|_| 401u16)?;
+    if let Some(range) = range {
+        req = req.header("Range", range);
+    }
+    let resp = req.send().await.map_err(|_| 502u16)?;
+    if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
+        signed_out(app, server);
+    }
+    Ok(resp)
+}
+
 pub async fn serve_media(app: AppHandle, request: tauri::http::Request<Vec<u8>>) -> MediaResponse {
     let decoded = percent_decode(request.uri().path().trim_start_matches('/'));
     let mut parts = decoded.splitn(3, '/');
