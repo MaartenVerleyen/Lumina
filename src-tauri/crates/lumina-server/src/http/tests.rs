@@ -738,6 +738,14 @@ async fn roles_per_library_let_someone_edit_their_own_and_only_look_at_what_is_s
     let (_, _, photos) = send(&s.app, rpc("scan_folder", json!({"folderPath": anna}))).await;
     assert_eq!(hashes_of(&photos), ["a1"]);
 
+    // An album that wasn't shared with them shows only the photos of their own library in it: that b2 is in
+    // it too stays unknown, though Holiday shows them b2
+    let mixed = lumina_core::albums::create_album(s.host.clone(), "Mixed".into()).unwrap();
+    lumina_core::albums::add_to_album(s.host.clone(), mixed, vec!["a1".into(), "b2".into()]).unwrap();
+    let (_, _, albums) = send(&s.app, rpc("get_albums", json!({}))).await;
+    let listed: Vec<(&str, &Value)> = albums.as_array().unwrap().iter().map(|a| (a["name"].as_str().unwrap(), &a["hashes"])).collect();
+    assert_eq!(listed, [("Holiday", &json!(["b2"])), ("Mixed", &json!(["a1"]))]);
+
     assert_eq!(send(&s.app, rpc("set_photos_rating", json!({"hashes": ["a1"], "rating": 4}))).await.0, StatusCode::OK);
     let (status, _, body) = send(&s.app, rpc("set_photos_rating", json!({"hashes": ["b2"], "rating": 4}))).await;
     assert_eq!((status, body), (StatusCode::FORBIDDEN, json!({"error": "set_photos_rating needs the editor role"})));
@@ -780,6 +788,67 @@ async fn sharing_an_album_gives_and_takes_its_photos() {
     assert_eq!(hashes_of(&photos), ["b2"]);
     let (status, _, _) = send(&s.app, post("/api/rpc/share_album", json!({"id": holiday, "userName": "nobody", "shared": true}), Some(&admin))).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn a_shared_dynamic_album_shows_its_photos_and_never_its_query() {
+    let s = server("dynamic");
+    let (_, bob, _) = two_libraries(&s);
+    {
+        let conn = db::open_global_db(&*s.host).unwrap();
+        accounts::create_user(&conn, "gil", Role::Guest, "long enough").unwrap();
+    }
+    let ed = login(&s.app, "ed").await;
+    let gil = login(&s.app, "gil").await;
+    let as_ed = |cmd: &str, args: Value| post(&format!("/api/rpc/{cmd}"), args, Some(&ed));
+    let as_gil = |cmd: &str, args: Value| post(&format!("/api/rpc/{cmd}"), args, Some(&gil));
+
+    let (status, _, id) = send(&s.app, as_ed("save_search", json!({"name": "Bob's photos", "query": "person:bob", "smart": false}))).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _, _) = send(&s.app, as_ed("share_search", json!({"id": id, "userName": "gil", "shared": true}))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(send(&s.app, as_ed("get_search_shares", json!({"id": id}))).await.2, json!(["gil"]));
+
+    // The guest sees the matching photos, as an album by the search's name, without the query
+    let (_, _, libs) = send(&s.app, as_gil("list_libraries", json!({}))).await;
+    assert_eq!((libs.as_array().unwrap().len(), &libs[0]["photos"]), (1, &json!(2)));
+    let (_, _, photos) = send(&s.app, as_gil("scan_folder", json!({"folderPath": bob}))).await;
+    assert_eq!(hashes_of(&photos), ["b1", "b2"]);
+    let (_, _, albums) = send(&s.app, as_gil("get_albums", json!({}))).await;
+    let id = id.as_i64().unwrap();
+    assert_eq!(albums[0], json!({"id": -id, "name": "Bob's photos", "hashes": ["b1", "b2"], "dynamic": true}));
+    assert_eq!(albums.as_array().unwrap().len(), 1, "not Holiday or Private, though their photos are visible: {albums}");
+    assert_eq!(send(&s.app, as_gil("get_saved_searches", json!({}))).await.2, json!([]));
+    assert!(!albums.to_string().contains("person:"), "no query in the answer");
+
+    // A photo that stops matching goes once the albums are worked out again (the serve loop does that after
+    // every change; here by hand)
+    let (status, _, _) = send(&s.app, as_ed("remove_person_from_photo", json!({"hash": "b1", "name": "Bob"}))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(crate::dynamic::refresh(&s.host).await.unwrap(), "the album changed");
+    assert!(!crate::dynamic::refresh(&s.host).await.unwrap(), "and is the same the second time");
+    let (_, _, photos) = send(&s.app, as_gil("scan_folder", json!({"folderPath": bob}))).await;
+    assert_eq!(hashes_of(&photos), ["b2"]);
+    assert_eq!(send(&s.app, get("/media/thumb/b1", Some(&gil))).await.0, StatusCode::NOT_FOUND);
+
+    // Shared by someone who may edit only Anna's library, it finds nothing in Bob's
+    let mia = login(&s.app, "mia").await;
+    let (status, _, _) = send(&s.app, post("/api/rpc/share_search", json!({"id": id, "userName": "gil", "shared": true}), Some(&mia))).await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, _, albums) = send(&s.app, as_gil("get_albums", json!({}))).await;
+    assert_eq!(albums[0]["hashes"], json!([]));
+    send(&s.app, as_ed("share_search", json!({"id": id, "userName": "gil", "shared": true}))).await;
+
+    // Deleting the saved search takes it away at once
+    let mut events = s.host.subscribe();
+    let (status, _, _) = send(&s.app, as_ed("delete_saved_search", json!({"id": id}))).await;
+    assert_eq!(status, StatusCode::OK);
+    let (event, _) = events.recv().await.unwrap();
+    assert_eq!(event, "albums-changed");
+    let (event, payload) = events.recv().await.unwrap();
+    assert_eq!((event.as_str(), &payload["users"]), ("shares-changed", &json!(["gil"])));
+    assert!(!send(&s.app, as_gil("get_albums", json!({}))).await.2.to_string().contains("dynamic"));
+    assert_eq!(send(&s.app, as_gil("scan_folder", json!({"folderPath": bob}))).await.0, StatusCode::NOT_FOUND);
 }
 
 // ---- Milestone 5: administration ----

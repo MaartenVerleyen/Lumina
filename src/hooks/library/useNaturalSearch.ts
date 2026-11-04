@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { interpretNatural } from "../../utils/naturalQuery";
 import type { SearchTerm } from "../../utils/searchQuery";
+import { searchVocabulary } from "../../utils/searchRun";
 import type { LibraryCore } from "./core";
 import type { FilterState } from "./useFilterState";
 
@@ -12,16 +13,7 @@ export function useNaturalSearch(core: LibraryCore, filters: FilterState) {
   const { parsedSearch } = filters;
 
   // Names and places this library knows, from its photos
-  const vocabulary = useMemo(() => {
-    const people = new Set<string>();
-    const places = new Set<string>();
-    for (const p of photos) {
-      for (const name of p.people) people.add(name);
-      const city = p.location.split(",")[0].trim();
-      if (city) places.add(city);
-    }
-    return { people: Array.from(people), places: Array.from(places) };
-  }, [photos]);
+  const vocabulary = useMemo(() => searchVocabulary(photos), [photos]);
 
   const natural = useMemo(() => {
     const typed = new Set<SearchTerm["key"]>(parsedSearch.terms.map((t) => t.key));

@@ -101,6 +101,14 @@ fn carry_over(conn: &rusqlite::Connection, old: &Path) -> Result<(), String> {
              JOIN old.albums oa ON oa.id = s.album_id JOIN main.albums na ON lower(na.name) = lower(oa.name)",
         );
     }
+    // Shared dynamic albums by the saved search's name; their photos are worked out again at start
+    if has("search_shares") {
+        steps.push(
+            "INSERT OR IGNORE INTO search_shares (search_id, user_id, shared_by)
+             SELECT ns.id, s.user_id, s.shared_by FROM old.search_shares s
+             JOIN old.saved_searches os ON os.id = s.search_id JOIN main.saved_searches ns ON lower(ns.name) = lower(os.name)",
+        );
+    }
     let result = steps.iter().try_for_each(|sql| conn.execute(sql, []).map(|_| ()).map_err(|e| e.to_string()));
     let _ = conn.execute("DETACH DATABASE old", []);
     result

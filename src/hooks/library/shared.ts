@@ -1,4 +1,5 @@
 import { PhotoItem, AiPerf } from "../../types/lumina";
+import { searchTextFields } from "../../utils/searchRun";
 
 // Constants and small helpers shared by the library hooks
 
@@ -30,9 +31,7 @@ export const searchTextCache = new WeakMap<PhotoItem, string>();
 export function searchTextOf(p: PhotoItem): string {
   let text = searchTextCache.get(p);
   if (text === undefined) {
-    text = [p.name, p.ai_caption, p.ocr_text, p.location, ...p.tags, ...p.people]
-      .join("\n")
-      .toLowerCase();
+    text = searchTextFields(p);
     searchTextCache.set(p, text);
   }
   return text;

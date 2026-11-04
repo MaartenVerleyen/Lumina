@@ -180,8 +180,8 @@ pub fn get_saved_searches(app: AppHandle) -> Result<Vec<albums::SavedSearch>, St
 }
 
 #[tauri::command]
-pub fn save_search(app: AppHandle, name: String, query: String) -> Result<i64, String> {
-    albums::save_search(Arc::new(app), name, query)
+pub fn save_search(app: AppHandle, name: String, query: String, smart: Option<bool>) -> Result<i64, String> {
+    albums::save_search(Arc::new(app), name, query, smart.unwrap_or(false))
 }
 
 #[tauri::command]

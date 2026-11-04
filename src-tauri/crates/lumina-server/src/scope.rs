@@ -2,7 +2,7 @@
 // default role for every library (users.role: guest, viewer, uploader or editor) that an admin can set
 // differently per library (library_roles): Anna can be an editor of her own library and a guest of
 // Bob's. Albums shared with a user (album_shares) add their photos, to look at only, wherever the role
-// doesn't already show them. The engine knows none of this: the server works out a Scope per request and
+// doesn't already show them, and so do dynamic albums shared with them (search_shares, see dynamic.rs). The engine knows none of this: the server works out a Scope per request and
 // checks or filters with it.
 use crate::accounts::{Role, User};
 use lumina_core::libraries;
@@ -24,7 +24,8 @@ pub fn ensure_tables(conn: &Connection) -> Result<(), String> {
          );
          CREATE INDEX IF NOT EXISTS idx_album_shares_user ON album_shares(user_id);",
     )
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?;
+    crate::dynamic::ensure_tables(conn)
 }
 
 // A user's own role on one library, instead of their default (None: back to the default). An admin's role
@@ -116,6 +117,11 @@ impl Scope {
                     shared.insert(h);
                 }
             }
+            let mut stmt = conn.prepare("SELECT hash FROM search_share_photos WHERE user_id = ?1").map_err(|e| e.to_string())?;
+            let rows = stmt.query_map([user.id], |r| r.get::<_, String>(0)).map_err(|e| e.to_string())?;
+            for row in rows {
+                shared.insert(row.map_err(|e| e.to_string())?);
+            }
         }
         Ok(Scope { user: user.clone(), libraries, shared, shared_albums })
     }
@@ -192,6 +198,13 @@ impl Scope {
             })
             .cloned()
             .collect())
+    }
+
+    // The ones of these photos this user sees through a role on their library, leaving out those seen only
+    // because an album or smart album was shared: an album that wasn't shared shows no more than these
+    pub fn visible_by_role(&self, conn: &Connection, hashes: &[String]) -> Result<Vec<String>, String> {
+        let found = Scope::libraries_of(conn, hashes)?;
+        Ok(hashes.iter().filter(|h| found.get(*h).is_some_and(|l| self.role_on(*l) >= Role::Viewer)).cloned().collect())
     }
 
     pub fn can_see(&self, conn: &Connection, hash: &str) -> Result<bool, String> {

@@ -30,7 +30,7 @@ interface CollectionsViewProps {
   onDeleteSavedSearch: (id: number) => Promise<void>;
   onRenameTrip: (id: string, name: string) => Promise<void>;
   // On a server: share an album with other users (absent in the desktop app, and for who may not edit)
-  onShareAlbum?: (album: { id: number; name: string }) => void;
+  onShareAlbum?: (album: { id: number; name: string; kind?: "album" | "search" }) => void;
   onHighlights: (title: string, hashes: string[], count?: number, focus?: HighlightFocus) => void;
   // The best `count` photos of a set, as Highlights would choose them
   pickHighlights: (source: PhotoItem[], count: number, focus?: HighlightFocus) => Promise<string[]>;
@@ -301,8 +301,9 @@ export default function CollectionsView({
                 ...(onShareGallery
                   ? [{ label: "Share as web gallery", run: () => onShareGallery(a.name, a.hashes.filter((h) => photoByHash.has(h))) }]
                   : []),
-                ...(onShareAlbum ? [{ label: "Share with…", run: () => onShareAlbum({ id: a.id, name: a.name }) }] : []),
-                ...(access.edit
+                ...(onShareAlbum && !a.dynamic ? [{ label: "Share with…", run: () => onShareAlbum({ id: a.id, name: a.name }) }] : []),
+                // A smart album shared with them comes as an album; it changes with the search, not by hand
+                ...(access.edit && !a.dynamic
                   ? [
                       { label: "Rename", run: () => setRenaming({ kind: "album", id: String(a.id), value: a.name }) },
                       { label: "Delete album", danger: true, run: () => onDeleteAlbum(a.id) },
@@ -375,7 +376,14 @@ export default function CollectionsView({
                     </div>
                   }
                   onOpen={() => onOpenSavedSearch(s)}
-                  menu={access.edit ? [{ label: "Delete smart album", danger: true, run: () => onDeleteSavedSearch(s.id) }] : undefined}
+                  menu={
+                    access.edit
+                      ? [
+                          ...(onShareAlbum ? [{ label: "Share with…", run: () => onShareAlbum({ id: s.id, name: s.name, kind: "search" as const }) }] : []),
+                          { label: "Delete smart album", danger: true, run: () => onDeleteSavedSearch(s.id) },
+                        ]
+                      : undefined
+                  }
                 />
               ))}
             </div>

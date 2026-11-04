@@ -46,6 +46,7 @@ pub mod people;
 pub mod perf;
 pub mod recycle;
 pub mod scan;
+pub mod search;
 pub mod storage;
 pub mod thumbs;
 pub mod types;

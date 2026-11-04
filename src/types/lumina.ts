@@ -431,12 +431,16 @@ export interface Album {
   id: number;
   name: string;
   hashes: string[];
+  // A smart album shared with this user (the server works out its photos; its search stays hidden)
+  dynamic?: boolean;
 }
 
 export interface SavedSearch {
   id: number;
   name: string;
   query: string;
+  // Free text runs as smart search (it was on when the search was saved)
+  smart?: boolean;
 }
 
 export type BulkPopover = "tag" | "person" | "move" | "location" | "time" | "album";

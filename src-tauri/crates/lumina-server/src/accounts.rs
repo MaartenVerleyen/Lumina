@@ -183,6 +183,9 @@ pub fn remove_user(conn: &Connection, name: &str) -> Result<(), String> {
         "DELETE FROM sessions WHERE user_id = ?1",
         "DELETE FROM library_roles WHERE user_id = ?1",
         "DELETE FROM album_shares WHERE user_id = ?1",
+        // Dynamic albums shared with them, and the ones they shared (those ran with their rights)
+        "DELETE FROM search_shares WHERE user_id = ?1 OR shared_by = ?1",
+        "DELETE FROM search_share_photos WHERE user_id = ?1",
         "DELETE FROM users WHERE id = ?1",
     ] {
         conn.execute(sql, [user.id]).map_err(|e| e.to_string())?;

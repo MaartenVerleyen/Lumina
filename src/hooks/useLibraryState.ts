@@ -19,6 +19,8 @@ import { useBackup } from "./library/useBackup";
 import { useDuplicates } from "./library/useDuplicates";
 import { useLiveUpdates } from "./library/useLiveUpdates";
 
+import type { SavedSearch } from "../types/lumina";
+
 export type { Toast } from "./library/shared";
 
 // Everything the app knows about the open library, as one object (`lib`) for the components.
@@ -66,6 +68,12 @@ export function useLibraryState() {
     ...highlighter,
     ...backup,
     ...duplicates,
+    // A saved search keeps whether its free text was a smart search, and opens the same way again
+    handleSaveSearch: (name: string) => collections.handleSaveSearch(name, smart.smartSearch),
+    runSavedSearch: (saved: SavedSearch) => {
+      collections.runSavedSearch(saved);
+      if (Boolean(saved.smart) !== smart.smartSearch) void smart.toggleSmartSearch();
+    },
     canUndo: core.undo.canUndo,
     canRedo: core.undo.canRedo,
     handleUndo: core.undo.handleUndo,

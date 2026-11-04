@@ -122,7 +122,7 @@ export default function App() {
   const [newFolderInput, setNewFolderInput] = useState<string>("");
   const [isPaletteOpen, setIsPaletteOpen] = useState<boolean>(false);
   // The album whose sharing dialog is open (web client)
-  const [shareAlbum, setShareAlbum] = useState<{ id: number; name: string } | null>(null);
+  const [shareAlbum, setShareAlbum] = useState<{ id: number; name: string; kind?: "album" | "search" } | null>(null);
   // The server's admin page (web client, admins; opened from the account menu)
   const [isAdminOpen, setIsAdminOpen] = useState(false);
   useEffect(() => {

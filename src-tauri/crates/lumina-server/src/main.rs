@@ -4,6 +4,7 @@
 mod accounts;
 mod changes;
 mod config;
+mod dynamic;
 mod host;
 mod http;
 mod pipeline;
@@ -128,6 +129,8 @@ async fn serve(config: &Config, host: Arc<ServerHost>) -> Result<(), String> {
     host.jobs.set_caption_model(config.caption_model.clone());
     // The web server first, so people can log in while a long first scan runs
     start_web_server(config, host.clone()).await?;
+    // Shared dynamic albums follow the library as it changes
+    dynamic::keep_up(host.clone());
 
     let mut changes = host.subscribe();
     let mut jobs = host.jobs.take_receiver().ok_or("The pipeline runs once per server")?;

@@ -16,10 +16,18 @@ const WHO: Record<Role, string> = {
   admin: "sees everything",
 };
 
-// Share an album with other people on the server (the web client; the desktop app has no users). A guest
-// sees only the albums shared with them; someone whose role already shows the library gets nothing more,
-// unless their role on that library is guest.
-export default function ShareAlbumDialog({ album, onClose }: { album: { id: number; name: string } | null; onClose: () => void }) {
+// Share an album or a smart album (a saved search) with other people on the server (the web client; the
+// desktop app has no users). A guest sees only the albums shared with them; someone whose role already shows
+// the library gets nothing more, unless their role on that library is guest. A shared smart album reaches
+// them as an album of the photos it finds, without its search.
+export default function ShareAlbumDialog({
+  album,
+  onClose,
+}: {
+  album: { id: number; name: string; kind?: "album" | "search" } | null;
+  onClose: () => void;
+}) {
+  const search = album?.kind === "search";
   const dialogRef = useDialogFocus<HTMLDivElement>(album !== null);
   const [users, setUsers] = useState<ShareUser[] | null>(null);
   const [shared, setShared] = useState<Set<string>>(new Set());
@@ -30,7 +38,7 @@ export default function ShareAlbumDialog({ album, onClose }: { album: { id: numb
     if (!album) return;
     setUsers(null);
     setError(null);
-    Promise.all([call<ShareUser[]>("list_share_users"), call<string[]>("get_album_shares", { id: album.id })])
+    Promise.all([call<ShareUser[]>("list_share_users"), call<string[]>(album.kind === "search" ? "get_search_shares" : "get_album_shares", { id: album.id })])
       .then(([list, names]) => {
         setUsers(list);
         setShared(new Set(names.map((n) => n.toLowerCase())));
@@ -46,7 +54,7 @@ export default function ShareAlbumDialog({ album, onClose }: { album: { id: numb
     setBusy(name);
     setError(null);
     try {
-      await call("share_album", { id: album.id, userName: name, shared: on });
+      await call(album.kind === "search" ? "share_search" : "share_album", { id: album.id, userName: name, shared: on });
       setShared((prev) => {
         const next = new Set(prev);
         if (on) next.add(name.toLowerCase());
@@ -80,8 +88,9 @@ export default function ShareAlbumDialog({ album, onClose }: { album: { id: numb
           </button>
         </div>
         <p className="text-zinc-400 leading-relaxed">
-          The people you tick can look at the photos in this album (not change them), also if they may not see the rest of
-          the library.
+          {search
+            ? "The people you tick see the photos this smart album finds, as an album they can look at (not change), also if they may not see the rest of the library. They don't see its search. It keeps up with your library by itself."
+            : "The people you tick can look at the photos in this album (not change them), also if they may not see the rest of the library."}
         </p>
         {error && <p className="text-red-400">{error}</p>}
         {users === null && !error ? (

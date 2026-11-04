@@ -16,6 +16,8 @@ pub struct SavedSearch {
     pub id: i64,
     pub name: String,
     pub query: String,
+    // Free text runs as smart search (it was on when the search was saved)
+    pub smart: bool,
 }
 
 fn clean_name(name: &str) -> Result<String, String> {
@@ -125,21 +127,21 @@ pub fn remove_from_album(app: SharedHost, id: i64, hashes: Vec<String>) -> Resul
 pub fn get_saved_searches(app: SharedHost) -> Result<Vec<SavedSearch>, String> {
     let conn = open_global_db(&app)?;
     let mut stmt = conn
-        .prepare("SELECT id, name, query FROM saved_searches ORDER BY created_at, id")
+        .prepare("SELECT id, name, query, smart FROM saved_searches ORDER BY created_at, id")
         .map_err(|e| e.to_string())?;
     let rows = stmt
-        .query_map([], |r| Ok(SavedSearch { id: r.get(0)?, name: r.get(1)?, query: r.get(2)? }))
+        .query_map([], |r| Ok(SavedSearch { id: r.get(0)?, name: r.get(1)?, query: r.get(2)?, smart: r.get::<_, i64>(3)? != 0 }))
         .map_err(|e| e.to_string())?;
     Ok(rows.flatten().collect())
 }
 
-pub fn save_search(app: SharedHost, name: String, query: String) -> Result<i64, String> {
+pub fn save_search(app: SharedHost, name: String, query: String, smart: bool) -> Result<i64, String> {
     let name = clean_name(&name)?;
     if query.trim().is_empty() {
         return Err("There is no search to save".into());
     }
     let conn = open_global_db(&app)?;
-    conn.execute("INSERT INTO saved_searches (name, query) VALUES (?1, ?2)", params![name, query.trim()])
+    conn.execute("INSERT INTO saved_searches (name, query, smart) VALUES (?1, ?2, ?3)", params![name, query.trim(), smart])
         .map_err(|e| unique_error(e, "smart album", &name))?;
     Ok(conn.last_insert_rowid())
 }

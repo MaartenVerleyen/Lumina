@@ -1,0 +1,1269 @@
+{
+ "today": "2026-11-04",
+ "albums": {
+  "Holiday": [
+   "p01",
+   "p03",
+   "p09"
+  ],
+  "Work": [
+   "p05"
+  ]
+ },
+ "photos": [
+  {
+   "hash": "p01",
+   "name": "IMG_0001.jpg",
+   "rating": 5,
+   "flag": "pick",
+   "color_label": "red",
+   "people": [
+    "Emma",
+    "Lucas"
+   ],
+   "tags": [
+    "beach",
+    "sea"
+   ],
+   "camera_model": "Canon EOS R6",
+   "lens_model": "RF 24-105mm",
+   "location": "Paris, France",
+   "captured_at": "2024-07-14 10:00:00",
+   "latitude": 48.85,
+   "longitude": 2.35,
+   "faces": [
+    {
+     "bbox_w": 0.2,
+     "bbox_h": 0.25,
+     "eyes_open": 0.05,
+     "face_sharpness": 300,
+     "confidence": 0.9
+    }
+   ],
+   "ocr_text": "",
+   "ai_caption": "Two children build a sandcastle on the beach.",
+   "width": 6000,
+   "height": 4000,
+   "sharpness": 500
+  },
+  {
+   "hash": "p02",
+   "name": "IMG_0002.jpg",
+   "rating": 3,
+   "flag": null,
+   "color_label": null,
+   "people": [
+    "Anna Smith"
+   ],
+   "tags": [
+    "birthday"
+   ],
+   "camera_model": "iPhone 15",
+   "lens_model": null,
+   "location": "Antwerpen, Belgium",
+   "captured_at": "2023:12:25 18:30:00",
+   "latitude": null,
+   "longitude": null,
+   "faces": [
+    {
+     "bbox_w": 0.3,
+     "bbox_h": 0.3,
+     "eyes_open": -0.05,
+     "face_sharpness": 200,
+     "confidence": 0.95
+    }
+   ],
+   "ocr_text": "Happy Birthday",
+   "ai_caption": "A woman blows out candles on a cake.",
+   "width": 4032,
+   "height": 3024,
+   "sharpness": 300
+  },
+  {
+   "hash": "p03",
+   "name": "DSC_1234.NEF",
+   "rating": 4,
+   "flag": "reject",
+   "color_label": "green",
+   "people": [],
+   "tags": [
+    "mountain"
+   ],
+   "camera_model": "Nikon Z 6",
+   "lens_model": "NIKKOR Z 24-70mm",
+   "location": "Lagos, Nigeria",
+   "captured_at": "2022-01-01 00:10:00",
+   "latitude": 6.5,
+   "longitude": 3.4,
+   "faces": [],
+   "ocr_text": "",
+   "ai_caption": "",
+   "pair_raw_path": "/lib/DSC_1234.NEF",
+   "width": 6048,
+   "height": 4024,
+   "sharpness": 50
+  },
+  {
+   "hash": "p04",
+   "name": "Screenshot 2025-03-02.png",
+   "rating": 0,
+   "flag": null,
+   "color_label": null,
+   "people": [],
+   "tags": [
+    "screenshot"
+   ],
+   "camera_model": "",
+   "lens_model": null,
+   "location": "",
+   "captured_at": "2025-03-02 09:00:00",
+   "latitude": null,
+   "longitude": null,
+   "faces": [],
+   "ocr_text": "Invoice 2025",
+   "ai_caption": "",
+   "width": 1170,
+   "height": 2532,
+   "sharpness": 900
+  },
+  {
+   "hash": "p05",
+   "name": "clip.mp4",
+   "rating": 2,
+   "flag": null,
+   "color_label": "blue",
+   "people": [
+    "Noah"
+   ],
+   "tags": [],
+   "camera_model": "GoPro HERO11",
+   "lens_model": null,
+   "location": "New York, USA",
+   "captured_at": "2026-10-30 12:00:00",
+   "latitude": 40.7,
+   "longitude": -74,
+   "faces": [],
+   "ocr_text": "",
+   "ai_caption": "A man skates in a park.",
+   "media_type": "video",
+   "width": 1920,
+   "height": 1080,
+   "sharpness": 100
+  },
+  {
+   "hash": "p06",
+   "name": "WhatsApp Image 2026-11-03.jpeg",
+   "rating": 1,
+   "flag": null,
+   "color_label": null,
+   "people": [
+    "Emma"
+   ],
+   "tags": [
+    "whatsapp"
+   ],
+   "camera_model": "",
+   "lens_model": null,
+   "location": "Paris, France",
+   "captured_at": "2026-11-03 20:00:00",
+   "latitude": null,
+   "longitude": null,
+   "faces": [
+    {
+     "bbox_w": 0.01,
+     "bbox_h": 0.01,
+     "eyes_open": -0.5,
+     "face_sharpness": 10,
+     "confidence": 0.9
+    }
+   ],
+   "ocr_text": "",
+   "ai_caption": "",
+   "in_basket": true,
+   "width": 1600,
+   "height": 1200,
+   "sharpness": 80
+  },
+  {
+   "hash": "p07",
+   "name": "IMG_0007.HEIC",
+   "rating": 4,
+   "flag": null,
+   "color_label": null,
+   "people": [
+    "June"
+   ],
+   "tags": [
+    "garden"
+   ],
+   "camera_model": "iPhone 12 Pro",
+   "lens_model": null,
+   "location": "Brugge, Belgium",
+   "captured_at": "2025-06-21 15:00:00",
+   "latitude": 51.2,
+   "longitude": 3.2,
+   "faces": [
+    {
+     "bbox_w": 0.2,
+     "bbox_h": 0.2,
+     "eyes_open": 0.1,
+     "face_sharpness": 20,
+     "confidence": 0.9
+    }
+   ],
+   "ocr_text": "",
+   "ai_caption": "A girl among roses in summer.",
+   "live_video_hash": "p08",
+   "width": 4032,
+   "height": 3024,
+   "sharpness": 60
+  },
+  {
+   "hash": "p08",
+   "name": "IMG_0007.MOV",
+   "rating": 0,
+   "flag": null,
+   "color_label": null,
+   "people": [],
+   "tags": [],
+   "camera_model": "iPhone 12 Pro",
+   "lens_model": null,
+   "location": "Brugge, Belgium",
+   "captured_at": "2025-06-21 15:00:00",
+   "latitude": null,
+   "longitude": null,
+   "faces": [],
+   "ocr_text": "",
+   "ai_caption": "",
+   "media_type": "video",
+   "live_photo_hash": "p07",
+   "width": 1920,
+   "height": 1440,
+   "sharpness": 60
+  },
+  {
+   "hash": "p09",
+   "name": "kerst.jpg",
+   "rating": 5,
+   "flag": "pick",
+   "color_label": "red",
+   "people": [
+    "Emma",
+    "Anna Smith",
+    "Lucas"
+   ],
+   "tags": [
+    "christmas",
+    "family"
+   ],
+   "camera_model": "Canon EOS R6",
+   "lens_model": "RF 50mm F1.8",
+   "location": "Antwerpen, Belgium",
+   "captured_at": "2025-12-24 19:00:00",
+   "latitude": 51.2,
+   "longitude": 4.4,
+   "faces": [],
+   "ocr_text": "",
+   "ai_caption": "A family around a Christmas tree.",
+   "staged_target": "/lib/Family",
+   "width": 5000,
+   "height": 5000,
+   "sharpness": 400
+  },
+  {
+   "hash": "p10",
+   "name": "broken.jpg",
+   "rating": 0,
+   "flag": null,
+   "color_label": null,
+   "people": [],
+   "tags": [],
+   "camera_model": "",
+   "lens_model": null,
+   "location": "",
+   "captured_at": "",
+   "latitude": null,
+   "longitude": null,
+   "faces": [],
+   "ocr_text": "",
+   "ai_caption": "",
+   "damaged": true,
+   "width": 0,
+   "height": 0,
+   "sharpness": 0
+  },
+  {
+   "hash": "p11",
+   "name": "Été à Liège.jpg",
+   "rating": 3,
+   "flag": null,
+   "color_label": "yellow",
+   "people": [
+    "Noah",
+    "Emma"
+   ],
+   "tags": [
+    "café"
+   ],
+   "camera_model": "Fujifilm X-T5",
+   "lens_model": "XF 35mm",
+   "location": "Liège, Belgium",
+   "captured_at": "2026-08-15 11:00:00",
+   "latitude": 50.6,
+   "longitude": 5.6,
+   "faces": [],
+   "ocr_text": "",
+   "ai_caption": "Friends drink coffee on a terrace in summer.",
+   "width": 6240,
+   "height": 4160,
+   "sharpness": 350
+  },
+  {
+   "hash": "p12",
+   "name": "IMG_0012.jpg",
+   "rating": 2,
+   "flag": null,
+   "color_label": null,
+   "people": [
+    "Lucas"
+   ],
+   "tags": [
+    "beach"
+   ],
+   "camera_model": "Canon EOS R6",
+   "lens_model": "RF 24-105mm",
+   "location": "Paris, France",
+   "captured_at": "2026-10-28 08:00:00",
+   "latitude": 48.85,
+   "longitude": 2.35,
+   "faces": [],
+   "ocr_text": "",
+   "ai_caption": "A boy runs along the shore.",
+   "width": 6000,
+   "height": 4000,
+   "sharpness": 250
+  }
+ ],
+ "cases": [
+  {
+   "query": "rating:5",
+   "expect": [
+    "p01",
+    "p09"
+   ]
+  },
+  {
+   "query": "rating:>=4",
+   "expect": [
+    "p01",
+    "p03",
+    "p07",
+    "p09"
+   ]
+  },
+  {
+   "query": "rating:<2",
+   "expect": [
+    "p04",
+    "p06",
+    "p10"
+   ]
+  },
+  {
+   "query": "rating:>3 -flag:reject",
+   "expect": [
+    "p01",
+    "p07",
+    "p09"
+   ]
+  },
+  {
+   "query": "flag:pick",
+   "expect": [
+    "p01",
+    "p09"
+   ]
+  },
+  {
+   "query": "flag:none",
+   "expect": [
+    "p02",
+    "p04",
+    "p05",
+    "p06",
+    "p07",
+    "p10",
+    "p11",
+    "p12"
+   ]
+  },
+  {
+   "query": "flag:rejected",
+   "expect": [
+    "p03"
+   ]
+  },
+  {
+   "query": "-flag:pick",
+   "expect": [
+    "p02",
+    "p03",
+    "p04",
+    "p05",
+    "p06",
+    "p07",
+    "p10",
+    "p11",
+    "p12"
+   ]
+  },
+  {
+   "query": "label:red",
+   "expect": [
+    "p01",
+    "p09"
+   ]
+  },
+  {
+   "query": "label:none",
+   "expect": [
+    "p02",
+    "p04",
+    "p06",
+    "p07",
+    "p10",
+    "p12"
+   ]
+  },
+  {
+   "query": "person:emma",
+   "expect": [
+    "p01",
+    "p06",
+    "p09",
+    "p11"
+   ]
+  },
+  {
+   "query": "person:Emma person:Lucas",
+   "expect": [
+    "p01",
+    "p09"
+   ]
+  },
+  {
+   "query": "person:emma|noah",
+   "expect": [
+    "p01",
+    "p05",
+    "p06",
+    "p09",
+    "p11"
+   ]
+  },
+  {
+   "query": "-person:emma",
+   "expect": [
+    "p02",
+    "p03",
+    "p04",
+    "p05",
+    "p07",
+    "p10",
+    "p12"
+   ]
+  },
+  {
+   "query": "person:\"anna smith\"",
+   "expect": [
+    "p02",
+    "p09"
+   ]
+  },
+  {
+   "query": "person:em",
+   "expect": [
+    "p01",
+    "p06",
+    "p09",
+    "p11"
+   ]
+  },
+  {
+   "query": "tag:beach",
+   "expect": [
+    "p01",
+    "p12"
+   ]
+  },
+  {
+   "query": "tag:bea",
+   "expect": [
+    "p01",
+    "p12"
+   ]
+  },
+  {
+   "query": "tag:beach ",
+   "expect": [
+    "p01",
+    "p12"
+   ]
+  },
+  {
+   "query": "-tag:beach",
+   "expect": [
+    "p02",
+    "p03",
+    "p04",
+    "p05",
+    "p06",
+    "p07",
+    "p09",
+    "p10",
+    "p11"
+   ]
+  },
+  {
+   "query": "tag:café",
+   "expect": [
+    "p11"
+   ]
+  },
+  {
+   "query": "camera:canon",
+   "expect": [
+    "p01",
+    "p09",
+    "p12"
+   ]
+  },
+  {
+   "query": "camera:\"EOS R6\"",
+   "expect": [
+    "p01",
+    "p09",
+    "p12"
+   ]
+  },
+  {
+   "query": "lens:24-105",
+   "expect": [
+    "p01",
+    "p12"
+   ]
+  },
+  {
+   "query": "place:belgium",
+   "expect": [
+    "p02",
+    "p07",
+    "p09",
+    "p11"
+   ]
+  },
+  {
+   "query": "place:paris",
+   "expect": [
+    "p01",
+    "p06",
+    "p12"
+   ]
+  },
+  {
+   "query": "name:img_00",
+   "expect": [
+    "p01",
+    "p02",
+    "p07",
+    "p12"
+   ]
+  },
+  {
+   "query": "date:2025",
+   "expect": [
+    "p04",
+    "p07",
+    "p09"
+   ]
+  },
+  {
+   "query": "date:2025-12",
+   "expect": [
+    "p09"
+   ]
+  },
+  {
+   "query": "date:2024-07-14",
+   "expect": [
+    "p01"
+   ]
+  },
+  {
+   "query": "date:<2024",
+   "expect": [
+    "p02",
+    "p03"
+   ]
+  },
+  {
+   "query": "date:>=2026",
+   "expect": [
+    "p05",
+    "p06",
+    "p11",
+    "p12"
+   ]
+  },
+  {
+   "query": "date:2023..2024",
+   "expect": [
+    "p01",
+    "p02"
+   ]
+  },
+  {
+   "query": "date:2025-06..",
+   "expect": [
+    "p05",
+    "p06",
+    "p07",
+    "p09",
+    "p11",
+    "p12"
+   ]
+  },
+  {
+   "query": "date:*-12",
+   "expect": [
+    "p02",
+    "p09"
+   ]
+  },
+  {
+   "query": "date:*-12-24..*-12-26",
+   "expect": [
+    "p02",
+    "p09"
+   ]
+  },
+  {
+   "query": "date:*-12-01..*-02-28",
+   "expect": [
+    "p02",
+    "p03",
+    "p09"
+   ]
+  },
+  {
+   "query": "album:holiday",
+   "expect": [
+    "p01",
+    "p03",
+    "p09"
+   ]
+  },
+  {
+   "query": "album:Work",
+   "expect": [
+    "p05"
+   ]
+  },
+  {
+   "query": "-album:holiday",
+   "expect": [
+    "p02",
+    "p04",
+    "p05",
+    "p06",
+    "p07",
+    "p10",
+    "p11",
+    "p12"
+   ]
+  },
+  {
+   "query": "album:nothing",
+   "expect": []
+  },
+  {
+   "query": "has:gps",
+   "expect": [
+    "p01",
+    "p03",
+    "p05",
+    "p07",
+    "p09",
+    "p11",
+    "p12"
+   ]
+  },
+  {
+   "query": "has:faces",
+   "expect": [
+    "p01",
+    "p02",
+    "p06",
+    "p07"
+   ]
+  },
+  {
+   "query": "has:people",
+   "expect": [
+    "p01",
+    "p02",
+    "p05",
+    "p06",
+    "p07",
+    "p09",
+    "p11",
+    "p12"
+   ]
+  },
+  {
+   "query": "has:ocr",
+   "expect": [
+    "p02",
+    "p04"
+   ]
+  },
+  {
+   "query": "has:text",
+   "expect": [
+    "p02",
+    "p04"
+   ]
+  },
+  {
+   "query": "has:caption",
+   "expect": [
+    "p01",
+    "p02",
+    "p05",
+    "p07",
+    "p09",
+    "p11",
+    "p12"
+   ]
+  },
+  {
+   "query": "has:tags",
+   "expect": [
+    "p01",
+    "p02",
+    "p03",
+    "p04",
+    "p06",
+    "p07",
+    "p09",
+    "p11",
+    "p12"
+   ]
+  },
+  {
+   "query": "has:location",
+   "expect": [
+    "p01",
+    "p02",
+    "p03",
+    "p05",
+    "p06",
+    "p07",
+    "p09",
+    "p11",
+    "p12"
+   ]
+  },
+  {
+   "query": "has:place",
+   "expect": [
+    "p01",
+    "p02",
+    "p03",
+    "p05",
+    "p06",
+    "p07",
+    "p09",
+    "p11",
+    "p12"
+   ]
+  },
+  {
+   "query": "-has:gps",
+   "expect": [
+    "p02",
+    "p04",
+    "p06",
+    "p10"
+   ]
+  },
+  {
+   "query": "is:raw",
+   "expect": [
+    "p03"
+   ]
+  },
+  {
+   "query": "is:video",
+   "expect": [
+    "p05"
+   ]
+  },
+  {
+   "query": "is:movie",
+   "expect": [
+    "p05"
+   ]
+  },
+  {
+   "query": "is:photo",
+   "expect": [
+    "p01",
+    "p02",
+    "p03",
+    "p04",
+    "p06",
+    "p07",
+    "p09",
+    "p10",
+    "p11",
+    "p12"
+   ]
+  },
+  {
+   "query": "is:paired",
+   "expect": [
+    "p03"
+   ]
+  },
+  {
+   "query": "is:screenshot",
+   "expect": [
+    "p04"
+   ]
+  },
+  {
+   "query": "is:whatsapp",
+   "expect": [
+    "p06"
+   ]
+  },
+  {
+   "query": "is:damaged",
+   "expect": [
+    "p10"
+   ]
+  },
+  {
+   "query": "is:staged",
+   "expect": [
+    "p09"
+   ]
+  },
+  {
+   "query": "is:basket",
+   "expect": [
+    "p06"
+   ]
+  },
+  {
+   "query": "is:pinned",
+   "expect": [
+    "p06"
+   ]
+  },
+  {
+   "query": "is:pick",
+   "expect": [
+    "p01",
+    "p09"
+   ]
+  },
+  {
+   "query": "is:rejected",
+   "expect": [
+    "p03"
+   ]
+  },
+  {
+   "query": "is:blinking",
+   "expect": [
+    "p02"
+   ]
+  },
+  {
+   "query": "is:closed-eyes",
+   "expect": [
+    "p02"
+   ]
+  },
+  {
+   "query": "is:blurry",
+   "expect": [
+    "p07"
+   ]
+  },
+  {
+   "query": "is:soft",
+   "expect": [
+    "p07"
+   ]
+  },
+  {
+   "query": "-is:video",
+   "expect": [
+    "p01",
+    "p02",
+    "p03",
+    "p04",
+    "p06",
+    "p07",
+    "p09",
+    "p10",
+    "p11",
+    "p12"
+   ]
+  },
+  {
+   "query": "beach",
+   "expect": [
+    "p01",
+    "p12"
+   ]
+  },
+  {
+   "query": "sandcastle",
+   "expect": [
+    "p01"
+   ]
+  },
+  {
+   "query": "birthday",
+   "expect": [
+    "p02"
+   ]
+  },
+  {
+   "query": "invoice",
+   "expect": [
+    "p04"
+   ]
+  },
+  {
+   "query": "\"christmas tree\"",
+   "expect": [
+    "p09"
+   ]
+  },
+  {
+   "query": "Paris",
+   "expect": [
+    "p01",
+    "p06",
+    "p12"
+   ]
+  },
+  {
+   "query": "liège",
+   "expect": [
+    "p11"
+   ]
+  },
+  {
+   "query": "emma",
+   "expect": [
+    "p01",
+    "p06",
+    "p09",
+    "p11"
+   ]
+  },
+  {
+   "query": "emma and lucas",
+   "expect": [
+    "p01",
+    "p09"
+   ]
+  },
+  {
+   "query": "emma or noah",
+   "expect": [
+    "p01",
+    "p05",
+    "p06",
+    "p09",
+    "p11"
+   ]
+  },
+  {
+   "query": "anna",
+   "expect": [
+    "p02",
+    "p09"
+   ]
+  },
+  {
+   "query": "photos of emma in paris",
+   "expect": [
+    "p01",
+    "p06"
+   ]
+  },
+  {
+   "query": "emma summer 2024",
+   "expect": [
+    "p01"
+   ]
+  },
+  {
+   "query": "summer 2024",
+   "expect": [
+    "p01"
+   ]
+  },
+  {
+   "query": "summer",
+   "expect": [
+    "p01",
+    "p07",
+    "p11"
+   ]
+  },
+  {
+   "query": "zomer 2026",
+   "expect": [
+    "p11"
+   ]
+  },
+  {
+   "query": "christmas",
+   "expect": [
+    "p02",
+    "p09"
+   ]
+  },
+  {
+   "query": "kerst 2025",
+   "expect": [
+    "p09"
+   ]
+  },
+  {
+   "query": "kerst bij oma",
+   "expect": []
+  },
+  {
+   "query": "last week",
+   "expect": [
+    "p05",
+    "p06",
+    "p12"
+   ]
+  },
+  {
+   "query": "last month",
+   "expect": [
+    "p05",
+    "p12"
+   ]
+  },
+  {
+   "query": "this year",
+   "expect": [
+    "p05",
+    "p06",
+    "p11",
+    "p12"
+   ]
+  },
+  {
+   "query": "last year",
+   "expect": [
+    "p04",
+    "p07",
+    "p09"
+   ]
+  },
+  {
+   "query": "yesterday",
+   "expect": [
+    "p06"
+   ]
+  },
+  {
+   "query": "gisteren",
+   "expect": [
+    "p06"
+   ]
+  },
+  {
+   "query": "june",
+   "expect": [
+    "p07"
+   ]
+  },
+  {
+   "query": "june 2025",
+   "expect": [
+    "p07"
+   ]
+  },
+  {
+   "query": "may 2025",
+   "expect": []
+  },
+  {
+   "query": "2022",
+   "expect": [
+    "p03"
+   ]
+  },
+  {
+   "query": "new year 2022",
+   "expect": [
+    "p03"
+   ]
+  },
+  {
+   "query": "halloween",
+   "expect": []
+  },
+  {
+   "query": "in antwerpen",
+   "expect": [
+    "p02",
+    "p09"
+   ]
+  },
+  {
+   "query": "lucas at the beach",
+   "expect": []
+  },
+  {
+   "query": "noah in new york",
+   "expect": [
+    "p05"
+   ]
+  },
+  {
+   "query": "emma coffee",
+   "expect": [
+    "p11"
+   ]
+  },
+  {
+   "query": "rating:>=3 emma",
+   "expect": [
+    "p01",
+    "p09",
+    "p11"
+   ]
+  },
+  {
+   "query": "tag:beach -person:emma",
+   "expect": [
+    "p12"
+   ]
+  },
+  {
+   "query": "person:emma date:2026 place:paris",
+   "expect": [
+    "p06"
+   ]
+  },
+  {
+   "query": "is:photo has:faces rating:>=3",
+   "expect": [
+    "p01",
+    "p02",
+    "p07"
+   ]
+  },
+  {
+   "query": "camera:canon -is:staged",
+   "expect": [
+    "p01",
+    "p12"
+   ]
+  },
+  {
+   "query": "unknownkey:x beach",
+   "expect": []
+  },
+  {
+   "query": "rating:abc",
+   "expect": []
+  },
+  {
+   "query": "",
+   "expect": [
+    "p01",
+    "p02",
+    "p03",
+    "p04",
+    "p05",
+    "p06",
+    "p07",
+    "p09",
+    "p10",
+    "p11",
+    "p12"
+   ]
+  },
+  {
+   "query": "zzz no match",
+   "expect": []
+  }
+ ],
+ "smart": {
+  "scores": {
+   "p01": 0.31,
+   "p02": 0.12,
+   "p03": 0.2,
+   "p05": 0.25,
+   "p06": 0.29,
+   "p07": 0.18,
+   "p09": 0.22,
+   "p11": 0.27,
+   "p12": 0.3
+  },
+  "cases": [
+   {
+    "query": "sunny day",
+    "expect": [
+     "p01",
+     "p12",
+     "p06"
+    ]
+   },
+   {
+    "query": "sunny day -person:emma",
+    "expect": [
+     "p12"
+    ]
+   },
+   {
+    "query": "person:lucas sunny day",
+    "expect": [
+     "p01"
+    ]
+   },
+   {
+    "query": "rating:>=4",
+    "expect": [
+     "p01",
+     "p03",
+     "p07",
+     "p09"
+    ]
+   },
+   {
+    "query": "sunny day date:2026",
+    "expect": [
+     "p12",
+     "p06"
+    ]
+   }
+  ]
+ }
+}

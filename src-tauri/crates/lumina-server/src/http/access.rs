@@ -204,18 +204,26 @@ pub fn people_for(conn: &Connection, scope: &Scope, library: Option<i64>, people
     Ok(JsonValue::Array(out))
 }
 
-// Albums as this user may see them: the photos in them they can see, and the albums with any (or shared)
+// Albums as this user may see them: those shared with them, and those with photos in a library they have a
+// role on (only those photos).
+// Dynamic albums shared with them come as albums too ("dynamic": true, id -<search id>): their photos without
+// their query.
 pub fn albums_for(conn: &Connection, scope: &Scope, albums: JsonValue) -> Result<JsonValue, ApiError> {
     if scope.sees_all() {
         return Ok(albums);
     }
     let JsonValue::Array(items) = albums else { return Ok(albums) };
     let mut out = Vec::new();
+    for (id, name, hashes) in crate::dynamic::shared_with(conn, scope.user.id)? {
+        out.push(serde_json::json!({ "id": -id, "name": name, "hashes": scope.visible(conn, &hashes)?, "dynamic": true }));
+    }
     for mut album in items {
         let hashes: Vec<String> =
             album["hashes"].as_array().map(|a| a.iter().filter_map(|h| h.as_str().map(str::to_string)).collect()).unwrap_or_default();
-        let visible = scope.visible(conn, &hashes)?;
+        // An album shared with them shows every photo of it they may see; any other only where a role on
+        // the library lets them in, so a photo shared through one album never reveals the others it is in
         let shared = album["id"].as_i64().is_some_and(|id| scope.shared_albums.contains(&id));
+        let visible = if shared { scope.visible(conn, &hashes)? } else { scope.visible_by_role(conn, &hashes)? };
         if visible.is_empty() && !shared {
             continue;
         }

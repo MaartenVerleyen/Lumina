@@ -12,6 +12,7 @@ use super::lookup;
 use crate::host::ServerHost;
 use super::access::{self, Target};
 use crate::scope::{self, Scope};
+use crate::dynamic;
 use super::admin;
 use crate::pipeline::Job;
 use crate::restore;
@@ -425,8 +426,13 @@ commands! {
         => after Ok(Changed::photos(hashes).and_albums());
     Editor [Target::Photos(hashes.clone())] blocking remove_from_album(id: i64, hashes: Vec<String>) |host, scope| albums::remove_from_album(host, id, hashes)
         => after Ok(Changed::photos(hashes).and_albums());
-    Editor blocking save_search(name: String, query: String) |host, scope| albums::save_search(host, name, query) => after Ok(Changed::albums());
-    Editor blocking delete_saved_search(id: i64) |host, scope| albums::delete_saved_search(host, id) => after Ok(Changed::albums());
+    Editor blocking save_search(name: String, query: String, smart: Option<bool>) |host, scope| albums::save_search(host, name, query, smart.unwrap_or(false)) => after Ok(Changed::albums());
+    // Whoever it was shared with loses it at once
+    Editor blocking delete_saved_search(id: i64) |host, scope| {
+        dynamic::forget_search(&db::open_global_db(&*host)?, id)?;
+        albums::delete_saved_search(host, id)
+    }
+        => before Ok(Changed { shared_with: dynamic::shares_of(&db::open_global_db(&*host)?, id)?, albums: true, ..Default::default() });
     Editor blocking set_trip_name(trip_id: String, name: String) |host, scope| albums::set_trip_name(host, trip_id, name)
         => after Ok(Changed::albums());
     // Sharing an album with someone who may see only that (a guest), or with anyone else
@@ -434,6 +440,15 @@ commands! {
     Editor [Target::Album(id)] blocking share_album(id: i64, user_name: String, shared: bool) |host, scope| {
         let user = user_id(&host, &user_name)?;
         scope::share_album(&db::open_global_db(&*host)?, id, user, shared).map_err(ApiError::from)
+    }
+        => after Ok(Changed { shared_with: vec![user_name], albums: true, ..Default::default() });
+    // Sharing a dynamic album (a saved search): it runs over the libraries the person sharing it may edit, and
+    // whoever it is shared with sees its photos as an album, not its query (dynamic.rs)
+    Editor blocking get_search_shares(id: i64) |host, scope| dynamic::shares_of(&db::open_global_db(&*host)?, id);
+    Editor async share_search(id: i64, user_name: String, shared: bool) |host, scope| {
+        let user = user_id(&host, &user_name)?;
+        dynamic::share(&db::open_global_db(&*host)?, id, user, scope.user.id, shared)?;
+        dynamic::refresh(&host).await.map(|_| ())
     }
         => after Ok(Changed { shared_with: vec![user_name], albums: true, ..Default::default() });
     // Who an album can be shared with: every account's name and default role

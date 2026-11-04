@@ -32,6 +32,8 @@ zip = { version = "9", default-features = false, features = ["deflate"] }
 sha2 = "0.10"
 tokio = { version = "1", features = ["sync", "macros", "time", "rt"] }
 jpeg-decoder = { version = "0.3", default-features = false }
+# Accent folding for the search language ("liege" finds Liège), as the frontend does with normalize("NFD")
+unicode-normalization = "0.1"
 
 [target.'cfg(windows)'.dependencies]
 ort = { version = "=2.0.0-rc.15", features = ["directml"] }

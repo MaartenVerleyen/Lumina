@@ -241,4 +241,6 @@ pub fn ensure_album_tables(conn: &Connection) {
             created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
          );",
     );
+    // Whether free text in a saved search means smart search (1) or plain text (0), as it did when saved
+    let _ = conn.execute("ALTER TABLE saved_searches ADD COLUMN smart INTEGER NOT NULL DEFAULT 0", []);
 }

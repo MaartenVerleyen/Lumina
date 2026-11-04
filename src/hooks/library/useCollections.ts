@@ -215,10 +215,10 @@ export function useCollections(core: LibraryCore, filters: FilterState) {
     }
   }
 
-  async function handleSaveSearch(name: string) {
+  async function handleSaveSearch(name: string, smart = false) {
     try {
-      const id = await call<number>("save_search", { name, query: searchQuery });
-      setSavedSearches((prev) => [...prev, { id, name: name.trim(), query: searchQuery.trim() }]);
+      const id = await call<number>("save_search", { name, query: searchQuery, smart });
+      setSavedSearches((prev) => [...prev, { id, name: name.trim(), query: searchQuery.trim(), smart }]);
       setAutoMatchNotice(`Saved smart album "${name.trim()}": it updates by itself as your photos change.`);
       return true;
     } catch (err) {

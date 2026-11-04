@@ -104,7 +104,10 @@ land in `<library>/uploads/<user>/`; `/media/download/{hash}` sends originals wi
 
 On the server every RPC command has a lowest role and names what it touches (`http/rpc.rs`, `http/access.rs`);
 roles are per library (a default per user, `library_roles` overrides, admins server-wide) and guests see only
-albums shared with them (`scope.rs`), so reads, media and events are filtered per user. An editing command also
+albums shared with them (`scope.rs`), so reads, media and events are filtered per user. Smart albums (saved
+searches) can be shared too (`dynamic.rs`, `docs/plans/shared-dynamic-albums.md`): the server runs the search with
+a Rust copy of the search language (`lumina-core/src/search.rs`, kept in step with `src/utils/searchRun.ts` by
+`tests/fixtures/search-cases.json`) and the guest gets an album of its photos, never its query. An editing command also
 says which photos it changed, so the server writes `changes` (who did what) and sends `photos-changed` / `people-changed` /
 `albums-changed`, which other windows refresh from (`get_photos`; `useLiveUpdates`). The web client hides what
 the role on the open library can't do through `useAccess()` (`src/components/auth/ServerGate.tsx`); admins have
