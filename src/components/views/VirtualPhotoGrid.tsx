@@ -98,10 +98,12 @@ export default function VirtualPhotoGrid({
   onPhotoContextMenu,
   onCardPointerDown,
 }: VirtualPhotoGridProps) {
-  // Thumbnails that failed to load (file deleted or cache cleared) show a placeholder instead of a broken image
+  // Thumbnails that failed to load (file deleted or cache cleared) show a placeholder instead of a broken image.
+  // Kept by URL, not by path: a server's thumb_path is the same in its own library and in All photos, and a
+  // URL made for the wrong engine while the open library changes must not hide the right one.
   const [failedThumbs, setFailedThumbs] = useState<Set<string>>(() => new Set());
-  const onThumbError = (thumbPath: string) =>
-    setFailedThumbs((prev) => new Set(prev).add(thumbPath));
+  const onThumbError = (src: string) =>
+    setFailedThumbs((prev) => new Set(prev).add(src));
 
   const hasHeaders = layout.rows.some((r) => r.kind === "header");
   const floatingLabel = hasHeaders ? currentHeaderLabel(layout.rows, rowVirtualizer.scrollOffset ?? 0) : null;
@@ -185,7 +187,7 @@ export default function VirtualPhotoGrid({
                       isSharpestPick={Boolean(grp && sharpestInGroup.get(grp)?.hash === photo.hash)}
                       eyesClosed={hasClosedEyes(photo, culling)}
                       softFocus={isSoftFocus(photo, culling)}
-                      thumbFailed={failedThumbs.has(photo.thumb_path)}
+                      thumbFailed={failedThumbs.has(thumbSrc(photo))}
                       simpleMode={simpleMode}
                       handlePhotoClick={handlePhotoClick}
                       setActiveHash={setActiveHash}
@@ -233,7 +235,7 @@ interface PhotoCardProps {
   toggleBurstGroupExpand: (groupNum: number, e: React.MouseEvent) => void;
   onPhotoContextMenu?: (photo: PhotoItem, e: React.MouseEvent) => void;
   onCardPointerDown?: (hash: string, e: React.PointerEvent) => void;
-  onThumbError: (thumbPath: string) => void;
+  onThumbError: (src: string) => void;
 }
 
 const PhotoCard = memo(function PhotoCard({
@@ -345,7 +347,7 @@ const PhotoCard = memo(function PhotoCard({
             alt={photo.name}
             decoding="async"
             draggable={false}
-            onError={() => onThumbError(photo.thumb_path)}
+            onError={() => onThumbError(thumbSrc(photo))}
             style={
               quarterTurn
                 ? {
