@@ -304,6 +304,9 @@ let all: AllState = {
   people: new Map(),
 };
 
+// Sent when All photos has listed its libraries again: albums, smart albums and people are asked again
+export const ALL_PHOTOS_LOADED = "lumina-all-photos-loaded";
+
 // Sent when photos weren't added to an album because they aren't in its library: { count, where }
 export const ALBUM_SKIPPED_EVENT = "lumina-album-skipped";
 
@@ -569,6 +572,7 @@ async function loadAllNow(check?: string[]): Promise<PhotoItem[]> {
   accessChanged();
   if (watchAllPhotos) await watchAllPhotosFolders().catch((err) => console.error("All photos: could not watch this computer's folders", err));
   await copyDown(merged.photos);
+  window.dispatchEvent(new Event(ALL_PHOTOS_LOADED));
   return merged.photos;
 }
 

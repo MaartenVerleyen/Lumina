@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
-import { call, isOwnChange, openLibraryIsAll, openLibraryServer, RECONNECTED, subscribe } from "../../api";
+import { ALL_PHOTOS_LOADED, call, isOwnChange, openLibraryIsAll, openLibraryServer, RECONNECTED, subscribe } from "../../api";
 import { Album, SavedSearch } from "../../types/lumina";
 import { MatchContext } from "../../utils/searchQuery";
 import { computeTrips, tripLabel } from "../../utils/trips";
@@ -94,7 +94,13 @@ export function useCollections(core: LibraryCore, filters: FilterState) {
     });
     // Or did while the event socket was down
     const offReconnected = subscribe(RECONNECTED, refresh);
+    // All photos listed its libraries again (an account changed on one of its servers, say)
+    const allLoaded = () => {
+      if (openLibraryIsAll()) refresh();
+    };
+    window.addEventListener(ALL_PHOTOS_LOADED, allLoaded);
     return () => {
+      window.removeEventListener(ALL_PHOTOS_LOADED, allLoaded);
       off.then((f) => f());
       offReconnected.then((f) => f());
     };

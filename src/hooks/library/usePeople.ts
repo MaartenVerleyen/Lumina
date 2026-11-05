@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { platform } from "../../api/platform";
 import { useAccess } from "../../components/auth/ServerGate";
-import { call, isOwnChange, RECONNECTED, subscribe } from "../../api";
+import { ALL_PHOTOS_LOADED, call, isOwnChange, openLibraryIsAll, RECONNECTED, subscribe } from "../../api";
 import { PhotoItem, PersonItem, FaceScanProgress, FaceMatchEvent, FaceInstance, FaceModelDownloadProgress, FaceQualityProgress } from "../../types/lumina";
 import { diskPathOf } from "../../utils/rawPairs";
 import { isLiveClip, isVideo } from "../../utils/media";
@@ -103,9 +103,15 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
     });
     // Or did while the event socket was down
     const offReconnected = subscribe(RECONNECTED, () => refreshPeopleRef.current());
+    // All photos listed its libraries again (an account changed on one of its servers, say)
+    const allLoaded = () => {
+      if (openLibraryIsAll()) refreshPeopleRef.current();
+    };
+    window.addEventListener(ALL_PHOTOS_LOADED, allLoaded);
     return () => {
       off.then((f) => f());
       offReconnected.then((f) => f());
+      window.removeEventListener(ALL_PHOTOS_LOADED, allLoaded);
     };
   }, []);
 

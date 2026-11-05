@@ -18,6 +18,8 @@ import {
   rememberLibraryRoles,
   setOpenLibrary,
   subscribe,
+  subscribeLocal,
+  inDesktopApp,
   type Role,
 } from "../../api";
 import { useAccount } from "../../components/auth/ServerGate";
@@ -605,8 +607,16 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
     const off = subscribe(RECONNECTED, () => {
       if (folderRef.current) silentRescanRef.current();
     });
+    // All photos: signed in to a server (again, perhaps as someone else) or out of one, so what it may show
+    // changed
+    const offs = (inDesktopApp ? ["remote-connected", "remote-signed-out"] : []).map((event) =>
+      subscribeLocal(event, () => {
+        if (openLibraryIsAll()) silentRescanRef.current();
+      })
+    );
     return () => {
       off.then((f) => f());
+      for (const o of offs) o.then((f) => f());
     };
   }, []);
 

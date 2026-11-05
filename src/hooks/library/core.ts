@@ -75,7 +75,8 @@ export function useLibraryCore() {
       // The same message again (e.g. a repeated failure) replaces the old toast instead of stacking
       setToasts((prev) => [...prev.filter((t) => t.message !== message), { id, kind, message, action }].slice(-MAX_TOASTS));
       // Toasts with a button stay long enough to use it
-      const ttl = kind === "error" ? 12000 : action ? 20000 : Math.min(9000, 3500 + message.length * 25);
+      // A longer message stays longer, so it can be read to the end
+      const ttl = kind === "error" ? 12000 : action ? 20000 : Math.min(15000, 3500 + message.length * 40);
       window.setTimeout(() => dismissToast(id), ttl);
     },
     [dismissToast]
