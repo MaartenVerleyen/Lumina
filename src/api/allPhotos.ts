@@ -37,8 +37,9 @@ export interface Merged {
   copies: Map<string, Copies>;
   // The values of each copy on this computer, for keeping them in step with a server home
   localValues: Map<string, LocalValues>;
-  // A copy on this computer known here by another id than the photo's (see `sameAs`): its own id
-  localIds: Map<string, string>;
+  // The copies on this computer of a photo, by their ids here, when one differs from the photo's (see
+  // `sameAs`): the same file in two folders here is two copies, and an edit goes to both
+  localIds: Map<string, string[]>;
 }
 
 export interface LocalValues {
@@ -78,7 +79,7 @@ export function mergeSources(lists: { source: Source; photos: PhotoItem[] }[], s
   const photos: PhotoItem[] = [];
   const copies = new Map<string, Copies>();
   const localValues = new Map<string, LocalValues>();
-  const localIds = new Map<string, string>();
+  const localIds = new Map<string, string[]>();
   for (const [hash, found] of byHash) {
     const ordered = [...found].sort((a, b) => rank(a.source) - rank(b.source));
     const shown = ordered[0];
@@ -87,7 +88,8 @@ export function mergeSources(lists: { source: Source; photos: PhotoItem[] }[], s
     if (local) {
       const p = local.photo;
       localValues.set(hash, { rating: p.rating, flag: p.flag, color_label: p.color_label, tags: [...p.tags] });
-      if (p.hash !== hash) localIds.set(hash, p.hash);
+      const own = [...new Set(found.filter((f) => f.source.server === null).map((f) => f.photo.hash))];
+      if (own.some((h) => h !== hash)) localIds.set(hash, own);
     }
     const keys = [...new Set(found.map((f) => sourceKey(f.source)))];
     copies.set(hash, { copies: keys, home, shown: sourceKey(shown.source) });
@@ -106,9 +108,9 @@ export function mergeSources(lists: { source: Source; photos: PhotoItem[] }[], s
 }
 
 // An edit for this computer's engine, with the ids it knows its copies by
-export function withLocalIds(args: Record<string, unknown>, localIds: Map<string, string>): Record<string, unknown> {
+export function withLocalIds(args: Record<string, unknown>, localIds: Map<string, string[]>): Record<string, unknown> {
   if (!Array.isArray(args.hashes)) return args;
-  return { ...args, hashes: (args.hashes as string[]).map((h) => localIds.get(h) ?? h) };
+  return { ...args, hashes: (args.hashes as string[]).flatMap((h) => localIds.get(h) ?? [h]) };
 }
 
 // The hashes of an edit, per engine of their home; photos without a home can't be changed

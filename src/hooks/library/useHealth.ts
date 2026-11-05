@@ -49,20 +49,32 @@ export function useHealth(core: LibraryCore) {
     }
   }
 
-  // The rows of files deleted outside Lumina go, with their ratings, tags, names and album places
+  // The rows of files deleted outside Lumina go, with their ratings, tags, names and album places, and people
+  // left on no photo
   async function handleForgetMissing() {
-    if (!folder || !healthStats || healthStats.missing_count === 0) return;
+    if (!folder || !healthStats) return;
     const n = healthStats.missing_count;
-    const ok = await confirmDialog(
-      `${n} photo${n === 1 ? " is" : "s are"} no longer in the folder (deleted, or moved outside Lumina to a place it doesn't know). Forget ${n === 1 ? "it" : "them"}, with ${n === 1 ? "its" : "their"} ratings, tags, names and album places? A file that comes back later is a new photo.`,
-      { title: "Forget files that are gone", okLabel: "Forget", kind: "danger" }
-    );
+    const people = healthStats.unused_people;
+    if (n === 0 && people === 0) return;
+    const parts = [
+      n > 0 &&
+        `${n} photo${n === 1 ? " is" : "s are"} no longer in the folder (deleted, or moved outside Lumina to a place it doesn't know): ${n === 1 ? "it goes" : "they go"} with ${n === 1 ? "its" : "their"} ratings, tags, names and album places, and a file that comes back later is a new photo.`,
+      people > 0 && `${people} ${people === 1 ? "person has" : "people have"} no photos left and ${people === 1 ? "goes" : "go"} from the people list.`,
+    ].filter(Boolean);
+    const ok = await confirmDialog(parts.join(" "), { title: "Forget what is gone", okLabel: "Forget", kind: "danger" });
     if (!ok) return;
     try {
       const forgotten = await call<number>("forget_missing_files", { rootFolder: folder });
       setHealthStats(await call<LibraryHealthStats>("get_library_health_stats", { rootFolder: folder }));
-      addLog("DISK", `Forgot ${forgotten} photo(s) whose file is gone`);
-      setAutoMatchNotice(`Forgot ${forgotten} photo${forgotten === 1 ? "" : "s"} whose file is gone.`);
+      addLog("DISK", `Forgot ${forgotten} photo(s) whose file is gone, and ${people} person(s) without photos`);
+      setAutoMatchNotice(
+        [
+          forgotten > 0 && `Forgot ${forgotten} photo${forgotten === 1 ? "" : "s"} whose file is gone`,
+          people > 0 && `${people} ${people === 1 ? "person" : "people"} without photos left the list`,
+        ]
+          .filter(Boolean)
+          .join("; ") + "."
+      );
     } catch (err) {
       setError(String(err));
     }

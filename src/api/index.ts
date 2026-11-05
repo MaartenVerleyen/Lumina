@@ -266,7 +266,7 @@ interface AllState {
   // Face crop path → engine
   faces: Map<string, string>;
   // Copies on this computer known there by another id (mergeSources), and the other way round
-  localIds: Map<string, string>;
+  localIds: Map<string, string[]>;
   fromLocal: Map<string, string>;
 }
 
@@ -405,7 +405,7 @@ async function loadAll(check?: string[]): Promise<PhotoItem[]> {
     const shown = sourceMap.get(merged.copies.get(p.hash)!.shown)!;
     for (const f of p.faces ?? []) if (f.face_thumb) faces.set(f.face_thumb, engineOf(shown));
   }
-  const fromLocal = new Map([...merged.localIds].map(([id, own]) => [own, id]));
+  const fromLocal = new Map([...merged.localIds].flatMap(([id, own]) => own.map((h): [string, string] => [h, id])));
   all = { sources: sourceMap, copies: merged.copies, localValues: merged.localValues, placed, faces, localIds: merged.localIds, fromLocal };
   accessChanged();
   if (watchAllPhotos) await watchAllPhotosFolders().catch((err) => console.error("All photos: could not watch this computer's folders", err));
@@ -551,7 +551,7 @@ async function callAll<T>(command: string, args: Record<string, unknown>): Promi
   if (Array.isArray(args.hashes)) return editAll<T>(command, args, args.hashes as string[]);
   if (typeof args.hash === "string") {
     const engine = engineOfShown(args.hash);
-    const hash = engine === "" ? all.localIds.get(args.hash) ?? args.hash : args.hash;
+    const hash = engine === "" ? all.localIds.get(args.hash)?.[0] ?? args.hash : args.hash;
     if (engine !== undefined) return engineTransport(engine).call<T>(command, { ...args, hash });
   }
   if ("rootFolder" in args || "folderPath" in args || "root" in args || Array.isArray(args.ops)) {

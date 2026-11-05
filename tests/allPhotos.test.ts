@@ -91,10 +91,25 @@ test("a second copy of a file on this PC joins the server's photo it was backed 
   assert.equal(merged.photos.length, 1);
   assert.equal(merged.photos[0].hash, "both");
   assert.deepEqual(merged.photos[0].copies, [sourceKey(pc), sourceKey(cachy)]);
-  assert.equal(merged.localIds.get("both"), "dup");
+  assert.deepEqual(merged.localIds.get("both"), ["dup"]);
   assert.equal(merged.localValues.get("both")!.rating, 1);
   // This computer's engine is asked about its own id
   assert.deepEqual(withLocalIds({ hashes: ["both", "other"], rating: 4 }, merged.localIds), { hashes: ["dup", "other"], rating: 4 });
+});
+
+test("a file in two folders on this PC and on the server: an edit reaches both copies here", () => {
+  const scans: Source = { server: null, root: "E:\\Scans", label: "E:\\Scans", editable: true, uploadable: false };
+  const merged = mergeSources(
+    [
+      { source: pc, photos: [photo("both")] },
+      { source: scans, photos: [photo("dup")] },
+      { source: cachy, photos: [photo("both")] },
+    ],
+    new Map([["dup", "both"]])
+  );
+  assert.equal(merged.photos.length, 1);
+  assert.deepEqual(merged.localIds.get("both"), ["both", "dup"]);
+  assert.deepEqual(withLocalIds({ hashes: ["both"], rating: 3 }, merged.localIds).hashes, ["both", "dup"]);
 });
 
 test("burst groups of two libraries don't run into each other", () => {

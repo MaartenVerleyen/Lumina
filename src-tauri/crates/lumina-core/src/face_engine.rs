@@ -199,6 +199,18 @@ pub fn sync_photo_people_from_faces(conn: &Connection, hash: &str, previous_face
     }
 }
 
+// People on no photo and no face (and not starred or hidden): what forget_unused_person would take off
+pub fn unused_people(conn: &Connection) -> Vec<String> {
+    let Ok(mut stmt) = conn.prepare(
+        "SELECT name FROM people p WHERE COALESCE(starred, 0) = 0 AND COALESCE(hidden, 0) = 0
+           AND NOT EXISTS (SELECT 1 FROM photo_people pp WHERE lower(pp.person_name) = lower(p.name))
+           AND NOT EXISTS (SELECT 1 FROM photo_faces f WHERE lower(f.person_name) = lower(p.name))",
+    ) else {
+        return Vec::new();
+    };
+    stmt.query_map([], |r| r.get::<_, String>(0)).map(|rows| rows.flatten().collect()).unwrap_or_default()
+}
+
 // A person left on no photo and no face (the last name taken off) goes from the people list: People shows
 // no one without photos, and the row would linger forever. One the user starred or hid stays.
 pub fn forget_unused_person(conn: &Connection, name: &str) {

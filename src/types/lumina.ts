@@ -183,6 +183,8 @@ export interface LibraryHealthStats {
   damaged_files: string[];
   // Rows of files deleted outside Lumina (kept so a moved file keeps its values)
   missing_count: number;
+  // People left on no photo (from before Lumina took them off by itself)
+  unused_people: number;
 }
 
 export type AutoStagePreset =

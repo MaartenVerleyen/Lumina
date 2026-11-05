@@ -613,6 +613,7 @@ fn get_library_health_stats_blocking(app: &dyn Host, root_folder: Option<String>
         damaged_count,
         damaged_files,
         missing_count: missing_files(&conn, &prefix).len(),
+        unused_people: face_engine::unused_people(&conn).len(),
     })
 }
 
@@ -652,13 +653,8 @@ pub async fn forget_missing_files(app: SharedHost, root_folder: String) -> Resul
             }
         }
         tx.commit().map_err(|e| e.to_string())?;
-        // People named only in those photos go too
-        let empty: Vec<String> = {
-            let mut stmt = conn.prepare("SELECT name FROM people").map_err(|e| e.to_string())?;
-            let rows = stmt.query_map([], |r| r.get::<_, String>(0)).map_err(|e| e.to_string())?;
-            rows.flatten().collect()
-        };
-        for name in empty {
+        // People named only in those photos go too, and any other left on no photo
+        for name in face_engine::unused_people(&conn) {
             face_engine::forget_unused_person(&conn, &name);
         }
         Ok(gone.len())

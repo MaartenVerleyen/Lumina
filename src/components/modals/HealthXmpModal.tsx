@@ -104,12 +104,18 @@ export default function HealthXmpModal({
               </div>
             )}
 
-            {healthStats.missing_count > 0 && handleForgetMissing && (
+            {(healthStats.missing_count > 0 || healthStats.unused_people > 0) && handleForgetMissing && (
               <div className="p-3.5 bg-zinc-900/60 border border-zinc-800 rounded-xl flex items-center justify-between gap-3">
                 <span className="text-zinc-400 text-[11px]">
-                  {healthStats.missing_count} photo{healthStats.missing_count === 1 ? "'s file is" : "s' files are"} gone from
-                  the folder. Lumina keeps {healthStats.missing_count === 1 ? "its" : "their"} ratings, tags and names in case a
-                  file was moved and turns up again.
+                  {healthStats.missing_count > 0 && (
+                    <>
+                      {healthStats.missing_count} photo{healthStats.missing_count === 1 ? "'s file is" : "s' files are"} gone
+                      from the folder. Lumina keeps {healthStats.missing_count === 1 ? "its" : "their"} ratings, tags and names
+                      in case a file was moved and turns up again.{" "}
+                    </>
+                  )}
+                  {healthStats.unused_people > 0 &&
+                    `${healthStats.unused_people} ${healthStats.unused_people === 1 ? "person has" : "people have"} no photos left.`}
                 </span>
                 <button
                   onClick={handleForgetMissing}

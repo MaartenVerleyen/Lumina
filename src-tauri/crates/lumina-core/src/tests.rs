@@ -587,6 +587,7 @@ fn files_that_are_gone_are_forgotten_with_their_values() {
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     let stats = rt.block_on(files::get_library_health_stats(host.clone(), Some(library.to_string_lossy().to_string()))).unwrap();
     assert_eq!(stats.missing_count, 1);
+    assert_eq!(stats.unused_people, 0);
     assert!(rt.block_on(files::forget_missing_files(host.clone(), base.join("Unplugged").to_string_lossy().to_string())).is_err());
     assert_eq!(rt.block_on(files::forget_missing_files(host.clone(), library.to_string_lossy().to_string())).unwrap(), 1);
 

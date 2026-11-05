@@ -187,6 +187,8 @@ pub struct LibraryHealthStats {
     // Rows whose file is gone (deleted outside Lumina): kept so a file moved elsewhere keeps its values when
     // it is found again; Library Health can forget them
     pub missing_count: usize,
+    // People left on no photo and no face (from before Lumina took them off the list by itself)
+    pub unused_people: usize,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
