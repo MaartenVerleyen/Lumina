@@ -519,6 +519,14 @@ pub fn watch_library(app: AppHandle, root: Option<String>) -> Result<(), String>
     watch::watch_library(Arc::new(app), root)
 }
 
+// All photos: each person's face in short, to suggest that people of two libraries are one
+#[tauri::command]
+pub async fn person_centroids(app: AppHandle) -> Result<Vec<face_review::PersonCentroid>, String> {
+    tauri::async_runtime::spawn_blocking(move || face_review::person_centroids(&open_global_db(&app)?, None))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 // All photos watches every folder on this computer in it
 #[tauri::command]
 pub fn watch_libraries(app: AppHandle, roots: Vec<String>) -> Result<(), String> {

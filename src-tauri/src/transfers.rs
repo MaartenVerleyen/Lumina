@@ -66,6 +66,25 @@ struct Item {
     values: Option<serde_json::Value>,
     #[serde(default)]
     values_sent: bool,
+    // Download of a followed album's photo (follows.rs): what comes with it, and the server it goes on to
+    #[serde(default)]
+    follow: Option<FollowStep>,
+    // Upload of a followed photo passing through this PC: the file goes once the server has it
+    #[serde(default)]
+    delete_after: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+struct FollowStep {
+    values: Option<serde_json::Value>,
+    upload_to: Option<String>,
+}
+
+// A photo of a followed album to download (follows.rs)
+pub struct FollowedPhoto {
+    pub hash: String,
+    pub name: String,
+    pub values: Option<serde_json::Value>,
 }
 
 // A backed-up file whose values still have to go to the server
@@ -366,7 +385,11 @@ async fn upload_pass(app: &AppHandle, q: &Arc<Queue>) -> Pass {
                         });
                         if have {
                             if let Some(p) = &item.path {
-                                let _ = client_db::add_copy(app, &server, &hash, Path::new(p), item.size);
+                                if item.delete_after {
+                                    let _ = fs::remove_file(p);
+                                } else {
+                                    let _ = client_db::add_copy(app, &server, &hash, Path::new(p), item.size);
+                                }
                             }
                         }
                     }
@@ -428,7 +451,11 @@ async fn upload_pass(app: &AppHandle, q: &Arc<Queue>) -> Pass {
                 match result {
                     Ok(photo) => {
                         let hash = photo["hash"].as_str().map(str::to_string).or(item.hash.clone()).unwrap_or_default();
-                        let _ = client_db::add_copy(app, &item.server, &hash, &path, item.size);
+                        if item.delete_after {
+                            let _ = fs::remove_file(&path);
+                        } else {
+                            let _ = client_db::add_copy(app, &item.server, &hash, &path, item.size);
+                        }
                         // The server's id for it (another copy of the same photo there gets its own)
                         q.update(i, |it| {
                             it.state = ItemState::Done;
@@ -518,9 +545,11 @@ async fn download_pass(app: &AppHandle, q: &Arc<Queue>) -> Pass {
     let todo = waiting(q, |_| true);
     q.set_stage("Downloading");
     let outcome: Mutex<Option<Pass>> = Mutex::new(None);
+    // Followed photos that landed in a folder of this PC, to take into the library once the pass ends
+    let landed: Mutex<Vec<(PathBuf, Option<serde_json::Value>)>> = Mutex::new(Vec::new());
     futures_util::stream::iter(todo)
         .for_each_concurrent(2, |(i, item)| {
-            let (q, outcome) = (q.clone(), &outcome);
+            let (q, outcome, landed) = (q.clone(), &outcome, &landed);
             async move {
                 if q.cancel.load(Ordering::SeqCst) || outcome.lock().unwrap().is_some() {
                     return;
@@ -538,6 +567,11 @@ async fn download_pass(app: &AppHandle, q: &Arc<Queue>) -> Pass {
                 match result {
                     Ok((path, size)) => {
                         let _ = client_db::add_copy(app, &item.server, &hash, &path, size);
+                        match &item.follow {
+                            Some(FollowStep { values, upload_to: Some(target) }) => relay(app, target, &path, size, values.clone()),
+                            Some(FollowStep { values, upload_to: None }) => landed.lock().unwrap().push((path.clone(), values.clone())),
+                            None => {}
+                        }
                         q.update(i, |it| {
                             it.state = ItemState::Done;
                             it.size = size;
@@ -561,7 +595,115 @@ async fn download_pass(app: &AppHandle, q: &Arc<Queue>) -> Pass {
             }
         })
         .await;
+    let landed = landed.into_inner().unwrap();
+    if !landed.is_empty() {
+        let app2 = app.clone();
+        let _ = tauri::async_runtime::spawn_blocking(move || take_in(&app2, landed)).await;
+    }
     outcome.into_inner().unwrap().unwrap_or(Pass::Finished)
+}
+
+// Followed photos in a folder of this PC become photos of your library: indexed, with their tags and people
+// names (each name goes on the face found at the same place, once this PC's face scan has found it), and the
+// window is told so it lists the folder again
+fn take_in(app: &AppHandle, landed: Vec<(PathBuf, Option<serde_json::Value>)>) {
+    let host: lumina_core::host::SharedHost = Arc::new(app.clone());
+    let Ok(mut conn) = open_global_db(app) else { return };
+    let libraries = lumina_core::libraries::list(&conn).unwrap_or_default();
+    let (mut hashes, mut roots) = (Vec::new(), HashSet::new());
+    for (path, values) in landed {
+        let file = path.to_string_lossy().to_lowercase();
+        let Some(root) = libraries
+            .iter()
+            .filter(|l| file.starts_with(&l.root.to_lowercase()))
+            .max_by_key(|l| l.root.len())
+            .map(|l| l.root.clone())
+        else {
+            continue;
+        };
+        match scan::index_new_file(host.clone(), &root, &path) {
+            Ok(photo) => {
+                if let Some(mut meta) = values.and_then(|v| serde_json::from_value::<photo_meta::PhotoMeta>(v).ok()) {
+                    meta.hash = photo.hash.clone();
+                    let _ = photo_meta::apply(&mut conn, &[meta]);
+                }
+                hashes.push(photo.hash);
+                roots.insert(root);
+            }
+            Err(e) => eprintln!("[follow] {}: {e}", path.display()),
+        }
+    }
+    if !hashes.is_empty() {
+        let host = host.clone();
+        tauri::async_runtime::spawn(async move {
+            if let Err(e) = lumina_core::face_scan::scan_library_faces_batch(host, hashes).await {
+                eprintln!("[follow] no face scan: {e}");
+            }
+        });
+    }
+    for root in roots {
+        let _ = app.emit("library-files-changed", root);
+    }
+}
+
+// A followed photo for a library on another server: it goes on as an upload, with what came with it, and
+// leaves this PC once that server has it
+fn relay(app: &AppHandle, server: &str, path: &Path, size: u64, values: Option<serde_json::Value>) {
+    let q = transfers(app).uploads.clone();
+    {
+        let mut items = q.items.lock().unwrap();
+        forget_finished(&q, &mut items);
+        items.push(Item {
+            server: server.to_string(),
+            name: path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
+            path: Some(path.to_string_lossy().to_string()),
+            dir: None,
+            size,
+            modified: fs::metadata(path).as_ref().map(modified_secs).unwrap_or(0),
+            hash: None,
+            full_hash: None,
+            checked: false,
+            state: ItemState::Waiting,
+            error: None,
+            values,
+            values_sent: false,
+            follow: None,
+            delete_after: true,
+        });
+    }
+    q.save();
+    start(app, q);
+}
+
+// The new photos of a followed album, into `folder` (and on to `upload_to`)
+pub fn download_followed(app: &AppHandle, server: &str, photos: Vec<FollowedPhoto>, folder: &str, upload_to: Option<String>) -> Result<(), String> {
+    let q = transfers(app).downloads.clone();
+    {
+        let mut items = q.items.lock().unwrap();
+        forget_finished(&q, &mut items);
+        for p in photos {
+            items.push(Item {
+                server: server.to_string(),
+                path: None,
+                dir: Some(folder.to_string()),
+                name: p.name,
+                size: 0,
+                modified: 0,
+                hash: Some(p.hash),
+                full_hash: None,
+                checked: true,
+                state: ItemState::Waiting,
+                error: None,
+                values: None,
+                values_sent: false,
+                follow: Some(FollowStep { values: p.values, upload_to: upload_to.clone() }),
+                delete_after: false,
+            });
+        }
+    }
+    q.save();
+    start(app, q);
+    Ok(())
 }
 
 // A new batch while the queue rests starts a fresh list: what finished before (perhaps while the app was
@@ -638,6 +780,8 @@ pub async fn upload_paths(app: AppHandle, server: String, paths: Vec<String>) ->
                 error: None,
                 values: None,
                 values_sent: false,
+                follow: None,
+                delete_after: false,
             });
             queued += 1;
         }
@@ -703,6 +847,8 @@ pub async fn back_up(app: AppHandle, server: String, hashes: Vec<String>, with_v
                 error: None,
                 values: values.get(&hash).cloned(),
                 values_sent: false,
+                follow: None,
+                delete_after: false,
             });
             queued += 1;
         }
@@ -747,6 +893,8 @@ pub fn download_originals(app: AppHandle, server: String, photos: Vec<(String, S
             error: None,
             values: None,
             values_sent: false,
+            follow: None,
+            delete_after: false,
         });
         queued += 1;
     }

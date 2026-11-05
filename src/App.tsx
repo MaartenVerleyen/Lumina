@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import { ALBUM_SKIPPED_EVENT, ALL_PHOTOS, call, inDesktopApp, OPEN_ADMIN_EVENT, openLibraryIsLocal, READ_ONLY_EVENT } from "./api";
+import { ALBUM_SKIPPED_EVENT, ALL_PHOTOS, call, inDesktopApp, OPEN_ADMIN_EVENT, openLibraryIsLocal, READ_ONLY_EVENT, subscribeLocal } from "./api";
 import { platform } from "./api/platform";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useLibraryState } from "./hooks/useLibraryState";
@@ -72,6 +72,7 @@ import { useThrottled } from "./hooks/useThrottled";
 import { useSettings } from "./settings";
 import ConfirmDialog from "./components/modals/ConfirmDialog";
 import ShareAlbumDialog from "./components/modals/ShareAlbumDialog";
+import FollowAlbumDialog, { type FollowTarget } from "./components/modals/FollowAlbumDialog";
 import AdminPage from "./components/admin/AdminPage";
 import { useConfirmRequest } from "./confirm";
 import { useAccess } from "./components/auth/ServerGate";
@@ -123,6 +124,7 @@ export default function App() {
   const [isPaletteOpen, setIsPaletteOpen] = useState<boolean>(false);
   // The album whose sharing dialog is open (web client)
   const [shareAlbum, setShareAlbum] = useState<{ id: number; name: string; kind?: "album" | "search" } | null>(null);
+  const [followAlbum, setFollowAlbum] = useState<FollowTarget | null>(null);
   // The server's admin page (web client, admins; opened from the account menu)
   const [isAdminOpen, setIsAdminOpen] = useState(false);
   useEffect(() => {
@@ -146,7 +148,14 @@ export default function App() {
     };
     window.addEventListener(READ_ONLY_EVENT, note);
     window.addEventListener(ALBUM_SKIPPED_EVENT, skipped);
+    // A followed album that is no longer shared with you: the follow ended, the photos stay
+    const offEnded = subscribeLocal<{ albums: string[] }>("follows-ended", (e) =>
+      setAutoMatchNotice(
+        `${e.payload.albums.map((a) => `“${a}”`).join(", ")} ${e.payload.albums.length === 1 ? "is" : "are"} no longer shared with you. The photos you got from ${e.payload.albums.length === 1 ? "it" : "them"} stay in your library.`
+      )
+    );
     return () => {
+      offEnded.then((f) => f());
       window.removeEventListener(READ_ONLY_EVENT, note);
       window.removeEventListener(ALBUM_SKIPPED_EVENT, skipped);
     };
@@ -604,8 +613,8 @@ export default function App() {
                 onSetHidden={lib.handleSetPersonHidden}
                 onSetStarred={lib.handleSetPersonStarred}
                 onNamesChanged={() => {
-                  lib.refreshPeople();
-                  void lib.silentRescan();
+                  // The photos first: People counts from the names they show
+                  void lib.silentRescan().then(() => lib.refreshPeople());
                 }}
                 collapsedSections={collapsedSections}
                 onToggleSection={(id) =>
@@ -686,6 +695,7 @@ export default function App() {
               // Albums are shared with the accounts of the server the library is on (the web client's, or one
               // the desktop app opened a library of)
               onShareAlbum={!openLibraryIsLocal() && access.edit ? setShareAlbum : undefined}
+              onFollowAlbum={inDesktopApp ? setFollowAlbum : undefined}
               pickHighlights={lib.pickHighlights}
               bestOfFocus={bestOfFocus}
               onShareGallery={platform.localFiles ? (title, hashes) => lib.openGallery(title, hashes) : undefined}
@@ -1115,6 +1125,15 @@ export default function App() {
       <ConfirmDialog />
 
       <ShareAlbumDialog album={shareAlbum} onClose={() => setShareAlbum(null)} />
+      <FollowAlbumDialog
+        album={followAlbum}
+        onClose={() => setFollowAlbum(null)}
+        onFollowed={() => {
+          lib.setAutoMatchNotice(`Following “${followAlbum?.name}”: its photos are on their way.`);
+          // The folder is a library of yours now: All photos lists it
+          void lib.silentRescan();
+        }}
+      />
       <AdminPage isOpen={isAdminOpen} onClose={() => setIsAdminOpen(false)} />
 
       <RestoreModal

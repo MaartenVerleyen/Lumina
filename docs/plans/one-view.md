@@ -407,6 +407,55 @@ The phone app (phase 5) then adds the camera roll as a local source, with this s
   All photos' number; the guest renaming the server's "Crew Member" to "Astronaut" (kept as their own name,
   the server's person unchanged) and back with "Use their name again".
 
+### Milestone 4 (2026-11-05, checked on Windows against a lumina-server on 127.0.0.1)
+
+- Collections (All photos, desktop app): an album shared with you has **Follow…**. The dialog offers a folder on
+  this PC (by default a folder named after the album in your first library) or a library of another server
+  where you may upload. A followed album says "following into …" and has **Stop following**.
+- `src-tauri/src/follows.rs` keeps the follows in `client.db` (`album_follows`, and `follow_photos` for what was
+  taken) and looks at them when a server says albums or shares changed, when its event socket (re)connects
+  (also at the start) and after a new follow. New photos of the album are downloaded with the download queue;
+  photos your library has already are skipped. With each comes what the server's `photo_values` gives: tags and
+  people names as this user calls them (their names of their own); the sharer's ratings, flags, labels,
+  captions and albums stay theirs.
+- A photo that lands in a folder here is indexed into its library and gets those values (`photo_meta::apply`);
+  this PC's face scan then runs on the new photos, and names wait in `backup_faces` until it has found the faces
+  (the face scan now puts waiting names on after each batch, on the server too). For a server target the photo
+  passes through `follow-staging` in the app's data folder and goes on as an upload with the same values; the
+  file leaves this PC once that server has it.
+- A photo taken out of the album stays. When the album is no longer shared, the follow ends (`follows-ended`, a
+  notice) and the photos stay.
+- Checked: a guest followed "Follow test" (a photo of the test library, and one only the server had, its face
+  named "Follow Person" and tagged): the photo the PC had was skipped, the other was downloaded into the folder,
+  indexed, tagged, and after the face scan its face was "Follow Person" here; no rating came along. Unsharing
+  ended the follow and the photo stayed. The server-library target was not run live.
+
+### Milestone 5 (2026-11-05, checked on Windows against a lumina-server on 127.0.0.1)
+
+- Suggested names: every engine answers `person_centroids` (each person's mean face from their named faces of
+  the current engine, a guest's from the photos they see). All photos pairs people of two libraries whose faces
+  are each other's best match there at 0.6 or more and whose names differ, and People shows them under "Maybe
+  the same person": "Me on cachy looks like Maarten on This PC" with **Same person** (the server's person gets
+  that name as a name of your own; a person of this PC is renamed) and **Not the same** (kept on this device).
+- Duplicates across libraries: each library's own groups stay, and photos of two libraries whose fingerprints
+  are at most 8 bits apart join a group too (`groupAcrossSources`).
+- Per-home editing: a single-photo change (`hash`) to a photo with no copy this account may change gets the
+  "shared with you" note instead of the server's refusal; the side panel of such a photo is look-only.
+  Captions are written by AI analysis, which goes to each photo's home already.
+- Checked: this PC's person "Reid" and the server's "Follow Person" (the same face) were suggested, "Same person"
+  made them one with one photo, and nothing was suggested after.
+
+### Fixes after the Linux test of milestone 3
+
+- The tag × reaches every copy (`remove_tag_batch`, as in the Linux test's own fix).
+- People's counts follow renames and "Not the same person" (the photos are listed again first).
+- A person left on no photo goes also when starred or hidden: People can't show them, so nobody could undo it.
+- Albums and people of All photos wait for its load (they were asked before its sources were known); a new
+  album is listed again with its library.
+- Who is in a shared photo shows also where your own copy is the home, so `person:` finds it for a guest.
+- "Emma (cachy)" shows the library as a small label (not cut off, not capitalized).
+- The web client shows no "on the server" marks and no Where filter (it has no "this PC").
+
 ## Done when
 
 - On Maarten's desktop, All photos counts 61,500 photos for the example above. The Where filter's counts

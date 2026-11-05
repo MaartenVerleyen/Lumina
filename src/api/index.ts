@@ -22,8 +22,13 @@ import {
   localValuesOf,
   mergeHits,
   mergePeople,
+  decodeCentroid,
+  groupAcrossSources,
   mergeSources,
   nameOn,
+  suggestSamePeople,
+  type Centroid,
+  type NameSuggestion,
   shownPersonName,
   withLocalIds,
   withPeopleNamed,
@@ -340,6 +345,53 @@ export async function setPersonApart(name: string, apart: boolean): Promise<void
   }
 }
 
+// ---------- Suggested names (milestone 5) ----------
+
+const DISMISSED_KEY = "lumina_same_person_dismissed";
+const suggestionKey = (s: NameSuggestion) => `${s.from.engine}|${s.from.name}~${s.to.engine}|${s.to.name}`.toLowerCase();
+
+function dismissedSuggestions(): Set<string> {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(DISMISSED_KEY) || "[]"));
+  } catch {
+    return new Set();
+  }
+}
+
+// People of two libraries whose faces look alike under different names ("Looks like Maarten on this PC")
+export async function allPhotosNameSuggestions(): Promise<NameSuggestion[]> {
+  if (openLibrary !== ALL_PHOTOS) return [];
+  await allLoading;
+  const lists = await Promise.all(
+    engines().map(async (engine) => {
+      const list = await engineTransport(engine)
+        .call<{ name: string; centroid: string }[]>("person_centroids")
+        .catch(() => [] as { name: string; centroid: string }[]);
+      const show = showOn(engine);
+      return list.map((c): Centroid => ({ engine, name: show(c.name), vector: decodeCentroid(c.centroid) }));
+    })
+  );
+  const dismissed = dismissedSuggestions();
+  return suggestSamePeople(lists.flat()).filter((s) => !dismissed.has(suggestionKey(s)));
+}
+
+// "Same person": the person takes the other's name, as a name of this account's own on a server (nothing
+// changes for anyone else), or renamed when on this PC
+export async function acceptNameSuggestion(s: NameSuggestion): Promise<void> {
+  const part = allPhotosPersonParts(s.from.name).find((p) => p.engine === s.from.engine);
+  if (!part) return;
+  if (part.engine === "") await localTransport.call("rename_person", { oldName: part.name, newName: s.to.name });
+  else await setOwnName(part.engine, part.name, s.to.name, false);
+}
+
+export function dismissNameSuggestion(s: NameSuggestion) {
+  const dismissed = dismissedSuggestions();
+  dismissed.add(suggestionKey(s));
+  try {
+    localStorage.setItem(DISMISSED_KEY, JSON.stringify([...dismissed]));
+  } catch {}
+}
+
 // "Use their name again": the names of this account's own for this person go
 export async function dropOwnNames(name: string): Promise<void> {
   for (const p of allPhotosPersonParts(name)) {
@@ -420,6 +472,12 @@ export function allPhotosSources(): Map<string, Source> {
   return all.sources;
 }
 
+// Whether All photos holds a folder on this PC (the web client's never does): only then do "on the server"
+// marks and the Where filter say anything
+export function allPhotosHasLocal(): boolean {
+  return [...all.sources.values()].some((s) => s.server === null);
+}
+
 // Whether photos can be backed up from here: a server library this account may upload to is in the view
 export function allPhotosCanBackUp(): boolean {
   return [...all.sources.values()].some((s) => s.server !== null && s.uploadable);
@@ -436,7 +494,16 @@ function watchAllPhotosFolders(): Promise<void> {
 // `check`: the folders on this computer to scan on disk (new, changed and removed files); the others are
 // listed as the database has them. Absent, every one is checked, as when a single folder opens. The scans go
 // one after another (often one disk), beside each other's thumbnail passes.
-async function loadAll(check?: string[]): Promise<PhotoItem[]> {
+// The load running now: lists of albums, people and trips wait for it (they ask its sources)
+let allLoading: Promise<unknown> = Promise.resolve();
+
+function loadAll(check?: string[]): Promise<PhotoItem[]> {
+  const loading = loadAllNow(check);
+  allLoading = loading.catch(() => {});
+  return loading;
+}
+
+async function loadAllNow(check?: string[]): Promise<PhotoItem[]> {
   const sources = includedSources(await allPhotosCandidates(), excludedSources());
   let localTurn: Promise<unknown> = Promise.resolve();
   const scanHere = (root: string) => {
@@ -476,7 +543,9 @@ async function loadAll(check?: string[]): Promise<PhotoItem[]> {
   );
   all = { ...all, sources: sourceMap, names };
   const named = lists.map((l) => (l.source.server === null ? l : { ...l, photos: l.photos.map((p) => withPeopleNamed(p, showOn(engineOf(l.source)))) }));
-  const merged = mergeSources(named, sameAs);
+  const mergedSources = mergeSources(named, sameAs);
+  // Near-duplicates of two libraries share a burst group too
+  const merged = { ...mergedSources, photos: groupAcrossSources(mergedSources.photos, (p) => mergedSources.copies.get(p.hash)?.shown ?? "") };
   const placed = new Map<string, Placed>();
   const faces = new Map<string, string>();
   for (const p of merged.photos) {
@@ -644,7 +713,7 @@ async function listCollections<T extends { id: number; hashes?: string[] }>(
         const id = foreignId(engine, item.id);
         into.set(id, { engine, id: item.id });
         const hashes = item.hashes && engine === "" ? item.hashes.map((h) => all.fromLocal.get(h) ?? h) : item.hashes;
-        return { ...item, id, ...(hashes ? { hashes } : {}), source: engineLabel(engine), readOnly: !engineEditable(engine) };
+        return { ...item, id, ...(hashes ? { hashes } : {}), source: engineLabel(engine), readOnly: !engineEditable(engine), engine, realId: item.id };
       });
     })
   );
@@ -679,6 +748,7 @@ async function albumCommand<T>(command: string, args: Record<string, unknown>, m
 }
 
 async function callAll<T>(command: string, args: Record<string, unknown>): Promise<T> {
+  if (command !== "scan_folder") await allLoading;
   switch (command) {
     case "scan_folder":
       return (await loadAll(args.check as string[] | undefined)) as T;
@@ -737,6 +807,10 @@ async function callAll<T>(command: string, args: Record<string, unknown>): Promi
       for (const p of allPhotosPersonParts(String(args.oldName ?? ""))) {
         if (p.editable) await engineTransport(p.engine).call("rename_person", { oldName: p.name, newName });
         else await setOwnName(p.engine, p.name, newName, p.apart);
+      }
+      const old = String(args.oldName ?? "").toLowerCase();
+      for (const [hash, names] of all.people) {
+        if (names.some((n) => n.toLowerCase() === old)) all.people.set(hash, [...new Set(names.map((n) => (n.toLowerCase() === old ? newName : n)))]);
       }
       return newName as T;
     }
@@ -797,6 +871,11 @@ async function callAll<T>(command: string, args: Record<string, unknown>): Promi
   if (Array.isArray(args.faceIds) || typeof args.faceId === "string") return faceCommand<T>(command, args);
   if (Array.isArray(args.hashes)) return editAll<T>(command, args, args.hashes as string[]);
   if (typeof args.hash === "string") {
+    // A change to a photo with no copy this account may change: the note, not the server's refusal
+    if (all.copies.get(args.hash) && !all.copies.get(args.hash)!.home && !/^(get_|find_|existing_|make_playable|ensure_)/.test(command)) {
+      readOnlyLeft([args.hash]);
+      return undefined as T;
+    }
     const engine = engineOfShown(args.hash);
     const hash = engine === "" ? all.localIds.get(args.hash)?.[0] ?? args.hash : args.hash;
     if (engine !== undefined) return engineTransport(engine).call<T>(command, namedFor(engine, { ...args, hash }));

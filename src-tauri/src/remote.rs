@@ -399,12 +399,17 @@ async fn listen_once(app: &AppHandle, id: &str, token: &str, connected_before: &
         let _ = app.emit("remote-event", json!({ "server": id, "event": "events-reconnected", "payload": null }));
     }
     *connected_before = true;
+    // Followed albums catch up with what changed while the app was closed or the socket down
+    crate::follows::nudge(app);
     while let Some(msg) = ws.next().await {
         match msg {
             Ok(tungstenite::Message::Text(text)) => {
                 let Ok(v) = serde_json::from_str::<Value>(text.as_str()) else { continue };
                 let Some(event) = v["event"].as_str() else { continue };
                 let _ = app.emit("remote-event", json!({ "server": id, "event": event, "payload": v["payload"] }));
+                if matches!(event, "albums-changed" | "shares-changed") {
+                    crate::follows::nudge(app);
+                }
             }
             Ok(tungstenite::Message::Close(_)) | Err(_) => break,
             _ => {}

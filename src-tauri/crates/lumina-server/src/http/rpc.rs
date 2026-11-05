@@ -419,6 +419,13 @@ commands! {
         face_scan::get_outdated_face_photos(host, root).await.map_err(ApiError::from)
     };
 
+    // Each person's face in short (All photos suggests people of two libraries are one); a guest's of the
+    // faces in what is shared with them
+    Viewer blocking person_centroids() |host, scope| {
+        let conn = db::open_global_db(&*host).map_err(ApiError::from)?;
+        let visible = if scope.sees_all() { None } else { Some(access::visible_photos(&conn, &scope, None)?) };
+        face_review::person_centroids(&conn, visible.as_ref()).map_err(ApiError::from)
+    };
     // Names of your own for people (docs/plans/one-view.md, People): each user's own, any role, guests too;
     // the people themselves don't change, so nobody else is told
     Viewer blocking get_person_names() |host, scope| {
@@ -428,6 +435,29 @@ commands! {
     Viewer blocking set_person_name(person: String, shown_as: Option<String>, apart: Option<bool>) |host, scope| {
         let conn = db::open_global_db(&*host)?;
         crate::person_names::set(&conn, scope.user.id, &person, shown_as.as_deref(), apart.unwrap_or(false))
+    };
+
+    // Following a shared album (docs/plans/one-view.md): what travels with its photos to the follower's own
+    // library, their tags and people names (as this user calls them); ratings, flags, labels, captions and
+    // albums stay the sharer's
+    Viewer [Target::Photos(hashes.clone())] blocking photo_values(hashes: Vec<String>) |host, scope| {
+        let conn = db::open_global_db(&*host)?;
+        let own: std::collections::HashMap<String, String> = crate::person_names::of_user(&conn, scope.user.id)?
+            .into_iter()
+            .filter_map(|n| Some((n.person.to_lowercase(), n.shown_as?)))
+            .collect();
+        let named = |name: &str| own.get(&name.to_lowercase()).cloned().unwrap_or_else(|| name.to_string());
+        let values: Vec<photo_meta::PhotoMeta> = photo_meta::collect(&conn, &hashes)?
+            .into_iter()
+            .map(|m| photo_meta::PhotoMeta {
+                hash: m.hash,
+                tags: m.tags,
+                people: m.people.iter().map(|p| named(p)).collect(),
+                faces: m.faces.into_iter().map(|f| photo_meta::NamedFace { name: named(&f.name), ..f }).collect(),
+                ..Default::default()
+            })
+            .collect();
+        Ok::<_, String>(values)
     };
 
     // Backup (docs/plans/one-view.md): the values a device had for photos it uploaded, put on where the

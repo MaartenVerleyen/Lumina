@@ -445,6 +445,9 @@ export interface Album {
   // All photos: the library it is in ("cachy", "This PC"), and whether this account may only look at it
   source?: string;
   readOnly?: boolean;
+  // All photos: its engine ("" this PC, else the server) and its own id there
+  engine?: string;
+  realId?: number;
 }
 
 export interface SavedSearch {

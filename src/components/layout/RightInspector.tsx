@@ -2,6 +2,7 @@ import { thumbSrc } from "../../utils/photoHelpers";
 import { codecLabel, formatDuration, isVideo } from "../../utils/media";
 import { memo, useEffect, useRef } from "react";
 import { call, mediaUrl } from "../../api";
+import { PersonName } from "../people/PersonName";
 import { useAccess } from "../auth/ServerGate";
 import {
   CitySearchResult,
@@ -245,7 +246,9 @@ function RightInspector({
   refreshPeople,
   onOpenFaceReviewModal,
 }: RightInspectorProps) {
-  const access = useAccess();
+  // In All photos a photo with no copy this account may change (shared with a guest) is look-only
+  const libraryAccess = useAccess();
+  const access = { ...libraryAccess, edit: libraryAccess.edit && !(activePhoto.copies && !activePhoto.home) };
   const previewImgWrapRef = useRef<HTMLDivElement>(null);
   const faceInputRef = useRef<HTMLInputElement>(null);
 
@@ -536,8 +539,8 @@ function RightInspector({
                       alt="face"
                       className="w-6 h-6 rounded-full object-cover"
                     />
-                    <span className="text-[11px] font-medium">
-                      {f.person_name || `Face #${idx + 1}`}
+                    <span className="text-[11px] font-medium flex items-baseline gap-1 min-w-0">
+                      {f.person_name ? <PersonName name={f.person_name} /> : `Face #${idx + 1}`}
                     </span>
                     {access.edit && (
                     <button
@@ -635,7 +638,7 @@ function RightInspector({
                   className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-950/60 border border-emerald-500/40 text-emerald-200 text-[11px] font-medium"
                 >
                   <User className="w-3 h-3 text-emerald-400" />
-                  <span className="capitalize">{personName}</span>
+                  <PersonName name={personName} />
                   {access.edit && (
                   <button
                     type="button"
@@ -1071,7 +1074,8 @@ function RightInspector({
                 {access.edit && (
                 <button
                   onClick={async () => {
-                    await call("remove_tag", { hash: activePhoto.hash, tag: t });
+                    // As a batch, so in All photos the copies on this PC follow too
+                    await call("remove_tag_batch", { hashes: [activePhoto.hash], tag: t });
                     setPhotos((prev) =>
                       prev.map((p) =>
                         p.hash === activePhoto.hash

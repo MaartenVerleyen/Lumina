@@ -627,7 +627,7 @@ fn files_that_are_gone_are_forgotten_with_their_values() {
     assert_eq!(count("SELECT COUNT(*) FROM album_photos"), 0);
     let mut stmt = conn.prepare("SELECT name FROM people ORDER BY name").unwrap();
     let people: Vec<String> = stmt.query_map([], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect();
-    assert_eq!(people, vec!["Emma", "Starred gone"], "a starred person stays");
+    assert_eq!(people, vec!["Emma"], "a starred person goes too: People couldn't show them");
     drop(stmt);
     drop(rt);
     drop(conn);
@@ -656,6 +656,40 @@ fn a_person_left_on_no_photo_leaves_the_list() {
     assert_eq!(names(&conn), vec!["Bob"]);
     face_engine::forget_unused_person(&conn, "Bob");
     assert_eq!(names(&conn), vec!["Bob"], "Bob still has his face");
+}
+
+// All photos' suggested names: a person's mean face (normalized), from faces of the current engine only, and
+// for a guest only from the photos they see
+#[test]
+fn a_persons_face_in_short_is_the_mean_of_their_faces() {
+    let conn = Connection::open_in_memory().unwrap();
+    db::migrate(&conn).unwrap();
+    let blob = |v: &[f32]| -> Vec<u8> {
+        let mut full = vec![0f32; 512];
+        full[..v.len()].copy_from_slice(v);
+        full.iter().flat_map(|f| f.to_le_bytes()).collect()
+    };
+    for (id, hash, name, v, engine) in [
+        ("a_1_1", "a", "Ann", vec![1.0, 0.0], face_engine::FACE_ENGINE_V2),
+        ("b_1_1", "b", "Ann", vec![0.0, 1.0], face_engine::FACE_ENGINE_V2),
+        ("c_1_1", "c", "Ann", vec![0.0, 0.0, 1.0], "old engine"),
+        ("d_1_1", "d", "Bob", vec![1.0, 0.0], face_engine::FACE_ENGINE_V2),
+    ] {
+        conn.execute(
+            "INSERT INTO photo_faces (face_id, hash, bbox_x, bbox_y, bbox_w, bbox_h, person_name, face_thumb, embedding, embedding_blob, engine)
+             VALUES (?1, ?2, 0.1, 0.1, 0.1, 0.1, ?3, '', '[]', ?4, ?5)",
+            params![id, hash, name, blob(&v), engine],
+        )
+        .unwrap();
+    }
+    let all = face_review::person_centroids(&conn, None).unwrap();
+    assert_eq!(all.iter().map(|c| (c.name.as_str(), c.faces)).collect::<Vec<_>>(), vec![("Ann", 2), ("Bob", 1)]);
+    let bytes = general_purpose::STANDARD.decode(&all[0].centroid).unwrap();
+    let v: Vec<f32> = bytes.chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect();
+    assert_eq!(v.len(), 512);
+    assert!((v[0] - std::f32::consts::FRAC_1_SQRT_2).abs() < 1e-5 && (v[1] - std::f32::consts::FRAC_1_SQRT_2).abs() < 1e-5);
+    let visible: HashSet<String> = ["d".to_string()].into();
+    assert_eq!(face_review::person_centroids(&conn, Some(&visible)).unwrap().iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), vec!["Bob"]);
 }
 
 #[test]

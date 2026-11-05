@@ -199,10 +199,10 @@ pub fn sync_photo_people_from_faces(conn: &Connection, hash: &str, previous_face
     }
 }
 
-// People on no photo and no face (and not starred or hidden): what forget_unused_person would take off
+// People on no photo and no face: what forget_unused_person would take off
 pub fn unused_people(conn: &Connection) -> Vec<String> {
     let Ok(mut stmt) = conn.prepare(
-        "SELECT name FROM people p WHERE COALESCE(starred, 0) = 0 AND COALESCE(hidden, 0) = 0
+        "SELECT name FROM people p WHERE 1 = 1
            AND NOT EXISTS (SELECT 1 FROM photo_people pp WHERE lower(pp.person_name) = lower(p.name))
            AND NOT EXISTS (SELECT 1 FROM photo_faces f WHERE lower(f.person_name) = lower(p.name))",
     ) else {
@@ -212,13 +212,13 @@ pub fn unused_people(conn: &Connection) -> Vec<String> {
 }
 
 // A person left on no photo and no face (the last name taken off) goes from the people list: People shows
-// no one without photos, and the row would linger forever. One the user starred or hid stays.
+// no one without photos, so the row would linger forever, starred or hidden ones too (nobody could unstar them).
 pub fn forget_unused_person(conn: &Connection, name: &str) {
     if name.trim().is_empty() {
         return;
     }
     let _ = conn.execute(
-        "DELETE FROM people WHERE lower(name) = lower(?1) AND COALESCE(starred, 0) = 0 AND COALESCE(hidden, 0) = 0
+        "DELETE FROM people WHERE lower(name) = lower(?1)
            AND NOT EXISTS (SELECT 1 FROM photo_people WHERE lower(person_name) = lower(?1))
            AND NOT EXISTS (SELECT 1 FROM photo_faces WHERE lower(person_name) = lower(?1))",
         params![name.trim()],

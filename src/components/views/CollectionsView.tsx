@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useAccess } from "../auth/ServerGate";
-import { openLibraryIsAll } from "../../api";
+import { callLocal, inDesktopApp, openLibraryIsAll, subscribeLocal } from "../../api";
+import type { FollowTarget } from "../modals/FollowAlbumDialog";
 import { BookImage, Calendar, Check, MoreHorizontal, Plane, Plus, Search, Sparkles, Trophy } from "lucide-react";
 import { Album, PhotoItem, SavedSearch } from "../../types/lumina";
 import { Trip } from "../../utils/trips";
@@ -32,6 +33,8 @@ interface CollectionsViewProps {
   onRenameTrip: (id: string, name: string) => Promise<void>;
   // On a server: share an album with other users (absent in the desktop app, and for who may not edit)
   onShareAlbum?: (album: { id: number; name: string; kind?: "album" | "search" }) => void;
+  // All photos in the desktop app: follow an album shared with you (its photos into a library of yours)
+  onFollowAlbum?: (album: FollowTarget) => void;
   onHighlights: (title: string, hashes: string[], count?: number, focus?: HighlightFocus) => void;
   // The best `count` photos of a set, as Highlights would choose them
   pickHighlights: (source: PhotoItem[], count: number, focus?: HighlightFocus) => Promise<string[]>;
@@ -178,6 +181,7 @@ export default function CollectionsView({
   onDeleteSavedSearch,
   onRenameTrip,
   onShareAlbum,
+  onFollowAlbum,
   onHighlights,
   pickHighlights,
   bestOfFocus,
@@ -218,6 +222,18 @@ export default function CollectionsView({
   };
 
   const visibleAlbums = albums.filter((a) => matches(a.name));
+  // Albums this device follows (desktop app, All photos): by server and the album's id there
+  const [follows, setFollows] = useState<{ server: string; album_id: number; folder: string; upload_to: string | null; photos: number }[]>([]);
+  useEffect(() => {
+    if (!inDesktopApp || !openLibraryIsAll()) return;
+    const load = () => callLocal<typeof follows>("album_follows").then(setFollows).catch(() => {});
+    load();
+    const off = subscribeLocal("follows-ended", load);
+    return () => {
+      off.then((f) => f());
+    };
+  }, [albums]);
+  const followOf = (a: (typeof albums)[number]) => follows.find((f) => f.server === a.engine && f.album_id === a.realId);
   // Best of each year in the open folder, newest first
   const allYears = useMemo(() => {
     const byYear = new Map<number, PhotoItem[]>();
@@ -301,13 +317,32 @@ export default function CollectionsView({
             <Card
               key={a.id}
               title={a.name}
-              subtitle={`${a.source ? `${a.source} · ` : ""}${albumCounts.get(a.id) ?? 0} in this folder · ${a.hashes.length} in total`}
+              subtitle={
+                followOf(a)
+                  ? `${a.source} · following into ${followOf(a)!.upload_to ?? followOf(a)!.folder}`
+                  : `${a.source ? `${a.source} · ` : ""}${albumCounts.get(a.id) ?? 0} in this folder · ${a.hashes.length} in total`
+              }
               cover={<Cover hashes={a.hashes} photoByHash={photoByHash} icon={<BookImage className="w-8 h-8" />} />}
               onOpen={() => onOpenAlbum(a.id)}
               menu={[
                 { label: "Highlights", run: () => onHighlights(a.name, a.hashes.filter((h) => photoByHash.has(h))) },
                 ...(onShareGallery
                   ? [{ label: "Share as web gallery", run: () => onShareGallery(a.name, a.hashes.filter((h) => photoByHash.has(h))) }]
+                  : []),
+                // An album shared with you: follow it into a library of yours, or stop
+                ...(onFollowAlbum && a.readOnly && a.engine && a.realId !== undefined && !followOf(a)
+                  ? [{ label: "Follow…", run: () => onFollowAlbum({ server: a.engine!, albumId: a.realId!, name: a.name, source: a.source ?? "" }) }]
+                  : []),
+                ...(followOf(a)
+                  ? [
+                      {
+                        label: "Stop following",
+                        run: () =>
+                          callLocal("unfollow_album", { server: a.engine, albumId: a.realId })
+                            .then(() => setFollows((list) => list.filter((f) => f !== followOf(a))))
+                            .catch((e) => console.error(e)),
+                      },
+                    ]
                   : []),
                 ...(onShareAlbum && !a.dynamic && !a.readOnly && a.source !== "This PC"
                   ? [{ label: "Share with…", run: () => onShareAlbum({ id: a.id, name: a.name }) }]

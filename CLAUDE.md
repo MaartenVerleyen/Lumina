@@ -46,6 +46,8 @@ src-tauri/                Cargo workspace root, and the desktop app crate ("Lumi
   src/transfers.rs        the upload and download queues (saved, resumed, retried; `upload-progress` ...)
   src/client_db.rs        client.db in the app data folder: local copies of server photos ("On this PC"), the
                           device's basket (never on a server), this PC's libraries for All photos
+  src/follows.rs          albums shared with you that this device follows: new photos downloaded into a library
+                          of yours (or relayed to a server of yours), with their tags and people names
   crates/lumina-core/     the engine, no Tauri: db, libraries, scan, thumbs, decode, video_frames, ffmpeg,
                           face_* (SCRFD + ArcFace via ONNX Runtime), clip, ai (Ollama), albums, files,
                           backup, photo_meta (a photo's values taken along when it is backed up to a server),
@@ -177,7 +179,9 @@ scan means the models did not run.
   filter, edits per home, the device's basket); milestone 2 done on Windows against a lumina-server on 127.0.0.1
   (Back up now: uploads with their values, `apply_backup_values`, names waiting in `backup_faces` until the server
   has found the faces); milestone 3 done on Windows (albums and people of every library in All photos,
-  names of your own per user on the server, `person_names`); next: following shared albums.
+  names of your own per user on the server, `person_names`), milestone 4 (following shared albums,
+  `src-tauri/src/follows.rs`) and milestone 5 (suggested names from `person_centroids`, duplicates across
+  libraries) done on Windows; next: the phone app (phase 5) adds the camera roll as a source.
 - **Phase 4:** clients help with the server's AI backlog on request, and analyse photos before uploading.
 - **Phase 5:** Android app (Tauri) with automatic backup (Kotlin WorkManager).
 

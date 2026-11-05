@@ -2,12 +2,16 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   copyDownEdits,
+  decodeCentroid,
+  groupAcrossSources,
+  suggestSamePeople,
   includedSources,
   mergeHits,
   mergePeople,
   mergeSources,
   nameOn,
   shownPersonName,
+  splitApartName,
   withPeopleNamed,
   sourceKey,
   splitByHome,
@@ -113,6 +117,17 @@ test("a file in two folders on this PC and on the server: an edit reaches both c
   assert.equal(merged.photos.length, 1);
   assert.deepEqual(merged.localIds.get("both"), ["both", "dup"]);
   assert.deepEqual(withLocalIds({ hashes: ["both"], rating: 3 }, merged.localIds).hashes, ["both", "dup"]);
+});
+
+test("who is in a shared photo shows also where your own copy is the home", () => {
+  const merged = mergeSources([
+    { source: shared, photos: [photo("kids", { people: ["Maarten", "Emma"] })] },
+    { source: pc, photos: [photo("kids", { people: ["emma"] })] },
+  ]);
+  assert.equal(merged.photos[0].home, sourceKey(pc));
+  assert.deepEqual(merged.photos[0].people, ["emma", "Maarten"]);
+  assert.deepEqual(splitApartName("Emma (cachy)"), { base: "Emma", library: "cachy" });
+  assert.equal(splitApartName("Emma"), null);
 });
 
 test("burst groups of two libraries don't run into each other", () => {
@@ -238,4 +253,44 @@ test("a name of your own and a person kept apart, as this account sees a server'
   assert.equal(nameOn("cachy", "Maarten", parts), "Me");
   assert.equal(nameOn("", "Maarten", parts), "Maarten");
   assert.equal(nameOn("cachy", "Someone new", parts), "Someone new");
+});
+
+test("people of two libraries who look alike under different names are suggested as one", () => {
+  const unit = (...v: number[]) => {
+    const n = Math.hypot(...v);
+    return new Float32Array(v.map((x) => x / n));
+  };
+  const centroids = [
+    { engine: "", name: "Maarten", vector: unit(1, 0.1, 0) },
+    { engine: "", name: "Emma", vector: unit(0, 1, 0) },
+    { engine: "cachy", name: "Me", vector: unit(1, 0, 0.05) },
+    { engine: "cachy", name: "Emma", vector: unit(0, 1, 0.02) },
+    { engine: "cachy", name: "Stranger", vector: unit(0, 0, 1) },
+  ];
+  const s = suggestSamePeople(centroids);
+  assert.equal(s.length, 1, "Emma has the same name already; the stranger looks like no one");
+  assert.deepEqual([s[0].from, s[0].to], [{ engine: "cachy", name: "Me" }, { engine: "", name: "Maarten" }]);
+  // What the engines send: base64 of little-endian f32
+  const bytes = new Uint8Array(new Float32Array([0.5, -0.25]).buffer);
+  assert.deepEqual([...decodeCentroid(btoa(String.fromCharCode(...bytes)))], [0.5, -0.25]);
+});
+
+test("near-duplicates of two libraries share a group; within one library the engine's groups stay", () => {
+  const p = (hash: string, dhash: string, extra: Partial<PhotoItem> = {}) => photo(hash, { dhash, captured_at: "2026-01-01 10:00:00", ...extra });
+  const where = new Map([["a", "pc"], ["b", "cachy"], ["c", "pc"], ["d", "pc"], ["e", "cachy"]]);
+  const grouped = groupAcrossSources(
+    [
+      p("a", "ffffffffffffffff"),
+      p("b", "fffffffffffffff0"), // 4 bits from a, on another library
+      p("c", "0000000000000000", { duplicate_group: 7 }),
+      p("d", "000000000000000f", { duplicate_group: 7 }), // the engine's own group
+      p("e", "00ff00ff00ff00ff"), // far from everything
+    ],
+    (x) => where.get(x.hash)!
+  );
+  const g = Object.fromEntries(grouped.map((x) => [x.hash, x.duplicate_group]));
+  assert.equal(g.a, g.b);
+  assert.equal(g.c, g.d);
+  assert.notEqual(g.a, g.c);
+  assert.equal(g.e ?? null, null);
 });

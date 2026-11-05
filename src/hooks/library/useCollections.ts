@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
-import { call, isOwnChange, openLibraryServer, RECONNECTED, subscribe } from "../../api";
+import { call, isOwnChange, openLibraryIsAll, openLibraryServer, RECONNECTED, subscribe } from "../../api";
 import { Album, SavedSearch } from "../../types/lumina";
 import { MatchContext } from "../../utils/searchQuery";
 import { computeTrips, tripLabel } from "../../utils/trips";
@@ -126,7 +126,9 @@ export function useCollections(core: LibraryCore, filters: FilterState) {
   async function handleCreateAlbum(name: string, addHashes?: string[]) {
     try {
       const id = await call<number>("create_album", { name });
-      setAlbums((prev) => [...prev, { id, name: name.trim(), hashes: [] }]);
+      // All photos says which library it went to
+      if (openLibraryIsAll()) await refreshAlbums();
+      else setAlbums((prev) => [...prev, { id, name: name.trim(), hashes: [] }]);
       addLog("LIBRARY", `Created album "${name.trim()}"`);
       if (addHashes && addHashes.length > 0) await handleAddToAlbum(id, addHashes, name.trim());
       return id;

@@ -29,7 +29,7 @@ import {
   Eye,
 } from "lucide-react";
 import { useIsOnDevice } from "../../hooks/useOnDevice";
-import { allPhotosCanBackUp, allPhotosSources } from "../../api";
+import { allPhotosCanBackUp, allPhotosHasLocal, allPhotosSources } from "../../api";
 import { whereabouts } from "../../api/allPhotos";
 
 export type { GridStyle, CardDetails } from "../../settings";
@@ -589,6 +589,8 @@ function WhereBadge({ photo }: { photo: PhotoItem }) {
   if (where === "not-backed-up") return mark("border-amber-400/60 text-amber-300", "Not backed up: only on this PC", <CloudOff className="w-3 h-3" />);
   if (where !== "server-only") return null;
   if (!photo.home) return mark("border-violet-400/50 text-violet-300", "Shared with you: you can look, not change", <Eye className="w-3 h-3" />);
+  // Without a folder on this PC in the view (the web client) every photo is on the server: no mark
+  if (!allPhotosHasLocal()) return null;
   return mark("border-sky-400/50 text-sky-300", "On the server only", <Cloud className="w-3 h-3" />);
 }
 

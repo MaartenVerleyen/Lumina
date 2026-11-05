@@ -94,9 +94,17 @@ export function mergeSources(lists: { source: Source; photos: PhotoItem[] }[], s
     const keys = [...new Set(found.map((f) => sourceKey(f.source)))];
     copies.set(hash, { copies: keys, home, shown: sourceKey(shown.source) });
     const group = shown.photo.duplicate_group;
+    // People travel with a shared photo: who is in it shows also where your own copy is the home (Dad's copy
+    // of a photo shared with him finds maarten's names)
+    const people = [...shown.photo.people];
+    for (const f of found) {
+      if (f === shown || rank(f.source) < 2) continue;
+      for (const n of f.photo.people) if (!people.some((x) => x.toLowerCase() === n.toLowerCase())) people.push(n);
+    }
     photos.push({
       ...shown.photo,
       hash,
+      people,
       subfolder: treePath(shown.source, shown.photo.subfolder),
       also_in: found.filter((f) => f !== shown).map((f) => treePath(f.source, f.photo.subfolder)),
       duplicate_group: group == null ? group : shown.index * GROUP_RANGE + group,
@@ -269,7 +277,127 @@ export interface PersonPart {
   apart: boolean;
 }
 
+// A name with the library it is kept apart in ("Emma (cachy)"): the name and the library, else null
+export function splitApartName(name: string): { base: string; library: string } | null {
+  const m = /^(.*\S) \(([^()]+)\)$/.exec(name);
+  return m ? { base: m[1], library: m[2] } : null;
+}
+
 // The person's name on an engine, for a name the window shows (a new name stays as it is)
 export function nameOn(engine: string, shown: string, parts: Map<string, PersonPart[]>): string {
   return parts.get(shown.toLowerCase())?.find((p) => p.engine === engine)?.name ?? shown;
+}
+
+// ---------- Suggested names (milestone 5) ----------
+
+// A person's face in short from an engine (person_centroids), by the name the window shows
+export interface Centroid {
+  engine: string;
+  name: string;
+  vector: Float32Array;
+}
+
+export interface NameSuggestion {
+  // The person who would take the other's name, and that person
+  from: { engine: string; name: string };
+  to: { engine: string; name: string };
+  score: number;
+}
+
+// The engines send a centroid as base64 of little-endian f32
+export function decodeCentroid(base64: string): Float32Array {
+  const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+  return new Float32Array(bytes.buffer, bytes.byteOffset, Math.floor(bytes.length / 4));
+}
+
+const dotProduct = (a: Float32Array, b: Float32Array) => {
+  let s = 0;
+  for (let i = 0; i < Math.min(a.length, b.length); i++) s += a[i] * b[i];
+  return s;
+};
+
+// People of two libraries whose faces look alike but whose names differ: pairs that are each other's best
+// match there, at 0.6 or more (the engine's "likely" match). The server's person takes this PC's name (a
+// name of your own, which changes nothing for anyone else); between two servers the second takes the first's.
+export function suggestSamePeople(centroids: Centroid[], minScore = 0.6): NameSuggestion[] {
+  const best = (c: Centroid, engine: string) => {
+    let top: { other: Centroid; score: number } | null = null;
+    for (const o of centroids) {
+      if (o.engine !== engine) continue;
+      const score = dotProduct(c.vector, o.vector);
+      if (!top || score > top.score) top = { other: o, score };
+    }
+    return top;
+  };
+  const engineOrder = (e: string) => (e === "" ? "" : `~${e}`);
+  const out: NameSuggestion[] = [];
+  for (const a of centroids) {
+    for (const engine of new Set(centroids.map((c) => c.engine))) {
+      if (engine === a.engine || engineOrder(engine) > engineOrder(a.engine)) continue;
+      const match = best(a, engine);
+      if (!match || match.score < minScore) continue;
+      const back = best(match.other, a.engine);
+      if (back?.other !== a || match.other.name.toLowerCase() === a.name.toLowerCase()) continue;
+      out.push({ from: { engine: a.engine, name: a.name }, to: { engine, name: match.other.name }, score: match.score });
+    }
+  }
+  return out.sort((x, y) => y.score - x.score);
+}
+
+// ---------- Duplicates across libraries (milestone 5) ----------
+
+const popcount32 = (n: number) => {
+  n = n - ((n >>> 1) & 0x55555555);
+  n = (n & 0x33333333) + ((n >>> 2) & 0x33333333);
+  return (((n + (n >>> 4)) & 0x0f0f0f0f) * 0x01010101) >>> 24;
+};
+
+function dhashBits(a: string, b: string): number {
+  const half = (h: string, i: number) => parseInt(h.slice(i * 8, i * 8 + 8), 16) >>> 0;
+  return popcount32((half(a, 0) ^ half(b, 0)) >>> 0) + popcount32((half(a, 1) ^ half(b, 1)) >>> 0);
+}
+
+// Each library groups its own near-duplicates (with smart search to confirm); across libraries photos whose
+// fingerprints are at most 8 bits apart join a group too, as the engine does without smart search. Compared in
+// capture order, each with the next 300 of another library. Groups are numbered again from 1.
+export function groupAcrossSources(photos: PhotoItem[], shownIn: (p: PhotoItem) => string): PhotoItem[] {
+  const parent = photos.map((_, i) => i);
+  const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i])));
+  const join = (a: number, b: number) => {
+    parent[find(a)] = find(b);
+  };
+  const byGroup = new Map<number, number>();
+  photos.forEach((p, i) => {
+    if (p.duplicate_group == null) return;
+    const first = byGroup.get(p.duplicate_group);
+    if (first === undefined) byGroup.set(p.duplicate_group, i);
+    else join(i, first);
+  });
+  const order = photos
+    .map((_, i) => i)
+    .filter((i) => /^[0-9a-f]{16}$/i.test(photos[i].dhash))
+    .sort((a, b) => photos[a].captured_at.localeCompare(photos[b].captured_at) || photos[a].name.localeCompare(photos[b].name));
+  const joined = new Set<number>();
+  for (let x = 0; x < order.length; x++) {
+    const a = order[x];
+    for (let y = x + 1; y < Math.min(order.length, x + 300); y++) {
+      const b = order[y];
+      if (shownIn(photos[a]) === shownIn(photos[b])) continue;
+      if (dhashBits(photos[a].dhash, photos[b].dhash) <= 8) {
+        join(a, b);
+        joined.add(a).add(b);
+      }
+    }
+  }
+  const size = new Map<number, number>();
+  photos.forEach((p, i) => {
+    if (p.duplicate_group != null || joined.has(i)) size.set(find(i), (size.get(find(i)) ?? 0) + 1);
+  });
+  const numbers = new Map<number, number>();
+  return photos.map((p, i) => {
+    const root = find(i);
+    if ((size.get(root) ?? 0) < 2) return p.duplicate_group == null ? p : { ...p, duplicate_group: null };
+    if (!numbers.has(root)) numbers.set(root, numbers.size + 1);
+    return { ...p, duplicate_group: numbers.get(root)! };
+  });
 }

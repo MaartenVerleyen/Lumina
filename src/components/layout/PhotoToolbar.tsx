@@ -3,7 +3,7 @@ import { ArrowUpDown, Calendar, Check, ChevronDown, CloudUpload, Columns, Copy, 
 import type { LibraryState } from "../../hooks/useLibraryState";
 import { useAccess } from "../auth/ServerGate";
 import { AutoStagePreset, OrientationFilter, SortOption } from "../../types/lumina";
-import { allPhotosCanBackUp, allPhotosSources, openLibraryIsAll, openLibraryServer } from "../../api";
+import { allPhotosCanBackUp, allPhotosHasLocal, allPhotosSources, openLibraryIsAll, openLibraryServer } from "../../api";
 import { whereabouts, type Whereabouts } from "../../api/allPhotos";
 import { libraryName } from "../../utils/photoHelpers";
 import { useOnDeviceSet } from "../../hooks/useOnDevice";
@@ -507,7 +507,7 @@ function WhereFilter({ lib }: { lib: LibraryState }) {
     if (isAll && current !== "all") apply(current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lib.photos]);
-  if (!isAll) return null;
+  if (!isAll || !allPhotosHasLocal()) return null;
   return (
     <div className="flex bg-zinc-900 border border-zinc-800 rounded-lg p-0.5 text-[11px]" role="group" aria-label="Where the photos are">
       {WHERE.filter((w) => canBackUp || w.value !== "not-backed-up").map((w) => (

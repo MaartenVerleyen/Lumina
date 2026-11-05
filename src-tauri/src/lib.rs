@@ -15,6 +15,7 @@ mod remote;
 mod client_db;
 mod transfer;
 mod transfers;
+mod follows;
 
 use db::*;
 use storage::*;
@@ -167,6 +168,7 @@ pub fn run() {
             engine_commands::cancel_import,
             engine_commands::watch_library,
             engine_commands::watch_libraries,
+            engine_commands::person_centroids,
             engine_commands::measure_face_quality,
             engine_commands::pick_highlights,
             engine_commands::export_gallery,
@@ -189,6 +191,10 @@ pub fn run() {
             remote::clear_remote_cache,
             transfers::upload_paths,
             transfers::back_up,
+            follows::album_follows,
+            follows::follow_album,
+            follows::unfollow_album,
+            follows::sync_follows,
             transfers::download_originals,
             transfers::transfer_progress,
             transfers::cancel_transfers,

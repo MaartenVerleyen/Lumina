@@ -1,5 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { allPhotosPersonParts, dropOwnNames, mediaUrl, openLibraryIsAll, setPersonApart } from "../../api";
+import {
+  acceptNameSuggestion,
+  allPhotosNameSuggestions,
+  allPhotosPersonParts,
+  dismissNameSuggestion,
+  dropOwnNames,
+  mediaUrl,
+  openLibraryIsAll,
+  setPersonApart,
+} from "../../api";
+import type { NameSuggestion } from "../../api/allPhotos";
+import { PersonName } from "../people/PersonName";
 import { useAccess } from "../auth/ServerGate";
 import { ChevronDown, ChevronRight, Search, Star, User, Users, X } from "lucide-react";
 import { PersonItem } from "../../types/lumina";
@@ -65,6 +76,22 @@ export default function PeopleSidebar({
   // In All photos anyone may give people of a library they only look at a name of their own
   const isAll = openLibraryIsAll();
   const canName = access.edit || isAll;
+  // All photos: people of two libraries who look alike under different names
+  const [suggestions, setSuggestions] = useState<NameSuggestion[]>([]);
+  useEffect(() => {
+    if (!isAll) {
+      setSuggestions([]);
+      return;
+    }
+    let stale = false;
+    allPhotosNameSuggestions()
+      .then((list) => !stale && setSuggestions(list))
+      .catch(() => {});
+    return () => {
+      stale = true;
+    };
+  }, [isAll, people]);
+  const labelOf = (engine: string, name: string) => allPhotosPersonParts(name).find((x) => x.engine === engine)?.label ?? "";
   const [query, setQuery] = useState("");
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [menuInput, setMenuInput] = useState("");
@@ -205,8 +232,8 @@ export default function PeopleSidebar({
             )}
           </span>
           <span className="min-w-0">
-            <span className={`block text-xs font-semibold capitalize truncate ${on ? "text-emerald-100" : "text-zinc-200"}`}>
-              {p.name}
+            <span className={`flex items-baseline gap-1 min-w-0 text-xs font-semibold ${on ? "text-emerald-100" : "text-zinc-200"}`}>
+              <PersonName name={p.name} />
             </span>
             <span className="block text-[11px] text-zinc-500 truncate">
               {p.photo_count} photo{p.photo_count === 1 ? "" : "s"}
@@ -372,6 +399,41 @@ export default function PeopleSidebar({
       </div>
 
       <div className="flex-1 overflow-y-auto p-2 flex flex-col gap-0.5">
+        {suggestions.length > 0 && (
+          <div className="mb-2 p-2 rounded-xl border border-sky-500/30 bg-sky-950/20 flex flex-col gap-1.5">
+            <span className="text-[11px] font-bold text-sky-300 uppercase tracking-wider">Maybe the same person</span>
+            {suggestions.slice(0, 5).map((sg) => (
+              <div key={`${sg.from.engine}|${sg.from.name}`} className="flex flex-col gap-1 text-[11px] text-zinc-300">
+                <span>
+                  <span className="font-semibold capitalize">{sg.from.name}</span> on {labelOf(sg.from.engine, sg.from.name)} looks like{" "}
+                  <span className="font-semibold capitalize">{sg.to.name}</span> on {labelOf(sg.to.engine, sg.to.name)}
+                </span>
+                <span className="flex gap-1">
+                  <button
+                    className="px-2 py-0.5 rounded bg-sky-600 hover:bg-sky-500 text-white"
+                    title={`Show ${sg.from.name} as ${sg.to.name} (for you only, when on a server)`}
+                    onClick={() =>
+                      acceptNameSuggestion(sg)
+                        .then(() => onNamesChanged?.())
+                        .catch((e) => console.error(e))
+                    }
+                  >
+                    Same person
+                  </button>
+                  <button
+                    className="px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200"
+                    onClick={() => {
+                      dismissNameSuggestion(sg);
+                      setSuggestions((list) => list.filter((x) => x !== sg));
+                    }}
+                  >
+                    Not the same
+                  </button>
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
         <button
           onClick={() => onChange(null)}
           className={`flex items-center gap-2.5 px-2 py-1.5 rounded-xl border text-left ${

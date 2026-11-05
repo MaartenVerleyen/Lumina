@@ -429,6 +429,9 @@ fn run_face_scan(app_clone: &dyn Host, hashes: Vec<String>, models: Arc<FaceMode
                         }
                         let _ = tx.commit();
                     }
+                    // Names a backup or a followed album brought for faces not found then go on now, so this
+                    // batch's report carries them
+                    let _ = crate::photo_meta::apply_waiting_faces(&mut conn);
 
                     for (h, _, _) in &chunk_results {
                         let all_faces = get_faces_for_hash(&conn, h);

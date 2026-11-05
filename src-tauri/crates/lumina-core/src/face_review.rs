@@ -752,3 +752,43 @@ pub async fn get_unknown_face_clusters(app: SharedHost, root_folder: Option<Stri
     .await
     .map_err(|e| e.to_string())?
 }
+
+// One person's face in short: the mean of their named faces' embeddings (normalized), in little-endian f32
+// bytes as base64. All photos compares these between libraries to suggest that two people are one.
+#[derive(Serialize)]
+pub struct PersonCentroid {
+    pub name: String,
+    pub faces: usize,
+    pub centroid: String,
+}
+
+// The people named on faces of the current engine; with `visible`, only faces on those photos (a guest's)
+pub fn person_centroids(conn: &Connection, visible: Option<&HashSet<String>>) -> Result<Vec<PersonCentroid>, String> {
+    let mut by_person: HashMap<String, (String, Vec<Vec<f32>>)> = HashMap::new();
+    let mut stmt = conn
+        .prepare(
+            "SELECT hash, person_name, embedding_blob FROM photo_faces
+             WHERE engine = ?1 AND embedding_blob IS NOT NULL AND COALESCE(person_name, '') != '' AND person_name != ?2",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(params![FACE_ENGINE_V2, IGNORED_FACE], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Vec<u8>>(2)?)))
+        .map_err(|e| e.to_string())?;
+    for (hash, name, blob) in rows.flatten() {
+        if visible.is_some_and(|v| !v.contains(&hash)) {
+            continue;
+        }
+        let entry = by_person.entry(name.to_lowercase()).or_insert_with(|| (name.clone(), Vec::new()));
+        entry.1.push(blob_to_embedding(&blob));
+    }
+    let mut out: Vec<PersonCentroid> = by_person
+        .into_values()
+        .filter_map(|(name, faces)| {
+            let centroid = compute_normalized_centroid(&faces, 512)?;
+            let bytes: Vec<u8> = centroid.iter().flat_map(|f| f.to_le_bytes()).collect();
+            Some(PersonCentroid { name, faces: faces.len(), centroid: general_purpose::STANDARD.encode(bytes) })
+        })
+        .collect();
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(out)
+}
