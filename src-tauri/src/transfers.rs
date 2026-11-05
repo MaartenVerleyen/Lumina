@@ -869,6 +869,43 @@ pub async fn back_up(app: AppHandle, server: String, hashes: Vec<String>, with_v
     Ok(queued)
 }
 
+// The phone app: a photo's original to another app, downloaded into the app's cache first and then handed to
+// Android's share sheet. Only one shared file is kept at a time.
+#[tauri::command]
+pub async fn share_photo(app: AppHandle, server: String, hash: String) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        use tauri::Manager;
+        let c = conn(&app, &server).ok_or_else(|| format!("Signed out of {server}: sign in again in Settings"))?;
+        let dir = app.path().app_cache_dir().map_err(|e| e.to_string())?.join("share");
+        let _ = fs::remove_dir_all(&dir);
+        let (path, _) = transfer::download_one(&c, &hash, &dir, &AtomicU64::new(0), &AtomicBool::new(false))
+            .await
+            .map_err(|f| match f {
+                Failure::Refused(e) | Failure::Network(e) => e,
+                Failure::SignedOut => format!("Signed out of {server}: sign in again in Settings"),
+                Failure::Cancelled => "Cancelled".to_string(),
+            })?;
+        let ext = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+        let mime = match ext.as_str() {
+            "jpg" | "jpeg" => "image/jpeg",
+            "png" => "image/png",
+            "heic" | "heif" => "image/heic",
+            "webp" => "image/webp",
+            "mp4" | "m4v" => "video/mp4",
+            "mov" => "video/quicktime",
+            _ if video_meta::is_video_ext(&ext) => "video/*",
+            _ => "image/*",
+        };
+        crate::android::share_file(&app, &path, mime)
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (app, server, hash);
+        Err("Sharing to another app is the phone app's".into())
+    }
+}
+
 // Originals of these photos into a folder on this computer
 #[tauri::command]
 pub fn download_originals(app: AppHandle, server: String, photos: Vec<(String, String)>, folder: String) -> Result<usize, String> {

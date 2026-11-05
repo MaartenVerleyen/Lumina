@@ -15,6 +15,8 @@ mod remote;
 mod client_db;
 mod transfer;
 mod transfers;
+#[cfg(target_os = "android")]
+mod android;
 mod follows;
 
 use db::*;
@@ -34,7 +36,11 @@ pub fn run() {
         std::process::exit(prepare::run(steps));
     }
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // The phone app's Kotlin side: its share sheet (android.rs)
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(android::init());
+    builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -59,7 +65,7 @@ pub fn run() {
                 LazyLock::force(&BG_POOL);
             });
             import::start_drive_watch(Arc::new(app.handle().clone()));
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             media_server::start(app.handle().clone());
             // Servers this app is signed in to: their events, and uploads or downloads still waiting
             app.manage(Arc::new(remote::Remote::load(get_app_storage_dir(app.handle()))));
@@ -191,6 +197,7 @@ pub fn run() {
             remote::clear_remote_cache,
             transfers::upload_paths,
             transfers::back_up,
+            transfers::share_photo,
             follows::album_follows,
             follows::follow_album,
             follows::unfollow_album,

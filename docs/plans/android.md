@@ -168,3 +168,27 @@ library of yours from the desktop instead.
 - With flight mode on, the app opens and shows the library from its cache.
 - A followed album's new photo arrives on the phone by itself.
 - The release has an APK that installs on the phone, and the next release offers itself as an update.
+
+## What was built
+
+### Milestone 1 (2026-11-05, checked on Maarten's OnePlus 8T over USB, against cachy over Tailscale)
+
+- `src-tauri/gen/android` (made by `tauri android init`), built on this PC with a portable JDK 17, the
+  Android SDK (platform 36, build tools 36.1) and NDK 29 in `%LOCALAPPDATA%\Android` (`JAVA_HOME`,
+  `ANDROID_HOME`, `NDK_HOME` set for the user). Windows needs Developer Mode for the build's symbolic link.
+  `npx tauri android build --debug --target aarch64 --apk`, then `adb install -r` the universal APK.
+- Android builds use rustls instead of OpenSSL (`reqwest`, `tokio-tungstenite`), and no `keyring`: the session
+  token is a file in the app's private folder for now (`remote.rs` token_get/set/delete; Keystore encryption
+  comes with the camera-roll plugin). `face_ort` has a CPU entry for Android only so it builds; the phone runs
+  no models.
+- `tauri.android.conf.json`: one window (the desktop's splash screen is a window of its own), and video from
+  127.0.0.1. `onAndroid` (src/api) picks the phone layout, leaves out folders on this device and the desktop
+  updater.
+- `MainActivity.kt` keeps the web view clear of the status and navigation bars (Android draws edge to edge)
+  and gives them Lumina's dark background. Lumina's launcher icon and Android's start screen (themes,
+  `values-v31`), and a dark loading screen with the mark in `index.html` until the app has started.
+- Server videos go through the app's own video server on 127.0.0.1 (`media_server.rs`, as on Linux), so
+  skipping ahead in a long video starts at once; `network_security_config.xml` allows plain HTTP to 127.0.0.1
+  only (any address in debug builds, for `tauri android dev`).
+- Share: `LuminaPlugin.kt` (Android's share sheet through the FileProvider) and `share_photo`, which downloads
+  the original into the app's cache first; a Share button in the phone layout's full-screen view.

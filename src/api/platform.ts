@@ -9,7 +9,7 @@ import * as updater from "@tauri-apps/plugin-updater";
 import * as app from "@tauri-apps/api/app";
 import * as paths from "@tauri-apps/api/path";
 import * as webview from "@tauri-apps/api/webview";
-import { inDesktopApp, openLibraryIsLocal } from "./index";
+import { inDesktopApp, onAndroid, openLibraryIsLocal } from "./index";
 
 export type { Update } from "@tauri-apps/plugin-updater";
 
@@ -18,8 +18,8 @@ export type { Update } from "@tauri-apps/plugin-updater";
 const onMac = typeof navigator !== "undefined" && /Macintosh|Mac OS X/.test(navigator.userAgent);
 
 export const platform = {
-  // The full app: libraries in folders on this computer (everywhere but a Mac, for now)
-  fullApp: inDesktopApp && !onMac,
+  // The full app: libraries in folders on this computer (everywhere but a Mac or a phone, for now)
+  fullApp: inDesktopApp && !onMac && !onAndroid,
   // Native dialogs to pick files and folders on this computer
   fileDialogs: inDesktopApp,
   // The open library is on this computer's own drives (scan, open in Explorer, import from a card, export,
@@ -27,8 +27,8 @@ export const platform = {
   get localFiles() {
     return openLibraryIsLocal();
   },
-  // Updates through the built-in updater (a server updates with its image)
-  updater: inDesktopApp,
+  // Updates through the built-in updater (a server updates with its image; Android installs a new APK)
+  updater: inDesktopApp && !onAndroid,
   // The library's background work runs in this app (face scans and their upgrades, eyes and focus, the smart
   // search index). A server's own pipeline does all of that, so its clients never start them.
   get libraryJobs() {

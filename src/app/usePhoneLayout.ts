@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState } from "react";
-import { inDesktopApp } from "../api";
+import { inDesktopApp, onAndroid } from "../api";
 
 // The web client on a phone gets its own simple layout (src/components/mobile); the full layout needs a
 // big screen and a mouse. A phone held sideways is wide but short, so that counts as a phone too. Someone
@@ -24,12 +24,13 @@ function storedPreferFull(): boolean {
 }
 
 export function usePhoneLayoutState(): PhoneLayout {
-  const query = inDesktopApp || typeof window === "undefined" ? null : window.matchMedia(PHONE_SCREEN);
-  const [phoneScreen, setPhoneScreen] = useState(() => query?.matches ?? false);
+  // The Android app is always on a phone
+  const query = (inDesktopApp && !onAndroid) || typeof window === "undefined" ? null : window.matchMedia(PHONE_SCREEN);
+  const [phoneScreen, setPhoneScreen] = useState(() => onAndroid || (query?.matches ?? false));
   const [preferFull, setPreferFullState] = useState(storedPreferFull);
   useEffect(() => {
     if (!query) return;
-    const update = () => setPhoneScreen(query.matches);
+    const update = () => setPhoneScreen(onAndroid || query.matches);
     query.addEventListener("change", update);
     return () => query.removeEventListener("change", update);
     // eslint-disable-next-line react-hooks/exhaustive-deps

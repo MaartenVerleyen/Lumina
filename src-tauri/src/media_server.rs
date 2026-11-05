@@ -1,25 +1,27 @@
-// Linux only: WebKitGTK can't stream videos from Tauri's asset:// URLs (tauri#3725), so the window plays
-// local videos over plain HTTP from 127.0.0.1 instead, with range requests like any web server. Windows
+// Linux and Android: WebKitGTK can't stream videos from Tauri's asset:// URLs (tauri#3725), so the window
+// plays local videos over plain HTTP from 127.0.0.1 instead, with range requests like any web server. On
+// Android a server's videos come through here too: the custom protocol hands over each range only once it
+// has all of it, so skipping ahead in a long video waited for megabytes first. Windows
 // keeps asset://, where WebView2 plays video. Only video files are served, only from the folders the
 // asset protocol may already show (the opened libraries and the app's data folder), and only with this
 // run's token, so another program or web page on the PC can't read files through it. A server's videos
 // stall the same way on lumina-remote://, so they come through here as well (/remote), with the same token.
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 static ADDRESS: std::sync::OnceLock<(String, String)> = std::sync::OnceLock::new();
 
 // Where the window finds the video server: { base, token }, or null where there is none (Windows, or the
 // port couldn't be opened, and videos go through asset:// as before)
 #[tauri::command]
 pub fn local_media_server() -> Option<serde_json::Value> {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     if let Some((base, token)) = ADDRESS.get() {
         return Some(serde_json::json!({ "base": base, "token": token }));
     }
     None
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 pub fn start(app: tauri::AppHandle) {
     use rand::RngCore;
     let mut bytes = [0u8; 32];
@@ -53,7 +55,7 @@ pub fn start(app: tauri::AppHandle) {
     });
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 #[derive(Clone)]
 struct Server {
     app: tauri::AppHandle,
@@ -61,10 +63,10 @@ struct Server {
 }
 
 // Containers the library treats as video (VIDEO_NAME in src/utils/media.ts), plus what playable copies use
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 const VIDEO_EXTENSIONS: &[&str] = &["mp4", "mov", "m4v", "3gp", "avi", "mts", "m2ts", "mpg", "mpeg", "webm", "mkv"];
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 fn may_serve(app: &tauri::AppHandle, path: &std::path::Path) -> bool {
     use std::path::Component;
     use tauri::Manager;
@@ -77,7 +79,7 @@ fn may_serve(app: &tauri::AppHandle, path: &std::path::Path) -> bool {
     is_video && plain && path.is_file() && app.asset_protocol_scope().is_allowed(path)
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 async fn serve_video(
     axum::extract::State(server): axum::extract::State<Server>,
     axum::extract::Path(token): axum::extract::Path<String>,
@@ -107,7 +109,7 @@ async fn serve_video(
 
 // A server's video (?key=<server>/<kind>/<id>, as lumina-remote:// names it), fetched with this app's session
 // and streamed through with its range, so the player can seek
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 async fn serve_remote_video(
     axum::extract::State(server): axum::extract::State<Server>,
     axum::extract::Path(token): axum::extract::Path<String>,

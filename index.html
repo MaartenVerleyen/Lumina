@@ -2,14 +2,22 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <link rel="icon" type="image/svg+xml" href="/lumina-mark.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#090a0f" />
     <title>Lumina — AI Photo Triage</title>
+    <!-- Shown until the app has started (the phone app and the web client; the desktop window opens once ready) -->
+    <style>
+      html, body { margin: 0; background: #090a0f; }
+      .boot { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px;
+        color: #e4e4e7; font: 600 22px system-ui, sans-serif; letter-spacing: 0.02em; }
+      .boot img { animation: boot-pulse 1.8s ease-in-out infinite; }
+      @keyframes boot-pulse { 50% { opacity: 0.55; transform: scale(0.96); } }
+    </style>
   </head>
 
   <body>
-    <div id="root"></div>
+    <div id="root"><div class="boot"><img src="/lumina-mark.svg" width="96" height="96" alt="" />Lumina</div></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

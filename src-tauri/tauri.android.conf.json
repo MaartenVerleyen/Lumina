@@ -1,0 +1,19 @@
+{
+  "app": {
+    "windows": [
+      {
+        "title": "Lumina",
+        "label": "main",
+        "visible": true
+      }
+    ],
+    "security": {
+      "csp": {
+        "media-src": "'self' asset: http://asset.localhost lumina-remote: http://lumina-remote.localhost blob: http://127.0.0.1:*"
+      },
+      "devCsp": {
+        "media-src": "'self' asset: http://asset.localhost lumina-remote: http://lumina-remote.localhost blob: http://127.0.0.1:* http://localhost:1420"
+      }
+    }
+  }
+}

@@ -1,0 +1,6 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- Lumina is dark, in daylight too: no white flash while it starts -->
+    <style name="Theme.lumina" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="android:windowBackground">@color/lumina_background</item>
+    </style>
+</resources>

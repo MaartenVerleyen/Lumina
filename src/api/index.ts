@@ -52,6 +52,9 @@ export const OPEN_ADMIN_EVENT = "lumina-open-admin";
 
 // Inside the Tauri desktop app (rather than a browser)
 export const inDesktopApp = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+// The app on an Android phone (docs/plans/android.md): the same app as the desktop's, a client of a server,
+// in the phone layout
+export const onAndroid = inDesktopApp && typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent);
 
 // Sent when the server says the session has ended; the login screen listens for it
 export const LOGGED_OUT_EVENT = "lumina-logged-out";

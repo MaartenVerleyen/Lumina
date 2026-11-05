@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { ChevronLeft, Info, MapPin, Camera, X } from "lucide-react";
-import { mediaUrl } from "../../api";
+import { ChevronLeft, Info, Loader2, MapPin, Camera, Share2, X } from "lucide-react";
+import { callLocal, mediaUrl, onAndroid, openLibraryServer } from "../../api";
 import type { PhotoItem } from "../../types/lumina";
 import { thumbSrc } from "../../utils/photoHelpers";
 import { isVideo } from "../../utils/media";
@@ -240,6 +240,7 @@ export default function MobileViewer({
               {photo.location ? ` · ${photo.location}` : ""}
             </div>
           </div>
+          {onAndroid && openLibraryServer() && <ShareButton hash={photo.hash} />}
           <button onClick={() => setInfo(true)} className="p-2 rounded-full text-white active:bg-white/20" aria-label="Details">
             <Info className="w-5 h-5" />
           </button>
@@ -248,6 +249,31 @@ export default function MobileViewer({
 
       {info && <Details photo={photo} onClose={() => setInfo(false)} onPerson={onPerson} />}
     </div>
+  );
+}
+
+// The phone app: the photo's original to another app (downloaded first, then Android's share sheet)
+function ShareButton({ hash }: { hash: string }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const share = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await callLocal("share_photo", { server: openLibraryServer(), hash });
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <>
+      {error && <span className="text-[11px] text-red-300 max-w-[40vw] truncate" title={error}>{error}</span>}
+      <button onClick={share} disabled={busy} className="p-2 rounded-full text-white active:bg-white/20" aria-label="Share">
+        {busy ? <Loader2 className="w-5 h-5 animate-spin" /> : <Share2 className="w-5 h-5" />}
+      </button>
+    </>
   );
 }
 

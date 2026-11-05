@@ -1,7 +1,7 @@
 import { useEffect, useState, type RefObject } from "react";
 import { Clock, FolderInput, FolderOpen, Images, Search, Server } from "lucide-react";
 import type { LibraryState } from "../../hooks/useLibraryState";
-import { call, inDesktopApp, rememberLibraryRoles, subscribe, type Role } from "../../api";
+import { call, inDesktopApp, onAndroid, rememberLibraryRoles, subscribe, type Role } from "../../api";
 import { useAccount } from "../auth/ServerGate";
 import { ConnectServerForm, ServerLibraryList } from "../servers/Servers";
 import { platform } from "../../api/platform";
@@ -105,7 +105,9 @@ function DesktopStart({ lib, gridContainerRef }: { lib: LibraryState; gridContai
         </h2>
         {!platform.fullApp && (
           <p className="text-xs text-zinc-400 mt-1 max-w-md leading-relaxed">
-            On a Mac, Lumina works with the photo libraries on a Lumina server for now. Connect to one below.
+            {onAndroid
+              ? "Lumina on your phone shows the photo libraries of your Lumina server. Connect to it below."
+              : "On a Mac, Lumina works with the photo libraries on a Lumina server for now. Connect to one below."}
           </p>
         )}
         {platform.fullApp && (

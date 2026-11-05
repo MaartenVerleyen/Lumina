@@ -95,6 +95,15 @@ pub(crate) fn gpu_provider() -> ort::ep::ExecutionProviderDispatch {
     ort::ep::CoreML::default().build().error_on_failure()
 }
 
+// Android: the phone app is a client and runs no models (docs/plans/android.md); this only has to build
+#[cfg(target_os = "android")]
+pub const GPU_DEVICE: &str = "CPU";
+
+#[cfg(target_os = "android")]
+pub(crate) fn gpu_provider() -> ort::ep::ExecutionProviderDispatch {
+    ort::ep::CPU::default().build()
+}
+
 pub fn build_session(path: &Path, gpu: bool) -> Result<Session, String> {
     let env = ORT_ENV.as_ref().ok_or("ONNX Runtime could not be initialised")?;
     let mut builder = Session::builder(env).map_err(|e| e.to_string())?;

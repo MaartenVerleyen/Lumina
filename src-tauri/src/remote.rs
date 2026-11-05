@@ -123,7 +123,7 @@ impl Remote {
         let settings: Settings = fs::read(dir.join("servers.json")).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
         let mut tokens = HashMap::new();
         for s in &settings.servers {
-            if let Some(t) = keyring_entry(s).and_then(|e| e.get_password().ok()) {
+            if let Some(t) = token_get(&dir, s) {
                 tokens.insert(s.id.clone(), t);
             }
         }
@@ -177,8 +177,56 @@ impl Remote {
     }
 }
 
+// Where a session token is kept: the system's credential store on the desktop. Android has none that keyring
+// reaches: there it is a file in the app's private folder, which other apps can't read (encrypting it with a
+// Keystore key comes with the app's Kotlin plugin, docs/plans/android.md).
+#[cfg(not(target_os = "android"))]
 fn keyring_entry(server: &ServerEntry) -> Option<keyring::Entry> {
     keyring::Entry::new(KEYRING_SERVICE, &format!("{}@{}", server.user, server.id)).ok()
+}
+
+#[cfg(not(target_os = "android"))]
+fn token_get(_dir: &Path, server: &ServerEntry) -> Option<String> {
+    keyring_entry(server)?.get_password().ok()
+}
+
+#[cfg(not(target_os = "android"))]
+fn token_set(_dir: &Path, server: &ServerEntry, token: &str) -> Result<(), String> {
+    keyring_entry(server)
+        .ok_or("The system's credential store isn't available")?
+        .set_password(token)
+        .map_err(|e| format!("Couldn't keep the session in the system's credential store: {e}"))
+}
+
+#[cfg(not(target_os = "android"))]
+fn token_delete(_dir: &Path, server: &ServerEntry) {
+    if let Some(e) = keyring_entry(server) {
+        let _ = e.delete_credential();
+    }
+}
+
+#[cfg(target_os = "android")]
+fn token_file(dir: &Path, server: &ServerEntry) -> PathBuf {
+    dir.join("sessions").join(safe(&format!("{}@{}", server.user, server.id)))
+}
+
+#[cfg(target_os = "android")]
+fn token_get(dir: &Path, server: &ServerEntry) -> Option<String> {
+    fs::read_to_string(token_file(dir, server)).ok().filter(|t| !t.is_empty())
+}
+
+#[cfg(target_os = "android")]
+fn token_set(dir: &Path, server: &ServerEntry, token: &str) -> Result<(), String> {
+    let file = token_file(dir, server);
+    if let Some(parent) = file.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    fs::write(file, token).map_err(|e| format!("Couldn't keep the session: {e}"))
+}
+
+#[cfg(target_os = "android")]
+fn token_delete(dir: &Path, server: &ServerEntry) {
+    let _ = fs::remove_file(token_file(dir, server));
 }
 
 // The server ended the session (password changed, removed, signed out elsewhere): forget the token and tell
@@ -189,9 +237,7 @@ pub fn signed_out(app: &AppHandle, id: &str) {
         return;
     }
     if let Ok(s) = r.server(id) {
-        if let Some(e) = keyring_entry(&s) {
-            let _ = e.delete_credential();
-        }
+        token_delete(&r.dir, &s);
     }
     if let Some(h) = r.sockets.lock().unwrap().remove(id) {
         h.abort();
@@ -273,19 +319,14 @@ pub async fn server_login(app: AppHandle, url: String, name: String, password: S
         // Signing in again as someone else replaces the old account's token
         if let Some(old) = settings.servers.iter().find(|s| s.id == id) {
             if old.user != entry.user {
-                if let Some(e) = keyring_entry(old) {
-                    let _ = e.delete_credential();
-                }
+                token_delete(&r.dir, old);
             }
         }
         settings.servers.retain(|s| s.id != id);
         settings.servers.push(entry.clone());
     }
     r.save()?;
-    keyring_entry(&entry)
-        .ok_or("The system's credential store isn't available")?
-        .set_password(&token)
-        .map_err(|e| format!("Couldn't keep the session in the system's credential store: {e}"))?;
+    token_set(&r.dir, &entry, &token)?;
     r.tokens.lock().unwrap().insert(id.clone(), token);
     start_socket(&app, &id);
     Ok(info(&r, &entry))
@@ -496,7 +537,7 @@ fn bounded_range(range: &str) -> String {
 // A server's video for the window's local video server (media_server.rs): WebKitGTK stalls on a video from
 // lumina-remote:// after its first range, as it does on asset://. `key` is the protocol's
 // <server>/<kind>/<id>; the range goes as asked, and the caller streams the answer.
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+#[cfg_attr(not(any(target_os = "linux", target_os = "android")), allow(dead_code))]
 pub async fn video_response(app: &AppHandle, key: &str, range: Option<&str>) -> Result<reqwest::Response, u16> {
     let mut parts = key.splitn(3, '/');
     let (Some(server), Some(kind), Some(id)) = (parts.next(), parts.next(), parts.next()) else { return Err(400) };

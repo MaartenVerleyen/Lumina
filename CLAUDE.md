@@ -46,6 +46,8 @@ src-tauri/                Cargo workspace root, and the desktop app crate ("Lumi
   src/transfers.rs        the upload and download queues (saved, resumed, retried; `upload-progress` ...)
   src/client_db.rs        client.db in the app data folder: local copies of server photos ("On this PC"), the
                           device's basket (never on a server), this PC's libraries for All photos
+  src/android.rs          the phone app's Kotlin plugin (gen/android/.../LuminaPlugin.kt): share sheet, camera roll later
+  gen/android/            the Android project (Tauri); see docs/plans/android.md for building it on this PC
   src/follows.rs          albums shared with you that this device follows: new photos downloaded into a library
                           of yours (or relayed to a server of yours), with their tags and people names
   crates/lumina-core/     the engine, no Tauri: db, libraries, scan, thumbs, decode, video_frames, ffmpeg,
@@ -183,7 +185,8 @@ scan means the models did not run.
   `src-tauri/src/follows.rs`) and milestone 5 (suggested names from `person_centroids`, duplicates across
   libraries) done on Windows; next: the phone app (phase 5) adds the camera roll as a source.
 - **Phase 4:** clients help with the server's AI backlog on request, and analyse photos before uploading.
-- **Phase 5:** Android app (Tauri) with automatic backup (Kotlin WorkManager).
+- **Phase 5, the Android app (branch `android`; the brief is `docs/plans/android.md`):** milestone 1 done on a
+  OnePlus 8T (sign in, browse and search the server, photos and videos, share); next: the phone's camera roll.
 
 ## First jobs on the Linux machine
 
