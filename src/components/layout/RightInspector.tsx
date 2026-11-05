@@ -1071,7 +1071,7 @@ function RightInspector({
                 {access.edit && (
                 <button
                   onClick={async () => {
-                    await call("remove_tag", { hash: activePhoto.hash, tag: t });
+                    await call("remove_tag_batch", { hashes: [activePhoto.hash], tag: t });
                     setPhotos((prev) =>
                       prev.map((p) =>
                         p.hash === activePhoto.hash
