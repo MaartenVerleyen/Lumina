@@ -1,7 +1,7 @@
 <div align="center">
   <img src="src/assets/lumina-mark.svg" width="64" alt="Lumina logo" />
   <h1>Lumina</h1>
-  <p><strong>Sort, find and cull a lifetime of photos on your own PC.</strong></p>
+  <p><strong>Sort, find and cull a lifetime of photos on your own PC and home server.</strong></p>
   <p>
     <img src="https://img.shields.io/badge/Windows-desktop-0078D4?style=flat-square" alt="Windows desktop" />
     <img src="https://img.shields.io/badge/Tauri-v2-24C8DB?style=flat-square" alt="Tauri v2" />
@@ -13,12 +13,13 @@
 
 ![The Photos tab: a justified grid grouped by month, with named faces, place, camera settings, AI caption and tags in the inspector](docs/screenshots/photos.jpg)
 
-Lumina is a Windows desktop app for working through a large photo library. It recognises the people in your
+Lumina is a desktop app for working through a large photo library. It recognises the people in your
 photos, writes a caption and tags for each one, lets you search by describing a photo, puts your trips on a
-map and helps you keep the sharpest shot of every burst.
+map and helps you keep the sharpest shot of every burst. It also runs as a server at home, so everyone in
+the house reaches one library from their own computer or a web browser.
 
-Face recognition, captions, smart search and place names all run on your own computer. Your photos are never
-uploaded.
+Face recognition, captions, smart search and place names all run on your own machines. Your photos are never
+sent to anyone else.
 
 ## Features
 
@@ -143,6 +144,24 @@ uploaded.
   first index resumes where it stopped.
 - **Updates** are checked once a day and installed with one click from GitHub Releases.
 
+### A home server
+
+- **Lumina server** keeps the library on a Linux PC at home (Docker, with the NVIDIA GPU): it indexes new
+  photos, finds faces, builds smart search and writes captions by itself. Reach it over Tailscale.
+- **Accounts** for everyone in the house, each with a role per library (look, upload, edit, admin), and a
+  **web client** in any browser with the same grid, people, map and search.
+- **Share an album or a smart album** with someone: they see only that, also from the web.
+- **In the app:** Settings → Servers connects to a server. Its libraries open next to the folders on your PC;
+  drop files on the window to upload, download originals, and see which photos are on this PC already.
+- **All photos** shows the folders on this PC and your servers' libraries in one grid, each photo once, with a
+  mark for what isn't backed up, what is only on the server and what is shared with you. Edits go to where
+  the photo lives; the copy on this PC follows.
+- **Back up now** sends what is only on this PC to the server, with its ratings, tags, albums and people names.
+- **Follow** an album shared with you: its photos come into a folder of yours, with the people in them and their
+  tags, and new ones follow by themselves.
+- **People across libraries:** the same name is one person, a person from another library can get a name of
+  your own, and Lumina suggests when two people look like one.
+
 ### Formats
 
 JPEG, PNG, HEIC/HEIF and RAW (CR2, CR3, NEF, ARW, DNG, ORF, RW2, PEF, RAF). RAW files show their embedded
@@ -162,6 +181,9 @@ Videos: MP4, MOV, M4V, 3GP, AVI, MTS, M2TS and MPG.
   answers a smart search in about 3 ms.
 - The face models and the smart-search models (about 500 MB) download automatically the first time you use
   those features. Downloads are checked against pinned SHA-256 hashes.
+
+- **A Lumina server** (optional) runs on Linux in Docker with an NVIDIA GPU: see
+  [server/README.md](server/README.md).
 
 ### Linux and Mac
 

@@ -14,6 +14,20 @@ export interface ReleaseNotes {
 // Newest first. Add an entry for every release that should greet updating users with "What's new".
 export const RELEASE_NOTES: ReleaseNotes[] = [
   {
+    version: "5.0.0",
+    items: [
+      { title: "A home server", text: "Lumina now also runs as a server on a Linux PC at home (in Docker, with the GPU). It keeps your library, finds faces, makes smart search work and writes captions by itself, and everyone in the house reaches it from Lumina on their computer, or from a web browser, over Tailscale. Your photos still never leave your own machines." },
+      { title: "Accounts and sharing", text: "Each person signs in with an account of their own: look only, upload, edit, or run the server. Share an album or a smart album with someone, and they see just that, also from the web. Who changed what is kept with each photo." },
+      { title: "Your server in the app", text: "Settings → Servers connects Lumina to a server. Open its libraries next to the folders on this PC, upload by dropping files on the window, download originals, and see which photos are on this PC already. Video plays straight from the server." },
+      { title: "All photos", text: "One view of every photo you may see: the folders on this PC and the libraries of your servers together, each photo once. A mark shows which photos aren't backed up yet, and which are only on the server or only shared with you. Rate, flag and tag anywhere: the change goes to where the photo lives, and the copy on this PC follows." },
+      { title: "Back up now", text: "One click sends the photos that are only on this PC to your server, with their ratings, tags, albums and the names of the people in them. The server finds the faces itself and puts the names on." },
+      { title: "Follow a shared album", text: "When someone shares an album with you, follow it: its photos come into a folder of yours with who is in them and their tags, and new photos follow by themselves. They are yours to keep, also when the album stops being shared." },
+      { title: "People everywhere", text: "The same person in two libraries shows as one. Give someone from another library a name of your own (their \"Me\" can be your \"Maarten\"), keep two people with the same name apart, and Lumina suggests when two people look like one." },
+      { title: "Linux and Mac", text: "Lumina is also built for Linux (AppImage and .deb) and for Apple Silicon Macs. The Mac app works with a Lumina server for now." },
+      { title: "Fixes", text: "RAW files from Nikon, Sony, Canon (CR3) and others show their real size. Removing the name from a face keeps the face. Library Health can forget photos whose files are gone, and the Library menu can forget a folder (its files stay)." },
+    ],
+  },
+  {
     version: "4.3.0",
     items: [
       { title: "Getting ready for Lumina 5", text: "Lumina's engine was reorganised so it can also run on a home server, for Lumina 5. Nothing changes in how you use it. On first start Lumina notes which library each photo belongs to, once; your ratings, people, albums and faces stay as they are." },
