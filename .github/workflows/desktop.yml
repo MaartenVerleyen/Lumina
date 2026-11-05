@@ -79,6 +79,13 @@ jobs:
 
       - run: npm ci
 
+      # ONNX Runtime's prebuilt macOS library checks the OS version with ___isPlatformVersionAtLeast, which lives
+      # in clang's runtime library; Rust doesn't link that by itself
+      - name: macOS runtime library
+        if: runner.os == 'macOS'
+        shell: bash
+        run: echo "RUSTFLAGS=-C link-arg=$(clang --print-runtime-dir)/libclang_rt.osx.a" >> "$GITHUB_ENV"
+
       - name: Build
         shell: bash
         run: |
@@ -155,8 +162,9 @@ jobs:
           [ -f latest.json ] || { echo "::error::latest.json never appeared on the release"; exit 1; }
           base="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG"
           entry() { jq -n --arg url "$base/$1" --arg sig "$(cat "files/$1.sig")" '{signature: $sig, url: $url}'; }
-          linux=$(ls files | grep -E '\.AppImage$' | head -1)
-          mac=$(ls files | grep -E '\.app\.tar\.gz$' | head -1)
+          # A platform that failed to build has no file here: grep finding nothing is no error
+          linux=$(ls files | grep -E '\.AppImage$' | head -1 || true)
+          mac=$(ls files | grep -E '\.app\.tar\.gz$' | head -1 || true)
           cp latest.json latest.new.json
           if [ -n "$linux" ] && [ -f "files/$linux.sig" ]; then
             jq --argjson e "$(entry "$linux")" '.platforms["linux-x86_64"] = $e' latest.new.json > t.json && mv t.json latest.new.json
