@@ -5,7 +5,8 @@
 # the release, and adds them to its latest.json so installed copies on Linux and macOS update too.
 #
 # Run it by hand (Actions → Desktop builds → Run workflow) to try a build without touching any release: the
-# files are kept as the run's artifacts only.
+# files are kept as the run's artifacts only. Give it a release tag as well to add the files to that release
+# and to its latest.json (to repair a release whose build failed).
 #
 # Updates need the update key as the repository secret TAURI_SIGNING_PRIVATE_KEY (the contents of
 # lumina-updater.key; Settings → Secrets and variables → Actions). Without it the apps are built without
@@ -19,8 +20,12 @@ on:
     inputs:
       ref:
         description: Branch or tag to build
-        default: lumina-5
+        default: main
         required: true
+      release_tag:
+        description: Add the files to this release (vX.Y.Z); empty for artifacts only
+        default: ""
+        required: false
 
 permissions:
   contents: write
@@ -44,6 +49,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       REF: ${{ github.event.release.tag_name || inputs.ref }}
+      RELEASE: ${{ github.event.release.tag_name || inputs.release_tag }}
+      # ONNX Runtime's macOS build targets 13.4: an older target leaves ___isPlatformVersionAtLeast unresolved
+      MACOSX_DEPLOYMENT_TARGET: "13.4"
       TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
     steps:
@@ -110,19 +118,20 @@ jobs:
           retention-days: 14
 
       - name: Add to the release
-        if: github.event_name == 'release'
+        if: env.RELEASE != ''
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$REF" "$RUNNER_TEMP"/out/* --clobber --repo "$GITHUB_REPOSITORY"
+        run: gh release upload "$RELEASE" "$RUNNER_TEMP"/out/* --clobber --repo "$GITHUB_REPOSITORY"
 
-  # latest.json gets the Linux and Mac entries, once the Windows release script has put it up
+  # latest.json gets the Linux and Mac entries, once the Windows release script has put it up; also when one
+  # of the builds failed, for the other
   updater:
     needs: build
-    if: github.event_name == 'release'
+    if: always() && (github.event_name == 'release' || inputs.release_tag != '')
     runs-on: ubuntu-24.04
     env:
-      TAG: ${{ github.event.release.tag_name }}
+      TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/download-artifact@v4

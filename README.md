@@ -191,7 +191,7 @@ Videos: MP4, MOV, M4V, 3GP, AVI, MTS, M2TS and MPG.
   system's ffmpeg for video frames and HEIC, and GStreamer's "good" plugins to play videos (the .deb installs
   both; with the AppImage, install `ffmpeg` and `gst-plugins-good` yourself). Built on Ubuntu 24.04, so it
   needs a system at least that recent.
-- **Mac (Apple Silicon):** the .dmg works with the photo libraries on a Lumina server for now; opening folders
+- **Mac (Apple Silicon, macOS 13.4 or later):** the .dmg works with the photo libraries on a Lumina server for now; opening folders
   on the Mac itself comes later. The app isn't signed by Apple yet: the first time, right-click Lumina in
   Applications and choose **Open**, then **Open** again. Intel Macs aren't supported.
 

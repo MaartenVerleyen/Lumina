@@ -42,6 +42,11 @@ and adds `linux-x86_64` and `darwin-aarch64` to `latest.json` once the release s
   added, without update signatures, and `latest.json` keeps Windows only.
 - To try a build without touching any release: Actions → Desktop builds → Run workflow, with a branch or tag.
   The files are kept as the run's artifacts for 14 days.
+- To repair a release whose Linux or Mac build failed: fix it, then Run workflow with the branch that has the
+  fix and the release's tag (`v5.0.0`) under "Add the files to this release". The files and latest.json of that
+  release are brought up to date. latest.json gets each platform that built, also when another failed.
+- The Mac app needs macOS 13.4 or later (`bundle.macOS.minimumSystemVersion`), the version ONNX Runtime's
+  prebuilt library is made for.
 
 ## The update key
 
