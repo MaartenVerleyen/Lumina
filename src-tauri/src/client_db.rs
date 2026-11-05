@@ -12,7 +12,12 @@ fn now() -> i64 {
 }
 
 pub fn open(app: &AppHandle) -> Result<Connection, String> {
-    let conn = Connection::open(get_app_storage_dir(app).join("client.db")).map_err(|e| e.to_string())?;
+    open_at(&get_app_storage_dir(app))
+}
+
+// The same, by the app's data folder (the phone's background backup has no window to ask)
+pub fn open_at(dir: &Path) -> Result<Connection, String> {
+    let conn = Connection::open(dir.join("client.db")).map_err(|e| e.to_string())?;
     conn.busy_timeout(std::time::Duration::from_secs(5)).map_err(|e| e.to_string())?;
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS local_copies (

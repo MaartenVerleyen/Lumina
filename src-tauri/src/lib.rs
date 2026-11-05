@@ -17,7 +17,10 @@ mod transfer;
 mod transfers;
 #[cfg(target_os = "android")]
 mod android;
+#[cfg(target_os = "android")]
+mod android_jni;
 mod phone;
+mod phone_backup;
 mod follows;
 
 use db::*;
@@ -204,6 +207,11 @@ pub fn run() {
             transfers::share_photo,
             phone::phone_photos,
             phone::share_phone_photo,
+            phone_backup::phone_backup_status,
+            phone_backup::phone_backup_settings,
+            phone_backup::set_phone_backup,
+            phone_backup::phone_backup_now,
+            phone_backup::phone_backup_stop,
             follows::album_follows,
             follows::follow_album,
             follows::unfollow_album,

@@ -71,7 +71,7 @@ pub fn remote(app: &AppHandle) -> Arc<Remote> {
 }
 
 // "cachy" for cachy.tailnet.ts.net; an address (192.168.1.5:8080) stays whole
-fn label_of(id: &str) -> String {
+pub fn label_of(id: &str) -> String {
     let host = id.rsplit_once(':').filter(|(_, port)| port.bytes().all(|b| b.is_ascii_digit())).map(|(h, _)| h).unwrap_or(id);
     if host.parse::<std::net::IpAddr>().is_ok() || host.starts_with('[') {
         return id.to_string();
@@ -178,8 +178,7 @@ impl Remote {
 }
 
 // Where a session token is kept: the system's credential store on the desktop. Android has none that keyring
-// reaches: there it is a file in the app's private folder, which other apps can't read (encrypting it with a
-// Keystore key comes with the app's Kotlin plugin, docs/plans/android.md).
+// reaches: there it is encrypted with a key in Android's Keystore (TokenStore.kt, through android_jni.rs).
 #[cfg(not(target_os = "android"))]
 fn keyring_entry(server: &ServerEntry) -> Option<keyring::Entry> {
     keyring::Entry::new(KEYRING_SERVICE, &format!("{}@{}", server.user, server.id)).ok()
@@ -206,26 +205,42 @@ fn token_delete(_dir: &Path, server: &ServerEntry) {
 }
 
 #[cfg(target_os = "android")]
+fn token_name(server: &ServerEntry) -> String {
+    format!("{}@{}", server.user, server.id)
+}
+
+// Where the first phone builds kept a session, unencrypted
+#[cfg(target_os = "android")]
 fn token_file(dir: &Path, server: &ServerEntry) -> PathBuf {
-    dir.join("sessions").join(safe(&format!("{}@{}", server.user, server.id)))
+    dir.join("sessions").join(safe(&token_name(server)))
 }
 
 #[cfg(target_os = "android")]
 fn token_get(dir: &Path, server: &ServerEntry) -> Option<String> {
-    fs::read_to_string(token_file(dir, server)).ok().filter(|t| !t.is_empty())
+    if let Some(token) = crate::android_jni::token_get(&token_name(server)) {
+        return Some(token);
+    }
+    // A session from before the Keystore moves into it
+    let file = token_file(dir, server);
+    let token = fs::read_to_string(&file).ok().filter(|t| !t.is_empty())?;
+    if crate::android_jni::token_set(&token_name(server), &token) {
+        let _ = fs::remove_file(&file);
+    }
+    Some(token)
 }
 
 #[cfg(target_os = "android")]
-fn token_set(dir: &Path, server: &ServerEntry, token: &str) -> Result<(), String> {
-    let file = token_file(dir, server);
-    if let Some(parent) = file.parent() {
-        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+fn token_set(_dir: &Path, server: &ServerEntry, token: &str) -> Result<(), String> {
+    if crate::android_jni::token_set(&token_name(server), token) {
+        Ok(())
+    } else {
+        Err("Couldn't keep the session in Android's Keystore".into())
     }
-    fs::write(file, token).map_err(|e| format!("Couldn't keep the session: {e}"))
 }
 
 #[cfg(target_os = "android")]
 fn token_delete(dir: &Path, server: &ServerEntry) {
+    crate::android_jni::token_delete(&token_name(server));
     let _ = fs::remove_file(token_file(dir, server));
 }
 

@@ -1,5 +1,5 @@
 // The phone app's own side (docs/plans/android.md): a small Kotlin plugin (LuminaPlugin.kt in gen/android)
-// for what only Android does: the camera roll (phone.rs), its share sheet; background backup comes later.
+// for what only Android does: the camera roll (phone.rs), its share sheet, the backup's settings (phone_backup.rs).
 use serde::Serialize;
 use std::path::Path;
 use tauri::plugin::{Builder, PluginHandle, TauriPlugin};
@@ -67,18 +67,13 @@ struct MediaArgs<'a> {
 }
 
 #[derive(serde::Deserialize)]
-struct MediaList {
-    items: Vec<PhoneMedia>,
+pub struct MediaList {
+    pub items: Vec<PhoneMedia>,
 }
 
 #[derive(serde::Deserialize)]
 struct ThumbAnswer {
     path: String,
-}
-
-#[derive(serde::Deserialize)]
-struct FdAnswer {
-    fd: i32,
 }
 
 fn plugin(app: &AppHandle) -> PluginHandle<Wry> {
@@ -93,6 +88,11 @@ pub fn list_media(app: &AppHandle) -> Result<Vec<PhoneMedia>, String> {
         .map_err(|e| e.to_string())
 }
 
+// A command of the plugin with its answer as it comes (the backup's settings)
+pub fn call(app: &AppHandle, command: &str, args: serde_json::Value) -> Result<serde_json::Value, String> {
+    plugin(app).run_mobile_plugin::<serde_json::Value>(command, args).map_err(|e| e.to_string())
+}
+
 // A thumbnail of it, made once into the app's cache
 pub fn thumbnail(app: &AppHandle, id: i64, video: bool) -> Result<std::path::PathBuf, String> {
     plugin(app)
@@ -101,14 +101,9 @@ pub fn thumbnail(app: &AppHandle, id: i64, video: bool) -> Result<std::path::Pat
         .map_err(|e| e.to_string())
 }
 
-// Its file, to read
-pub fn open_media(app: &AppHandle, id: i64, video: bool) -> Result<std::fs::File, String> {
-    use std::os::fd::FromRawFd;
-    let answer = plugin(app)
-        .run_mobile_plugin::<FdAnswer>("openMedia", MediaArgs { id, video, size: 0, mime: "" })
-        .map_err(|e| e.to_string())?;
-    // The plugin detached the descriptor: it is ours to close (the File does)
-    Ok(unsafe { std::fs::File::from_raw_fd(answer.fd) })
+// Its file, to read (straight from Kotlin, not through the plugin: that waits for the UI thread)
+pub fn open_media(id: i64, video: bool) -> Result<std::fs::File, String> {
+    crate::android_jni::open_media(id, video)
 }
 
 // It to another app, through Android's share sheet

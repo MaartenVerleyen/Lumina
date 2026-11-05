@@ -128,8 +128,7 @@ async fn serve_phone_video(
         return StatusCode::NOT_FOUND.into_response();
     }
     let range = headers.get(header::RANGE).and_then(|v| v.to_str().ok()).map(str::to_string);
-    let app = server.app.clone();
-    match tokio::task::spawn_blocking(move || crate::phone::original(&app, video, id, range.as_deref())).await {
+    match tokio::task::spawn_blocking(move || crate::phone::original(video, id, range.as_deref())).await {
         Ok(resp) => {
             let (parts, body) = resp.into_parts();
             let mut builder = axum::http::Response::builder().status(parts.status.as_u16()).header(header::CACHE_CONTROL, "no-store");

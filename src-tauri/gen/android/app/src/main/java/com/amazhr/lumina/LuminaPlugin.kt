@@ -2,7 +2,6 @@ package com.amazhr.lumina
 
 import android.Manifest
 import android.app.Activity
-import android.content.ContentUris
 import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
@@ -17,7 +16,6 @@ import app.tauri.annotation.Permission
 import app.tauri.annotation.PermissionCallback
 import app.tauri.annotation.TauriPlugin
 import app.tauri.plugin.Invoke
-import app.tauri.plugin.JSArray
 import app.tauri.plugin.JSObject
 import app.tauri.plugin.Plugin
 import java.io.File
@@ -26,6 +24,20 @@ import java.util.concurrent.Executors
 import java.util.concurrent.LinkedBlockingDeque
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
+
+@InvokeArg
+class BackupArgs {
+  var enabled: Boolean = false
+  var server: String? = null
+  var wifiOnly: Boolean = true
+  var charging: Boolean = false
+  var videos: Boolean = true
+}
+
+@InvokeArg
+class BackupNowArgs {
+  var anyNetwork: Boolean = false
+}
 
 @InvokeArg
 class ShareArgs {
@@ -43,29 +55,27 @@ class MediaArgs {
 }
 
 // What only Android does for Lumina (src-tauri/src/android.rs; docs/plans/android.md): the phone's photos and
-// videos from its media store, their thumbnails and files, and its share sheet. Background backup comes later.
+// videos from its media store and their thumbnails, its share sheet, and the backup's settings (Backup.kt).
 @TauriPlugin(
   permissions = [
     // Android 13 and later ask for photos and videos; earlier versions for the shared storage
     Permission(strings = [Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO], alias = "media"),
     Permission(strings = [Manifest.permission.READ_EXTERNAL_STORAGE], alias = "mediaOld"),
+    Permission(strings = [Manifest.permission.POST_NOTIFICATIONS], alias = "notifications"),
   ]
 )
 class LuminaPlugin(private val activity: Activity) : Plugin(activity) {
   // Tauri calls a plugin's commands on the UI thread: the media store's work goes to threads of its own, so
   // the grid keeps scrolling. Thumbnails newest first: after a fast scroll the rows on screen asked last, and
-  // shouldn't wait for the ones scrolled past. Files (a video playing, content ids) never wait for thumbnails.
+  // shouldn't wait for the ones scrolled past. (Files Rust opens itself, from its own threads: PhoneStore.open.)
   private val thumbs = ThreadPoolExecutor(4, 4, 0L, TimeUnit.MILLISECONDS, object : LinkedBlockingDeque<Runnable>() {
     override fun offer(e: Runnable): Boolean = offerFirst(e)
   })
-  private val pool = Executors.newFixedThreadPool(2)
+  private val pool = Executors.newFixedThreadPool(1)
 
   private val mediaAlias get() = if (Build.VERSION.SDK_INT >= 33) "media" else "mediaOld"
 
-  private fun collection(video: Boolean): Uri =
-    if (video) MediaStore.Video.Media.EXTERNAL_CONTENT_URI else MediaStore.Images.Media.EXTERNAL_CONTENT_URI
-
-  private fun uriOf(args: MediaArgs): Uri = ContentUris.withAppendedId(collection(args.video), args.id)
+  private fun uriOf(args: MediaArgs): Uri = PhoneStore.uriOf(args.id, args.video)
 
   // A file of the app's (a downloaded original in its cache) to another app, through Android's share sheet
   @Command
@@ -100,53 +110,16 @@ class LuminaPlugin(private val activity: Activity) : Plugin(activity) {
       requestPermissionForAlias(mediaAlias, invoke, "mediaPermission")
       return
     }
-    pool.execute { invoke.resolve(JSObject().put("items", list())) }
+    pool.execute { invoke.resolve(JSObject().put("items", PhoneStore.list(activity))) }
   }
 
   @PermissionCallback
   fun mediaPermission(invoke: Invoke) {
     if (getPermissionState(mediaAlias) == PermissionState.GRANTED) {
-      pool.execute { invoke.resolve(JSObject().put("items", list())) }
+      pool.execute { invoke.resolve(JSObject().put("items", PhoneStore.list(activity))) }
     } else {
       invoke.reject("Lumina may not see this phone's photos: allow it under Settings → Apps → Lumina → Permissions")
     }
-  }
-
-  private fun list(): JSArray {
-    val items = JSArray()
-    for (video in listOf(false, true)) {
-      val columns = mutableListOf(
-        MediaStore.MediaColumns._ID,
-        MediaStore.MediaColumns.DISPLAY_NAME,
-        MediaStore.MediaColumns.SIZE,
-        MediaStore.MediaColumns.DATE_MODIFIED,
-        MediaStore.MediaColumns.MIME_TYPE,
-        MediaStore.MediaColumns.WIDTH,
-        MediaStore.MediaColumns.HEIGHT,
-        MediaStore.Images.ImageColumns.DATE_TAKEN,
-      )
-      if (video) columns.add(MediaStore.Video.VideoColumns.DURATION)
-      if (Build.VERSION.SDK_INT >= 29) columns.add(MediaStore.MediaColumns.RELATIVE_PATH)
-      activity.contentResolver.query(collection(video), columns.toTypedArray(), null, null, null)?.use { c ->
-        val col = { name: String -> c.getColumnIndex(name) }
-        while (c.moveToNext()) {
-          val item = JSObject()
-          item.put("id", c.getLong(col(MediaStore.MediaColumns._ID)))
-          item.put("video", video)
-          item.put("name", c.getString(col(MediaStore.MediaColumns.DISPLAY_NAME)) ?: "")
-          item.put("size", c.getLong(col(MediaStore.MediaColumns.SIZE)))
-          item.put("modified", c.getLong(col(MediaStore.MediaColumns.DATE_MODIFIED)))
-          item.put("mime", c.getString(col(MediaStore.MediaColumns.MIME_TYPE)) ?: "")
-          item.put("width", c.getInt(col(MediaStore.MediaColumns.WIDTH)))
-          item.put("height", c.getInt(col(MediaStore.MediaColumns.HEIGHT)))
-          item.put("taken", c.getLong(col(MediaStore.Images.ImageColumns.DATE_TAKEN)))
-          if (video) item.put("duration", c.getLong(col(MediaStore.Video.VideoColumns.DURATION)))
-          if (Build.VERSION.SDK_INT >= 29) item.put("folder", c.getString(col(MediaStore.MediaColumns.RELATIVE_PATH)) ?: "")
-          items.put(item)
-        }
-      }
-    }
-    return items
   }
 
   // A thumbnail of a photo or video, as a JPEG in the app's cache (made once)
@@ -181,20 +154,33 @@ class LuminaPlugin(private val activity: Activity) : Plugin(activity) {
     }
   }
 
-  // A file descriptor of the photo or video, for Lumina to read itself (its content id, the original); the
-  // caller closes it
+  // Settings → Backup (Backup.kt)
   @Command
-  fun openMedia(invoke: Invoke) {
-    val args = invoke.parseArgs(MediaArgs::class.java)
-    pool.execute { open(invoke, args) }
+  fun backupSettings(invoke: Invoke) {
+    invoke.resolve(Backup.settings(activity))
   }
 
-  private fun open(invoke: Invoke, args: MediaArgs) {
-    try {
-      val pfd = activity.contentResolver.openFileDescriptor(uriOf(args), "r") ?: throw IllegalStateException("Not found")
-      invoke.resolve(JSObject().put("fd", pfd.detachFd()))
-    } catch (e: Exception) {
-      invoke.reject("Couldn't open the photo: ${e.message}")
+  @Command
+  fun setBackup(invoke: Invoke) {
+    val args = invoke.parseArgs(BackupArgs::class.java)
+    Backup.configure(activity, args.enabled, args.server, args.wifiOnly, args.charging, args.videos)
+    // The backup's notification needs Android 13's permission; without it the backup runs unseen
+    if (args.enabled && Build.VERSION.SDK_INT >= 33 && getPermissionState("notifications") != PermissionState.GRANTED) {
+      requestPermissionForAlias("notifications", invoke, "notificationsPermission")
+      return
     }
+    invoke.resolve()
+  }
+
+  @PermissionCallback
+  fun notificationsPermission(invoke: Invoke) {
+    invoke.resolve()
+  }
+
+  @Command
+  fun backupNow(invoke: Invoke) {
+    val args = invoke.parseArgs(BackupNowArgs::class.java)
+    Backup.now(activity, args.anyNetwork)
+    invoke.resolve()
   }
 }

@@ -23,7 +23,7 @@ mod imp {
     // Where the plugin keeps the thumbnails it made (learnt from its first answer)
     static THUMB_DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
 
-    fn ensure_table(conn: &rusqlite::Connection) -> Result<(), String> {
+    pub fn ensure_table(conn: &rusqlite::Connection) -> Result<(), String> {
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS phone_media (
                  id INTEGER NOT NULL,
@@ -103,21 +103,34 @@ mod imp {
         let Ok(conn) = client_db::open(app) else { return };
         let total = media.len();
         for (n, m) in media.into_iter().enumerate() {
-            let hash = android::open_media(app, m.id, m.video)
-                .and_then(|mut f| lumina_core::imaging::content_hash_of_file(&mut f, m.size));
-            match hash {
-                Ok(hash) => {
-                    let _ = conn.execute(
-                        "INSERT OR REPLACE INTO phone_media (id, video, modified, size, hash) VALUES (?1, ?2, ?3, ?4, ?5)",
-                        params![m.id, m.video, m.modified, m.size as i64, hash],
-                    );
-                }
-                Err(e) => eprintln!("[phone] {}: {e}", m.name),
+            if let Err(e) = read_id(&conn, &m) {
+                eprintln!("[phone] {}: {e}", m.name);
             }
             if (n + 1) % 500 == 0 || n + 1 == total {
                 let _ = app.emit("library-files-changed", PHONE_ROOT);
             }
         }
+    }
+
+    // A photo's content id, read from its file and kept
+    pub fn read_id(conn: &rusqlite::Connection, m: &PhoneMedia) -> Result<String, String> {
+        let hash = android::open_media(m.id, m.video).and_then(|mut f| lumina_core::imaging::content_hash_of_file(&mut f, m.size))?;
+        conn.execute(
+            "INSERT OR REPLACE INTO phone_media (id, video, modified, size, hash) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![m.id, m.video, m.modified, m.size as i64, hash],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(hash)
+    }
+
+    // Its content id as kept, while the photo is unchanged (same date and size)
+    pub fn known_id(conn: &rusqlite::Connection, m: &PhoneMedia) -> Option<String> {
+        conn.query_row(
+            "SELECT hash FROM phone_media WHERE id = ?1 AND video = ?2 AND modified = ?3 AND size = ?4",
+            params![m.id, m.video, m.modified, m.size as i64],
+            |r| r.get(0),
+        )
+        .ok()
     }
 
     pub fn parse(path: &str) -> Option<(bool, i64)> {
@@ -166,14 +179,14 @@ mod imp {
                 Err(_) => status(404),
             };
         }
-        original(app, video, id, request.headers().get("range").and_then(|v| v.to_str().ok()))
+        original(video, id, request.headers().get("range").and_then(|v| v.to_str().ok()))
     }
 
     // A photo or video's file, with the range the player asks for (at most 8 MB at a time). The window's video
     // player gets videos from the app's video server on 127.0.0.1 (media_server.rs), which answers with this.
-    pub fn original(app: &AppHandle, video: bool, id: i64, range: Option<&str>) -> MediaResponse {
+    pub fn original(video: bool, id: i64, range: Option<&str>) -> MediaResponse {
         use std::io::{Read, Seek, SeekFrom};
-        let Ok(mut file) = android::open_media(app, id, video) else { return status(404) };
+        let Ok(mut file) = android::open_media(id, video) else { return status(404) };
         let size = file.metadata().map(|m| m.len()).unwrap_or(0);
         let range = range.and_then(|r| {
             let spec = r.strip_prefix("bytes=")?;
@@ -209,7 +222,7 @@ mod imp {
 }
 
 #[cfg(target_os = "android")]
-pub use imp::{original, parse, serve};
+pub use imp::{ensure_table, known_id, original, parse, read_id, serve};
 
 // The phone's photos and videos (the phone app's "This phone" in All photos)
 #[tauri::command]

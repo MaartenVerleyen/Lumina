@@ -209,3 +209,25 @@ library of yours from the desktop instead.
 - Share sends a phone photo straight from the media store; the phone layout opens All photos itself and shows
   "Loading the library…" until it has.
 - Still to do: the session token's Keystore encryption (with the background backup, milestone 3).
+
+### Milestone 3 (2026-11-05, checked on the same phone against a throwaway lumina-server on this PC over USB)
+
+- `Backup.kt`: the settings (on/off, server, Wi-Fi only, while charging, videos) and WorkManager: every hour
+  while the conditions hold, also with the app closed and after a restart; Back up now is the same worker, once.
+  `BackupWorker` runs in the foreground with a notification (stage, progress, Stop) and calls Rust once.
+- `android_jni.rs` / `Native.kt`: Rust and Kotlin call each other directly. The plugin bridge runs on the UI
+  thread and isn't there when the worker starts the app without a window; Rust now opens the phone's files
+  (`PhoneStore.open`) from its own threads, also for the grid and videos.
+- `phone_backup.rs`: a pass reads new photos' content ids (as All photos does), asks the server which it lacks
+  and uploads those two at a time with `transfer.rs` (the desktop's protocol, resumable, BLAKE3-checked), reading
+  the open file through `/proc/self/fd`. What the server has is kept in `client.db` (`phone_backup`), so a pass
+  with nothing new takes about 2 s. The last pass's outcome is `phone-backup.json`; a network failure makes
+  Android try again later.
+- Sessions are encrypted with a key in Android's Keystore (`TokenStore.kt`); a session file of milestone 1 moves
+  into it on the first start.
+- A Backup sheet in the phone layout (the header's cloud button); the full Backup page comes with the new screens
+  (`docs/plans/android-app-ui.md`).
+- Checked: 40 photos and videos (1.07 GB) in 16 s; a second pass sends nothing; with Wi-Fi off Back up now
+  waits, and when Wi-Fi returns Android starts it in a new process with the app closed. Debug builds only: a
+  file `phone-backup-limit` in the app's folder backs up just the newest N (for tests), and the screen stays on
+  while the app is in front.

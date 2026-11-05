@@ -9,6 +9,7 @@ dependencies = [
  "axum",
  "blake3",
  "futures-util",
+ "jni 0.21.1",
  "keyring",
  "lumina-core",
  "rand 0.9.5",
