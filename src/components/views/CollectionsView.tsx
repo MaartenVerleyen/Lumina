@@ -285,29 +285,23 @@ export default function CollectionsView({
         </div>
       </div>
 
-      {/* Albums stay with their library: All photos lists them per library in a later step */}
-      {openLibraryIsAll() ? (
-        <section className="flex flex-col gap-2">
-          <h2 className="text-xs font-bold text-zinc-400 uppercase tracking-wider flex items-center gap-2">
-            <BookImage className="w-4 h-4 text-indigo-400" /> Albums
-          </h2>
-          <p className="text-[12px] text-zinc-500">
-            Albums and smart albums belong to their library. Open a library on its own (Library menu) to see and
-            change its albums.
-          </p>
-        </section>
-      ) : (
-      <>
       <section className="flex flex-col gap-3">
         <h2 className="text-xs font-bold text-zinc-400 uppercase tracking-wider flex items-center gap-2">
           <BookImage className="w-4 h-4 text-indigo-400" /> Albums ({albums.length})
         </h2>
+        {/* All photos: every library's albums, each staying in its library */}
+        {openLibraryIsAll() && (
+          <span className="text-[11px] text-zinc-500 -mt-1">
+            Each album stays in its library. Photos added to one go in when they are in that library (back them up
+            first otherwise).
+          </span>
+        )}
         <div className={sectionGrid}>
           {visibleAlbums.map((a) => (
             <Card
               key={a.id}
               title={a.name}
-              subtitle={`${albumCounts.get(a.id) ?? 0} in this folder · ${a.hashes.length} in total`}
+              subtitle={`${a.source ? `${a.source} · ` : ""}${albumCounts.get(a.id) ?? 0} in this folder · ${a.hashes.length} in total`}
               cover={<Cover hashes={a.hashes} photoByHash={photoByHash} icon={<BookImage className="w-8 h-8" />} />}
               onOpen={() => onOpenAlbum(a.id)}
               menu={[
@@ -315,9 +309,11 @@ export default function CollectionsView({
                 ...(onShareGallery
                   ? [{ label: "Share as web gallery", run: () => onShareGallery(a.name, a.hashes.filter((h) => photoByHash.has(h))) }]
                   : []),
-                ...(onShareAlbum && !a.dynamic ? [{ label: "Share with…", run: () => onShareAlbum({ id: a.id, name: a.name }) }] : []),
+                ...(onShareAlbum && !a.dynamic && !a.readOnly && a.source !== "This PC"
+                  ? [{ label: "Share with…", run: () => onShareAlbum({ id: a.id, name: a.name }) }]
+                  : []),
                 // A smart album shared with them comes as an album; it changes with the search, not by hand
-                ...(access.edit && !a.dynamic
+                ...(access.edit && !a.dynamic && !a.readOnly
                   ? [
                       { label: "Rename", run: () => setRenaming({ kind: "album", id: String(a.id), value: a.name }) },
                       { label: "Delete album", danger: true, run: () => onDeleteAlbum(a.id) },
@@ -383,7 +379,7 @@ export default function CollectionsView({
                 <Card
                   key={s.id}
                   title={s.name}
-                  subtitle={s.query}
+                  subtitle={s.source ? `${s.source} · ${s.query}` : s.query}
                   cover={
                     <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-amber-950/40 to-zinc-950 text-amber-300/70">
                       <Sparkles className="w-8 h-8" />
@@ -391,9 +387,11 @@ export default function CollectionsView({
                   }
                   onOpen={() => onOpenSavedSearch(s)}
                   menu={
-                    access.edit
+                    access.edit && !s.readOnly
                       ? [
-                          ...(onShareAlbum ? [{ label: "Share with…", run: () => onShareAlbum({ id: s.id, name: s.name, kind: "search" as const }) }] : []),
+                          ...(onShareAlbum && s.source !== "This PC"
+                            ? [{ label: "Share with…", run: () => onShareAlbum({ id: s.id, name: s.name, kind: "search" as const }) }]
+                            : []),
                           { label: "Delete smart album", danger: true, run: () => onDeleteSavedSearch(s.id) },
                         ]
                       : undefined
@@ -403,8 +401,6 @@ export default function CollectionsView({
             </div>
           )}
         </section>
-      )}
-      </>
       )}
 
       {years.length > 0 && (

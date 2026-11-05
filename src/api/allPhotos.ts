@@ -231,3 +231,45 @@ export function includedSources(all: Source[], excluded: string[]): Source[] {
   const off = new Set(excluded);
   return all.filter((s) => !off.has(sourceKey(s)));
 }
+
+// ---------- People of several sources (milestone 3) ----------
+
+// A user's own name for a server's person (get_person_names), and whether it is kept apart
+export interface PersonName {
+  person: string;
+  shown_as: string | null;
+  apart: boolean;
+}
+
+// How this account shows a server's person: by the name of their own, and with the server's name added when
+// kept apart from a person of the same name elsewhere ("Emma (cachy)")
+export function shownPersonName(name: string, names: Map<string, PersonName> | undefined, serverLabel: string): string {
+  const own = names?.get(name.toLowerCase());
+  const base = own?.shown_as || name;
+  return own?.apart ? `${base} (${serverLabel})` : base;
+}
+
+// A photo with its people (and named faces) as this account shows them
+export function withPeopleNamed(p: PhotoItem, show: (name: string) => string): PhotoItem {
+  return {
+    ...p,
+    people: p.people.map(show),
+    faces: (p.faces ?? []).map((f) => (f.person_name ? { ...f, person_name: show(f.person_name) } : f)),
+  };
+}
+
+// One source's part of a person All photos shows: the engine, the name there, and whether this account may
+// change that person there (else a name of their own is all it can give)
+export interface PersonPart {
+  engine: string;
+  label: string;
+  name: string;
+  editable: boolean;
+  shownAs: string | null;
+  apart: boolean;
+}
+
+// The person's name on an engine, for a name the window shows (a new name stays as it is)
+export function nameOn(engine: string, shown: string, parts: Map<string, PersonPart[]>): string {
+  return parts.get(shown.toLowerCase())?.find((p) => p.engine === engine)?.name ?? shown;
+}

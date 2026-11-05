@@ -23,7 +23,12 @@ import {
   mergeHits,
   mergePeople,
   mergeSources,
+  nameOn,
+  shownPersonName,
   withLocalIds,
+  withPeopleNamed,
+  type PersonName,
+  type PersonPart,
   mergeStatus,
   sourceKey,
   splitByHome,
@@ -268,6 +273,15 @@ interface AllState {
   // Copies on this computer known there by another id (mergeSources), and the other way round
   localIds: Map<string, string[]>;
   fromLocal: Map<string, string>;
+  // Each server's names of this account's own for its people (get_person_names), by person
+  names: Map<string, Map<string, PersonName>>;
+  // Each person the window shows, by the name it shows: the sources they come from (get_people)
+  parts: Map<string, PersonPart[]>;
+  // Albums and smart albums of every engine, under numbers of All photos' own
+  albums: Map<number, { engine: string; id: number }>;
+  searches: Map<number, { engine: string; id: number }>;
+  // The people each photo shows, for People's counts (a photo in two places counts once)
+  people: Map<string, string[]>;
 }
 
 let all: AllState = {
@@ -278,7 +292,60 @@ let all: AllState = {
   faces: new Map(),
   localIds: new Map(),
   fromLocal: new Map(),
+  names: new Map(),
+  parts: new Map(),
+  albums: new Map(),
+  searches: new Map(),
+  people: new Map(),
 };
+
+// Sent when photos weren't added to an album because they aren't in its library: { count, where }
+export const ALBUM_SKIPPED_EVENT = "lumina-album-skipped";
+
+// "cachy" for a server's sources ("cachy: Library"), "This PC" for this computer's
+function engineLabel(engine: string): string {
+  if (engine === "") return "This PC";
+  const s = [...all.sources.values()].find((x) => x.server === engine);
+  if (!s) return engine;
+  return s.label.includes(": ") ? s.label.slice(0, s.label.lastIndexOf(": ")) : s.label;
+}
+
+// This account may change people and albums there (this computer's always)
+function engineEditable(engine: string): boolean {
+  return engine === "" || [...all.sources.values()].some((s) => engineOf(s) === engine && s.editable);
+}
+
+// How the window names an engine's people (this computer's by their own names)
+function showOn(engine: string): (name: string) => string {
+  return engine === "" ? (name) => name : (name) => shownPersonName(name, all.names.get(engine), engineLabel(engine));
+}
+
+// The sources of a person All photos shows (People → the person's menu)
+export function allPhotosPersonParts(name: string): PersonPart[] {
+  return all.parts.get(name.toLowerCase()) ?? [];
+}
+
+// A name of this account's own for a server's person, on the server and in the window's copy of them
+async function setOwnName(engine: string, person: string, shownAs: string | null, apart: boolean): Promise<void> {
+  await engineTransport(engine).call("set_person_name", { person, shownAs, apart });
+  const names = all.names.get(engine) ?? new Map<string, PersonName>();
+  names.set(person.toLowerCase(), { person, shown_as: shownAs, apart });
+  all.names.set(engine, names);
+}
+
+// "Not the same person" (apart) and "The same person again": kept with this account on each server
+export async function setPersonApart(name: string, apart: boolean): Promise<void> {
+  for (const p of allPhotosPersonParts(name)) {
+    if (p.engine !== "") await setOwnName(p.engine, p.name, p.shownAs, apart);
+  }
+}
+
+// "Use their name again": the names of this account's own for this person go
+export async function dropOwnNames(name: string): Promise<void> {
+  for (const p of allPhotosPersonParts(name)) {
+    if (p.shownAs) await setOwnName(p.engine, p.name, null, p.apart);
+  }
+}
 
 // The photo All photos shows for a copy this computer's engine names (its events use its own ids)
 export function allPhotosIdOf(localHash: string): string {
@@ -396,8 +463,20 @@ async function loadAll(check?: string[]): Promise<PhotoItem[]> {
   );
   // Second copies of a file here that a backup found on a server, under the server's id
   const sameAs = new Map(serverTransport ? [] : await callLocal<[string, string][]>("local_copy_ids").catch(() => []));
-  const merged = mergeSources(lists, sameAs);
   const sourceMap = new Map(sources.map((s) => [sourceKey(s), s]));
+  // A server's people as this account names them
+  const servers = [...new Set(sources.map((s) => s.server).filter((s): s is string => s !== null))];
+  const names = new Map(
+    await Promise.all(
+      servers.map(async (server) => {
+        const list = await engineTransport(server).call<PersonName[]>("get_person_names").catch(() => [] as PersonName[]);
+        return [server, new Map(list.map((n) => [n.person.toLowerCase(), n]))] as const;
+      })
+    )
+  );
+  all = { ...all, sources: sourceMap, names };
+  const named = lists.map((l) => (l.source.server === null ? l : { ...l, photos: l.photos.map((p) => withPeopleNamed(p, showOn(engineOf(l.source)))) }));
+  const merged = mergeSources(named, sameAs);
   const placed = new Map<string, Placed>();
   const faces = new Map<string, string>();
   for (const p of merged.photos) {
@@ -406,7 +485,8 @@ async function loadAll(check?: string[]): Promise<PhotoItem[]> {
     for (const f of p.faces ?? []) if (f.face_thumb) faces.set(f.face_thumb, engineOf(shown));
   }
   const fromLocal = new Map([...merged.localIds].flatMap(([id, own]) => own.map((h): [string, string] => [h, id])));
-  all = { sources: sourceMap, copies: merged.copies, localValues: merged.localValues, placed, faces, localIds: merged.localIds, fromLocal };
+  const people = new Map(merged.photos.map((p) => [p.hash, p.people]));
+  all = { ...all, sources: sourceMap, copies: merged.copies, localValues: merged.localValues, placed, faces, localIds: merged.localIds, fromLocal, people };
   accessChanged();
   if (watchAllPhotos) await watchAllPhotosFolders().catch((err) => console.error("All photos: could not watch this computer's folders", err));
   await copyDown(merged.photos);
@@ -467,11 +547,18 @@ function readOnlyLeft(hashes: string[]) {
   window.dispatchEvent(new CustomEvent(READ_ONLY_EVENT, { detail: hashes.length }));
 }
 
+// A command's person names as that engine knows them ("Maarten" is cachy's "Me" for this account)
+function namedFor(engine: string, args: Record<string, unknown>): Record<string, unknown> {
+  const out = { ...args };
+  for (const key of ["name", "personName"]) if (typeof out[key] === "string") out[key] = nameOn(engine, out[key] as string, all.parts);
+  return out;
+}
+
 async function editAll<T>(command: string, args: Record<string, unknown>, hashes: string[]): Promise<T> {
   const { byEngine, readOnly, alsoLocal } = splitByHome(hashes, all.copies, all.sources);
   const results = await Promise.all(
     [...byEngine].map(([engine, part]) => {
-      const partArgs = { ...args, hashes: part };
+      const partArgs = namedFor(engine, { ...args, hashes: part });
       return engineTransport(engine).call<T>(command, engine === "" ? withLocalIds(partArgs, all.localIds) : partArgs);
     })
   );
@@ -491,9 +578,104 @@ async function editAll<T>(command: string, args: Record<string, unknown>, hashes
   return results[0] as T;
 }
 
-// One engine per server among the sources (and this computer's when a local folder is one)
+// One engine per server among the sources (and this computer's when a local folder is one), this computer's
+// first and the servers by name, so the numbers albums get below stay the same between loads
 function engines(): string[] {
-  return [...new Set([...all.sources.values()].map(engineOf))];
+  return [...new Set([...all.sources.values()].map(engineOf))].sort((a, b) => (a === "" ? -1 : b === "" ? 1 : a.localeCompare(b)));
+}
+
+// A face's engine: the one of the copy whose faces the window shows, when this account may change it there
+function faceEngine(faceId: string): { engine: string | undefined; id: string } {
+  const own = faceId.split("_")[0];
+  const id = all.fromLocal.get(own) ?? own;
+  return { engine: all.copies.get(id)?.home ? engineOfShown(id) : undefined, id };
+}
+
+// Commands about faces (faceIds, or one faceId): each engine gets its faces, under its names for people
+async function faceCommand<T>(command: string, args: Record<string, unknown>): Promise<T> {
+  const ids: string[] = Array.isArray(args.faceIds) ? (args.faceIds as string[]) : [args.faceId as string];
+  const byEngine = new Map<string, string[]>();
+  const readOnly = new Set<string>();
+  for (const faceId of ids) {
+    const { engine, id } = faceEngine(faceId);
+    if (engine === undefined) {
+      readOnly.add(id);
+      continue;
+    }
+    byEngine.set(engine, [...(byEngine.get(engine) ?? []), faceId]);
+  }
+  const results = await Promise.all(
+    [...byEngine].map(async ([engine, part]) => {
+      const engineArgs = namedFor(engine, Array.isArray(args.faceIds) ? { ...args, faceIds: part } : args);
+      return [engine, await engineTransport(engine).call<unknown>(command, engineArgs)] as const;
+    })
+  );
+  readOnlyLeft([...readOnly]);
+  // Faces per photo, as some commands answer: by All photos' ids, with the names the window shows
+  if (results.length > 0 && results.every(([, r]) => r && typeof r === "object" && !Array.isArray(r))) {
+    const merged: Record<string, unknown> = {};
+    for (const [engine, r] of results) {
+      const show = showOn(engine);
+      for (const [hash, faces] of Object.entries(r as Record<string, unknown>)) {
+        merged[all.fromLocal.get(hash) ?? hash] = Array.isArray(faces)
+          ? faces.map((f) => (f?.person_name ? { ...f, person_name: show(f.person_name) } : f))
+          : faces;
+      }
+    }
+    return merged as T;
+  }
+  return results[0]?.[1] as T;
+}
+
+// An album or smart album of an engine under a number of All photos' own
+function foreignId(engine: string, id: number): number {
+  return Math.max(0, engines().indexOf(engine)) * 1_000_000 + id;
+}
+
+async function listCollections<T extends { id: number; hashes?: string[] }>(
+  command: string,
+  into: Map<number, { engine: string; id: number }>
+): Promise<(T & { source: string; readOnly: boolean })[]> {
+  into.clear();
+  const lists = await Promise.all(
+    engines().map(async (engine) => {
+      const list = await engineTransport(engine).call<T[]>(command).catch(() => [] as T[]);
+      return list.map((item) => {
+        const id = foreignId(engine, item.id);
+        into.set(id, { engine, id: item.id });
+        const hashes = item.hashes && engine === "" ? item.hashes.map((h) => all.fromLocal.get(h) ?? h) : item.hashes;
+        return { ...item, id, ...(hashes ? { hashes } : {}), source: engineLabel(engine), readOnly: !engineEditable(engine) };
+      });
+    })
+  );
+  return lists.flat();
+}
+
+// Where a new album or smart album of All photos goes: the first server this account may edit, else this PC
+function collectionHome(): string {
+  return engines().find((e) => e !== "" && engineEditable(e)) ?? (serverTransport ? engines()[0] : "");
+}
+
+// Album commands by All photos' number: the album's engine, with the photos that are in its library
+async function albumCommand<T>(command: string, args: Record<string, unknown>, map: Map<number, { engine: string; id: number }>): Promise<T> {
+  const target = map.get(args.id as number);
+  if (!target) throw new Error("That album isn't in All photos any more: open its library on its own");
+  if (!Array.isArray(args.hashes)) return engineTransport(target.engine).call<T>(command, { ...args, id: target.id });
+  const inLibrary: string[] = [];
+  let skipped = 0;
+  for (const h of args.hashes as string[]) {
+    const there = all.copies.get(h)?.copies.some((k) => {
+      const s = all.sources.get(k);
+      return !!s && engineOf(s) === target.engine;
+    });
+    if (there) inLibrary.push(h);
+    else skipped++;
+  }
+  if (skipped > 0) window.dispatchEvent(new CustomEvent(ALBUM_SKIPPED_EVENT, { detail: { count: skipped, where: engineLabel(target.engine) } }));
+  if (inLibrary.length === 0) return [] as T;
+  const engineArgs = { ...args, id: target.id, hashes: inLibrary };
+  const result = await engineTransport(target.engine).call<T>(command, target.engine === "" ? withLocalIds(engineArgs, all.localIds) : engineArgs);
+  return (Array.isArray(result) && target.engine === "" ? result.map((h: string) => all.fromLocal.get(h) ?? h) : result) as T;
 }
 
 async function callAll<T>(command: string, args: Record<string, unknown>): Promise<T> {
@@ -510,23 +692,88 @@ async function callAll<T>(command: string, args: Record<string, unknown>): Promi
         list.push(h);
         byEngine.set(engine, list);
       }
-      const lists = await Promise.all([...byEngine].map(([engine, hashes]) => engineTransport(engine).call<PhotoItem[]>("get_photos", { hashes })));
+      const lists = await Promise.all(
+        [...byEngine].map(async ([engine, hashes]) =>
+          (await engineTransport(engine).call<PhotoItem[]>("get_photos", { hashes })).map((p) => withPeopleNamed(p, showOn(engine)))
+        )
+      );
       const fresh = lists.flat().map(placeAgain);
+      for (const p of fresh) all.people.set(p.hash, p.people);
       await copyDown(fresh);
       return fresh as T;
     }
     case "get_people": {
+      const parts = new Map<string, PersonPart[]>();
       const lists = await Promise.all(
         [...all.sources.values()].map(async (s) => {
-          const people = await engineTransport(engineOf(s))
+          const engine = engineOf(s);
+          const people = await engineTransport(engine)
             .call<PersonItem[]>("get_people", { rootFolder: s.root })
             .catch(() => [] as PersonItem[]);
-          for (const p of people) if (p.cover_thumb) all.faces.set(p.cover_thumb, engineOf(s));
-          return people;
+          const show = showOn(engine);
+          return people.map((p) => {
+            if (p.cover_thumb) all.faces.set(p.cover_thumb, engine);
+            const shown = show(p.name);
+            const own = all.names.get(engine)?.get(p.name.toLowerCase());
+            const list = parts.get(shown.toLowerCase()) ?? [];
+            if (!list.some((x) => x.engine === engine)) {
+              list.push({ engine, label: engineLabel(engine), name: p.name, editable: engineEditable(engine), shownAs: own?.shown_as ?? null, apart: !!own?.apart });
+            }
+            parts.set(shown.toLowerCase(), list);
+            return { ...p, name: shown };
+          });
         })
       );
-      return mergePeople(lists) as T;
+      all.parts = parts;
+      // A person's photos as the view shows them: a photo in two places counts once
+      const counts = new Map<string, number>();
+      for (const names of all.people.values()) for (const n of new Set(names.map((x) => x.toLowerCase()))) counts.set(n, (counts.get(n) ?? 0) + 1);
+      return mergePeople(lists).map((p) => ({ ...p, photo_count: counts.get(p.name.toLowerCase()) || p.photo_count })) as T;
     }
+    // A person of several sources: renamed where this account may edit, given a name of its own elsewhere
+    // (a merge is a rename to a name that exists)
+    case "rename_person": {
+      const newName = String(args.newName ?? "").trim();
+      for (const p of allPhotosPersonParts(String(args.oldName ?? ""))) {
+        if (p.editable) await engineTransport(p.engine).call("rename_person", { oldName: p.name, newName });
+        else await setOwnName(p.engine, p.name, newName, p.apart);
+      }
+      return newName as T;
+    }
+    case "set_person_hidden":
+    case "set_person_starred": {
+      for (const p of allPhotosPersonParts(String(args.name ?? ""))) {
+        if (p.editable) await engineTransport(p.engine).call(command, { ...args, name: p.name });
+      }
+      return undefined as T;
+    }
+    // Suggestions are worked out per library: the person's own library shows them
+    case "get_pending_face_match_counts":
+      return {} as T;
+    // Albums and smart albums of every library, each in its own
+    case "get_albums":
+      return (await listCollections("get_albums", all.albums)) as T;
+    case "get_saved_searches":
+      return (await listCollections("get_saved_searches", all.searches)) as T;
+    case "create_album":
+    case "save_search": {
+      const engine = command === "create_album" ? collectionHome() : serverTransport ? collectionHome() : "";
+      const id = await engineTransport(engine).call<number>(command, args);
+      const own = foreignId(engine, id);
+      (command === "create_album" ? all.albums : all.searches).set(own, { engine, id });
+      return own as T;
+    }
+    case "rename_album":
+    case "delete_album":
+    case "add_to_album":
+    case "remove_from_album":
+    case "share_album":
+    case "get_album_shares":
+      return albumCommand<T>(command, args, all.albums);
+    case "delete_saved_search":
+    case "share_search":
+    case "get_search_shares":
+      return albumCommand<T>(command, args, all.searches);
     case "semantic_status": {
       const list = await Promise.all(
         [...all.sources.values()].map((s) =>
@@ -541,18 +788,18 @@ async function callAll<T>(command: string, args: Record<string, unknown>): Promi
       const lists = await Promise.all(engines().map((e) => engineTransport(e).call<SemanticHit[]>(command, args).catch(() => [] as SemanticHit[])));
       return mergeHits(lists) as T;
     }
-    // Albums, smart albums and trip names stay with their library; All photos lists them in a later step
-    case "get_albums":
-    case "get_saved_searches":
-      return [] as T;
-    case "get_trip_names":
-      return {} as T;
+    // Trip names of every library (a new one is kept where the window's own commands go)
+    case "get_trip_names": {
+      const maps = await Promise.all(engines().map((e) => engineTransport(e).call<Record<string, string>>(command).catch(() => ({}))));
+      return Object.assign({}, ...maps.reverse()) as T;
+    }
   }
+  if (Array.isArray(args.faceIds) || typeof args.faceId === "string") return faceCommand<T>(command, args);
   if (Array.isArray(args.hashes)) return editAll<T>(command, args, args.hashes as string[]);
   if (typeof args.hash === "string") {
     const engine = engineOfShown(args.hash);
     const hash = engine === "" ? all.localIds.get(args.hash)?.[0] ?? args.hash : args.hash;
-    if (engine !== undefined) return engineTransport(engine).call<T>(command, { ...args, hash });
+    if (engine !== undefined) return engineTransport(engine).call<T>(command, namedFor(engine, { ...args, hash }));
   }
   if ("rootFolder" in args || "folderPath" in args || "root" in args || Array.isArray(args.ops)) {
     throw new Error("Open the library on its own for this: All photos shows several libraries at once.");

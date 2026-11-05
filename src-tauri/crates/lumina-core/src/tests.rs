@@ -554,6 +554,35 @@ fn a_tiff_raws_size_is_its_largest_image() {
     assert!(exif_meta::is_tiff_raw(Path::new("C:/x/Nikon Z 6.NEF")) && !exif_meta::is_tiff_raw(Path::new("a.jpg")));
 }
 
+// A CR3-like file: two tracks, a 1624 x 1080 preview and the 5472 x 3648 raw image
+#[test]
+fn a_cr3s_size_is_its_largest_track() {
+    fn boxed(kind: &[u8; 4], payload: &[u8]) -> Vec<u8> {
+        let mut b = ((payload.len() + 8) as u32).to_be_bytes().to_vec();
+        b.extend(kind);
+        b.extend(payload);
+        b
+    }
+    let track = |w: u16, h: u16| {
+        let mut entry = vec![0u8; 24];
+        entry.extend(w.to_be_bytes());
+        entry.extend(h.to_be_bytes());
+        entry.extend([0u8; 40]);
+        let mut stsd = vec![0, 0, 0, 0, 0, 0, 0, 1];
+        stsd.extend(boxed(b"CRAW", &entry));
+        boxed(b"trak", &boxed(b"mdia", &boxed(b"minf", &boxed(b"stbl", &boxed(b"stsd", &stsd)))))
+    };
+    let mut moov = boxed(b"uuid", &[0u8; 24]);
+    moov.extend(track(1624, 1080));
+    moov.extend(track(5472, 3648));
+    let mut file = boxed(b"ftyp", b"crx \x00\x00\x00\x01");
+    file.extend(boxed(b"moov", &moov));
+    file.extend(boxed(b"mdat", &[0u8; 16]));
+    assert_eq!(exif_meta::cr3_largest_image(&file), Some((5472, 3648)));
+    assert_eq!(exif_meta::cr3_largest_image(b"II*\x00 a tiff, not a cr3"), None);
+    assert!(exif_meta::has_raw_size(Path::new("x/Canon EOS R6.CR3")));
+}
+
 // Library Health → Forget files that are gone: the rows of deleted files go with what hangs on them, people
 // left on no photo go from the list, and a library whose folder is missing (a drive not connected) is left as it is
 #[test]

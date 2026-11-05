@@ -385,14 +385,81 @@ pub fn tiff_largest_image(bytes: &[u8]) -> Option<(u32, u32)> {
     best
 }
 
-// The sensor size of a TIFF-based RAW (unrotated), from the bytes at hand or the file's first megabyte
-pub fn raw_sensor_size(path: &Path, head: Option<&[u8]>) -> Option<(u32, u32)> {
-    if !is_tiff_raw(path) {
+fn is_cr3(path: &Path) -> bool {
+    path.extension().is_some_and(|e| e.eq_ignore_ascii_case("cr3"))
+}
+
+// A RAW whose sensor size Lumina reads itself (the image library sees only a thumbnail in it, or nothing)
+pub fn has_raw_size(path: &Path) -> bool {
+    is_tiff_raw(path) || is_cr3(path)
+}
+
+// The largest image a Canon CR3 holds: it is built like an MP4, each image (raw, preview, thumbnail) a track
+// whose "CRAW" sample entry gives its width and height
+pub fn cr3_largest_image(bytes: &[u8]) -> Option<(u32, u32)> {
+    fn walk(bytes: &[u8], mut at: usize, end: usize, depth: usize, best: &mut Option<(u32, u32)>) {
+        let be32 = |o: usize| bytes.get(o..o + 4).map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]));
+        let be16 = |o: usize| bytes.get(o..o + 2).map(|b| u16::from_be_bytes([b[0], b[1]]) as u32);
+        while at + 8 <= end {
+            let (Some(size), Some(kind)) = (be32(at), bytes.get(at + 4..at + 8)) else { return };
+            let (size, header) = match size {
+                0 => (end - at, 8),
+                1 => match bytes.get(at + 8..at + 16) {
+                    Some(b) => (u64::from_be_bytes(b.try_into().unwrap_or_default()) as usize, 16),
+                    None => return,
+                },
+                n => (n as usize, 8),
+            };
+            if size < header {
+                return;
+            }
+            let inner = (at + header, (at + size).min(end));
+            match kind {
+                b"moov" | b"trak" | b"mdia" | b"minf" | b"stbl" if depth < 6 => walk(bytes, inner.0, inner.1, depth + 1, best),
+                b"stsd" => {
+                    // Version and flags, the entry count, then the entries: size, type, and a visual sample
+                    // entry's width and height 32 bytes in
+                    let mut entry = inner.0 + 8;
+                    for _ in 0..be32(inner.0 + 4).unwrap_or(0).min(8) {
+                        let (Some(len), Some(kind)) = (be32(entry), bytes.get(entry + 4..entry + 8)) else { break };
+                        if kind == b"CRAW" {
+                            if let (Some(w), Some(h)) = (be16(entry + 32), be16(entry + 34)) {
+                                if w > 0 && h > 0 && best.is_none_or(|(bw, bh)| w as u64 * h as u64 > bw as u64 * bh as u64) {
+                                    *best = Some((w, h));
+                                }
+                            }
+                        }
+                        if len < 8 {
+                            break;
+                        }
+                        entry += len as usize;
+                    }
+                }
+                _ => {}
+            }
+            at += size;
+        }
+    }
+    if bytes.get(4..8)? != b"ftyp" {
         return None;
     }
-    head.and_then(tiff_largest_image).or_else(|| {
+    let mut best = None;
+    walk(bytes, 0, bytes.len(), 0, &mut best);
+    best
+}
+
+// The sensor size of a RAW Lumina reads itself (unrotated), from the bytes at hand or the file's first megabyte
+pub fn raw_sensor_size(path: &Path, head: Option<&[u8]>) -> Option<(u32, u32)> {
+    let read: fn(&[u8]) -> Option<(u32, u32)> = if is_tiff_raw(path) {
+        tiff_largest_image
+    } else if is_cr3(path) {
+        cr3_largest_image
+    } else {
+        return None;
+    };
+    head.and_then(read).or_else(|| {
         let mut file = File::open(path).ok()?;
-        tiff_largest_image(&crate::decode::read_file_prefix(&mut file, 1024 * 1024).ok()?)
+        read(&crate::decode::read_file_prefix(&mut file, 1024 * 1024).ok()?)
     })
 }
 

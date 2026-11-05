@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import { ALL_PHOTOS, call, inDesktopApp, OPEN_ADMIN_EVENT, openLibraryIsLocal, READ_ONLY_EVENT } from "./api";
+import { ALBUM_SKIPPED_EVENT, ALL_PHOTOS, call, inDesktopApp, OPEN_ADMIN_EVENT, openLibraryIsLocal, READ_ONLY_EVENT } from "./api";
 import { platform } from "./api/platform";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useLibraryState } from "./hooks/useLibraryState";
@@ -137,8 +137,19 @@ export default function App() {
       const n = (e as CustomEvent<number>).detail;
       setAutoMatchNotice(`${n} photo${n === 1 ? " is" : "s are"} shared with you and can't be changed.`);
     };
+    // An album takes the photos that are in its library
+    const skipped = (e: Event) => {
+      const { count, where } = (e as CustomEvent<{ count: number; where: string }>).detail;
+      setAutoMatchNotice(
+        `${count} photo${count === 1 ? " isn't" : "s aren't"} on ${where}, so ${count === 1 ? "it wasn't" : "they weren't"} added: back ${count === 1 ? "it" : "them"} up first.`
+      );
+    };
     window.addEventListener(READ_ONLY_EVENT, note);
-    return () => window.removeEventListener(READ_ONLY_EVENT, note);
+    window.addEventListener(ALBUM_SKIPPED_EVENT, skipped);
+    return () => {
+      window.removeEventListener(READ_ONLY_EVENT, note);
+      window.removeEventListener(ALBUM_SKIPPED_EVENT, skipped);
+    };
   }, [setAutoMatchNotice]);
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("general");
@@ -539,7 +550,7 @@ export default function App() {
         onOpenImport={platform.localFiles ? () => lib.openImport() : undefined}
         onOpenServerLibrary={inDesktopApp ? (root, server) => lib.handleLoadFolderPath(root, server) : undefined}
         recentFolders={lib.recentFolders}
-        onOpenAllPhotos={inDesktopApp ? () => lib.handleLoadFolderPath(ALL_PHOTOS) : undefined}
+        onOpenAllPhotos={() => lib.handleLoadFolderPath(ALL_PHOTOS)}
         onOpenRecentFolder={platform.fullApp ? (path) => lib.handleLoadFolderPath(path) : undefined}
         onUpload={client.pickAndUpload}
         serverLabel={client.server ? client.serverLabel : undefined}
@@ -592,6 +603,10 @@ export default function App() {
                 onRename={lib.handleRenamePerson}
                 onSetHidden={lib.handleSetPersonHidden}
                 onSetStarred={lib.handleSetPersonStarred}
+                onNamesChanged={() => {
+                  lib.refreshPeople();
+                  void lib.silentRescan();
+                }}
                 collapsedSections={collapsedSections}
                 onToggleSection={(id) =>
                   setCollapsedSections((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))

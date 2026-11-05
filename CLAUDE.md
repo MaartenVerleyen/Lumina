@@ -176,7 +176,8 @@ scan means the models did not run.
   servers' libraries in one grid. Milestone 1 done on Windows and Linux (the merged grid with marks and the Where
   filter, edits per home, the device's basket); milestone 2 done on Windows against a lumina-server on 127.0.0.1
   (Back up now: uploads with their values, `apply_backup_values`, names waiting in `backup_faces` until the server
-  has found the faces); next: albums and people across sources, following shared albums.
+  has found the faces); milestone 3 done on Windows (albums and people of every library in All photos,
+  names of your own per user on the server, `person_names`); next: following shared albums.
 - **Phase 4:** clients help with the server's AI backlog on request, and analyse photos before uploading.
 - **Phase 5:** Android app (Tauri) with automatic backup (Kotlin WorkManager).
 

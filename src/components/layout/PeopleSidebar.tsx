@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { mediaUrl } from "../../api";
+import { allPhotosPersonParts, dropOwnNames, mediaUrl, openLibraryIsAll, setPersonApart } from "../../api";
 import { useAccess } from "../auth/ServerGate";
 import { ChevronDown, ChevronRight, Search, Star, User, Users, X } from "lucide-react";
 import { PersonItem } from "../../types/lumina";
@@ -35,6 +35,8 @@ interface PeopleSidebarProps {
   // Collapsed list sections ("people-hidden"), remembered with the layout
   collapsedSections: string[];
   onToggleSection: (id: string) => void;
+  // All photos: names of one's own or "not the same person" changed, so people and photos are listed again
+  onNamesChanged?: () => void;
 }
 
 type MenuState = { name: string; x: number; y: number; mode: "menu" | "rename" | "merge" };
@@ -56,9 +58,13 @@ export default function PeopleSidebar({
   onSetStarred,
   collapsedSections,
   onToggleSection,
+  onNamesChanged,
 }: PeopleSidebarProps) {
   // Naming, starring, hiding and reviewing are editing; someone who may only look gets the list and search
   const access = useAccess();
+  // In All photos anyone may give people of a library they only look at a name of their own
+  const isAll = openLibraryIsAll();
+  const canName = access.edit || isAll;
   const [query, setQuery] = useState("");
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [menuInput, setMenuInput] = useState("");
@@ -166,7 +172,7 @@ export default function PeopleSidebar({
         key={p.name}
         onContextMenu={(e) => {
           e.preventDefault();
-          if (access.edit) openMenu(p.name, e.clientX, e.clientY);
+          if (canName) openMenu(p.name, e.clientX, e.clientY);
         }}
         className={`@container group relative flex items-center gap-2 pl-1.5 pr-1 py-1 rounded-xl border transition ${
           on ? "bg-emerald-500/15 border-emerald-500/40" : "border-transparent hover:bg-zinc-900"
@@ -232,7 +238,7 @@ export default function PeopleSidebar({
             <Star className={`w-3.5 h-3.5 ${p.starred ? "fill-current" : ""}`} />
           </button>
         )}
-        {access.edit && (
+        {canName && (
         <button
           onClick={(e) => {
             const r = e.currentTarget.getBoundingClientRect();
@@ -249,6 +255,15 @@ export default function PeopleSidebar({
   };
 
   const menuPerson = menu ? people.find((p) => p.name === menu.name) : undefined;
+  // All photos: the libraries the person comes from; one only looked at can get a name of one's own, no more
+  const parts = isAll && menuPerson ? allPhotosPersonParts(menuPerson.name) : [];
+  const onlyLooking = parts.length > 0 && parts.every((x) => !x.editable);
+  const namesAction = (run: () => Promise<void>) => () => {
+    setMenu(null);
+    run()
+      .then(() => onNamesChanged?.())
+      .catch((e) => console.error(e));
+  };
   const menuItem = "w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-zinc-800 text-zinc-200";
   const hiddenCollapsed = collapsedSections.includes("people-hidden");
 
@@ -424,6 +439,14 @@ export default function PeopleSidebar({
                 {avatar(menuPerson, "w-6 h-6")}
                 <span className="font-semibold text-zinc-100 capitalize truncate">{menuPerson.name}</span>
               </div>
+              {parts.length > 0 && (
+                <div className="px-2.5 pb-1 text-[11px] text-zinc-500">
+                  In{" "}
+                  {parts
+                    .map((x) => (x.name.toLowerCase() === menuPerson.name.toLowerCase() || x.engine === "" ? x.label : `${x.label} (as ${x.name})`))
+                    .join(" · ")}
+                </div>
+              )}
               <button
                 className={menuItem}
                 onClick={() => {
@@ -442,7 +465,7 @@ export default function PeopleSidebar({
               >
                 {isSelected(menuPerson.name) ? "Remove from the selection" : "Add to the selection"}
               </button>
-              {(pendingCounts[menuPerson.name] || 0) > 0 && (
+              {(pendingCounts[menuPerson.name] || 0) > 0 && !onlyLooking && (
                 <button
                   className={menuItem}
                   onClick={() => {
@@ -454,7 +477,7 @@ export default function PeopleSidebar({
                 </button>
               )}
               <div className="h-px bg-zinc-800 my-1" />
-              {!menuPerson.hidden && (
+              {!menuPerson.hidden && !onlyLooking && (
                 <button
                   className={menuItem}
                   onClick={() => {
@@ -465,15 +488,17 @@ export default function PeopleSidebar({
                   {menuPerson.starred ? "Unstar" : "Star (Best of focuses on them)"}
                 </button>
               )}
-              <button
-                className={menuItem}
-                onClick={() => {
-                  onChooseCover(menuPerson.name);
-                  setMenu(null);
-                }}
-              >
-                Choose profile picture…
-              </button>
+              {!onlyLooking && (
+                <button
+                  className={menuItem}
+                  onClick={() => {
+                    onChooseCover(menuPerson.name);
+                    setMenu(null);
+                  }}
+                >
+                  Choose profile picture…
+                </button>
+              )}
               <button
                 className={menuItem}
                 onClick={() => {
@@ -481,22 +506,43 @@ export default function PeopleSidebar({
                   setMenuInput(menuPerson.name);
                 }}
               >
-                Rename…
+                {onlyLooking ? "Call this person…" : "Rename…"}
               </button>
               {people.length > 1 && (
                 <button className={menuItem} onClick={() => setMenu({ ...menu, mode: "merge" })}>
                   Merge into…
                 </button>
               )}
-              <button
-                className={menuItem}
-                onClick={() => {
-                  onSetHidden(menuPerson.name, !menuPerson.hidden);
-                  setMenu(null);
-                }}
-              >
-                {menuPerson.hidden ? "Show again" : "Hide (no suggestions)"}
-              </button>
+              {new Set(parts.map((x) => x.engine)).size > 1 && !parts.some((x) => x.apart) && (
+                <button
+                  className={menuItem}
+                  onClick={namesAction(() => setPersonApart(menuPerson.name, true))}
+                  title="Two different people with the same name: each shows with the name of its library"
+                >
+                  Not the same person
+                </button>
+              )}
+              {parts.some((x) => x.apart) && (
+                <button className={menuItem} onClick={namesAction(() => setPersonApart(menuPerson.name, false))}>
+                  The same person after all
+                </button>
+              )}
+              {parts.some((x) => x.shownAs) && (
+                <button className={menuItem} onClick={namesAction(() => dropOwnNames(menuPerson.name))}>
+                  Use their name again ({parts.filter((x) => x.shownAs).map((x) => x.name).join(", ")})
+                </button>
+              )}
+              {!onlyLooking && (
+                <button
+                  className={menuItem}
+                  onClick={() => {
+                    onSetHidden(menuPerson.name, !menuPerson.hidden);
+                    setMenu(null);
+                  }}
+                >
+                  {menuPerson.hidden ? "Show again" : "Hide (no suggestions)"}
+                </button>
+              )}
             </>
           ) : menu.mode === "rename" ? (
             <form

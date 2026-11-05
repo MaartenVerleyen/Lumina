@@ -5,7 +5,7 @@ import { WebUploadButton } from "../servers/WebUpload";
 import { platform } from "../../api/platform";
 import { useAccess } from "../auth/ServerGate";
 import { confirmDialog } from "../../confirm";
-import { ALL_PHOTOS, call } from "../../api";
+import { ALL_PHOTOS, call, inDesktopApp } from "../../api";
 import { libraryName } from "../../utils/photoHelpers";
 import luminaMark from "../../assets/lumina-mark.svg";
 import type { GridStyle, CardDetails } from "../views/VirtualPhotoGrid";
@@ -371,7 +371,9 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                   <Layers className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
                   <div>
                     <div className="font-medium text-zinc-200">All photos</div>
-                    <div className="text-[11px] text-zinc-500">This PC and your servers in one view</div>
+                    <div className="text-[11px] text-zinc-500">
+                      {inDesktopApp ? "This PC and your servers in one view" : "Every library of the server in one view"}
+                    </div>
                   </div>
                 </button>
               )}

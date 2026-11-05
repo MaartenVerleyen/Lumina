@@ -442,6 +442,9 @@ export interface Album {
   hashes: string[];
   // A smart album shared with this user (the server works out its photos; its search stays hidden)
   dynamic?: boolean;
+  // All photos: the library it is in ("cachy", "This PC"), and whether this account may only look at it
+  source?: string;
+  readOnly?: boolean;
 }
 
 export interface SavedSearch {
@@ -450,6 +453,9 @@ export interface SavedSearch {
   query: string;
   // Free text runs as smart search (it was on when the search was saved)
   smart?: boolean;
+  // All photos: the library it is in, and whether this account may only look at it
+  source?: string;
+  readOnly?: boolean;
 }
 
 export type BulkPopover = "tag" | "person" | "move" | "location" | "time" | "album";

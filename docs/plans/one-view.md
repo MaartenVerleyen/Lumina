@@ -378,6 +378,35 @@ The phone app (phase 5) then adds the camera roll as a local source, with this s
   itself, the four names went on after the server's face scan (the video's on frame 0 only), and "Not backed
   up" dropped from 94 to 90.
 
+### Milestone 3 (2026-11-05, checked on Windows against a lumina-server on 127.0.0.1)
+
+- Collections lists the albums and smart albums of every library, each with its library ("cachy",
+  "This PC") and staying in it. All photos numbers them itself (engine and id behind each number), so
+  opening, renaming, deleting, sharing and adding photos reach the right library. Adding photos to an album
+  takes those that are in its library; the others are named in a notice ("back them up first"). A new album
+  goes to the first server this account may edit, else this PC; a new smart album is kept on this PC (in the
+  web client on the server). Albums of a library this account only looks at have no Rename, Delete or Share.
+  Trip names come from every library.
+- People: each person the window shows remembers its parts (library, name there, whether this account may
+  edit it there). A command about a person goes to each part under its own name: renaming renames where this
+  account may edit and gives a name of its own elsewhere (a merge is a rename to an existing name); starring
+  and hiding change the parts it may edit; naming a face goes to the library of the photo's home under that
+  library's name for the person.
+- Names of your own live on the server per user (`person_names`: person, shown_as, apart; `get_person_names`,
+  `set_person_name`, any role). All photos shows a server's people under them in the People list, on the photos
+  and their faces, so `person:Maarten` finds cachy's "Me" for Dad. The person's menu says where the person is
+  ("In This PC · cachy (as Me)") and offers "Not the same person" (the server's person then shows as
+  "Emma (cachy)"), "The same person after all" and "Use their name again"; for a person only looked at, Rename
+  is "Call this person…" and starring, hiding, profile picture and suggestions are left out. A guest has the
+  menu too.
+- People's counts in All photos are of the photos the view shows: a photo in two places counts once.
+- The web client has All photos in its Library menu (every library of its server).
+- Checked: a person named on this PC and on the server shows once with count 1, apart as "Reid Wiseman" and
+  "Reid Wiseman (127.0.0.1:8091)" and together again; the server's album listed with its library; a new album
+  made on the server, the photo only on this PC left out with the notice; the album shared with a guest by
+  All photos' number; the guest renaming the server's "Crew Member" to "Astronaut" (kept as their own name,
+  the server's person unchanged) and back with "Use their name again".
+
 ## Done when
 
 - On Maarten's desktop, All photos counts 61,500 photos for the example above. The Where filter's counts

@@ -7,6 +7,7 @@ mod config;
 mod dynamic;
 mod host;
 mod http;
+mod person_names;
 mod pipeline;
 mod restore;
 mod scope;

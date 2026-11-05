@@ -419,6 +419,17 @@ commands! {
         face_scan::get_outdated_face_photos(host, root).await.map_err(ApiError::from)
     };
 
+    // Names of your own for people (docs/plans/one-view.md, People): each user's own, any role, guests too;
+    // the people themselves don't change, so nobody else is told
+    Viewer blocking get_person_names() |host, scope| {
+        let conn = db::open_global_db(&*host)?;
+        crate::person_names::of_user(&conn, scope.user.id)
+    };
+    Viewer blocking set_person_name(person: String, shown_as: Option<String>, apart: Option<bool>) |host, scope| {
+        let conn = db::open_global_db(&*host)?;
+        crate::person_names::set(&conn, scope.user.id, &person, shown_as.as_deref(), apart.unwrap_or(false))
+    };
+
     // Backup (docs/plans/one-view.md): the values a device had for photos it uploaded, put on where the
     // server's copy has none (names on faces the server finds there, also later)
     Editor [Target::Photos(items.iter().map(|m| m.hash.clone()).collect())] blocking apply_backup_values(items: Vec<photo_meta::PhotoMeta>) |host, scope|

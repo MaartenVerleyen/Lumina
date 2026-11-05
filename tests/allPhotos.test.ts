@@ -6,6 +6,9 @@ import {
   mergeHits,
   mergePeople,
   mergeSources,
+  nameOn,
+  shownPersonName,
+  withPeopleNamed,
   sourceKey,
   splitByHome,
   withLocalIds,
@@ -206,4 +209,33 @@ test("marks: not backed up only where there is a server to back up to", () => {
 
 test("a library switched off in Settings is left out", () => {
   assert.deepEqual(includedSources([pc, cachy, shared], [sourceKey(shared)]), [pc, cachy]);
+});
+
+test("a name of your own and a person kept apart, as this account sees a server's people", () => {
+  const names = new Map([
+    ["me", { person: "Me", shown_as: "Maarten", apart: false }],
+    ["emma", { person: "Emma", shown_as: null, apart: true }],
+  ]);
+  assert.equal(shownPersonName("Me", names, "cachy"), "Maarten");
+  assert.equal(shownPersonName("Emma", names, "cachy"), "Emma (cachy)");
+  assert.equal(shownPersonName("Bob", names, "cachy"), "Bob");
+  const shown = withPeopleNamed(
+    photo("a", { people: ["Me"], faces: [{ face_id: "a_1_1", person_name: "Me" }, { face_id: "a_5_5", person_name: null }] as PhotoItem["faces"] }),
+    (n) => shownPersonName(n, names, "cachy")
+  );
+  assert.deepEqual(shown.people, ["Maarten"]);
+  assert.deepEqual(shown.faces.map((f) => f.person_name), ["Maarten", null]);
+  // A command about "Maarten" reaches cachy as "Me"; this PC knows them as Maarten
+  const parts = new Map([
+    [
+      "maarten",
+      [
+        { engine: "cachy", label: "cachy", name: "Me", editable: false, shownAs: "Maarten", apart: false },
+        { engine: "", label: "This PC", name: "Maarten", editable: true, shownAs: null, apart: false },
+      ],
+    ],
+  ]);
+  assert.equal(nameOn("cachy", "Maarten", parts), "Me");
+  assert.equal(nameOn("", "Maarten", parts), "Maarten");
+  assert.equal(nameOn("cachy", "Someone new", parts), "Someone new");
 });
