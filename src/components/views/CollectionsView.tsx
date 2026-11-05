@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useAccess } from "../auth/ServerGate";
 import { callLocal, inDesktopApp, openLibraryIsAll, subscribeLocal } from "../../api";
-import type { FollowTarget } from "../modals/FollowAlbumDialog";
+import { FOLLOWS_CHANGED, type FollowTarget } from "../modals/FollowAlbumDialog";
 import { BookImage, Calendar, Check, MoreHorizontal, Plane, Plus, Search, Sparkles, Trophy } from "lucide-react";
 import { Album, PhotoItem, SavedSearch } from "../../types/lumina";
 import { Trip } from "../../utils/trips";
@@ -229,8 +229,11 @@ export default function CollectionsView({
     const load = () => callLocal<typeof follows>("album_follows").then(setFollows).catch(() => {});
     load();
     const off = subscribeLocal("follows-ended", load);
+    // A follow made in the dialog
+    window.addEventListener(FOLLOWS_CHANGED, load);
     return () => {
       off.then((f) => f());
+      window.removeEventListener(FOLLOWS_CHANGED, load);
     };
   }, [albums]);
   const followOf = (a: (typeof albums)[number]) => follows.find((f) => f.server === a.engine && f.album_id === a.realId);

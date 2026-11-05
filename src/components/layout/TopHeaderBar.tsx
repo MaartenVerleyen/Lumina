@@ -5,7 +5,7 @@ import { WebUploadButton } from "../servers/WebUpload";
 import { platform } from "../../api/platform";
 import { useAccess } from "../auth/ServerGate";
 import { confirmDialog } from "../../confirm";
-import { ALL_PHOTOS, call, inDesktopApp } from "../../api";
+import { ALL_PHOTOS, call, callLocal, inDesktopApp } from "../../api";
 import { libraryName } from "../../utils/photoHelpers";
 import luminaMark from "../../assets/lumina-mark.svg";
 import type { GridStyle, CardDetails } from "../views/VirtualPhotoGrid";
@@ -199,6 +199,25 @@ export default function TopHeaderBar({
 }: TopHeaderBarProps) {
   const access = useAccess();
   const [isLibraryMenuOpen, setIsLibraryMenuOpen] = useState(false);
+  // The folders opened on this PC (its libraries), by name so the list stays put; recent folders until known
+  const [localFolders, setLocalFolders] = useState<string[] | null>(null);
+  const loadLocalFolders = () =>
+    callLocal<{ root: string }[]>("local_libraries")
+      .then((list) => setLocalFolders(list.map((l) => l.root).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }))))
+      .catch(() => setLocalFolders(null));
+  useEffect(() => {
+    if (isLibraryMenuOpen && inDesktopApp && onOpenRecentFolder) loadLocalFolders();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLibraryMenuOpen]);
+  const forgetFolder = async (path: string) => {
+    const ok = await confirmDialog(
+      `Lumina forgets "${path}": its photos' ratings, tags, names and album places in Lumina go, and it leaves All photos. The files stay in the folder; opening it again starts afresh.`,
+      { title: "Forget this folder", okLabel: "Forget", kind: "danger" }
+    );
+    if (!ok) return;
+    await callLocal("forget_local_library", { root: path }).catch((e) => console.error(e));
+    loadLocalFolders();
+  };
   const [isAiMenuOpen, setIsAiMenuOpen] = useState(false);
   // Flash attention: when Ollama runs without it, offer to switch it on (saves a Windows setting, restarts Ollama)
   const [flashAttention, setFlashAttention] = useState<{ value: string | null; canEnable: boolean } | null>(null);
@@ -422,26 +441,36 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                   </div>
                 </button>
               )}
-              {onOpenRecentFolder && recentFolders.length > 0 && (
+              {onOpenRecentFolder && (localFolders ?? recentFolders).length > 0 && (
                 <div className="px-1 py-1.5 flex flex-col gap-1">
                   <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-500 flex items-center gap-1.5 px-1">
                     <HardDrive className="w-3 h-3" /> On this PC
                   </div>
-                  {recentFolders.map((path) => (
-                    <button
-                      key={path}
-                      onClick={() => {
-                        setIsLibraryMenuOpen(false);
-                        onOpenRecentFolder(path);
-                      }}
-                      className={`w-full rounded-lg text-left px-2 py-1.5 hover:bg-zinc-800/80 transition ${
-                        !serverLabel && path === folder ? "text-emerald-200" : "text-zinc-200"
-                      }`}
-                      title={path}
-                    >
-                      <div className="truncate text-[13px] font-medium">{path.split(/[\\/]/).filter(Boolean).pop() || path}</div>
-                      <div className="truncate text-[11px] text-zinc-500">{path}</div>
-                    </button>
+                  {(localFolders ?? recentFolders).map((path) => (
+                    <div key={path} className="group flex items-center gap-1">
+                      <button
+                        onClick={() => {
+                          setIsLibraryMenuOpen(false);
+                          onOpenRecentFolder(path);
+                        }}
+                        className={`flex-1 min-w-0 rounded-lg text-left px-2 py-1.5 hover:bg-zinc-800/80 transition ${
+                          !serverLabel && path === folder ? "text-emerald-200" : "text-zinc-200"
+                        }`}
+                        title={path}
+                      >
+                        <div className="truncate text-[13px] font-medium">{path.split(/[\\/]/).filter(Boolean).pop() || path}</div>
+                        <div className="truncate text-[11px] text-zinc-500">{path}</div>
+                      </button>
+                      {localFolders && path !== folder && (
+                        <button
+                          onClick={() => void forgetFolder(path)}
+                          className="shrink-0 px-1.5 py-1 rounded text-[11px] text-zinc-500 hover:text-red-300 hover:bg-zinc-800 opacity-0 group-hover:opacity-100 focus:opacity-100"
+                          title="Forget this folder (its files stay)"
+                        >
+                          Forget
+                        </button>
+                      )}
+                    </div>
                   ))}
                 </div>
               )}

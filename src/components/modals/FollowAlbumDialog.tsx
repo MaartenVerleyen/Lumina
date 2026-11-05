@@ -1,8 +1,12 @@
 import { useEffect, useState } from "react";
 import { FolderDown, Loader2, X } from "lucide-react";
-import { allPhotosSources, callLocal } from "../../api";
+import { allPhotosCandidates, allPhotosSources, callLocal } from "../../api";
+import type { Source } from "../../api/allPhotos";
 import { open } from "../../api/platform";
 import { useDialogFocus } from "../../hooks/useDialogFocus";
+
+// Sent when this device starts following an album (Collections lists its follows again)
+export const FOLLOWS_CHANGED = "lumina-follows-changed";
 
 export interface FollowTarget {
   // The album on its server: the server and the album's own id there
@@ -17,9 +21,13 @@ export interface FollowTarget {
 // and new ones follow by themselves. They are yours to keep, also when the album stops being shared.
 export default function FollowAlbumDialog({ album, onClose, onFollowed }: { album: FollowTarget | null; onClose: () => void; onFollowed: () => void }) {
   const dialogRef = useDialogFocus<HTMLDivElement>(album !== null);
-  const sources = [...allPhotosSources().values()];
-  const firstFolder = sources.find((s) => s.server === null)?.root;
-  const servers = [...new Map(sources.filter((s) => s.server && s.server !== album?.server && s.uploadable).map((s) => [s.server!, s.label])).entries()];
+  const firstFolder = [...allPhotosSources().values()].find((s) => s.server === null)?.root;
+  // Every server this app is signed in to, also one connected since All photos loaded
+  const [candidates, setCandidates] = useState<Source[]>([]);
+  useEffect(() => {
+    if (album) allPhotosCandidates().then(setCandidates).catch(() => {});
+  }, [album]);
+  const servers = [...new Map(candidates.filter((s) => s.server && s.server !== album?.server && s.uploadable).map((s) => [s.server!, s.label])).entries()];
   const [into, setInto] = useState<string>("pc");
   const [folder, setFolder] = useState("");
   const [busy, setBusy] = useState(false);
@@ -54,6 +62,7 @@ export default function FollowAlbumDialog({ album, onClose, onFollowed }: { albu
         uploadTo: into === "pc" ? null : into,
       });
       onFollowed();
+      window.dispatchEvent(new Event(FOLLOWS_CHANGED));
       onClose();
     } catch (e) {
       setError(String(e));

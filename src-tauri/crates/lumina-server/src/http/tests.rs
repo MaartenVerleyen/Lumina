@@ -553,6 +553,27 @@ async fn backed_up_values_go_on_the_photos_and_are_announced() {
     assert_eq!(photos[0]["flag"], "pick");
     assert_eq!(photos[0]["tags"], json!(["beach"]));
     assert_eq!(photos[0]["people"], json!(["Anna"]));
+
+    // An uploader's values go on what they uploaded themselves, not on someone else's photo
+    {
+        let conn = db::open_global_db(&*s.host).unwrap();
+        accounts::create_user(&conn, "upi", Role::Uploader, "long enough").unwrap();
+        let root = s.dir.join("Library").join("uploads").join("upi");
+        std::fs::create_dir_all(&root).unwrap();
+        conn.execute(
+            "INSERT INTO photos (hash, current_path) VALUES ('mine01', ?1)",
+            [root.join("b.jpg").to_string_lossy().to_string()],
+        )
+        .unwrap();
+    }
+    let uploader = login(&s.app, "upi").await;
+    let items = json!({"items": [{"hash": "mine01", "tags": ["own"]}, {"hash": "abc123", "tags": ["theirs"]}]});
+    let (status, _, report) = send(&s.app, post("/api/rpc/apply_backup_values", items, Some(&uploader))).await;
+    assert_eq!(status, StatusCode::OK, "{report}");
+    assert_eq!((report["photos"].as_u64(), &report["not_yours"]), (Some(1), &json!(["abc123"])));
+    let (_, _, photos) = send(&s.app, post("/api/rpc/get_photos", json!({"hashes": ["mine01", "abc123"]}), Some(&editor))).await;
+    let tags = |h: &str| photos.as_array().unwrap().iter().find(|p| p["hash"] == h).unwrap()["tags"].clone();
+    assert_eq!((tags("mine01"), tags("abc123")), (json!(["own"]), json!(["beach"])));
 }
 
 #[tokio::test]

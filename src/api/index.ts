@@ -399,6 +399,11 @@ export async function dropOwnNames(name: string): Promise<void> {
   }
 }
 
+// Near-duplicates across libraries found again (after a thumbnail pass made new fingerprints)
+export function allPhotosRegroup(photos: PhotoItem[]): PhotoItem[] {
+  return groupAcrossSources(photos, (p) => all.copies.get(p.hash)?.shown ?? "");
+}
+
 // The photo All photos shows for a copy this computer's engine names (its events use its own ids)
 export function allPhotosIdOf(localHash: string): string {
   return all.fromLocal.get(localHash) ?? localHash;

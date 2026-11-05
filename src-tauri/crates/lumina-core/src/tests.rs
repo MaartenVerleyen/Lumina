@@ -634,6 +634,35 @@ fn files_that_are_gone_are_forgotten_with_their_values() {
     let _ = fs::remove_dir_all(&base);
 }
 
+// A folder taken off this computer's libraries: the library and Lumina's rows of its photos go, another
+// library stays, and no file is touched
+#[test]
+fn a_forgotten_library_takes_its_rows_not_its_files() {
+    let base = std::env::temp_dir().join(format!("lumina_forget_library_test_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&base);
+    let (keep, gone) = (base.join("Keep"), base.join("Gone"));
+    fs::create_dir_all(&keep).unwrap();
+    fs::create_dir_all(&gone).unwrap();
+    fs::write(gone.join("a.jpg"), b"x").unwrap();
+    let mut conn = Connection::open_in_memory().unwrap();
+    db::migrate(&conn).unwrap();
+    libraries::open(&conn, &keep.to_string_lossy()).unwrap();
+    libraries::open(&conn, &gone.to_string_lossy()).unwrap();
+    conn.execute(
+        "INSERT INTO photos (hash, current_path) VALUES ('k', ?1), ('g', ?2)",
+        params![keep.join("k.jpg").to_string_lossy(), gone.join("a.jpg").to_string_lossy()],
+    )
+    .unwrap();
+    conn.execute_batch("INSERT INTO photo_tags VALUES ('k', 'sea'), ('g', 'sea'); INSERT INTO people (name) VALUES ('Ann'); INSERT INTO photo_people VALUES ('g', 'Ann');").unwrap();
+    assert_eq!(files::forget_library(&mut conn, &format!("{}{}", gone.to_string_lossy(), std::path::MAIN_SEPARATOR)).unwrap(), 1);
+    let count = |sql: &str| conn.query_row(sql, [], |r| r.get::<_, i64>(0)).unwrap();
+    assert_eq!((count("SELECT COUNT(*) FROM libraries"), count("SELECT COUNT(*) FROM photos"), count("SELECT COUNT(*) FROM photo_tags")), (1, 1, 1));
+    assert_eq!(count("SELECT COUNT(*) FROM people"), 0, "Ann was only in the forgotten folder");
+    assert!(gone.join("a.jpg").exists());
+    assert!(files::forget_library(&mut conn, &base.join("Elsewhere").to_string_lossy()).is_err());
+    let _ = fs::remove_dir_all(&base);
+}
+
 // Taking the last name off a face (or off a photo) leaves no empty person behind
 #[test]
 fn a_person_left_on_no_photo_leaves_the_list() {

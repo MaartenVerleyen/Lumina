@@ -1,4 +1,5 @@
 import type { RefObject } from "react";
+import { openLibraryIsAll } from "../api";
 import { platform } from "../api/platform";
 import type { PaletteAction } from "../components/modals/CommandPalette";
 import type { SettingsSection } from "../components/modals/SettingsModal";
@@ -57,7 +58,8 @@ export function buildPaletteActions({
     })),
     { id: "rescan", group: "Library", label: "Quick rescan folder", enabled: hasPhotos, run: lib.handleRescanFolder },
     { id: "deep", group: "Library", label: "Deep reprocess thumbnails", enabled: hasPhotos, run: lib.handleRescanAndProcessFolder },
-    { id: "health", group: "Library", label: "Library health & XMP export", keywords: "cache sidecar lightroom", enabled: hasPhotos, run: lib.handleOpenHealthDashboard },
+    // Also for a library left without photos: its rows of files that are gone can be forgotten there
+    { id: "health", group: "Library", label: "Library health & XMP export", keywords: "cache sidecar lightroom", enabled: !!lib.folder && !openLibraryIsAll(), run: lib.handleOpenHealthDashboard },
     { id: "xmp-all", group: "Library", label: "Export XMP sidecars (all photos)", keywords: "lightroom", enabled: hasPhotos, run: () => lib.handleExportXmp(false) },
     { id: "xmp-sel", group: "Library", label: "Export XMP sidecars (selection)", keywords: "lightroom", enabled: hasSelection, run: () => lib.handleExportXmp(true) },
     { id: "commit", group: "Organize", label: "Review & commit staged moves", keywords: "disk move apply", enabled: lib.stagedPhotos.length > 0, run: () => lib.setIsCommitModalOpen(true) },

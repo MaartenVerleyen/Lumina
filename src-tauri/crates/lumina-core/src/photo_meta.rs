@@ -53,6 +53,9 @@ pub struct ApplyReport {
     pub faces_waiting: usize,
     // Photos with a named face the server didn't find
     pub faces_unplaced: Vec<String>,
+    // Photos whose values this account may not set there (someone else's upload, and no editor role)
+    #[serde(default)]
+    pub not_yours: Vec<String>,
 }
 
 // Faces whose box overlaps this much are the same face

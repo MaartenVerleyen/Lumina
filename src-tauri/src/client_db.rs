@@ -168,6 +168,14 @@ pub fn local_libraries(app: AppHandle) -> Result<Vec<lumina_core::libraries::Lib
     lumina_core::libraries::list(&open_global_db(&app)?)
 }
 
+// Settings and the Library menu: a folder taken off this computer's libraries (its files stay)
+#[tauri::command]
+pub async fn forget_local_library(app: AppHandle, root: String) -> Result<usize, String> {
+    tauri::async_runtime::spawn_blocking(move || lumina_core::files::forget_library(&mut open_global_db(&app)?, &root))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 // A library on this computer as its database has it, without walking the folder: All photos lists every
 // library this way (a scan of one folder would stop another's scan and thumbnail pass)
 #[tauri::command]

@@ -627,6 +627,46 @@ fn missing_files(conn: &Connection, prefix: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+// Lumina's rows of these photos go, with their tags, people, faces, album places and smart-search vectors, and
+// people left on no photo after that
+pub fn forget_photos(conn: &mut Connection, hashes: &[String]) -> Result<(), String> {
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    for hash in hashes {
+        tx.execute("DELETE FROM face_rejections WHERE face_id IN (SELECT face_id FROM photo_faces WHERE hash = ?1)", params![hash])
+            .map_err(|e| e.to_string())?;
+        for table in ["photo_tags", "photo_people", "album_photos", "photo_faces", "photo_clip", "photo_clip_frames", "photos"] {
+            // Older databases may lack a table; the photo's own row must go
+            let done = tx.execute(&format!("DELETE FROM {table} WHERE hash = ?1"), params![hash]);
+            if table == "photos" {
+                done.map_err(|e| e.to_string())?;
+            }
+        }
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+    for name in face_engine::unused_people(conn) {
+        face_engine::forget_unused_person(conn, &name);
+    }
+    Ok(())
+}
+
+// Takes a folder off this computer's libraries: Lumina's rows of its photos go (see forget_photos) and the
+// library itself. The files stay where they are; opening the folder again starts afresh. Answers how many
+// photos it forgot.
+pub fn forget_library(conn: &mut Connection, root: &str) -> Result<usize, String> {
+    let wanted = libraries::normalize_root(root);
+    let Some(library) = libraries::list(conn)?.into_iter().find(|l| libraries::normalize_root(&l.root).eq_ignore_ascii_case(&wanted)) else {
+        return Err(format!("{root} isn't one of the libraries"));
+    };
+    let hashes: Vec<String> = {
+        let mut stmt = conn.prepare("SELECT hash FROM photos WHERE library_id = ?1").map_err(|e| e.to_string())?;
+        let rows = stmt.query_map([library.id], |r| r.get::<_, String>(0)).map_err(|e| e.to_string())?;
+        rows.flatten().collect()
+    };
+    forget_photos(conn, &hashes)?;
+    conn.execute("DELETE FROM libraries WHERE id = ?1", [library.id]).map_err(|e| e.to_string())?;
+    Ok(hashes.len())
+}
+
 // Library Health → Forget files that are gone: the rows of photos whose file was deleted outside Lumina, with
 // their tags, people, faces, album places and smart-search vectors. A file that comes back later is a new
 // photo. Refused while the library's folder itself is missing (a drive that isn't connected).
@@ -637,26 +677,7 @@ pub async fn forget_missing_files(app: SharedHost, root_folder: String) -> Resul
         }
         let mut conn = open_global_db(&app)?;
         let gone = missing_files(&conn, &make_folder_prefix(Some(&root_folder)));
-        let tx = conn.transaction().map_err(|e| e.to_string())?;
-        for hash in &gone {
-            tx.execute(
-                "DELETE FROM face_rejections WHERE face_id IN (SELECT face_id FROM photo_faces WHERE hash = ?1)",
-                params![hash],
-            )
-            .map_err(|e| e.to_string())?;
-            for table in ["photo_tags", "photo_people", "album_photos", "photo_faces", "photo_clip", "photo_clip_frames", "photos"] {
-                // Older databases may lack a table; the photo's own row must go
-                let done = tx.execute(&format!("DELETE FROM {table} WHERE hash = ?1"), params![hash]);
-                if table == "photos" {
-                    done.map_err(|e| e.to_string())?;
-                }
-            }
-        }
-        tx.commit().map_err(|e| e.to_string())?;
-        // People named only in those photos go too, and any other left on no photo
-        for name in face_engine::unused_people(&conn) {
-            face_engine::forget_unused_person(&conn, &name);
-        }
+        forget_photos(&mut conn, &gone)?;
         Ok(gone.len())
     })
     .await

@@ -516,10 +516,13 @@ async fn send_values(app: &AppHandle, q: &Arc<Queue>, client: &str) -> Pass {
                     }
                     for (i, item) in batch {
                         let missing = item.hash.as_ref().is_some_and(|h| report.missing.contains(h));
+                        let not_yours = item.hash.as_ref().is_some_and(|h| report.not_yours.contains(h));
                         q.update(*i, |it| {
                             it.values_sent = true;
                             if missing {
                                 it.error = Some("The server doesn't list this photo, so its values weren't put on".into());
+                            } else if not_yours {
+                                it.error = Some("Someone else uploaded this photo there: its tags and names need an editor to go on".into());
                             }
                         });
                     }

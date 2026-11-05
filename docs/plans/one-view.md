@@ -456,6 +456,18 @@ The phone app (phase 5) then adds the camera roll as a local source, with this s
 - "Emma (cachy)" shows the library as a small label (not cut off, not capitalized).
 - The web client shows no "on the server" marks and no Where filter (it has no "this PC").
 
+### Fixes after the Linux test of milestones 4 and 5
+
+- An uploader's backup and follow carry their values onto the photos they uploaded themselves (their
+  `uploads/<name>/` folder); someone else's photo still needs an editor, and the queue says so for each such
+  file (`not_yours` in the answer of `apply_backup_values`, now an uploader command).
+- Collections shows "following into …" right after following; the Follow dialog lists every server the app is
+  signed in to, also one connected after All photos loaded.
+- A thumbnail pass in All photos groups near-duplicates across libraries again once it has made fingerprints.
+- The Library menu lists this PC's folders (its libraries) by name, each with Forget: Lumina's rows of its photos
+  and the library go (`forget_local_library`, `files::forget_library`), the files stay.
+- Library Health is in the palette for any open library, also one without photos.
+
 ## Done when
 
 - On Maarten's desktop, All photos counts 61,500 photos for the example above. The Where filter's counts

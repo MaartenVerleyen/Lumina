@@ -445,7 +445,8 @@ function BackUpButton({ lib }: { lib: LibraryState }) {
   const run = async () => {
     setBusy(true);
     try {
-      const r = await backUp(server, photos.map((p) => p.hash), target.editable);
+      // The server puts the values on what this account may set: everything as an editor, its own uploads else
+      const r = await backUp(server, photos.map((p) => p.hash), true);
       const skipped = r.ignored > 0 ? ` (${r.ignored} not found on this PC)` : "";
       lib.setAutoMatchNotice(`Backing up ${r.queued} photo${r.queued === 1 ? "" : "s"} to ${target.label}${skipped}.`);
     } catch (err) {
@@ -474,11 +475,7 @@ function BackUpButton({ lib }: { lib: LibraryState }) {
       <button
         onClick={run}
         disabled={busy}
-        title={
-          target.editable
-            ? `Upload ${count} to ${target.label}, with their ratings, tags, albums and people names`
-            : `Upload ${count} to ${target.label} (you may upload there, not edit: ratings, tags and names stay on this PC)`
-        }
+        title={`Upload ${count} to ${target.label}, with their ratings, tags, albums and people names`}
         className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-semibold border border-amber-500/40 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 disabled:opacity-50 transition"
       >
         <CloudUpload className="w-3.5 h-3.5" />

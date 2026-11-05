@@ -208,6 +208,7 @@ pub fn run() {
             client_db::local_libraries,
             client_db::list_local_library,
             client_db::local_copy_ids,
+            client_db::forget_local_library,
             system::close_splashscreen
         ])
         .run(tauri::generate_context!())

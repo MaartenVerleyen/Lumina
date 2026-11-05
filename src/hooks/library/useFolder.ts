@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import {
   ALL_PHOTOS,
   allPhotosIdOf,
+  allPhotosRegroup,
   allPhotosShownIn,
   allPhotosSources,
   call,
@@ -193,6 +194,8 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
           };
         })
       );
+      // All photos: the pass made fingerprints of new photos, so near-duplicates across libraries are found now
+      if (all && completed >= total) setPhotos((prev) => allPhotosRegroup(prev));
     });
     return () => {
       unlisten.then((f) => f());

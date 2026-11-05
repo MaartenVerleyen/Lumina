@@ -238,6 +238,32 @@ fn people_for(host: &ServerHost, scope: &Scope, root: Option<String>, people: Ve
     access::people_for(&db::open_global_db(host)?, scope, library, value)
 }
 
+// Of a backup's values, those this user may set: on any photo of a library where they are an editor, else
+// on their own uploads (their uploads/<name>/ folder); answers those and the hashes of the others
+fn values_allowed(host: &ServerHost, scope: &Scope, items: Vec<lumina_core::photo_meta::PhotoMeta>) -> Result<(Vec<lumina_core::photo_meta::PhotoMeta>, Vec<String>), String> {
+    let conn = db::open_global_db(host)?;
+    let own = format!("uploads/{}/", super::upload::safe_name(&scope.user.name, "user"));
+    let (mut allowed, mut not_yours) = (Vec::new(), Vec::new());
+    for m in items {
+        let place = conn
+            .query_row("SELECT library_id, rel_path FROM photos WHERE hash = ?1", [&m.hash], |r| Ok((r.get::<_, Option<i64>>(0)?, r.get::<_, Option<String>>(1)?)))
+            .ok();
+        let may = match place {
+            // Not there: apply reports it as missing
+            None => true,
+            Some((library, rel_path)) => {
+                scope.admin() || library.is_some_and(|l| scope.role_on(l) >= Role::Editor) || rel_path.is_some_and(|r| r.starts_with(&own))
+            }
+        };
+        if may {
+            allowed.push(m);
+        } else {
+            not_yours.push(m.hash);
+        }
+    }
+    Ok((allowed, not_yours))
+}
+
 // A user to share with, by name
 fn user_id(host: &ServerHost, name: &str) -> Result<i64, ApiError> {
     let conn = db::open_global_db(host)?;
@@ -461,9 +487,14 @@ commands! {
     };
 
     // Backup (docs/plans/one-view.md): the values a device had for photos it uploaded, put on where the
-    // server's copy has none (names on faces the server finds there, also later)
-    Editor [Target::Photos(items.iter().map(|m| m.hash.clone()).collect())] blocking apply_backup_values(items: Vec<photo_meta::PhotoMeta>) |host, scope|
-        photo_meta::apply(&mut db::open_global_db(&*host)?, &items)
+    // server's copy has none (names on faces the server finds there, also later). An uploader's go on the
+    // photos they uploaded themselves; other photos need an editor.
+    Uploader [Target::Photos(items.iter().map(|m| m.hash.clone()).collect())] blocking apply_backup_values(items: Vec<photo_meta::PhotoMeta>) |host, scope| {
+        let (allowed, not_yours) = values_allowed(&host, &scope, items)?;
+        let mut report = photo_meta::apply(&mut db::open_global_db(&*host)?, &allowed)?;
+        report.not_yours = not_yours;
+        Ok::<_, String>(report)
+    }
         => after {
             let mut changed = Changed::photos(items.iter().map(|m| m.hash.clone()));
             changed.people = items.iter().any(|m| !m.faces.is_empty() || !m.people.is_empty());

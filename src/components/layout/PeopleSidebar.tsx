@@ -405,8 +405,14 @@ export default function PeopleSidebar({
             {suggestions.slice(0, 5).map((sg) => (
               <div key={`${sg.from.engine}|${sg.from.name}`} className="flex flex-col gap-1 text-[11px] text-zinc-300">
                 <span>
-                  <span className="font-semibold capitalize">{sg.from.name}</span> on {labelOf(sg.from.engine, sg.from.name)} looks like{" "}
-                  <span className="font-semibold capitalize">{sg.to.name}</span> on {labelOf(sg.to.engine, sg.to.name)}
+                  <span className="font-semibold inline-flex items-baseline gap-1">
+                    <PersonName name={sg.from.name} />
+                  </span>{" "}
+                  on {labelOf(sg.from.engine, sg.from.name)} looks like{" "}
+                  <span className="font-semibold inline-flex items-baseline gap-1">
+                    <PersonName name={sg.to.name} />
+                  </span>{" "}
+                  on {labelOf(sg.to.engine, sg.to.name)}
                 </span>
                 <span className="flex gap-1">
                   <button
