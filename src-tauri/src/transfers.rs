@@ -115,6 +115,7 @@ pub struct Progress {
     // waiting for the server to find the faces, and photos with a named face the server didn't find
     values_sent: usize,
     values_failed: usize,
+    values_failures: Vec<FailedFile>,
     names_placed: usize,
     names_waiting: usize,
     names_unplaced: usize,
@@ -189,8 +190,11 @@ impl Queue {
         for (i, item) in items.iter().enumerate() {
             p.bytes_total += item.size;
             if item.values.is_some() && item.values_sent && item.state != ItemState::Failed {
-                if item.error.is_some() {
+                if let Some(error) = &item.error {
                     p.values_failed += 1;
+                    if p.values_failures.len() < 50 {
+                        p.values_failures.push(FailedFile { name: item.name.clone(), error: error.clone() });
+                    }
                 } else {
                     p.values_sent += 1;
                 }

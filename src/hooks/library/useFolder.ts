@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import {
   ALL_PHOTOS,
   allPhotosIdOf,
+  allPhotosKnows,
   allPhotosRegroup,
   allPhotosShownIn,
   allPhotosSources,
@@ -30,6 +31,29 @@ import type { LibraryCore } from "./core";
 import type { FilterState } from "./useFilterState";
 
 // The open library folder: opening, scanning, thumbnails as they arrive, rescans, _Trash, Explorer actions
+// A photo with what a thumbnail pass found for it (its thumbnail, fingerprint, size, automatic tags)
+function withThumb(p: PhotoItem, hit: ThumbBatchItem, duplicateGroup: PhotoItem["duplicate_group"]): PhotoItem {
+  const mergedTags = hit.auto_tags && hit.auto_tags.length > 0 ? Array.from(new Set([...p.tags, ...hit.auto_tags])).sort() : p.tags;
+  const isRawOrHeic = RAW_OR_HEIC_NAME.test(p.name);
+  const displayPath = isRawOrHeic && !p.path.endsWith("_preview.jpg") ? hit.thumb_path : p.path;
+  return {
+    ...p,
+    path: displayPath,
+    thumb_path: hit.thumb_path,
+    // The file was rewritten (e.g. upgraded to 480 px): a new revision makes the grid reload it
+    thumb_rev: p.thumb_ready && hit.thumb_edge > 0 ? (p.thumb_rev || 0) + 1 : p.thumb_rev,
+    dhash: hit.dhash,
+    sharpness: hit.sharpness,
+    width: hit.width || p.width,
+    height: hit.height || p.height,
+    tags: mergedTags,
+    thumb_ready: hit.thumb_ok,
+    damaged: hit.damaged,
+    duplicate_group: duplicateGroup,
+    duration_ms: hit.duration_ms ?? p.duration_ms,
+  };
+}
+
 export function useFolder(core: LibraryCore, filters: FilterState) {
   const {
     folder,
@@ -155,6 +179,8 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
         // This computer's engine names a second copy of a file by its own id
         const hash = all && !event.server ? allPhotosIdOf(it.hash) : it.hash;
         if (!all || allPhotosShownIn(hash, batchFolder, event)) batchMap.set(hash, it);
+        // A new file's thumbnail can come before All photos has listed it: kept for when it has
+        else if (!allPhotosKnows(hash)) earlyThumbsRef.current.set(hash, it);
       }
       const hasDupUpdate = !all && duplicate_groups && Object.keys(duplicate_groups).length > 0;
 
@@ -166,32 +192,7 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
           if (!hit) {
             return nextDup !== p.duplicate_group ? { ...p, duplicate_group: nextDup } : p;
           }
-
-          const mergedTags =
-            hit.auto_tags && hit.auto_tags.length > 0
-              ? Array.from(new Set([...p.tags, ...hit.auto_tags])).sort()
-              : p.tags;
-
-          const isRawOrHeic = RAW_OR_HEIC_NAME.test(p.name);
-          const displayPath =
-            isRawOrHeic && !p.path.endsWith("_preview.jpg") ? hit.thumb_path : p.path;
-
-          return {
-            ...p,
-            path: displayPath,
-            thumb_path: hit.thumb_path,
-            // The file was rewritten (e.g. upgraded to 480 px): a new revision makes the grid reload it
-            thumb_rev: p.thumb_ready && hit.thumb_edge > 0 ? (p.thumb_rev || 0) + 1 : p.thumb_rev,
-            dhash: hit.dhash,
-            sharpness: hit.sharpness,
-            width: hit.width || p.width,
-            height: hit.height || p.height,
-            tags: mergedTags,
-            thumb_ready: hit.thumb_ok,
-            damaged: hit.damaged,
-            duplicate_group: nextDup,
-            duration_ms: hit.duration_ms ?? p.duration_ms,
-          };
+          return withThumb(p, hit, nextDup);
         })
       );
       // All photos: the pass made fingerprints of new photos, so near-duplicates across libraries are found now
@@ -201,6 +202,20 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
       unlisten.then((f) => f());
     };
   }, []);
+
+  // All photos: thumbnails of photos it hadn't listed yet, by id, applied when a listing brings them
+  const earlyThumbsRef = useRef(new Map<string, ThumbBatchItem>());
+  const withEarlyThumbs = (photos: PhotoItem[]): PhotoItem[] => {
+    const early = earlyThumbsRef.current;
+    if (early.size === 0) return photos;
+    const next = photos.map((p) => {
+      const hit = early.get(p.hash);
+      if (!hit) return p;
+      early.delete(p.hash);
+      return withThumb(p, hit, p.duplicate_group);
+    });
+    return openLibraryIsAll() ? allPhotosRegroup(next) : next;
+  };
 
   // Only the most recent folder load may apply its result (a slower earlier scan must not win)
   const folderLoadRequestRef = useRef(0);
@@ -535,8 +550,9 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
       const args = target === ALL_PHOTOS ? { folderPath: target, forceReprocess: false, check } : { folderPath: target, forceReprocess: false };
       const res = await call<PhotoItem[]>("scan_folder", args);
       if (!isSameFolder(target, folderRef.current)) return null;
-      setPhotos(res);
-      return res;
+      const shown = withEarlyThumbs(res);
+      setPhotos(shown);
+      return shown;
     } catch {
       return null;
     } finally {

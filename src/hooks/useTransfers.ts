@@ -22,6 +22,8 @@ export interface TransferProgress {
   // faces, waiting for the server to find the faces, and photos with a named face it didn't find
   values_sent: number;
   values_failed: number;
+  // Why, for the first of them
+  values_failures: { name: string; error: string }[];
   names_placed: number;
   names_waiting: number;
   names_unplaced: number;
@@ -113,8 +115,10 @@ export function backupSummary(p: TransferProgress): string[] {
   const names = (n: number) => `${n} name${n === 1 ? "" : "s"}`;
   return [
     p.values_sent > 0 ? `ratings, tags and names went along for ${photos(p.values_sent)}` : "",
-    p.values_failed > 0 ? `not for ${photos(p.values_failed)}` : "",
-    p.names_waiting > 0 ? `${names(p.names_waiting)} go on once the server has found the faces` : "",
+    p.values_failed > 0
+      ? `not for ${photos(p.values_failed)}${p.values_failures[0] ? ` (${p.values_failures[0].name}: ${p.values_failures[0].error})` : ""}`
+      : "",
+    p.names_waiting > 0 ? `${names(p.names_waiting)} ${p.names_waiting === 1 ? "goes" : "go"} on once the server has found the faces` : "",
     p.names_unplaced > 0 ? `${photos(p.names_unplaced)} have a named face the server didn't find` : "",
   ];
 }

@@ -399,6 +399,11 @@ export async function dropOwnNames(name: string): Promise<void> {
   }
 }
 
+// All photos has listed this photo (a thumbnail pass may report one it hasn't yet)
+export function allPhotosKnows(hash: string): boolean {
+  return all.copies.has(hash);
+}
+
 // Near-duplicates across libraries found again (after a thumbnail pass made new fingerprints)
 export function allPhotosRegroup(photos: PhotoItem[]): PhotoItem[] {
   return groupAcrossSources(photos, (p) => all.copies.get(p.hash)?.shown ?? "");
