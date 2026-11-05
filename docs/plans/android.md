@@ -192,3 +192,20 @@ library of yours from the desktop instead.
   only (any address in debug builds, for `tauri android dev`).
 - Share: `LuminaPlugin.kt` (Android's share sheet through the FileProvider) and `share_photo`, which downloads
   the original into the app's cache first; a Share button in the phone layout's full-screen view.
+
+### Milestone 2 (2026-11-05, checked on the same phone: 11,379 photos and videos with cachy's 102)
+
+- `LuminaPlugin.kt` lists the media store (photos and videos, asking for access once), makes thumbnails
+  (`loadThumbnail`, kept in the app's cache) and opens files for Rust to read. Tauri runs a plugin's commands on
+  the UI thread, so the work goes to threads of its own: thumbnails newest first (after a fast scroll the rows
+  on screen asked last), files on their own pool so a playing video never waits for thumbnails.
+- `phone.rs`: the phone's photos as a source of All photos ("This phone", paths `phone:p:<id>` / `phone:v:<id>`).
+  Content ids are read in the background from the file (`imaging::content_hash_of_file`, the desktop's and the
+  server's id) and kept in `client.db` (`phone_media`, by media store id, date and size); until then a photo shows
+  under a stand-in id. All 11,379 took a few minutes the first time; a start after that lists in about 1.6 s.
+- The `lumina-phone` protocol serves thumbnails (from the cache straight away once made) and originals; the
+  phone's videos play from the app's video server on 127.0.0.1 (`/phone`), as Android's player doesn't read the
+  app's protocols. A phone video plays directly (its codec isn't read; the phone made or received it).
+- Share sends a phone photo straight from the media store; the phone layout opens All photos itself and shows
+  "Loading the library…" until it has.
+- Still to do: the session token's Keystore encryption (with the background backup, milestone 3).

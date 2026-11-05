@@ -481,7 +481,7 @@ mod tests {
 
 // Media: lumina-remote://localhost/<server>%2F<kind>%2F<id> (http://lumina-remote.localhost/... on Windows)
 
-fn percent_decode(s: &str) -> String {
+pub(crate) fn percent_decode(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;

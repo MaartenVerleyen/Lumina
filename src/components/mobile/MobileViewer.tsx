@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ChevronLeft, Info, Loader2, MapPin, Camera, Share2, X } from "lucide-react";
-import { callLocal, mediaUrl, onAndroid, openLibraryServer } from "../../api";
+import { allPhotosServerOf, callLocal, mediaUrl, onAndroid, openLibraryIsAll, openLibraryServer } from "../../api";
 import type { PhotoItem } from "../../types/lumina";
 import { thumbSrc } from "../../utils/photoHelpers";
 import { isVideo } from "../../utils/media";
@@ -240,7 +240,7 @@ export default function MobileViewer({
               {photo.location ? ` · ${photo.location}` : ""}
             </div>
           </div>
-          {onAndroid && openLibraryServer() && <ShareButton hash={photo.hash} />}
+          {onAndroid && <ShareButton photo={photo} />}
           <button onClick={() => setInfo(true)} className="p-2 rounded-full text-white active:bg-white/20" aria-label="Details">
             <Info className="w-5 h-5" />
           </button>
@@ -252,15 +252,22 @@ export default function MobileViewer({
   );
 }
 
-// The phone app: the photo's original to another app (downloaded first, then Android's share sheet)
-function ShareButton({ hash }: { hash: string }) {
+// The phone app: the photo to another app. A photo of the phone goes as it is; a server's original is downloaded
+// first. Then Android's share sheet.
+function ShareButton({ photo }: { photo: PhotoItem }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const share = async () => {
     setBusy(true);
     setError(null);
     try {
-      await callLocal("share_photo", { server: openLibraryServer(), hash });
+      if (photo.path.startsWith("phone:")) {
+        await callLocal("share_phone_photo", { path: photo.path, mime: isVideo(photo) ? "video/*" : "image/*" });
+        return;
+      }
+      const server = openLibraryIsAll() ? allPhotosServerOf(photo.hash) : openLibraryServer();
+      if (!server) throw new Error("This photo isn't on a server");
+      await callLocal("share_photo", { server, hash: photo.hash });
     } catch (e) {
       setError(String(e));
     } finally {

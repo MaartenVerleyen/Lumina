@@ -1,0 +1,240 @@
+// The phone's own photos in the phone app (docs/plans/android.md, milestone 2): the camera roll from Android's
+// media store (android.rs), as photos All photos shows next to a server's. Each photo's content id (Lumina's,
+// so it matches the server's copy) is read once from its file and kept in client.db by media store id; a
+// photo read for the first time shows under a stand-in id until its content id is known, and the window is
+// told when the reading is done. Thumbnails and originals are served by the lumina-phone protocol.
+//
+// Paths of these photos are "phone:p:<id>" (a photo) and "phone:v:<id>" (a video).
+use crate::*;
+
+// The root All photos knows the phone's photos by (its source "This phone")
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+pub const PHONE_ROOT: &str = "phone";
+
+#[cfg(target_os = "android")]
+mod imp {
+    use super::*;
+    use crate::android::{self, PhoneMedia};
+    use crate::client_db;
+    use rusqlite::params;
+    use tauri::Emitter;
+
+    static READING: AtomicBool = AtomicBool::new(false);
+    // Where the plugin keeps the thumbnails it made (learnt from its first answer)
+    static THUMB_DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+
+    fn ensure_table(conn: &rusqlite::Connection) -> Result<(), String> {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS phone_media (
+                 id INTEGER NOT NULL,
+                 video INTEGER NOT NULL,
+                 modified INTEGER NOT NULL,
+                 size INTEGER NOT NULL,
+                 hash TEXT NOT NULL,
+                 PRIMARY KEY (id, video)
+             );",
+        )
+        .map_err(|e| e.to_string())
+    }
+
+    fn stand_in(m: &PhoneMedia) -> String {
+        format!("phone-{}{}", if m.video { "v" } else { "p" }, m.id)
+    }
+
+    fn photo_of(m: &PhoneMedia, hash: String) -> PhotoItem {
+        let path = format!("phone:{}:{}", if m.video { "v" } else { "p" }, m.id);
+        let when = if m.taken > 0 {
+            std::time::UNIX_EPOCH + std::time::Duration::from_millis(m.taken as u64)
+        } else {
+            std::time::UNIX_EPOCH + std::time::Duration::from_secs(m.modified.max(0) as u64)
+        };
+        let folder = m.folder.trim_end_matches('/');
+        PhotoItem {
+            hash,
+            name: m.name.clone(),
+            subfolder: if folder.is_empty() { "Root".into() } else { folder.replace('/', " / ") },
+            path: path.clone(),
+            thumb_path: path,
+            size_kb: m.size / 1024,
+            width: m.width,
+            height: m.height,
+            thumb_ready: true,
+            captured_at: lumina_core::exif_meta::system_time_local_iso(when),
+            media_type: if m.video { "video" } else { "photo" }.into(),
+            duration_ms: m.duration,
+            ..Default::default()
+        }
+    }
+
+    pub async fn photos(app: AppHandle) -> Result<Vec<PhotoItem>, String> {
+        let app2 = app.clone();
+        let (photos, unread) = tauri::async_runtime::spawn_blocking(move || -> Result<_, String> {
+            let media = android::list_media(&app2)?;
+            let conn = client_db::open(&app2)?;
+            ensure_table(&conn)?;
+            let mut known = conn
+                .prepare("SELECT hash FROM phone_media WHERE id = ?1 AND video = ?2 AND modified = ?3 AND size = ?4")
+                .map_err(|e| e.to_string())?;
+            let mut photos = Vec::with_capacity(media.len());
+            let mut unread = Vec::new();
+            for m in media {
+                let hash = known.query_row(params![m.id, m.video, m.modified, m.size as i64], |r| r.get::<_, String>(0)).ok();
+                if hash.is_none() {
+                    unread.push(m.clone());
+                }
+                photos.push(photo_of(&m, hash.unwrap_or_else(|| stand_in(&m))));
+            }
+            Ok((photos, unread))
+        })
+        .await
+        .map_err(|e| e.to_string())??;
+        if !unread.is_empty() && !READING.swap(true, Ordering::SeqCst) {
+            tauri::async_runtime::spawn_blocking(move || {
+                read_ids(&app, unread);
+                READING.store(false, Ordering::SeqCst);
+            });
+        }
+        Ok(photos)
+    }
+
+    // The content ids of photos seen for the first time; the window lists the phone again every 500 and at
+    // the end, so they join their server copies
+    fn read_ids(app: &AppHandle, media: Vec<PhoneMedia>) {
+        let Ok(conn) = client_db::open(app) else { return };
+        let total = media.len();
+        for (n, m) in media.into_iter().enumerate() {
+            let hash = android::open_media(app, m.id, m.video)
+                .and_then(|mut f| lumina_core::imaging::content_hash_of_file(&mut f, m.size));
+            match hash {
+                Ok(hash) => {
+                    let _ = conn.execute(
+                        "INSERT OR REPLACE INTO phone_media (id, video, modified, size, hash) VALUES (?1, ?2, ?3, ?4, ?5)",
+                        params![m.id, m.video, m.modified, m.size as i64, hash],
+                    );
+                }
+                Err(e) => eprintln!("[phone] {}: {e}", m.name),
+            }
+            if (n + 1) % 500 == 0 || n + 1 == total {
+                let _ = app.emit("library-files-changed", PHONE_ROOT);
+            }
+        }
+    }
+
+    pub fn parse(path: &str) -> Option<(bool, i64)> {
+        let (video, id) = path.split_at(1);
+        Some((video == "v", id.parse().ok()?))
+    }
+
+    pub fn share(app: &AppHandle, path: &str, mime: &str) -> Result<(), String> {
+        let (video, id) = path.strip_prefix("phone:").and_then(|p| parse(&p.replace(':', ""))).ok_or("Not a photo of this phone")?;
+        android::share_media(app, id, video, mime)
+    }
+
+    type MediaResponse = tauri::http::Response<Vec<u8>>;
+
+    fn status(code: u16) -> MediaResponse {
+        tauri::http::Response::builder().status(code).body(Vec::new()).unwrap()
+    }
+
+    // The web view may keep it: scrolling back shows it without asking again
+    fn thumb_response(bytes: Vec<u8>) -> MediaResponse {
+        tauri::http::Response::builder()
+            .header("Content-Type", "image/jpeg")
+            .header("Cache-Control", "max-age=86400")
+            .body(bytes)
+            .unwrap()
+    }
+
+    // lumina-phone://localhost/<thumb|original>/<p|v><id>
+    pub fn serve(app: &AppHandle, request: &tauri::http::Request<Vec<u8>>) -> MediaResponse {
+        let path = crate::remote::percent_decode(request.uri().path().trim_start_matches('/'));
+        let Some((kind, rest)) = path.split_once('/') else { return status(400) };
+        let Some((video, id)) = parse(rest) else { return status(400) };
+        if kind == "thumb" {
+            // A thumbnail made before is read from the cache straight away; only a new one needs the plugin
+            let cached = THUMB_DIR.get().map(|dir| dir.join(format!("{}{id}.jpg", if video { "v" } else { "p" })));
+            if let Some(bytes) = cached.and_then(|p| fs::read(p).ok()) {
+                return thumb_response(bytes);
+            }
+            let made = android::thumbnail(app, id, video).inspect(|p| {
+                if let Some(dir) = p.parent() {
+                    let _ = THUMB_DIR.set(dir.to_path_buf());
+                }
+            });
+            return match made.and_then(|p| fs::read(p).map_err(|e| e.to_string())) {
+                Ok(bytes) => thumb_response(bytes),
+                Err(_) => status(404),
+            };
+        }
+        original(app, video, id, request.headers().get("range").and_then(|v| v.to_str().ok()))
+    }
+
+    // A photo or video's file, with the range the player asks for (at most 8 MB at a time). The window's video
+    // player gets videos from the app's video server on 127.0.0.1 (media_server.rs), which answers with this.
+    pub fn original(app: &AppHandle, video: bool, id: i64, range: Option<&str>) -> MediaResponse {
+        use std::io::{Read, Seek, SeekFrom};
+        let Ok(mut file) = android::open_media(app, id, video) else { return status(404) };
+        let size = file.metadata().map(|m| m.len()).unwrap_or(0);
+        let range = range.and_then(|r| {
+            let spec = r.strip_prefix("bytes=")?;
+            let (a, b) = spec.split_once('-')?;
+            let start: u64 = a.trim().parse().ok()?;
+            let end = b.trim().parse::<u64>().ok().unwrap_or(size.saturating_sub(1));
+            Some((start, end.min(size.saturating_sub(1)).min(start + 8 * 1024 * 1024 - 1)))
+        });
+        let mime = if video { "video/mp4" } else { "image/jpeg" };
+        match range {
+            Some((start, end)) if start <= end && start < size => {
+                let mut bytes = vec![0u8; (end - start + 1) as usize];
+                if file.seek(SeekFrom::Start(start)).is_err() || file.read_exact(&mut bytes).is_err() {
+                    return status(500);
+                }
+                tauri::http::Response::builder()
+                    .status(206)
+                    .header("Content-Type", mime)
+                    .header("Accept-Ranges", "bytes")
+                    .header("Content-Range", format!("bytes {start}-{end}/{size}"))
+                    .body(bytes)
+                    .unwrap()
+            }
+            _ => {
+                let mut bytes = Vec::with_capacity(size as usize);
+                if file.read_to_end(&mut bytes).is_err() {
+                    return status(500);
+                }
+                tauri::http::Response::builder().header("Content-Type", mime).header("Accept-Ranges", "bytes").body(bytes).unwrap()
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "android")]
+pub use imp::{original, parse, serve};
+
+// The phone's photos and videos (the phone app's "This phone" in All photos)
+#[tauri::command]
+pub async fn phone_photos(app: AppHandle) -> Result<Vec<PhotoItem>, String> {
+    #[cfg(target_os = "android")]
+    {
+        imp::photos(app).await
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = app;
+        Ok(Vec::new())
+    }
+}
+
+// A photo of the phone to another app (path "phone:p:<id>")
+#[tauri::command]
+pub fn share_phone_photo(app: AppHandle, path: String, mime: String) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        imp::share(&app, &path, &mime)
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (app, path, mime);
+        Err("Sharing to another app is the phone app's".into())
+    }
+}

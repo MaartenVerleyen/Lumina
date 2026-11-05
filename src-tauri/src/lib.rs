@@ -17,6 +17,7 @@ mod transfer;
 mod transfers;
 #[cfg(target_os = "android")]
 mod android;
+mod phone;
 mod follows;
 
 use db::*;
@@ -37,9 +38,12 @@ pub fn run() {
     }
 
     let builder = tauri::Builder::default();
-    // The phone app's Kotlin side: its share sheet (android.rs)
+    // The phone app's Kotlin side (android.rs), and the phone's own photos and videos (phone.rs)
     #[cfg(target_os = "android")]
-    let builder = builder.plugin(android::init());
+    let builder = builder.plugin(android::init()).register_asynchronous_uri_scheme_protocol("lumina-phone", |ctx, request, responder| {
+        let app = ctx.app_handle().clone();
+        tauri::async_runtime::spawn_blocking(move || responder.respond(phone::serve(&app, &request)));
+    });
     builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -198,6 +202,8 @@ pub fn run() {
             transfers::upload_paths,
             transfers::back_up,
             transfers::share_photo,
+            phone::phone_photos,
+            phone::share_phone_photo,
             follows::album_follows,
             follows::follow_album,
             follows::unfollow_album,

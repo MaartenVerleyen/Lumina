@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertCircle, ArrowLeft, Images, Loader2, Map as MapIcon, Search, Sparkles, SquareLibrary, UserRound, Users, X } from "lucide-react";
-import { mediaUrl } from "../../api";
+import { ALL_PHOTOS, mediaUrl, onAndroid } from "../../api";
+import { refreshServers, useServers } from "../../hooks/useServers";
 import { useLibraryState, type LibraryState } from "../../hooks/useLibraryState";
 import { describePeopleExpr } from "../../utils/peopleQuery";
 import type { MediaFilter } from "../../types/lumina";
@@ -31,6 +32,23 @@ export default function MobileApp() {
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
   const [searching, setSearching] = useState(false);
   const libraryRef = useRef<HTMLDivElement>(null);
+
+  // The phone app opens on All photos (the phone's photos with the server's) once it is signed in to a server
+  const { servers } = useServers();
+  const signedIn = servers.some((s) => s.signed_in);
+  const openedAll = useRef(false);
+  // Until the servers are listed the phone app doesn't know yet whether it will open All photos: loading
+  const [serversKnown, setServersKnown] = useState(!onAndroid);
+  useEffect(() => {
+    if (onAndroid) void refreshServers().finally(() => setServersKnown(true));
+  }, []);
+  useEffect(() => {
+    if (!onAndroid || !signedIn || openedAll.current) return;
+    openedAll.current = true;
+    // The folder may already say All photos (remembered from the last run) without its photos loaded
+    if (lib.folder !== ALL_PHOTOS || lib.photos.length === 0) void lib.handleLoadFolderPath(ALL_PHOTOS);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signedIn]);
 
   // Newest first, like a phone's own gallery
   useEffect(() => {
@@ -115,7 +133,7 @@ export default function MobileApp() {
       <main className="flex-1 min-h-0 flex flex-col">
         {tab === "photos" &&
           (photos.length === 0 ? (
-            <Empty busy={lib.progress !== null} filtered={!!scope || lib.mediaFilter !== "ALL"} onClear={lib.clearAllFilters} />
+            <Empty busy={lib.progress !== null || lib.isScanningFolder || !serversKnown} filtered={!!scope || lib.mediaFilter !== "ALL"} onClear={lib.clearAllFilters} />
           ) : (
             <MobileGrid
               photos={photos}

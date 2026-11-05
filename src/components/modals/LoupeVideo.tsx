@@ -17,8 +17,11 @@ type Conversion =
   | { state: "failed"; error: string };
 
 export default function LoupeVideo({ photo }: { photo: PhotoItem }) {
-  // The desktop's webview plays what isPlayableInWebView names; in a browser the browser decides
-  const direct = platform.localFiles
+  // The desktop's webview plays what isPlayableInWebView names; in a browser the browser decides. A video of
+  // the phone's own (the phone app; its codec isn't read) is one the phone made or received, and plays.
+  const direct = photo.path.startsWith("phone:")
+    ? true
+    : platform.localFiles
     ? isPlayableInWebView(photo)
     : isPlayableInBrowser(photo, (mime) => document.createElement("video").canPlayType(mime));
   // A converted copy made earlier (or just now)

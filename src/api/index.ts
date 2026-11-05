@@ -205,6 +205,15 @@ export function subscribe<T>(event: string, handler: (event: EngineEvent<T>) => 
 }
 
 export function mediaUrl(ref: MediaRef): string {
+  // A photo of the phone itself (the phone app's "This phone"): through the lumina-phone protocol (phone.rs)
+  if (ref.kind !== "face" && ref.path.startsWith("phone:")) {
+    // Its videos play from the app's video server on 127.0.0.1: Android's player doesn't read the app's protocols
+    const server = localMediaServer();
+    if (server && ref.kind !== "thumb" && ref.path.startsWith("phone:v:")) {
+      return `${server.base}/phone/${server.token}?key=v${ref.path.slice(8)}`;
+    }
+    return convertFileSrc(`${ref.kind === "thumb" ? "thumb" : "original"}/${ref.path.slice(6).replace(":", "")}`, "lumina-phone");
+  }
   if (openLibrary === ALL_PHOTOS) {
     // A photo's files come from the engine of the copy the window shows; a face crop from its photo's
     const engine = ref.kind === "face" ? all.faces.get(ref.path) : engineOfShown(ref.hash);
@@ -306,6 +315,15 @@ let all: AllState = {
   searches: new Map(),
   people: new Map(),
 };
+
+// The phone app's source for the phone's own photos (src-tauri/src/phone.rs)
+export const PHONE_ROOT = "phone";
+
+// The server a photo All photos shows comes from (null: this computer or phone)
+export function allPhotosServerOf(hash: string): string | null {
+  const engine = engineOfShown(hash);
+  return engine ? engine : null;
+}
 
 // Sent when All photos has listed its libraries again: albums, smart albums and people are asked again
 export const ALL_PHOTOS_LOADED = "lumina-all-photos-loaded";
@@ -470,6 +488,8 @@ export async function allPhotosCandidates(): Promise<Source[]> {
   }
   const local = await callLocal<{ root: string }[]>("local_libraries").catch(() => []);
   const sources: Source[] = local.map((l) => ({ server: null, root: l.root, label: l.root, editable: true, uploadable: false }));
+  // The phone app: the phone's own photos and videos (its camera roll), looked at here, backed up to a server
+  if (onAndroid) sources.unshift({ server: null, root: PHONE_ROOT, label: "This phone", editable: false, uploadable: false });
   const servers = await callLocal<ServerInfo[]>("server_list").catch(() => [] as ServerInfo[]);
   for (const s of servers.filter((s) => s.signed_in)) {
     try {
@@ -503,7 +523,8 @@ export function allPhotosCanBackUp(): boolean {
 let watchAllPhotos = false;
 
 function watchAllPhotosFolders(): Promise<void> {
-  const roots = [...all.sources.values()].filter((s) => s.server === null).map((s) => s.root);
+  // The phone's photos aren't a folder: phone.rs tells the window when they change
+  const roots = [...all.sources.values()].filter((s) => s.server === null && s.root !== PHONE_ROOT).map((s) => s.root);
   return callLocal("watch_libraries", { roots: watchAllPhotos ? roots : [] });
 }
 
@@ -534,7 +555,9 @@ async function loadAllNow(check?: string[]): Promise<PhotoItem[]> {
         const photos =
           source.server !== null
             ? await engineTransport(source.server).call<PhotoItem[]>("scan_folder", { folderPath: source.root, forceReprocess: false })
-            : checked
+            : source.root === PHONE_ROOT
+              ? await callLocal<PhotoItem[]>("phone_photos")
+              : checked
               ? await scanHere(source.root)
               : await callLocal<PhotoItem[]>("list_local_library", { root: source.root });
         return { source, photos };

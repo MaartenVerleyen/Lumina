@@ -20,6 +20,7 @@ import {
   subscribe,
   subscribeLocal,
   inDesktopApp,
+  onAndroid,
   type Role,
 } from "../../api";
 import { useAccount } from "../../components/auth/ServerGate";
@@ -151,7 +152,8 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
       initialRestoreDoneRef.current = true;
       try {
         const savedActive = localStorage.getItem("lumina_active_folder");
-        if (savedActive && photos.length === 0) {
+        // The phone app opens on All photos itself (MobileApp)
+        if (savedActive && photos.length === 0 && !onAndroid) {
           const ref = libraryRefFromString(savedActive);
           if (ref.root) handleLoadFolderPath(ref.root, ref.server);
         }

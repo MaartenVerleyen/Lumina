@@ -25,7 +25,17 @@ pub fn read_file_head(file: &mut File, file_size: u64) -> std::io::Result<Vec<u8
 pub fn hash_and_read_head(path: &Path, file_size: u64) -> Result<(String, Vec<u8>), String> {
     let mut file = File::open(path).map_err(|e| e.to_string())?;
     let head = read_file_head(&mut file, file_size).map_err(|e| e.to_string())?;
+    Ok((content_hash(&mut file, file_size, &head)?, head))
+}
 
+// Lumina's content id of an open file (the phone app reads its photos through file handles)
+pub fn content_hash_of_file(file: &mut File, file_size: u64) -> Result<String, String> {
+    let head = read_file_head(file, file_size).map_err(|e| e.to_string())?;
+    content_hash(file, file_size, &head)
+}
+
+// BLAKE3 of the size, the first 64 KB (`head`) and the last 64 KB, cut to 16 hex digits
+fn content_hash(file: &mut File, file_size: u64, head: &[u8]) -> Result<String, String> {
     let mut hasher = blake3::Hasher::new();
     hasher.update(&file_size.to_le_bytes());
     hasher.update(&head[..head.len().min(65536)]);
@@ -44,7 +54,7 @@ pub fn hash_and_read_head(path: &Path, file_size: u64) -> Result<(String, Vec<u8
         hasher.update(&tail[..filled]);
     }
 
-    Ok((hasher.finalize().to_hex()[..16].to_string(), head))
+    Ok(hasher.finalize().to_hex()[..16].to_string())
 }
 
 pub fn compute_dhash(img: &DynamicImage) -> String {

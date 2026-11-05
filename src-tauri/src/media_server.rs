@@ -41,8 +41,11 @@ pub fn start(app: tauri::AppHandle) {
 
     let router = axum::Router::new()
         .route("/video/{token}", axum::routing::get(serve_video))
-        .route("/remote/{token}", axum::routing::get(serve_remote_video))
-        .with_state(Server { app, token });
+        .route("/remote/{token}", axum::routing::get(serve_remote_video));
+    // The phone app: the phone's own videos (?key=v<id>, phone.rs)
+    #[cfg(target_os = "android")]
+    let router = router.route("/phone/{token}", axum::routing::get(serve_phone_video));
+    let router = router.with_state(Server { app, token });
     tauri::async_runtime::spawn(async move {
         match tokio::net::TcpListener::from_std(listener) {
             Ok(listener) => {
@@ -102,6 +105,38 @@ async fn serve_video(
             let mut response = response.into_response();
             response.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
             response
+        }
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+// A video of the phone's (?key=v<id>), read from Android's media store with the player's range
+#[cfg(target_os = "android")]
+async fn serve_phone_video(
+    axum::extract::State(server): axum::extract::State<Server>,
+    axum::extract::Path(token): axum::extract::Path<String>,
+    axum::extract::Query(query): axum::extract::Query<std::collections::HashMap<String, String>>,
+    headers: axum::http::HeaderMap,
+) -> axum::response::Response {
+    use axum::http::{header, StatusCode};
+    use axum::response::IntoResponse;
+
+    let Some((video, id)) = query.get("key").and_then(|k| crate::phone::parse(k)) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if token != server.token {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let range = headers.get(header::RANGE).and_then(|v| v.to_str().ok()).map(str::to_string);
+    let app = server.app.clone();
+    match tokio::task::spawn_blocking(move || crate::phone::original(&app, video, id, range.as_deref())).await {
+        Ok(resp) => {
+            let (parts, body) = resp.into_parts();
+            let mut builder = axum::http::Response::builder().status(parts.status.as_u16()).header(header::CACHE_CONTROL, "no-store");
+            for (name, value) in parts.headers.iter() {
+                builder = builder.header(name.as_str(), value.as_bytes());
+            }
+            builder.body(axum::body::Body::from(body)).unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
         }
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
