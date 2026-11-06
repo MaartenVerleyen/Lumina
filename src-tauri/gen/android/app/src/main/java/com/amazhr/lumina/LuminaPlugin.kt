@@ -13,7 +13,10 @@ import android.util.Size
 import android.view.HapticFeedbackConstants
 import android.webkit.MimeTypeMap
 import androidx.core.content.FileProvider
+import androidx.activity.result.ActivityResult
+import androidx.activity.result.IntentSenderRequest
 import app.tauri.PermissionState
+import app.tauri.annotation.ActivityCallback
 import app.tauri.annotation.Command
 import app.tauri.annotation.InvokeArg
 import app.tauri.annotation.Permission
@@ -168,6 +171,29 @@ class LuminaPlugin(private val activity: Activity) : Plugin(activity) {
     val view = Intent(Intent.ACTION_VIEW).setDataAndType(uri, activity.contentResolver.getType(uri) ?: args.mime).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     activity.startActivity(Intent.createChooser(view, null))
     invoke.resolve()
+  }
+
+  // Free up space: these photos to the phone's trash. Android asks first (one question for all of them) and keeps
+  // them in its trash for 30 days.
+  @Command
+  fun trashMedia(invoke: Invoke) {
+    val args = invoke.parseArgs(ShareArgs::class.java)
+    if (Build.VERSION.SDK_INT < 30) {
+      invoke.reject("Removing photos from the phone needs Android 11 or later")
+      return
+    }
+    if (args.media.isEmpty()) {
+      invoke.resolve(JSObject().put("done", false))
+      return
+    }
+    val uris = args.media.map { PhoneStore.uriOf(it.id, it.video) }
+    val request = MediaStore.createTrashRequest(activity.contentResolver, uris, true)
+    startIntentSenderForResult(invoke, IntentSenderRequest.Builder(request.intentSender).build(), "trashResult")
+  }
+
+  @ActivityCallback
+  fun trashResult(invoke: Invoke, result: ActivityResult) {
+    invoke.resolve(JSObject().put("done", result.resultCode == Activity.RESULT_OK))
   }
 
   // A short vibration (a long-press selecting a photo)

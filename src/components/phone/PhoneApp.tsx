@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertCircle, ArrowLeft, CloudUpload, Download, Images, Loader2, Search, Share2, SquareLibrary, UserRound, X } from "lucide-react";
-import { ALL_PHOTOS, callLocal, onAndroid, openLibraryIsAll, openLibraryServer, allPhotosCanBackUp, allPhotosSources } from "../../api";
+import { AlertCircle, ArrowLeft, CloudUpload, Download, Images, Loader2, Search, Share2, SquareLibrary, Trash2, UserRound, X } from "lucide-react";
+import { ALL_PHOTOS, ALL_PHOTOS_LOADED, allPhotosOffline, startAllPhotosFromKept, callLocal, onAndroid, openLibraryIsAll, openLibraryServer, allPhotosCanBackUp, allPhotosSources } from "../../api";
 import { whereabouts } from "../../api/allPhotos";
 import { refreshServers, useServers } from "../../hooks/useServers";
 import { useLibraryState, type LibraryState } from "../../hooks/useLibraryState";
@@ -18,6 +18,7 @@ import SearchScreen from "./SearchScreen";
 import type { PhoneFolder } from "./usePhoneFolders";
 import PhoneGrid, { COLUMN_STEPS } from "./PhoneGrid";
 import { saveToPhone, sharePhotos } from "./share";
+import { freeUpScan, moveToTrash } from "./freeUp";
 import { refreshBackup, usePhoneBackup } from "./usePhoneBackup";
 import PhoneViewer from "./PhoneViewer";
 import luminaMark from "../../assets/lumina-mark.svg";
@@ -64,10 +65,23 @@ export default function PhoneApp() {
   useEffect(() => {
     if (!onAndroid || !signedIn || openedAll.current) return;
     openedAll.current = true;
-    // The folder may already say All photos (remembered from the last run) without its photos loaded
-    if (lib.folder !== ALL_PHOTOS || lib.photos.length === 0) void lib.handleLoadFolderPath(ALL_PHOTOS);
+    // The folder may already say All photos (remembered from the last run) without its photos loaded. It opens
+    // from the lists kept last time (at once, and without a connection), then loads them again for real.
+    if (lib.folder !== ALL_PHOTOS || lib.photos.length === 0) {
+      startAllPhotosFromKept();
+      void lib.handleLoadFolderPath(ALL_PHOTOS).then(() => lib.handleLoadFolderPath(ALL_PHOTOS));
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signedIn]);
+
+  // Servers the last load couldn't reach: their photos show as last seen
+  const [offline, setOffline] = useState<string[]>([]);
+  useEffect(() => {
+    const update = () => setOffline(allPhotosOffline());
+    window.addEventListener(ALL_PHOTOS_LOADED, update);
+    return () => window.removeEventListener(ALL_PHOTOS_LOADED, update);
+  }, []);
+  const offlineLabels = offline.map((id) => servers.find((s) => s.id === id)?.label ?? id).join(", ");
 
   // Newest first, like a phone's own gallery
   useEffect(() => {
@@ -185,7 +199,16 @@ export default function PhoneApp() {
         style={{ paddingTop: "calc(env(safe-area-inset-top) + 0.25rem)" }}
       >
         {selected.size > 0 ? (
-          <SelectionBar photos={photos} selected={selected} onClear={() => select(new Set())} onBackedUp={() => select(new Set())} />
+          <SelectionBar
+            photos={photos}
+            selected={selected}
+            onClear={() => select(new Set())}
+            onBackedUp={() => select(new Set())}
+            onRemoved={() => {
+              select(new Set());
+              void refresh();
+            }}
+          />
         ) : (
           <div className="h-12 flex items-center gap-1">
             {scope && tab === "photos" ? (
@@ -203,7 +226,8 @@ export default function PhoneApp() {
               <div className="text-[15px] font-semibold text-zinc-100 truncate">{(tab === "photos" && scope) || TABS.find((t) => t.id === tab)!.label}</div>
               {tab === "photos" && (
                 <div className="text-[11px] text-zinc-500">
-                  {photos.length} {photos.length === 1 ? "item" : "items"}
+                  {photos.length.toLocaleString()} {photos.length === 1 ? "item" : "items"}
+                  {lib.isScanningFolder && photos.length > 0 ? " · updating" : offline.length > 0 ? ` · offline: ${offlineLabels} as last seen` : ""}
                 </div>
               )}
             </div>
@@ -220,7 +244,12 @@ export default function PhoneApp() {
       <main className="relative flex-1 min-h-0 flex flex-col">
         {/* Floats over the bottom of the screen: the grid doesn't move when it comes and goes */}
         {onAndroid && <BackupBanner onOpen={() => openPage("backup")} onFinished={() => void refresh()} />}
-        {tab === "photos" && notSearched > 0 && (
+        {tab === "photos" && lib.smartSearch && lib.searchQuery.trim() && offline.length > 0 && (
+          <div className="mx-2 mt-2 rounded-xl bg-indigo-950/70 border border-indigo-700/40 px-3 py-2 text-xs text-indigo-200">
+            Smart search needs a connection to {offlineLabels}.
+          </div>
+        )}
+        {tab === "photos" && notSearched > 0 && offline.length === 0 && (
           <div className="mx-2 mt-2 rounded-xl bg-indigo-950/70 border border-indigo-700/40 px-3 py-2 text-xs text-indigo-200">
             {notSearched.toLocaleString()} photos only on this phone aren't searched by what's in them until they're backed up.
           </div>
@@ -305,7 +334,7 @@ export default function PhoneApp() {
           onShowFolder={onAndroid ? (photo) => void showFolderOf(photo) : undefined}
         />
       )}
-      {page === "backup" && <BackupScreen onBack={closePage} />}
+      {page === "backup" && <BackupScreen onBack={closePage} onRemoved={() => void refresh()} />}
       {page === "settings" && <SettingsScreen onBack={closePage} />}
       <ConfirmDialog />
     </Shell>
@@ -318,26 +347,36 @@ function SelectionBar({
   selected,
   onClear,
   onBackedUp,
+  onRemoved,
 }: {
   photos: PhotoItem[];
   selected: Set<string>;
   onClear: () => void;
   // The backup has them: the selection ends, the banner under the header shows how it goes
   onBackedUp: () => void;
+  // They left the phone (they show from the server now)
+  onRemoved: () => void;
 }) {
-  const [busy, setBusy] = useState<"share" | "backup" | "save" | null>(null);
+  const backupServer = usePhoneBackup().settings?.server ?? null;
+  const [busy, setBusy] = useState<"share" | "backup" | "save" | "remove" | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const chosen = photos.filter((p) => selected.has(p.hash));
   const sources = openLibraryIsAll() ? allPhotosSources() : null;
   const canBackUp = allPhotosCanBackUp();
   const onlyHere = onAndroid && sources ? chosen.filter((p) => whereabouts(p, sources, canBackUp) === "not-backed-up") : [];
   const onlyServer = onAndroid && sources ? chosen.filter((p) => whereabouts(p, sources, canBackUp) === "server-only") : [];
-  const run = async (what: "share" | "backup" | "save") => {
+  // On the phone and on a server: they can leave the phone (Free up space for these)
+  const onBoth = onAndroid && sources && backupServer ? chosen.filter((p) => whereabouts(p, sources, canBackUp) === "both") : [];
+  const run = async (what: "share" | "backup" | "save" | "remove") => {
     setBusy(what);
     setMessage(null);
     try {
       if (what === "share") await sharePhotos(chosen);
-      else if (what === "save") {
+      else if (what === "remove") {
+        const scan = await freeUpScan(backupServer!, onBoth.map((p) => p.hash));
+        if (scan.count === 0) setMessage("None of these is backed up by this phone's backup yet");
+        else if (await moveToTrash(scan)) onRemoved();
+      } else if (what === "save") {
         setMessage(`Downloading ${onlyServer.length}…`);
         const n = await saveToPhone(onlyServer);
         setMessage(`Saved ${n} to this phone`);
@@ -364,6 +403,11 @@ function SelectionBar({
       {onAndroid && (
         <button onClick={() => run("share")} disabled={busy !== null} className="p-2.5 rounded-full text-zinc-200 active:bg-white/10" aria-label="Share">
           {busy === "share" ? <Loader2 className="w-5 h-5 animate-spin" /> : <Share2 className="w-5 h-5" />}
+        </button>
+      )}
+      {onBoth.length > 0 && (
+        <button onClick={() => run("remove")} disabled={busy !== null} className="p-2.5 rounded-full text-zinc-200 active:bg-white/10" aria-label="Remove from this phone">
+          {busy === "remove" ? <Loader2 className="w-5 h-5 animate-spin" /> : <Trash2 className="w-5 h-5" />}
         </button>
       )}
       {onlyServer.length > 0 && (

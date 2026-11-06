@@ -424,6 +424,112 @@ pub struct Folder {
     hashes: Vec<String>,
 }
 
+// Free up space: the photos on this phone that `server` has (all of them, or of `only`), asked of the server
+// just now by content id and size, so only photos it really holds are offered for removal
+#[derive(Serialize, Default)]
+pub struct FreeUp {
+    count: usize,
+    bytes: u64,
+    items: Vec<FreeItem>,
+}
+
+#[derive(Serialize, serde::Deserialize, Clone)]
+pub struct FreeItem {
+    id: i64,
+    video: bool,
+}
+
+#[tauri::command]
+pub async fn phone_free_up_scan(app: AppHandle, server: String, only: Option<Vec<String>>) -> Result<FreeUp, String> {
+    #[cfg(target_os = "android")]
+    {
+        use crate::transfer::{self, Conn};
+        use rusqlite::params;
+        let dir = get_app_storage_dir(&app);
+        let server2 = server.clone();
+        // (id, video, hash, size) of the phone's photos the backup has seen on the server
+        let kept: Vec<(i64, bool, String, u64)> = tauri::async_runtime::spawn_blocking(move || -> Result<_, String> {
+            let conn = crate::client_db::open_at(&dir)?;
+            imp::ensure_table(&conn)?;
+            let mut stmt = conn
+                .prepare("SELECT m.id, m.video, m.hash, m.size FROM phone_media m JOIN phone_backup b ON b.hash = m.hash AND b.server = ?1")
+                .map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map(params![server2], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get::<_, i64>(3)? as u64)))
+                .map_err(|e| e.to_string())?;
+            Ok(rows.filter_map(Result::ok).collect())
+        })
+        .await
+        .map_err(|e| e.to_string())??;
+        let only: Option<HashSet<String>> = only.map(|o| o.into_iter().collect());
+        let kept: Vec<_> = kept.into_iter().filter(|k| only.as_ref().is_none_or(|o| o.contains(&k.2))).collect();
+        if kept.is_empty() {
+            return Ok(FreeUp::default());
+        }
+        let r = crate::remote::remote(&app);
+        let entry = r.server(&server)?;
+        let token = r.token(&server).ok_or_else(|| format!("Signed out of {}: sign in again in Settings", crate::remote::label_of(&server)))?;
+        let c = Conn { http: r.http.clone(), base: entry.url, token };
+        let mut gone: HashSet<String> = HashSet::new();
+        for batch in kept.chunks(500) {
+            let files: Vec<(String, u64, String)> = batch.iter().map(|k| (k.2.clone(), k.3, String::new())).collect();
+            let missing = transfer::check_missing(&c, &files).await.map_err(|f| match f {
+                transfer::Failure::Network(e) => format!("Can't reach {} to check what it has ({e})", crate::remote::label_of(&server)),
+                transfer::Failure::SignedOut => format!("Signed out of {}: sign in again in Settings", crate::remote::label_of(&server)),
+                transfer::Failure::Refused(e) => e,
+                transfer::Failure::Cancelled => "Cancelled".into(),
+            })?;
+            gone.extend(missing);
+        }
+        // What the server no longer has is backed up again by the next backup
+        if !gone.is_empty() {
+            let (dir, server, gone) = (get_app_storage_dir(&app), server.clone(), gone.clone());
+            let _ = tauri::async_runtime::spawn_blocking(move || {
+                if let Ok(conn) = crate::client_db::open_at(&dir) {
+                    for hash in gone {
+                        let _ = conn.execute("DELETE FROM phone_backup WHERE server = ?1 AND hash = ?2", params![server, hash]);
+                    }
+                }
+            })
+            .await;
+        }
+        let mut out = FreeUp::default();
+        for (id, video, hash, size) in kept {
+            if gone.contains(&hash) {
+                continue;
+            }
+            out.count += 1;
+            out.bytes += size;
+            out.items.push(FreeItem { id, video });
+        }
+        Ok(out)
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (app, server, only);
+        Err("Freeing up space is the phone app's".into())
+    }
+}
+
+// These photos to the phone's trash (Android asks first, and keeps them there 30 days); true when it was allowed
+#[tauri::command]
+pub async fn phone_trash(app: AppHandle, items: Vec<FreeItem>) -> Result<bool, String> {
+    #[cfg(target_os = "android")]
+    {
+        // Not on the main thread: Android's question answers there
+        tauri::async_runtime::spawn_blocking(move || {
+            crate::android::call(&app, "trashMedia", serde_json::json!({ "media": items })).map(|a| a["done"].as_bool().unwrap_or(false))
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (app, items);
+        Err("Freeing up space is the phone app's".into())
+    }
+}
+
 // The phone's folders, with how many `server` has of each
 #[tauri::command]
 pub fn phone_folders(app: AppHandle, server: Option<String>) -> Result<Vec<Folder>, String> {

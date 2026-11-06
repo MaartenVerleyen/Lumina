@@ -172,7 +172,12 @@ impl Remote {
         self.dir.join("remote-cache")
     }
 
-    fn cache_limit(&self) -> u64 {
+    // Where a server's thumbnail or face crop is kept (serve_media, offline.rs)
+    pub fn cache_file(&self, server: &str, kind: &str, id: &str) -> PathBuf {
+        self.cache_root().join(safe(server)).join(kind).join(safe(id))
+    }
+
+    pub fn cache_limit(&self) -> u64 {
         self.settings.lock().unwrap().cache_limit_mb.unwrap_or(DEFAULT_CACHE_MB) * 1024 * 1024
     }
 }
@@ -579,7 +584,7 @@ pub async fn serve_media(app: AppHandle, request: tauri::http::Request<Vec<u8>>)
     }
     let r = remote(&app);
     let cached = CACHED_KINDS.contains(&kind);
-    let cache_file = r.cache_root().join(safe(server)).join(kind).join(safe(id));
+    let cache_file = r.cache_file(server, kind, id);
     if cached {
         if let Ok(bytes) = fs::read(&cache_file) {
             // Recently used: the cache trims the files used longest ago first
@@ -626,6 +631,38 @@ pub async fn serve_media(app: AppHandle, request: tauri::http::Request<Vec<u8>>)
         }
     }
     builder.body(bytes).unwrap()
+}
+
+// A server's thumbnail into the cache, unless it is there (Keep all thumbnails, offline.rs); true when fetched
+pub async fn cache_thumb(app: &AppHandle, server: &str, id: &str) -> Result<bool, String> {
+    let r = remote(app);
+    let file = r.cache_file(server, "thumb", id);
+    if file.exists() || !plain(id) {
+        return Ok(false);
+    }
+    let resp = r.request(server, reqwest::Method::GET, &format!("/media/thumb/{id}"))?.timeout(Duration::from_secs(60)).send().await.map_err(unreachable)?;
+    if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
+        signed_out(app, server);
+    }
+    if !resp.status().is_success() {
+        return Err(error_text(resp).await);
+    }
+    let bytes = resp.bytes().await.map_err(unreachable)?;
+    if let Some(dir) = file.parent() {
+        fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    fs::write(&file, &bytes).map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
+// Makes the cache hold at least this much (Keep all thumbnails)
+pub fn raise_cache_limit(app: &AppHandle, at_least_mb: u64) -> Result<(), String> {
+    let r = remote(app);
+    if r.cache_limit() / 1024 / 1024 >= at_least_mb {
+        return Ok(());
+    }
+    r.settings.lock().unwrap().cache_limit_mb = Some(at_least_mb);
+    r.save()
 }
 
 fn cache_files(root: &Path) -> Vec<(PathBuf, u64, SystemTime)> {

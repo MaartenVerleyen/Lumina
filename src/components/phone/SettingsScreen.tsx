@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { Cloud, Loader2, LogOut, Plus, Server, Smartphone, Trash2 } from "lucide-react";
-import { callLocal } from "../../api";
+import { Cloud, Download, Loader2, LogOut, Plus, Server, Smartphone, Trash2 } from "lucide-react";
+import { allPhotosOnServer, callLocal } from "../../api";
 import { getVersion } from "../../api/platform";
 import { connectServer, removeServer, signOutServer, useServers } from "../../hooks/useServers";
 import { formatBytes } from "../../utils/photoHelpers";
@@ -111,6 +111,7 @@ function AddServer({ onDone }: { onDone: () => void }) {
 }
 
 function StorageSection() {
+  const { servers } = useServers();
   const [thumbs, setThumbs] = useState<{ count: number; bytes: number } | null>(null);
   const [remote, setRemote] = useState<{ bytes: number; limit_mb: number } | null>(null);
   const load = () => {
@@ -134,14 +135,119 @@ function StorageSection() {
         <Cloud className="w-5 h-5 text-zinc-400 shrink-0" />
         <div className="flex-1 min-w-0">
           <div className="text-sm text-zinc-100">Server photos kept for viewing</div>
-          <div className="text-[11px] text-zinc-500">{remote ? `${formatBytes(remote.bytes)} of ${formatBytes(remote.limit_mb * 1024 * 1024)}` : "…"}</div>
+          <div className="text-[11px] text-zinc-500">
+            {remote ? `${formatBytes(remote.bytes)} of ` : "… of "}
+            <select
+              value={remote?.limit_mb ?? 2048}
+              onChange={(e) => callLocal("set_remote_cache_limit", { limitMb: Number(e.target.value) }).then(load)}
+              className="bg-transparent text-emerald-400 underline"
+              aria-label="How much the server photos kept may take"
+            >
+              {LIMITS_MB.concat(remote && !LIMITS_MB.includes(remote.limit_mb) ? [remote.limit_mb] : []).map((mb) => (
+                <option key={mb} value={mb}>
+                  {formatBytes(mb * 1024 * 1024)}
+                </option>
+              ))}
+            </select>
+            {" · the oldest go first"}
+          </div>
         </div>
         <button onClick={() => callLocal("clear_remote_cache").then(load)} className="px-3 py-1.5 rounded-full bg-zinc-800 text-xs text-zinc-200">
           Clear
         </button>
       </div>
+      {servers.filter((x) => x.signed_in).map((x) => (
+        <KeepAll key={x.id} server={x.id} label={x.label} onChange={load} />
+      ))}
     </Section>
   );
+}
+
+const LIMITS_MB = [512, 1024, 2048, 5120, 10240];
+
+// Every thumbnail of a server's library kept on the phone, so the whole library shows without a connection
+// (about 50 KB each); on Wi-Fi only
+function KeepAll({ server, label, onChange }: { server: string; label: string; onChange: () => void }) {
+  const [p, setP] = useState<KeepProgress | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  useEffect(() => {
+    let stop = false;
+    const tick = () =>
+      callLocal<KeepProgress>("keep_thumbs_progress")
+        .then((x) => {
+          if (stop) return;
+          // One keeps at a time, for one server: the others show nothing of it
+          setP(x.server === server ? x : null);
+          if (!x.running) onChange();
+        })
+        .catch(() => {});
+    tick();
+    const timer = window.setInterval(tick, 1000);
+    return () => {
+      stop = true;
+      window.clearInterval(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const ids = allPhotosOnServer(server);
+  const start = async () => {
+    const type = (navigator as Navigator & { connection?: { type?: string } }).connection?.type;
+    if (type && type !== "wifi" && type !== "ethernet") {
+      setNote("On Wi-Fi only: thumbnails of a whole library take a while to download");
+      return;
+    }
+    setNote(null);
+    await callLocal("keep_thumbs", { server, hashes: ids }).catch((e) => setNote(String(e)));
+  };
+  const finished = p && !p.running && p.total > 0;
+  return (
+    <div className="py-2">
+      <div className="flex items-center gap-3">
+        <Download className="w-5 h-5 text-zinc-400 shrink-0" />
+        <div className="flex-1 min-w-0">
+          <div className="text-sm text-zinc-100">Keep all thumbnails of {label}</div>
+          <div className="text-[11px] text-zinc-500">
+            {ids.length.toLocaleString()} photos · about {formatBytes(ids.length * 50 * 1024)} · to look through without a connection
+          </div>
+        </div>
+        {p?.running ? (
+          <button onClick={() => callLocal("stop_keep_thumbs")} className="px-3 py-1.5 rounded-full bg-zinc-800 text-xs text-zinc-200">
+            Stop
+          </button>
+        ) : (
+          <button onClick={start} disabled={ids.length === 0} className="px-3 py-1.5 rounded-full bg-emerald-700 text-xs text-white disabled:opacity-50">
+            Keep
+          </button>
+        )}
+      </div>
+      {p?.running && p.total > 0 && (
+        <div className="pt-2 pl-8">
+          <div className="h-1.5 rounded-full bg-zinc-800 overflow-hidden">
+            <div className="h-full bg-emerald-500" style={{ width: `${Math.round(((p.done + p.had + p.failed) / p.total) * 100)}%` }} />
+          </div>
+          <div className="pt-1 text-[11px] text-zinc-500">
+            {(p.done + p.had).toLocaleString()} of {p.total.toLocaleString()}
+          </div>
+        </div>
+      )}
+      {finished && (
+        <div className="pt-1 pl-8 text-[11px] text-zinc-500">
+          {(p.done + p.had).toLocaleString()} of {p.total.toLocaleString()} kept{p.failed > 0 ? ` · ${p.failed} couldn't be fetched${p.error ? `: ${p.error}` : ""}` : ""}
+        </div>
+      )}
+      {note && <div className="pt-1 pl-8 text-[11px] text-amber-300">{note}</div>}
+    </div>
+  );
+}
+
+interface KeepProgress {
+  server: string;
+  running: boolean;
+  total: number;
+  done: number;
+  had: number;
+  failed: number;
+  error: string | null;
 }
 
 function AboutSection() {

@@ -471,7 +471,60 @@ const lastSegment = (root: string) => root.split(/[\\/]/).filter(Boolean).pop() 
 
 // Every library All photos could show: the folders opened on this computer and the libraries of each server
 // the app is signed in to (in the web client, the libraries of its server)
-export async function allPhotosCandidates(): Promise<Source[]> {
+// The phone app keeps the last list of each server library (offline.rs): it opens from them (startAllPhotosFromKept)
+// and shows a server out of reach as it was last seen. The phone's own list isn't kept: Android lists it without
+// a connection, and sooner than a kept copy of it reads.
+let fromKept = false;
+let offlineServers: string[] = [];
+
+// The next All photos load takes the kept lists where there are some (the window then loads again, for real)
+export function startAllPhotosFromKept() {
+  fromKept = true;
+}
+
+// The content ids of the photos a server holds (its thumbnails are what Keep all thumbnails keeps)
+export function allPhotosOnServer(server: string): string[] {
+  const keys = new Set([...all.sources.values()].filter((s) => s.server === server).map(sourceKey));
+  return [...all.copies.entries()].filter(([, c]) => c.copies.some((k) => keys.has(k))).map(([hash]) => hash);
+}
+
+// The servers the last load couldn't reach, whose photos show as last seen
+export function allPhotosOffline(): string[] {
+  return offlineServers;
+}
+
+async function kept<T>(key: string): Promise<T | null> {
+  const found = await callLocal<{ value: T } | null>("offline_load", { key }).catch(() => null);
+  return found ? found.value : null;
+}
+
+function keep(key: string, value: unknown) {
+  if (onAndroid) void callLocal("offline_save", { key, value }).catch(() => {});
+}
+
+// A list from the server, kept for next time; the kept one when the server can't be reached (or when starting
+// from the kept lists)
+async function keptOr<T>(key: string, server: string, fetch: () => Promise<T>, useKept: boolean): Promise<T> {
+  // A server that didn't answer once in this load isn't waited for again (each try takes the connect timeout)
+  const out = offlineServers.includes(server);
+  if (onAndroid && (useKept || out)) {
+    const old = await kept<T>(key);
+    if (old !== null) return old;
+    if (out) throw new Error(`${server} is out of reach`);
+  }
+  try {
+    const fresh = await fetch();
+    keep(key, fresh);
+    return fresh;
+  } catch (err) {
+    const old = onAndroid ? await kept<T>(key) : null;
+    if (old === null) throw err;
+    if (!offlineServers.includes(server)) offlineServers = [...offlineServers, server];
+    return old;
+  }
+}
+
+export async function allPhotosCandidates(useKept = false): Promise<Source[]> {
   type Listed = { root: string; name?: string; role?: Role };
   const fromServer = (server: string, label: string, list: Listed[], user?: RemoteUser | null): Source[] =>
     list.map((l) => {
@@ -493,7 +546,7 @@ export async function allPhotosCandidates(): Promise<Source[]> {
   const servers = await callLocal<ServerInfo[]>("server_list").catch(() => [] as ServerInfo[]);
   for (const s of servers.filter((s) => s.signed_in)) {
     try {
-      const list = await desktopRemote(s.id).call<Listed[]>("list_libraries");
+      const list = await keptOr(`libraries:${s.id}`, s.id, () => desktopRemote(s.id).call<Listed[]>("list_libraries"), useKept);
       rememberLibraryRoles(list, s.id);
       sources.push(...fromServer(s.id, s.label, list, serverUsers.get(s.id) ?? ({ name: s.user, role: s.role } as RemoteUser)));
     } catch {
@@ -541,7 +594,10 @@ function loadAll(check?: string[]): Promise<PhotoItem[]> {
 }
 
 async function loadAllNow(check?: string[]): Promise<PhotoItem[]> {
-  const sources = includedSources(await allPhotosCandidates(), excludedSources());
+  const useKept = fromKept;
+  fromKept = false;
+  offlineServers = [];
+  const sources = includedSources(await allPhotosCandidates(useKept), excludedSources());
   let localTurn: Promise<unknown> = Promise.resolve();
   const scanHere = (root: string) => {
     const scan = localTurn.then(() => callLocal<PhotoItem[]>("scan_folder", { folderPath: root, forceReprocess: false, keepOthers: true }));
@@ -552,9 +608,15 @@ async function loadAllNow(check?: string[]): Promise<PhotoItem[]> {
     sources.map(async (source) => {
       try {
         const checked = !check || check.some((root) => sameRoot(root, source.root));
+        const server = source.server;
         const photos =
-          source.server !== null
-            ? await engineTransport(source.server).call<PhotoItem[]>("scan_folder", { folderPath: source.root, forceReprocess: false })
+          server !== null
+            ? await keptOr(
+                `photos:${server}|${source.root}`,
+                server,
+                () => engineTransport(server).call<PhotoItem[]>("scan_folder", { folderPath: source.root, forceReprocess: false }),
+                useKept
+              )
             : source.root === PHONE_ROOT
               ? await callLocal<PhotoItem[]>("phone_photos")
               : checked
@@ -575,7 +637,9 @@ async function loadAllNow(check?: string[]): Promise<PhotoItem[]> {
   const names = new Map(
     await Promise.all(
       servers.map(async (server) => {
-        const list = await engineTransport(server).call<PersonName[]>("get_person_names").catch(() => [] as PersonName[]);
+        const list = await keptOr(`names:${server}`, server, () => engineTransport(server).call<PersonName[]>("get_person_names"), useKept).catch(
+          () => [] as PersonName[]
+        );
         return [server, new Map(list.map((n) => [n.person.toLowerCase(), n]))] as const;
       })
     )

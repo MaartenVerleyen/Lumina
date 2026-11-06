@@ -6,6 +6,7 @@ import { formatBytes } from "../../utils/photoHelpers";
 import { Page, Section, Switch, Toggle } from "./PhoneParts";
 import { refreshBackup, setBackupSettings, usePhoneBackup, type BackupProgress, type BackupStatus } from "./usePhoneBackup";
 import { usePhoneFolders, type PhoneFolder } from "./usePhoneFolders";
+import { freeUpScan, moveToTrash, type FreeUp } from "./freeUp";
 
 // The phone app's Backup page (docs/plans/android-app-ui.md), opened from the header's backup button: how far it
 // is, Back up now, when Android backs up by itself, and which of the phone's folders
@@ -117,11 +118,91 @@ export function BackupBanner({ onOpen, onFinished }: { onOpen: () => void; onFin
   );
 }
 
-export default function BackupScreen({ onBack }: { onBack: () => void }) {
+// `onRemoved`: photos left the phone (Free up space), so All photos shows them from the server now
+export default function BackupScreen({ onBack, onRemoved }: { onBack: () => void; onRemoved: () => void }) {
   return (
     <Page title="Backup" onBack={onBack}>
       <BackupSection />
+      <FreeUpSection onRemoved={onRemoved} />
+      <FoldersSection />
     </Page>
+  );
+}
+
+// Photos the server has can leave the phone: they stay on the server and in Lumina, and in the phone's trash for
+// 30 days
+function FreeUpSection({ onRemoved }: { onRemoved: () => void }) {
+  const { settings } = usePhoneBackup();
+  const { servers } = useServers();
+  const server = settings?.server ?? null;
+  const label = servers.find((s) => s.id === server)?.label ?? server ?? "";
+  const [scan, setScan] = useState<FreeUp | null>(null);
+  const [state, setState] = useState<"checking" | "ready" | "removing" | "error">("checking");
+  const [message, setMessage] = useState<string | null>(null);
+  const check = () => {
+    if (!server) return;
+    setState("checking");
+    setMessage(null);
+    freeUpScan(server)
+      .then((s) => {
+        setScan(s);
+        setState("ready");
+      })
+      .catch((e) => {
+        setMessage(String(e));
+        setState("error");
+      });
+  };
+  useEffect(check, [server]);
+  if (!server) return null;
+  const remove = async () => {
+    if (!scan) return;
+    setState("removing");
+    try {
+      const done = await moveToTrash(scan);
+      if (done) {
+        setMessage(`${scan.count.toLocaleString()} removed from this phone: they stay on ${label}, and in the phone's trash for 30 days.`);
+        setScan(null);
+        onRemoved();
+        refreshBackup();
+      }
+      setState("ready");
+    } catch (e) {
+      setMessage(String(e));
+      setState("error");
+    }
+  };
+  return (
+    <Section title="Free up space">
+      {state === "checking" ? (
+        <div className="flex items-center gap-2 py-2 text-xs text-zinc-400">
+          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+          Asking {label} what it has…
+        </div>
+      ) : scan && scan.count > 0 ? (
+        <>
+          <div className="py-1 text-sm text-zinc-200">
+            {scan.count.toLocaleString()} photos on this phone are backed up on {label} ({formatBytes(scan.bytes)}).
+          </div>
+          <div className="pb-2 text-xs text-zinc-400">Remove them from this phone? They stay on {label}, and in Lumina.</div>
+          <button
+            onClick={remove}
+            disabled={state === "removing"}
+            className="w-full py-3 rounded-full bg-zinc-800 text-sm font-semibold text-zinc-100 active:bg-zinc-700 disabled:opacity-50"
+          >
+            {state === "removing" ? "Waiting for Android…" : "Remove from this phone"}
+          </button>
+        </>
+      ) : (
+        <div className="py-2 text-xs text-zinc-400">{message ?? `Nothing to remove: no photo on this phone is backed up on ${label} yet.`}</div>
+      )}
+      {message && scan && <div className="pt-2 text-xs text-zinc-400">{message}</div>}
+      {state === "error" && (
+        <button onClick={check} className="pt-1 text-xs text-emerald-400">
+          Try again
+        </button>
+      )}
+    </Section>
   );
 }
 
@@ -133,7 +214,6 @@ function BackupSection() {
   const [error, setError] = useState<string | null>(null);
   const server = settings?.server ?? signedIn[0]?.id ?? null;
   const serverLabel = servers.find((s) => s.id === server)?.label ?? server ?? "";
-  const folders = usePhoneFolders(server, status?.backed_up);
 
   if (!settings) return <Section title="">{error ?? <div className="py-2 text-sm text-zinc-400">Loading…</div>}</Section>;
   if (!server) {
@@ -162,12 +242,6 @@ function BackupSection() {
     } catch (e) {
       setError(String(e));
     }
-  };
-  const toggleFolder = (folder: string, on: boolean) => {
-    const set = new Set(settings.folders);
-    if (on) set.add(folder);
-    else set.delete(folder);
-    void change({ folders: [...set] });
   };
   const p = status?.progress;
   return (
@@ -232,8 +306,25 @@ function BackupSection() {
           ))}
         </details>
       )}
+    </Section>
+  );
+}
 
-      <h3 className="pt-4 pb-1 text-[11px] uppercase tracking-wider text-zinc-500">Folders</h3>
+// Which of the phone's folders are backed up (the camera's by default)
+function FoldersSection() {
+  const { settings, status } = usePhoneBackup();
+  const folders = usePhoneFolders(settings?.server ?? null, status?.backed_up);
+  if (!settings?.server) return null;
+  const toggleFolder = (folder: string, on: boolean) => {
+    const set = new Set(settings.folders);
+    if (on) set.add(folder);
+    else set.delete(folder);
+    const updated = { ...settings, folders: [...set] };
+    setBackupSettings(updated);
+    void callLocal("set_phone_backup", { settings: updated }).catch(() => {});
+  };
+  return (
+    <Section title="Folders">
       {folders === null ? (
         <div className="py-2 text-xs text-zinc-500">Loading…</div>
       ) : (

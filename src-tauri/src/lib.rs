@@ -21,6 +21,7 @@ mod android;
 mod android_jni;
 mod phone;
 mod phone_backup;
+mod offline;
 mod follows;
 
 use db::*;
@@ -202,6 +203,11 @@ pub fn run() {
             remote::remote_cache_info,
             remote::set_remote_cache_limit,
             remote::clear_remote_cache,
+            offline::offline_save,
+            offline::offline_load,
+            offline::keep_thumbs,
+            offline::keep_thumbs_progress,
+            offline::stop_keep_thumbs,
             transfers::upload_paths,
             transfers::back_up,
             transfers::share_photos,
@@ -211,6 +217,8 @@ pub fn run() {
             phone::phone_haptic,
             phone_backup::phone_backup_selected,
             phone_backup::phone_folders,
+            phone_backup::phone_free_up_scan,
+            phone_backup::phone_trash,
             phone::phone_thumbs_info,
             phone::clear_phone_thumbs,
             phone_backup::phone_backup_status,

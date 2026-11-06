@@ -231,3 +231,20 @@ library of yours from the desktop instead.
   waits, and when Wi-Fi returns Android starts it in a new process with the app closed. Debug builds only: a
   file `phone-backup-limit` in the app's folder backs up just the newest N (for tests), and the screen stays on
   while the app is in front.
+
+### Milestone 4 (2026-11-06, checked on the same phone; free up space with a test photo of its own)
+
+- **Free up space** (Backup page, above the folders, and "Remove from this phone" for a selection): `phone_free_up_scan` takes the
+  phone's photos the backup has seen on its server and asks the server again just then (content id and size);
+  what it no longer has is left out, and forgotten so the next backup sends it again. `phone_trash` hands them to
+  Android's trash request (`MediaStore.createTrashRequest`, Android 11 and later): Android asks once for all of
+  them and keeps them in its trash for 30 days. All photos then shows them from the server.
+- **Without a connection** (`offline.rs`, `keptOr` in `src/api/index.ts`): the last list of each server library,
+  its libraries and its people's names are kept on the phone; All photos opens from them and then loads again for
+  real. A server out of reach shows as last seen ("offline: cachy as last seen" in the header), and isn't asked
+  again in that load (each try waits for the connect timeout). Smart search says it needs a connection. The
+  phone's own list isn't kept: Android lists it without a connection, and sooner (1.5 s) than a kept copy of
+  9 MB reads (1.9 s). Without a connection All photos opens in about 2.6 s, as with one.
+- Thumbnails the grid showed stay in the server cache (as before); Settings chooses its size (512 MB to 10 GB,
+  the oldest out first) and **Keep all thumbnails** of a server fetches every one, four at a time, on Wi-Fi only,
+  raising the cache to hold them.
