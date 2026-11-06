@@ -50,7 +50,7 @@ jobs:
           - os: ubuntu-24.04
             platform: linux-x86_64
           # Apple Silicon only: ONNX Runtime has no prebuilt build for Intel Macs
-          - os: macos-14
+          - os: macos-15
             platform: darwin-aarch64
     runs-on: ${{ matrix.os }}
     env:
@@ -161,8 +161,11 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      # The SDK with its licenses accepted; Gradle fetches the platform and build tools it names itself
+      # The SDK with its licenses accepted; Gradle fetches the platform and build tools it names itself. Only
+      # platform-tools: the action's default also asks for "tools", which the SDK no longer has
       - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
 
       - name: Android NDK
         run: |
