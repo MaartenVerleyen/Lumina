@@ -195,6 +195,14 @@ Videos: MP4, MOV, M4V, 3GP, AVI, MTS, M2TS and MPG.
   on the Mac itself comes later. The app isn't signed by Apple yet: the first time, right-click Lumina in
   Applications and choose **Open**, then **Open** again. Intel Macs aren't supported.
 
+### Android
+
+- **Android 11 or later, 64-bit (arm64):** each release has `Lumina_<version>_android_arm64.apk`. Open it on the
+  phone to install it (Android asks to allow installing from your browser or file manager the first time); the
+  app then tells you when a newer version is out. It works with a Lumina server: browse and search its library
+  next to the phone's own photos, back the phone up, free up space and follow shared albums. Removing photos
+  needs Android 11; the rest works from Android 10.
+
 ## Development
 
 Prerequisites: Node.js 18+, the Rust toolchain ([rustup.rs](https://rustup.rs)) and the

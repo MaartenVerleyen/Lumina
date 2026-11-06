@@ -14,6 +14,16 @@ export interface ReleaseNotes {
 // Newest first. Add an entry for every release that should greet updating users with "What's new".
 export const RELEASE_NOTES: ReleaseNotes[] = [
   {
+    version: "5.1.0",
+    items: [
+      { title: "Lumina on your phone", text: "Lumina for Android: your phone's photos and your server's library in one timeline, each photo once. An amber mark shows what isn't backed up yet, a cloud what is only on the server. Pinch to change the size, drag the handle on the edge to jump through the years, long-press and drag to select. Install the APK from the release; the app tells you when there is a newer one." },
+      { title: "The phone backs itself up", text: "Turn on Backup and the phone sends its new photos and videos to your server by itself, also with the app closed: on Wi-Fi only and while charging if you like, and only the folders you choose (the camera's to start with). Back up now, or back up just a selection. A card shows how far it is." },
+      { title: "Free up space", text: "Photos the server has can leave the phone: Lumina asks the server first, then Android asks you. They stay on the server and in Lumina, and in the phone's bin for 30 days." },
+      { title: "Search and albums on the phone", text: "Search by people, places, things or what's in a photo (smart search). Albums shows your server's albums and the phone's own folders, each with whether it is backed up. Follow an album shared with you and its photos come into your phone's gallery, new ones by themselves." },
+      { title: "Without a connection", text: "The phone keeps the last list of your server's photos and the thumbnails you looked at, so your library opens without a connection too. Keep all thumbnails of a library to look through all of it offline." },
+    ],
+  },
+  {
     version: "5.0.0",
     items: [
       { title: "A home server", text: "Lumina now also runs as a server on a Linux PC at home (in Docker, with the GPU). It keeps your library, finds faces, makes smart search work and writes captions by itself, and everyone in the house reaches it from Lumina on their computer, or from a web browser, over Tailscale. Your photos still never leave your own machines." },
