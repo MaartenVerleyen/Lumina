@@ -869,40 +869,107 @@ pub async fn back_up(app: AppHandle, server: String, hashes: Vec<String>, with_v
     Ok(queued)
 }
 
-// The phone app: a photo's original to another app, downloaded into the app's cache first and then handed to
-// Android's share sheet. Only one shared file is kept at a time.
-#[tauri::command]
-pub async fn share_photo(app: AppHandle, server: String, hash: String) -> Result<(), String> {
-    #[cfg(target_os = "android")]
-    {
-        use tauri::Manager;
-        let c = conn(&app, &server).ok_or_else(|| format!("Signed out of {server}: sign in again in Settings"))?;
-        let dir = app.path().app_cache_dir().map_err(|e| e.to_string())?.join("share");
-        let _ = fs::remove_dir_all(&dir);
-        let (path, _) = transfer::download_one(&c, &hash, &dir, &AtomicU64::new(0), &AtomicBool::new(false))
+// The phone app: photos to another app through Android's share sheet. A photo of the phone goes as it is; a
+// server's original is downloaded into the app's cache first (only the last shared files are kept there).
+#[derive(Deserialize)]
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+pub struct ShareItem {
+    hash: String,
+    path: String,
+    // The server it is on, for a photo that isn't on the phone
+    #[serde(default)]
+    server: Option<String>,
+    #[serde(default)]
+    video: bool,
+}
+
+// The files of these photos on the phone: a photo of the phone as it is (its media store id), a server's original
+// downloaded into the app's cache (`folder` there, emptied first)
+#[cfg(target_os = "android")]
+async fn fetch_for_phone(app: &AppHandle, items: &[ShareItem], folder: &str) -> Result<(Vec<PathBuf>, Vec<(i64, bool)>), String> {
+    use tauri::Manager;
+    let mut media = Vec::new();
+    let mut files = Vec::new();
+    let dir = app.path().app_cache_dir().map_err(|e| e.to_string())?.join(folder);
+    let _ = fs::remove_dir_all(&dir);
+    for item in items {
+        if let Some(m) = crate::phone::media_of(&item.path) {
+            media.push(m);
+            continue;
+        }
+        let server = item.server.as_deref().ok_or_else(|| format!("{} isn't on this phone or a server", item.path))?;
+        let c = conn(app, server).ok_or_else(|| format!("Signed out of {server}: sign in again in Settings"))?;
+        let (path, _) = transfer::download_one(&c, &item.hash, &dir, &AtomicU64::new(0), &AtomicBool::new(false))
             .await
             .map_err(|f| match f {
                 Failure::Refused(e) | Failure::Network(e) => e,
                 Failure::SignedOut => format!("Signed out of {server}: sign in again in Settings"),
                 Failure::Cancelled => "Cancelled".to_string(),
             })?;
-        let ext = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
-        let mime = match ext.as_str() {
-            "jpg" | "jpeg" => "image/jpeg",
-            "png" => "image/png",
-            "heic" | "heif" => "image/heic",
-            "webp" => "image/webp",
-            "mp4" | "m4v" => "video/mp4",
-            "mov" => "video/quicktime",
-            _ if video_meta::is_video_ext(&ext) => "video/*",
-            _ => "image/*",
-        };
-        crate::android::share_file(&app, &path, mime)
+        files.push(path);
+    }
+    Ok((files, media))
+}
+
+#[cfg(target_os = "android")]
+fn mime_of(items: &[ShareItem]) -> &'static str {
+    if items.iter().all(|i| i.video) {
+        "video/*"
+    } else if items.iter().all(|i| !i.video) {
+        "image/*"
+    } else {
+        "*/*"
+    }
+}
+
+#[tauri::command]
+pub async fn share_photos(app: AppHandle, items: Vec<ShareItem>) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        let (files, media) = fetch_for_phone(&app, &items, "share").await?;
+        crate::android::share(&app, &files, &media, mime_of(&items))
     }
     #[cfg(not(target_os = "android"))]
     {
-        let _ = (app, server, hash);
+        let _ = (app, items);
         Err("Sharing to another app is the phone app's".into())
+    }
+}
+
+// The phone app: server photos into the phone's own gallery (Pictures/Lumina, videos in Movies/Lumina), where
+// other apps see them too; answers how many were saved
+#[tauri::command]
+pub async fn save_to_phone(app: AppHandle, items: Vec<ShareItem>) -> Result<usize, String> {
+    #[cfg(target_os = "android")]
+    {
+        let servers: Vec<ShareItem> = items.into_iter().filter(|i| crate::phone::media_of(&i.path).is_none()).collect();
+        let (files, _) = fetch_for_phone(&app, &servers, "save").await?;
+        let saved = crate::android::save_to_gallery(&app, &files);
+        if let Some(dir) = files.first().and_then(|f| f.parent()) {
+            let _ = fs::remove_dir_all(dir);
+        }
+        saved
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (app, items);
+        Err("Saving to the phone is the phone app's".into())
+    }
+}
+
+// The phone app: a photo in another app (Android asks which)
+#[tauri::command]
+pub async fn open_with(app: AppHandle, item: ShareItem) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        let items = [item];
+        let (files, media) = fetch_for_phone(&app, &items, "open").await?;
+        crate::android::open_with(&app, files.first(), media.first().copied(), mime_of(&items))
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (app, item);
+        Err("Opening in another app is the phone app's".into())
     }
 }
 

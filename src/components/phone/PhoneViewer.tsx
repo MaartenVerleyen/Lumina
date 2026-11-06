@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { ChevronLeft, Info, Loader2, MapPin, Camera, Share2, X } from "lucide-react";
-import { allPhotosServerOf, callLocal, mediaUrl, onAndroid, openLibraryIsAll, openLibraryServer } from "../../api";
+import { ChevronLeft, Cloud, CloudOff, CloudUpload, Download, ExternalLink, FileImage, FolderOpen, Info, Loader2, MapPin, Camera, MoreVertical, Share2, Smartphone, X } from "lucide-react";
+import { allPhotosCanBackUp, allPhotosSources, callLocal, mediaUrl, onAndroid, openLibraryIsAll } from "../../api";
+import { whereabouts, type Source } from "../../api/allPhotos";
+import { useServers } from "../../hooks/useServers";
+import { openWith, saveToPhone, serverOf, sharePhotos } from "./share";
 import type { PhotoItem } from "../../types/lumina";
-import { thumbSrc } from "../../utils/photoHelpers";
+import { formatBytes, thumbSrc } from "../../utils/photoHelpers";
 import { isVideo } from "../../utils/media";
 import LoupeVideo from "../modals/LoupeVideo";
 
@@ -33,18 +36,21 @@ interface Gesture {
 
 // The phone layout's full-screen viewer: swipe sideways for the next photo, down to close, up for the
 // details; pinch or double-tap to zoom. Videos play with the browser's own controls.
-export default function MobileViewer({
+export default function PhoneViewer({
   photos,
   index,
   onIndex,
   onClose,
   onPerson,
+  onShowFolder,
 }: {
   photos: PhotoItem[];
   index: number;
   onIndex: (index: number) => void;
   onClose: () => void;
   onPerson: (name: string) => void;
+  // The phone app: the phone's folder this photo is in (Albums)
+  onShowFolder?: (photo: PhotoItem) => void;
 }) {
   const photo = photos[index];
   const video = photo ? isVideo(photo) : false;
@@ -53,6 +59,8 @@ export default function MobileViewer({
   const [touching, setTouching] = useState(false);
   const [chrome, setChrome] = useState(true);
   const [info, setInfo] = useState(false);
+  const [menu, setMenu] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const gesture = useRef<Gesture>({ mode: "none", startX: 0, startY: 0, startTime: 0, moved: false, viewScale: 1, viewX: 0, viewY: 0, startDistance: 0 });
   const lastTap = useRef(0);
@@ -244,16 +252,143 @@ export default function MobileViewer({
           <button onClick={() => setInfo(true)} className="p-2 rounded-full text-white active:bg-white/20" aria-label="Details">
             <Info className="w-5 h-5" />
           </button>
+          {onAndroid && (
+            <button onClick={() => setMenu(true)} className="p-2 rounded-full text-white active:bg-white/20" aria-label="More">
+              <MoreVertical className="w-5 h-5" />
+            </button>
+          )}
         </div>
       )}
 
-      {info && <Details photo={photo} onClose={() => setInfo(false)} onPerson={onPerson} />}
+      {chrome && !info && photos.length > 1 && <Filmstrip photos={photos} index={index} onIndex={onIndex} />}
+
+      {notice && (
+        <div data-viewer-chrome className="absolute left-1/2 -translate-x-1/2 bottom-28 max-w-[85%] rounded-full bg-raised/95 border border-zinc-700 px-4 py-2 text-xs text-zinc-100 shadow-lg">
+          {notice}
+        </div>
+      )}
+
+      {info && (
+        <Details
+          photo={photo}
+          onClose={() => setInfo(false)}
+          onPerson={onPerson}
+          onAction={(what) => void act(what, photo, setNotice)}
+        />
+      )}
+      {menu && (
+        <Menu
+          photo={photo}
+          onClose={() => setMenu(false)}
+          onAction={(what) => {
+            setMenu(false);
+            if (what === "folder") onShowFolder?.(photo);
+            else void act(what, photo, setNotice);
+          }}
+          canShowFolder={!!onShowFolder && photo.path.startsWith("phone:")}
+        />
+      )}
     </div>
   );
 }
 
-// The phone app: the photo to another app. A photo of the phone goes as it is; a server's original is downloaded
-// first. Then Android's share sheet.
+type Action = "share" | "save" | "backup" | "open" | "folder";
+
+// Where a photo is, as All photos knows it: on this phone, and which servers
+function whereOf(photo: PhotoItem): { phone: boolean; servers: string[]; where: ReturnType<typeof whereabouts> } | null {
+  if (!openLibraryIsAll() || !photo.copies) return null;
+  const sources = allPhotosSources();
+  const found = photo.copies.map((k) => sources.get(k)).filter((x): x is Source => !!x);
+  return {
+    phone: found.some((x) => x.server === null),
+    servers: [...new Set(found.filter((x) => x.server !== null).map((x) => x.server!))],
+    where: whereabouts(photo, sources, allPhotosCanBackUp()),
+  };
+}
+
+async function act(what: Action, photo: PhotoItem, notify: (text: string | null) => void) {
+  const say = (text: string) => {
+    notify(text);
+    window.setTimeout(() => notify(null), 3500);
+  };
+  try {
+    if (what === "share") await sharePhotos([photo]);
+    else if (what === "open") await openWith(photo);
+    else if (what === "save") {
+      say("Downloading to this phone…");
+      const n = await saveToPhone([photo]);
+      say(n > 0 ? "Saved to this phone (Pictures/Lumina)" : "Nothing to save");
+    } else if (what === "backup") {
+      await callLocal("phone_backup_selected", { hashes: [photo.hash] });
+      say("Backing up…");
+    }
+  } catch (e) {
+    say(String(e));
+  }
+}
+
+// ⋮: what can be done with this photo here
+function Menu({ photo, onClose, onAction, canShowFolder }: { photo: PhotoItem; onClose: () => void; onAction: (what: Action) => void; canShowFolder: boolean }) {
+  const where = whereOf(photo);
+  const items: { what: Action; label: string; icon: typeof Share2 }[] = [
+    { what: "share", label: "Share", icon: Share2 },
+    ...(serverOf(photo) && !where?.phone ? [{ what: "save" as const, label: "Download to this phone", icon: Download }] : []),
+    ...(where?.where === "not-backed-up" ? [{ what: "backup" as const, label: "Back up now", icon: CloudUpload }] : []),
+    { what: "open", label: "Open with…", icon: ExternalLink },
+    ...(canShowFolder ? [{ what: "folder" as const, label: "Show in its folder", icon: FolderOpen }] : []),
+  ];
+  return (
+    <div data-viewer-chrome className="absolute inset-0 z-10" onClick={onClose}>
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="absolute right-2 min-w-[210px] rounded-2xl bg-raised border border-zinc-700/80 py-1.5 shadow-2xl"
+        style={{ top: "calc(env(safe-area-inset-top) + 3.5rem)" }}
+      >
+        {items.map(({ what, label, icon: Icon }) => (
+          <button key={what} onClick={() => onAction(what)} className="w-full flex items-center gap-3 px-4 py-3 text-left text-sm text-zinc-100 active:bg-white/10">
+            <Icon className="w-[18px] h-[18px] text-zinc-400" />
+            {label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// The photos around this one, to jump to
+function Filmstrip({ photos, index, onIndex }: { photos: PhotoItem[]; index: number; onIndex: (i: number) => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const from = Math.max(0, index - 40);
+  const shown = photos.slice(from, index + 41);
+  useEffect(() => {
+    const el = ref.current?.querySelector<HTMLElement>("[data-current]");
+    el?.scrollIntoView({ inline: "center", block: "nearest", behavior: "smooth" });
+  }, [index]);
+  return (
+    <div
+      data-viewer-chrome
+      ref={ref}
+      className="absolute bottom-0 inset-x-0 flex gap-1 overflow-x-auto px-[45%] pt-6 bg-gradient-to-t from-black/70 to-transparent [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 0.75rem)" }}
+    >
+      {shown.map((p, k) => {
+        const i = from + k;
+        return (
+          <button
+            key={p.hash}
+            data-current={i === index ? "" : undefined}
+            onClick={() => onIndex(i)}
+            className={`shrink-0 overflow-hidden rounded transition-all ${i === index ? "w-12 h-14 ring-2 ring-white" : "w-9 h-14 opacity-70"}`}
+          >
+            {p.thumb_ready && <img src={thumbSrc(p)} alt="" draggable={false} className="w-full h-full object-cover" />}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// The phone app: the photo to another app (Android's share sheet)
 function ShareButton({ photo }: { photo: PhotoItem }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -261,13 +396,7 @@ function ShareButton({ photo }: { photo: PhotoItem }) {
     setBusy(true);
     setError(null);
     try {
-      if (photo.path.startsWith("phone:")) {
-        await callLocal("share_phone_photo", { path: photo.path, mime: isVideo(photo) ? "video/*" : "image/*" });
-        return;
-      }
-      const server = openLibraryIsAll() ? allPhotosServerOf(photo.hash) : openLibraryServer();
-      if (!server) throw new Error("This photo isn't on a server");
-      await callLocal("share_photo", { server, hash: photo.hash });
+      await sharePhotos([photo]);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -284,8 +413,24 @@ function ShareButton({ photo }: { photo: PhotoItem }) {
   );
 }
 
-function Details({ photo, onClose, onPerson }: { photo: PhotoItem; onClose: () => void; onPerson: (name: string) => void }) {
-  const exposure = [photo.aperture && `f/${String(photo.aperture).replace(/^f\//, "")}`, photo.shutter_speed, photo.iso && `ISO ${String(photo.iso).replace(/^ISO\s*/i, "")}`]
+function Details({
+  photo,
+  onClose,
+  onPerson,
+  onAction,
+}: {
+  photo: PhotoItem;
+  onClose: () => void;
+  onPerson: (name: string) => void;
+  onAction: (what: Action) => void;
+}) {
+  const { servers } = useServers();
+  const where = whereOf(photo);
+  const labelOf = (id: string) => servers.find((x) => x.id === id)?.label ?? id;
+  const faces = (photo.faces ?? []).filter((f) => f.face_thumb);
+  const aperture = photo.aperture ? `f/${String(photo.aperture).replace(/^f\//, "")}` : "";
+  // A phone's lens name often holds the aperture already ("5.96mm f/1.6")
+  const exposure = [aperture && !(photo.lens_model ?? "").includes(aperture) && aperture, photo.shutter_speed, photo.iso && `ISO ${String(photo.iso).replace(/^ISO\s*/i, "")}`]
     .filter(Boolean)
     .join(" · ");
   return (
@@ -307,8 +452,44 @@ function Details({ photo, onClose, onPerson }: { photo: PhotoItem; onClose: () =
             <X className="w-5 h-5" />
           </button>
         </div>
-        {photo.location && (
+        {where && (
           <div className="mt-3 flex items-center gap-2 text-xs text-zinc-300">
+            {where.where === "not-backed-up" ? (
+              <CloudOff className="w-4 h-4 text-amber-400 shrink-0" />
+            ) : where.phone ? (
+              <Smartphone className="w-4 h-4 text-emerald-400 shrink-0" />
+            ) : (
+              <Cloud className="w-4 h-4 text-sky-400 shrink-0" />
+            )}
+            <span className="flex-1">
+              {where.phone && where.servers.length > 0
+                ? `On this phone and on ${where.servers.map(labelOf).join(", ")}`
+                : where.phone
+                  ? "Only on this phone"
+                  : `Only on ${where.servers.map(labelOf).join(", ")}`}
+            </span>
+            {onAndroid && where.where === "not-backed-up" && (
+              <button onClick={() => onAction("backup")} className="px-2.5 py-1 rounded-full bg-amber-500/15 border border-amber-500/40 text-amber-200 active:bg-amber-500/30">
+                Back up now
+              </button>
+            )}
+            {onAndroid && !where.phone && (
+              <button onClick={() => onAction("save")} className="px-2.5 py-1 rounded-full bg-zinc-800 border border-zinc-700 text-zinc-200 active:bg-zinc-700">
+                Download
+              </button>
+            )}
+          </div>
+        )}
+        <div className="mt-2 flex items-center gap-2 text-xs text-zinc-300">
+          <FileImage className="w-4 h-4 text-emerald-400 shrink-0" />
+          <span className="truncate">
+            {[photo.name, photo.size_kb > 0 ? formatBytes(photo.size_kb * 1024) : "", photo.width > 0 ? `${((photo.width * photo.height) / 1e6).toFixed(1)} MP` : ""]
+              .filter(Boolean)
+              .join(" · ")}
+          </span>
+        </div>
+        {photo.location && (
+          <div className="mt-2 flex items-center gap-2 text-xs text-zinc-300">
             <MapPin className="w-4 h-4 text-emerald-400 shrink-0" />
             {photo.location}
           </div>
@@ -319,7 +500,22 @@ function Details({ photo, onClose, onPerson }: { photo: PhotoItem; onClose: () =
             <span>{[photo.camera_model, photo.lens_model, exposure].filter(Boolean).join(" · ")}</span>
           </div>
         )}
-        {photo.people.length > 0 && (
+        {faces.some((f) => f.person_name) && (
+          <div className="mt-4">
+            <div className="text-[11px] uppercase tracking-wider text-zinc-500 mb-2">People</div>
+            <div className="flex gap-3 overflow-x-auto pb-1">
+              {faces
+                .filter((f) => f.person_name)
+                .map((f) => (
+                  <button key={f.face_id} onClick={() => onPerson(f.person_name!)} className="shrink-0 flex flex-col items-center gap-1 w-14">
+                    <img src={mediaUrl({ kind: "face", path: f.face_thumb })} alt="" className="w-12 h-12 rounded-full object-cover bg-zinc-800" />
+                    <span className="text-[11px] text-zinc-300 truncate w-full text-center">{f.person_name}</span>
+                  </button>
+                ))}
+            </div>
+          </div>
+        )}
+        {!faces.some((f) => f.person_name) && photo.people.length > 0 && (
           <div className="mt-4">
             <div className="text-[11px] uppercase tracking-wider text-zinc-500 mb-1.5">People</div>
             <div className="flex flex-wrap gap-1.5">

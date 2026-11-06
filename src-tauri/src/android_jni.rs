@@ -53,6 +53,15 @@ pub fn open_media(id: i64, video: bool) -> Result<std::fs::File, String> {
     Ok(unsafe { std::fs::File::from_raw_fd(fd) })
 }
 
+// Whether the phone's files are read as they are (with their locations): else Android hands out copies without
+pub fn reads_originals() -> bool {
+    with_env(|env, b| {
+        let class = <&JClass>::from(b.store.as_obj());
+        env.call_static_method(class, "originals", "()Z", &[])?.z()
+    })
+    .unwrap_or(false)
+}
+
 pub fn token_get(name: &str) -> Option<String> {
     with_env(|env, b| {
         let class = <&JClass>::from(b.tokens.as_obj());
@@ -97,10 +106,13 @@ pub extern "system" fn Java_com_amazhr_lumina_Native_backupPass(
     server: JString,
     media: JString,
     videos: jboolean,
+    folders: JString,
+    selection: jboolean,
 ) -> jstring {
     let mut text = |s: &JString| env.get_string(s).map(String::from).unwrap_or_default();
-    let (data_dir, server, media) = (text(&data_dir), text(&server), text(&media));
-    let outcome = crate::phone_backup::pass(std::path::Path::new(&data_dir), &server, &media, videos != 0);
+    let (data_dir, server, media, folders) = (text(&data_dir), text(&server), text(&media), text(&folders));
+    let folders: Vec<String> = serde_json::from_str(&folders).unwrap_or_default();
+    let outcome = crate::phone_backup::pass(std::path::Path::new(&data_dir), &server, &media, videos != 0, &folders, selection != 0);
     answer(&mut env, &outcome)
 }
 

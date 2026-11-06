@@ -1,8 +1,10 @@
 package com.amazhr.lumina
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.content.ContentUris
 import android.content.Context
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
@@ -56,14 +58,31 @@ object PhoneStore {
     return items
   }
 
+  // Whether Lumina reads the files as they are: with the access to the photos' locations Android gives the
+  // original, else a copy with the location taken out (other bytes, so another content id, and no GPS)
+  fun readsOriginals(): Boolean =
+    Build.VERSION.SDK_INT < 29 || context.checkSelfPermission(Manifest.permission.ACCESS_MEDIA_LOCATION) == PackageManager.PERMISSION_GRANTED
+
   // A file descriptor of the photo or video for Rust, which closes it; -1 when it can't be opened. Called
   // from Rust's own threads, so it never touches the UI.
   @SuppressLint("Recycle")
   @JvmStatic
-  fun open(id: Long, video: Boolean): Int =
-    try {
-      context.contentResolver.openFileDescriptor(uriOf(id, video), "r")?.detachFd() ?: -1
+  fun open(id: Long, video: Boolean): Int {
+    val uri = uriOf(id, video)
+    if (Build.VERSION.SDK_INT >= 29 && readsOriginals()) {
+      try {
+        context.contentResolver.openFileDescriptor(MediaStore.setRequireOriginal(uri), "r")?.let { return it.detachFd() }
+      } catch (e: Exception) {
+      }
+    }
+    return try {
+      context.contentResolver.openFileDescriptor(uri, "r")?.detachFd() ?: -1
     } catch (e: Exception) {
       -1
     }
+  }
+
+  // For Rust: whether the files it reads have their locations (it reads them again once they do)
+  @JvmStatic
+  fun originals(): Boolean = readsOriginals()
 }

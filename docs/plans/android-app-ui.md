@@ -189,3 +189,40 @@ Then `android.md` milestone 4 (free up space and offline) goes on with these scr
 - A photo opens, swipes, zooms, shows its details and closes with a swipe down.
 - The phone's folders show with their backup state, and backing up only the camera works.
 - Search finds people, places and things from the explore page, and smart search says what it can't search.
+
+## What was built (2026-11-06, all five steps, checked on Maarten's phone over USB; waiting for his review)
+
+- **Photos** (`PhoneGrid.tsx`): headings per day (per month at 7 and 9 columns); marks (amber only on this phone,
+  a cloud only on the server, violet shared with you) and a spinner on photos uploading; pinch through 3, 4, 5, 7
+  and 9 columns, around the photo under the fingers, remembered; the fast scroller with a month bubble;
+  long-press (with a vibration) and drag to select, a day's heading selects the day; pull to refresh. Selection
+  bar: Share (several at once), Download to this phone for server-only photos, Back up for phone-only ones; the
+  back gesture ends a selection.
+- **Viewer** (`PhoneViewer.tsx`): a filmstrip; details with where the photo is (with Back up now or Download),
+  file, camera, faces with their names, caption and tags; ⋮: Share, Download to this phone (into
+  `Pictures/Lumina` through the media store), Back up now, Open with…, Show in its folder.
+- **Backup and Settings** (Maarten's review: one Library tab held too much): the header's backup ring opens the
+  Backup page (`BackupScreen.tsx`: progress, Back up now, the conditions, the phone's folders each switched on or
+  off, the camera's by default; `phone_media` keeps each photo's folder, the pass and the counts follow the
+  choice); the account button (the user's initial) opens Settings (`SettingsScreen.tsx`: servers, the thumbnails
+  and server cache kept on the phone, About). Both are pages over the tabs, closed with the back gesture; the
+  tabs are Photos, Search and Albums.
+- **Albums** (`AlbumsScreen.tsx`): the server's albums as cards with covers, trips and events in a row, the
+  phone's folders with their backup state; a folder opens as its own grid.
+- **Search** (`SearchScreen.tsx`): the field with smart search, recent searches, People (All opens the grid of
+  faces), Places (the map, and cities by count), Things (the most used tags, each with its own cover). Results
+  show in Photos; a smart search says how many photos only on this phone it couldn't look into. All photos no
+  longer asks the phone's own engine (it has no library, and its smart search waited for models it hasn't got).
+- **Back up for a selection** (fixed after Maarten's try): the debug-only test limit no longer cuts a selection
+  short; selections add up (a second one while the first runs is kept, `phone-backup-only.json`), and a selection's
+  pass never turns into a whole backup. Back up now is expedited (Android starts it at once). A long-press lifted
+  without moving no longer takes the photo off again (the click after the touch), and the chips stay while
+  selecting so the grid doesn't move under the finger. **Progress:** a card over the bottom of the screen while a
+  backup runs ("Backing up · 3 of 12" with a bar), waits (for Wi-Fi, or "Can't reach cachy; trying again") or has
+  just ended ("Backed up 12"), opening Backup on a tap; the grid reloads afterwards, so the marks go.
+- **Where the phone's photos were taken:** the app asks for Android's media location permission (granted with
+  the photos' on Maarten's phone, without a dialog) and reads the originals (`MediaStore.setRequireOriginal`):
+  without it Android strips the location, which also changes the bytes, so the content ids and the backed-up
+  files were of the stripped copies. Each photo's EXIF (place, camera, lens, exposure) is kept with its content
+  id (`phone_media.meta`) and read again once for photos read before. Checked with a geotagged test photo
+  ("Gent, BE"); Maarten's own camera photos have no GPS (the camera saves none), so they show no place.

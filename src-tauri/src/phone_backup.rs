@@ -19,6 +19,8 @@ pub struct Progress {
     bytes_total: u64,
     bytes_done: u64,
     current: Vec<String>,
+    // The content ids of the photos in flight (the grid shows them uploading)
+    uploading: Vec<String>,
     failures: Vec<(String, String)>,
 }
 
@@ -36,6 +38,8 @@ struct Last {
 #[derive(Serialize)]
 pub struct Status {
     progress: Progress,
+    // A Back up now Android hasn't started yet (it waits for Wi-Fi when that is set)
+    waiting: bool,
     last: Option<Last>,
     // Of the phone's photos (and videos when they are backed up too): how many the server has
     backed_up: usize,
@@ -55,11 +59,12 @@ mod imp {
     use std::sync::atomic::AtomicU64;
     use std::sync::{LazyLock, Mutex};
 
+    pub const ONLY: &str = "phone-backup-only.json";
     static RUNNING: AtomicBool = AtomicBool::new(false);
     static CANCEL: AtomicBool = AtomicBool::new(false);
     static STATE: LazyLock<Mutex<Progress>> = LazyLock::new(|| Mutex::new(Progress::default()));
-    // Bytes sent so far of the files in flight
-    static INFLIGHT: LazyLock<Mutex<HashMap<String, Arc<AtomicU64>>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+    // The files in flight by content id: their name, and the bytes sent so far
+    static INFLIGHT: LazyLock<Mutex<HashMap<String, (String, Arc<AtomicU64>)>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
     fn now() -> i64 {
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
@@ -72,8 +77,9 @@ mod imp {
     pub fn progress() -> Progress {
         let mut p = STATE.lock().unwrap().clone();
         let inflight = INFLIGHT.lock().unwrap();
-        p.bytes_done += inflight.values().map(|b| b.load(Ordering::Relaxed)).sum::<u64>();
-        p.current = inflight.keys().cloned().collect();
+        p.bytes_done += inflight.values().map(|(_, b)| b.load(Ordering::Relaxed)).sum::<u64>();
+        p.current = inflight.values().map(|(name, _)| name.clone()).collect();
+        p.uploading = inflight.keys().cloned().collect();
         p
     }
 
@@ -98,13 +104,14 @@ mod imp {
         let _ = conn.execute("INSERT OR IGNORE INTO phone_backup (server, hash, at) VALUES (?1, ?2, ?3)", params![server, hash, now()]);
     }
 
-    pub fn pass(dir: &Path, server: &str, media: &str, videos: bool) -> String {
+    // `selection`: a Back up for chosen photos; with none left to do it does nothing (never a whole backup)
+    pub fn pass(dir: &Path, server: &str, media: &str, videos: bool, folders: &[String], selection: bool) -> String {
         if RUNNING.swap(true, Ordering::SeqCst) {
             return "busy".into();
         }
         CANCEL.store(false, Ordering::SeqCst);
         *STATE.lock().unwrap() = Progress { running: true, stage: "Looking for new photos".into(), ..Default::default() };
-        let outcome = run(dir, server, media, videos).unwrap_or_else(|e| e);
+        let outcome = run(dir, server, media, videos, folders, selection).unwrap_or_else(|e| e);
         let p = STATE.lock().unwrap().clone();
         let last = Last { at: now(), server: server.to_string(), uploaded: p.done, failed: p.failed, outcome: outcome.clone() };
         if let Ok(bytes) = serde_json::to_vec(&last) {
@@ -127,16 +134,25 @@ mod imp {
         }
     }
 
-    fn run(dir: &Path, server: &str, media: &str, videos: bool) -> Result<String, String> {
+    fn run(dir: &Path, server: &str, media: &str, videos: bool, folders: &[String], selection: bool) -> Result<String, String> {
+        let only = read_only(dir);
+        if selection && only.is_none() {
+            return Ok("done".into());
+        }
         #[allow(unused_mut)]
         let mut media: Vec<PhoneMedia> = serde_json::from_str::<Vec<PhoneMedia>>(media)
             .map_err(|e| format!("error: the phone's list of photos: {e}"))?
             .into_iter()
             .filter(|m| videos || !m.video)
             .collect();
-        // Debug builds only: a test backs up just the newest few (phone-backup-limit holds how many)
+        // Debug builds only: a test backs up just the newest few (phone-backup-limit holds how many); a selection
+        // (Back up for chosen photos) is never cut short
         #[cfg(debug_assertions)]
-        if let Some(limit) = fs::read_to_string(dir.join("phone-backup-limit")).ok().and_then(|s| s.trim().parse::<usize>().ok()) {
+        if let Some(limit) = fs::read_to_string(dir.join("phone-backup-limit"))
+            .ok()
+            .and_then(|s| s.trim().parse::<usize>().ok())
+            .filter(|_| only.is_none())
+        {
             media.sort_by_key(|m| std::cmp::Reverse(if m.taken > 0 { m.taken / 1000 } else { m.modified }));
             media.truncate(limit);
         }
@@ -174,9 +190,21 @@ mod imp {
             let rows = stmt.query_map([server], |r| r.get::<_, String>(0)).map_err(|e| format!("error: {e}"))?;
             rows.filter_map(Result::ok).collect()
         };
+        // Back up for a selection: only those photos this time (phone-backup-only.json, phone_backup_selected), in
+        // whatever folder; else the folders chosen
         let mut seen = HashSet::new();
-        let todo: Vec<(PhoneMedia, String)> = photos.into_iter().filter(|(_, h)| !backed.contains(h) && seen.insert(h.clone())).collect();
+        let todo: Vec<(PhoneMedia, String)> = photos
+            .into_iter()
+            .filter(|(m, h)| {
+                let wanted = match &only {
+                    Some(o) => o.contains(h),
+                    None => folders.iter().any(|f| *f == m.folder),
+                };
+                wanted && !backed.contains(h) && seen.insert(h.clone())
+            })
+            .collect();
         if todo.is_empty() {
+            forget_only(dir, only.as_ref());
             return Ok("done".into());
         }
 
@@ -186,7 +214,28 @@ mod imp {
         let conn_server = Conn { http: remote.http.clone(), base: entry.url.clone(), token };
         let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|e| format!("error: {e}"))?;
         let label = crate::remote::label_of(server);
-        runtime.block_on(send(&conn, &conn_server, server, &label, todo))
+        let outcome = runtime.block_on(send(&conn, &conn_server, server, &label, todo));
+        if outcome.as_deref() == Ok("done") {
+            forget_only(dir, only.as_ref());
+        }
+        outcome
+    }
+
+    // The photos chosen for a Back up of a selection, still to do
+    pub fn read_only(dir: &Path) -> Option<HashSet<String>> {
+        fs::read(dir.join(ONLY)).ok().and_then(|b| serde_json::from_slice(&b).ok())
+    }
+
+    // A selection done: those photos leave the list; ones chosen meanwhile (a second selection) stay for the
+    // next pass
+    fn forget_only(dir: &Path, done: Option<&HashSet<String>>) {
+        let Some(done) = done else { return };
+        let left: Vec<String> = read_only(dir).unwrap_or_default().into_iter().filter(|h| !done.contains(h)).collect();
+        if left.is_empty() {
+            let _ = fs::remove_file(dir.join(ONLY));
+        } else if let Ok(bytes) = serde_json::to_vec(&left) {
+            let _ = fs::write(dir.join(ONLY), bytes);
+        }
     }
 
     async fn send(db: &rusqlite::Connection, c: &Conn, server: &str, label: &str, todo: Vec<(PhoneMedia, String)>) -> Result<String, String> {
@@ -227,9 +276,9 @@ mod imp {
                         return;
                     }
                     let sent = Arc::new(AtomicU64::new(0));
-                    INFLIGHT.lock().unwrap().insert(m.name.clone(), sent.clone());
+                    INFLIGHT.lock().unwrap().insert(hash.clone(), (m.name.clone(), sent.clone()));
                     let result = upload(c, &m, &hash, &sent).await;
-                    INFLIGHT.lock().unwrap().remove(&m.name);
+                    INFLIGHT.lock().unwrap().remove(&hash);
                     match result {
                         Ok(()) => {
                             landed.lock().unwrap().push(hash);
@@ -279,22 +328,113 @@ mod imp {
         Ok(())
     }
 
-    pub fn status(dir: &Path, server: &str, videos: bool) -> Result<Status, String> {
+    pub fn status(dir: &Path, server: &str, videos: bool, folders: &[String]) -> Result<Status, String> {
         let conn = client_db::open_at(dir)?;
         ensure_table(&conn)?;
+        let folders = serde_json::to_string(folders).unwrap_or_default();
         let total: i64 = conn
-            .query_row("SELECT COUNT(DISTINCT hash) FROM phone_media WHERE ?1 OR video = 0", [videos], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(DISTINCT hash) FROM phone_media WHERE (?1 OR video = 0) AND folder IN (SELECT value FROM json_each(?2))",
+                params![videos, folders],
+                |r| r.get(0),
+            )
             .map_err(|e| e.to_string())?;
         let backed_up: i64 = conn
             .query_row(
                 "SELECT COUNT(DISTINCT m.hash) FROM phone_media m JOIN phone_backup b ON b.hash = m.hash AND b.server = ?2
-                 WHERE ?1 OR m.video = 0",
-                params![videos, server],
+                 WHERE (?1 OR m.video = 0) AND m.folder IN (SELECT value FROM json_each(?3))",
+                params![videos, server, folders],
                 |r| r.get(0),
             )
             .map_err(|e| e.to_string())?;
         let last = fs::read(dir.join("phone-backup.json")).ok().and_then(|b| serde_json::from_slice::<Last>(&b).ok()).filter(|l| l.server == server);
-        Ok(Status { progress: progress(), last, backed_up: backed_up as usize, total: total as usize })
+        Ok(Status { progress: progress(), waiting: false, last, backed_up: backed_up as usize, total: total as usize })
+    }
+
+    // The phone's folders: how many photos each holds, how many of them `server` has, the newest as its cover,
+    // and their content ids (the Albums tab opens a folder with them)
+    pub fn folders(dir: &Path, server: Option<&str>) -> Result<Vec<Folder>, String> {
+        let conn = client_db::open_at(dir)?;
+        ensure_table(&conn)?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT m.folder, m.id, m.video, m.modified, m.hash, b.hash IS NOT NULL
+                 FROM phone_media m LEFT JOIN phone_backup b ON b.hash = m.hash AND b.server = ?1
+                 ORDER BY m.modified DESC",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([server.unwrap_or("")], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, bool>(2)?, r.get::<_, String>(4)?, r.get::<_, bool>(5)?))
+            })
+            .map_err(|e| e.to_string())?;
+        let mut by_folder: Vec<Folder> = Vec::new();
+        let mut index: HashMap<String, usize> = HashMap::new();
+        for (folder, id, video, hash, backed) in rows.filter_map(Result::ok) {
+            let i = *index.entry(folder.clone()).or_insert_with(|| {
+                by_folder.push(Folder {
+                    name: folder_name(&folder),
+                    cover: format!("phone:{}:{id}", if video { "v" } else { "p" }),
+                    folder,
+                    count: 0,
+                    backed_up: 0,
+                    hashes: Vec::new(),
+                });
+                by_folder.len() - 1
+            });
+            let f = &mut by_folder[i];
+            f.count += 1;
+            if backed {
+                f.backed_up += 1;
+            }
+            f.hashes.push(hash);
+        }
+        // The same name in two places ("Screenshots" in DCIM and in Pictures): the folder above it tells them apart
+        let mut names: HashMap<String, usize> = HashMap::new();
+        for f in &by_folder {
+            *names.entry(f.name.clone()).or_default() += 1;
+        }
+        for f in by_folder.iter_mut().filter(|f| names[&f.name] > 1) {
+            let mut parts = f.folder.trim_end_matches('/').rsplit('/');
+            let (name, parent) = (parts.next().unwrap_or(""), parts.next().unwrap_or(""));
+            if !parent.is_empty() {
+                f.name = format!("{parent} / {name}");
+            }
+        }
+        by_folder.sort_by(|a, b| b.count.cmp(&a.count));
+        Ok(by_folder)
+    }
+
+    // "DCIM/Camera/" → "Camera", ".../WhatsApp/Media/WhatsApp Images/" → "WhatsApp Images"
+    fn folder_name(folder: &str) -> String {
+        let name = folder.trim_end_matches('/').rsplit('/').next().unwrap_or("");
+        if name.is_empty() { "Phone".to_string() } else { name.to_string() }
+    }
+}
+
+// A folder of the phone (Albums, the backup's choice of folders)
+#[derive(Serialize)]
+pub struct Folder {
+    folder: String,
+    name: String,
+    count: usize,
+    backed_up: usize,
+    // The newest photo's path, for its thumbnail
+    cover: String,
+    hashes: Vec<String>,
+}
+
+// The phone's folders, with how many `server` has of each
+#[tauri::command]
+pub fn phone_folders(app: AppHandle, server: Option<String>) -> Result<Vec<Folder>, String> {
+    #[cfg(target_os = "android")]
+    {
+        imp::folders(&get_app_storage_dir(&app), server.as_deref())
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (app, server);
+        Ok(Vec::new())
     }
 }
 
@@ -302,15 +442,26 @@ mod imp {
 pub use imp::{cancel, pass, progress};
 
 // Settings → Backup: how far the phone's backup to `server` is
+// Off the main thread: the window asks every second, also while it is busy loading All photos
 #[tauri::command]
-pub fn phone_backup_status(app: AppHandle, server: String, videos: bool) -> Result<Status, String> {
+pub async fn phone_backup_status(app: AppHandle, server: String, videos: bool, folders: Vec<String>) -> Result<Status, String> {
     #[cfg(target_os = "android")]
     {
-        imp::status(&get_app_storage_dir(&app), &server, videos)
+        tauri::async_runtime::spawn_blocking(move || {
+            let mut status = imp::status(&get_app_storage_dir(&app), &server, videos, &folders)?;
+            if !status.progress.running {
+                status.waiting = crate::android::call(&app, "backupWaiting", serde_json::json!({}))
+                    .map(|a| a["waiting"].as_bool().unwrap_or(false))
+                    .unwrap_or(false);
+            }
+            Ok(status)
+        })
+        .await
+        .map_err(|e| e.to_string())?
     }
     #[cfg(not(target_os = "android"))]
     {
-        let _ = (app, server, videos);
+        let _ = (app, server, videos, folders);
         Err("Backing up a phone is the phone app's".into())
     }
 }
@@ -352,6 +503,26 @@ pub fn phone_backup_now(app: AppHandle, any_network: bool) -> Result<(), String>
     #[cfg(not(target_os = "android"))]
     {
         let _ = (app, any_network);
+        Err("Backing up a phone is the phone app's".into())
+    }
+}
+
+// Back up for a selection: these photos now, also when they are in a folder the backup leaves out
+#[tauri::command]
+pub fn phone_backup_selected(app: AppHandle, hashes: Vec<String>) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        // Added to photos chosen before and not done yet
+        let dir = get_app_storage_dir(&app);
+        let mut all = imp::read_only(&dir).unwrap_or_default();
+        all.extend(hashes);
+        let bytes = serde_json::to_vec(&all).map_err(|e| e.to_string())?;
+        fs::write(dir.join(imp::ONLY), bytes).map_err(|e| e.to_string())?;
+        crate::android::call(&app, "backupNow", serde_json::json!({ "anyNetwork": false, "selection": true })).map(|_| ())
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (app, hashes);
         Err("Backing up a phone is the phone app's".into())
     }
 }

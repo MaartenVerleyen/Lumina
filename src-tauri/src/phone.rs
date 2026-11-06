@@ -1,8 +1,9 @@
 // The phone's own photos in the phone app (docs/plans/android.md, milestone 2): the camera roll from Android's
 // media store (android.rs), as photos All photos shows next to a server's. Each photo's content id (Lumina's,
-// so it matches the server's copy) is read once from its file and kept in client.db by media store id; a
-// photo read for the first time shows under a stand-in id until its content id is known, and the window is
-// told when the reading is done. Thumbnails and originals are served by the lumina-phone protocol.
+// so it matches the server's copy) and its EXIF (where it was taken, the camera) are read once from its file
+// and kept in client.db by media store id; a photo read for the first time shows under a stand-in id until
+// its content id is known, and the window is told when the reading is done. Thumbnails and originals are
+// served by the lumina-phone protocol.
 //
 // Paths of these photos are "phone:p:<id>" (a photo) and "phone:v:<id>" (a video).
 use crate::*;
@@ -34,14 +35,43 @@ mod imp {
                  PRIMARY KEY (id, video)
              );",
         )
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+        // Its folder on the phone ("DCIM/Camera/"), for the backup's choice of folders and the Albums tab;
+        // added after the first phone builds, so the table may lack it
+        let _ = conn.execute("ALTER TABLE phone_media ADD COLUMN folder TEXT NOT NULL DEFAULT ''", []);
+        // Its EXIF as PhoneMeta (JSON); NULL for photos read before it was kept
+        let _ = conn.execute("ALTER TABLE phone_media ADD COLUMN meta TEXT", []);
+        Ok(())
+    }
+
+    // What a photo's file says beyond the media store: where and with what it was taken
+    #[derive(serde::Serialize, serde::Deserialize, Default, Clone)]
+    pub struct PhoneMeta {
+        lat: Option<f64>,
+        lon: Option<f64>,
+        location: String,
+        camera_model: String,
+        lens_model: Option<String>,
+        focal_length: Option<String>,
+        aperture: Option<String>,
+        shutter_speed: Option<String>,
+        iso: Option<String>,
+        // Read from the original: Android strips the location (and so changes the bytes, and the content id)
+        // until Lumina may see where photos were taken; read again once it may
+        original: bool,
+    }
+
+    // A kept row is still good: read since it was last changed, and from the original when Lumina gets those
+    fn current(meta: &Option<String>, originals: bool) -> Option<PhoneMeta> {
+        let meta: PhoneMeta = serde_json::from_str(meta.as_deref()?).ok()?;
+        (meta.original || !originals).then_some(meta)
     }
 
     fn stand_in(m: &PhoneMedia) -> String {
         format!("phone-{}{}", if m.video { "v" } else { "p" }, m.id)
     }
 
-    fn photo_of(m: &PhoneMedia, hash: String) -> PhotoItem {
+    fn photo_of(m: &PhoneMedia, hash: String, meta: Option<&PhoneMeta>) -> PhotoItem {
         let path = format!("phone:{}:{}", if m.video { "v" } else { "p" }, m.id);
         let when = if m.taken > 0 {
             std::time::UNIX_EPOCH + std::time::Duration::from_millis(m.taken as u64)
@@ -62,6 +92,15 @@ mod imp {
             captured_at: lumina_core::exif_meta::system_time_local_iso(when),
             media_type: if m.video { "video" } else { "photo" }.into(),
             duration_ms: m.duration,
+            latitude: meta.and_then(|x| x.lat),
+            longitude: meta.and_then(|x| x.lon),
+            location: meta.map(|x| x.location.clone()).unwrap_or_default(),
+            camera_model: meta.map(|x| x.camera_model.clone()).unwrap_or_default(),
+            lens_model: meta.and_then(|x| x.lens_model.clone()),
+            focal_length: meta.and_then(|x| x.focal_length.clone()),
+            aperture: meta.and_then(|x| x.aperture.clone()),
+            shutter_speed: meta.and_then(|x| x.shutter_speed.clone()),
+            iso: meta.and_then(|x| x.iso.clone()),
             ..Default::default()
         }
     }
@@ -73,17 +112,39 @@ mod imp {
             let conn = client_db::open(&app2)?;
             ensure_table(&conn)?;
             let mut known = conn
-                .prepare("SELECT hash FROM phone_media WHERE id = ?1 AND video = ?2 AND modified = ?3 AND size = ?4")
+                .prepare("SELECT hash, folder, meta FROM phone_media WHERE id = ?1 AND video = ?2 AND modified = ?3 AND size = ?4")
                 .map_err(|e| e.to_string())?;
+            let originals = crate::android_jni::reads_originals();
             let mut photos = Vec::with_capacity(media.len());
             let mut unread = Vec::new();
-            for m in media {
-                let hash = known.query_row(params![m.id, m.video, m.modified, m.size as i64], |r| r.get::<_, String>(0)).ok();
-                if hash.is_none() {
-                    unread.push(m.clone());
+            let mut moved = Vec::new();
+            for m in &media {
+                let row = known
+                    .query_row(params![m.id, m.video, m.modified, m.size as i64], |r| {
+                        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?))
+                    })
+                    .ok();
+                match row {
+                    Some((hash, folder, meta)) => {
+                        if folder != m.folder {
+                            moved.push(m);
+                        }
+                        let meta = current(&meta, originals);
+                        // Kept from before its EXIF was, or from a copy without its location: read again, and
+                        // shown as it was meanwhile
+                        if meta.is_none() {
+                            unread.push(m.clone());
+                        }
+                        photos.push(photo_of(m, hash, meta.as_ref()));
+                    }
+                    None => {
+                        unread.push(m.clone());
+                        photos.push(photo_of(m, stand_in(m), None));
+                    }
                 }
-                photos.push(photo_of(&m, hash.unwrap_or_else(|| stand_in(&m))));
             }
+            drop(known);
+            remember_folders(&conn, &media, &moved)?;
             Ok((photos, unread))
         })
         .await
@@ -112,35 +173,74 @@ mod imp {
         }
     }
 
-    // A photo's content id, read from its file and kept
+    // The folders of photos whose folder changed (or wasn't kept yet), and photos gone from the phone forgotten,
+    // so the folders' counts and the backup's are the phone's as it is now
+    fn remember_folders(conn: &rusqlite::Connection, media: &[PhoneMedia], moved: &[&PhoneMedia]) -> Result<(), String> {
+        let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+        for m in moved {
+            tx.execute("UPDATE phone_media SET folder = ?3 WHERE id = ?1 AND video = ?2", params![m.id, m.video, m.folder]).map_err(|e| e.to_string())?;
+        }
+        let present: HashSet<(i64, bool)> = media.iter().map(|m| (m.id, m.video)).collect();
+        let kept: Vec<(i64, bool)> = {
+            let mut stmt = tx.prepare("SELECT id, video FROM phone_media").map_err(|e| e.to_string())?;
+            let rows = stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, bool>(1)?))).map_err(|e| e.to_string())?;
+            rows.filter_map(Result::ok).collect()
+        };
+        for (id, video) in kept.into_iter().filter(|k| !present.contains(k)) {
+            tx.execute("DELETE FROM phone_media WHERE id = ?1 AND video = ?2", params![id, video]).map_err(|e| e.to_string())?;
+        }
+        tx.commit().map_err(|e| e.to_string())
+    }
+
+    // A photo's content id and EXIF, read from its file and kept
     pub fn read_id(conn: &rusqlite::Connection, m: &PhoneMedia) -> Result<String, String> {
-        let hash = android::open_media(m.id, m.video).and_then(|mut f| lumina_core::imaging::content_hash_of_file(&mut f, m.size))?;
+        use std::os::fd::AsRawFd;
+        let original = crate::android_jni::reads_originals();
+        let mut file = android::open_media(m.id, m.video)?;
+        let hash = lumina_core::imaging::content_hash_of_file(&mut file, m.size)?;
+        // The EXIF readers take a path: the open file's own
+        let path = PathBuf::from(format!("/proc/self/fd/{}", file.as_raw_fd()));
+        let pass = if m.video {
+            lumina_core::video_meta::extract_video_pass(&path)
+        } else {
+            lumina_core::exif_meta::extract_all_exif_with_head(&path, None)
+        };
+        let meta = PhoneMeta {
+            lat: pass.lat,
+            lon: pass.lon,
+            location: pass.location,
+            camera_model: pass.camera_model,
+            lens_model: pass.lens_model,
+            focal_length: pass.focal_length,
+            aperture: pass.aperture,
+            shutter_speed: pass.shutter_speed,
+            iso: pass.iso,
+            original,
+        };
+        drop(file);
         conn.execute(
-            "INSERT OR REPLACE INTO phone_media (id, video, modified, size, hash) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![m.id, m.video, m.modified, m.size as i64, hash],
+            "INSERT OR REPLACE INTO phone_media (id, video, modified, size, hash, folder, meta) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![m.id, m.video, m.modified, m.size as i64, hash, m.folder, serde_json::to_string(&meta).unwrap_or_default()],
         )
         .map_err(|e| e.to_string())?;
         Ok(hash)
     }
 
-    // Its content id as kept, while the photo is unchanged (same date and size)
+    // Its content id as kept, while the photo is unchanged (same date and size) and was read as it is now
     pub fn known_id(conn: &rusqlite::Connection, m: &PhoneMedia) -> Option<String> {
-        conn.query_row(
-            "SELECT hash FROM phone_media WHERE id = ?1 AND video = ?2 AND modified = ?3 AND size = ?4",
-            params![m.id, m.video, m.modified, m.size as i64],
-            |r| r.get(0),
-        )
-        .ok()
+        let (hash, meta) = conn
+            .query_row(
+                "SELECT hash, meta FROM phone_media WHERE id = ?1 AND video = ?2 AND modified = ?3 AND size = ?4",
+                params![m.id, m.video, m.modified, m.size as i64],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?)),
+            )
+            .ok()?;
+        current(&meta, crate::android_jni::reads_originals()).map(|_| hash)
     }
 
     pub fn parse(path: &str) -> Option<(bool, i64)> {
         let (video, id) = path.split_at(1);
         Some((video == "v", id.parse().ok()?))
-    }
-
-    pub fn share(app: &AppHandle, path: &str, mime: &str) -> Result<(), String> {
-        let (video, id) = path.strip_prefix("phone:").and_then(|p| parse(&p.replace(':', ""))).ok_or("Not a photo of this phone")?;
-        android::share_media(app, id, video, mime)
     }
 
     type MediaResponse = tauri::http::Response<Vec<u8>>;
@@ -238,16 +338,52 @@ pub async fn phone_photos(app: AppHandle) -> Result<Vec<PhotoItem>, String> {
     }
 }
 
-// A photo of the phone to another app (path "phone:p:<id>")
+// A photo's media store id and kind, from its path ("phone:p:<id>"); None for a photo not of this phone
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+pub fn media_of(path: &str) -> Option<(i64, bool)> {
+    let rest = path.strip_prefix("phone:")?;
+    let (kind, id) = rest.split_once(':')?;
+    Some((id.parse().ok()?, kind == "v"))
+}
+
+// The thumbnails of the phone's photos the app made (in its cache): how many, and their size
+#[derive(serde::Serialize, Default)]
+pub struct ThumbsInfo {
+    count: usize,
+    bytes: u64,
+}
+
+fn phone_thumbs_dir(app: &AppHandle) -> Option<PathBuf> {
+    use tauri::Manager;
+    app.path().app_cache_dir().ok().map(|d| d.join("phone-thumbs"))
+}
+
 #[tauri::command]
-pub fn share_phone_photo(app: AppHandle, path: String, mime: String) -> Result<(), String> {
+pub fn phone_thumbs_info(app: AppHandle) -> ThumbsInfo {
+    let mut info = ThumbsInfo::default();
+    if let Some(entries) = phone_thumbs_dir(&app).and_then(|d| fs::read_dir(d).ok()) {
+        for e in entries.flatten() {
+            info.count += 1;
+            info.bytes += e.metadata().map(|m| m.len()).unwrap_or(0);
+        }
+    }
+    info
+}
+
+// They are made again as the grid shows them
+#[tauri::command]
+pub fn clear_phone_thumbs(app: AppHandle) -> Result<(), String> {
+    match phone_thumbs_dir(&app) {
+        Some(dir) if dir.exists() => fs::remove_dir_all(dir).map_err(|e| format!("Couldn't empty the cache: {e}")),
+        _ => Ok(()),
+    }
+}
+
+// A short vibration (the phone app: a long-press selecting a photo)
+#[tauri::command]
+pub fn phone_haptic(app: AppHandle) {
     #[cfg(target_os = "android")]
-    {
-        imp::share(&app, &path, &mime)
-    }
+    crate::android::haptic(&app);
     #[cfg(not(target_os = "android"))]
-    {
-        let _ = (app, path, mime);
-        Err("Sharing to another app is the phone app's".into())
-    }
+    let _ = app;
 }

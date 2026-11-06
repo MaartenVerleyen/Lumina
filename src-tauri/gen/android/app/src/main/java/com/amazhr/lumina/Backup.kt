@@ -12,11 +12,15 @@ import androidx.work.ExistingWorkPolicy
 import androidx.work.ForegroundInfo
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.OutOfQuotaPolicy
 import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.Worker
 import androidx.work.WorkerParameters
+import androidx.work.workDataOf
 import app.tauri.plugin.JSObject
+import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
@@ -30,6 +34,12 @@ object Backup {
 
   fun prefs(context: Context) = context.getSharedPreferences("lumina-backup", Context.MODE_PRIVATE)
 
+  // The phone's folders backed up (their RELATIVE_PATH); the camera's until others are chosen
+  val DEFAULT_FOLDERS = listOf("DCIM/Camera/")
+
+  fun folders(context: Context): JSONArray =
+    prefs(context).getString("folders", null)?.let { JSONArray(it) } ?: JSONArray(DEFAULT_FOLDERS)
+
   fun settings(context: Context): JSObject {
     val p = prefs(context)
     return JSObject()
@@ -38,10 +48,13 @@ object Backup {
       .put("wifiOnly", p.getBoolean("wifiOnly", true))
       .put("charging", p.getBoolean("charging", false))
       .put("videos", p.getBoolean("videos", true))
+      .put("folders", folders(context))
   }
 
-  fun configure(context: Context, enabled: Boolean, server: String?, wifiOnly: Boolean, charging: Boolean, videos: Boolean) {
-    prefs(context).edit()
+  fun configure(context: Context, enabled: Boolean, server: String?, wifiOnly: Boolean, charging: Boolean, videos: Boolean, folders: List<String>?) {
+    val edit = prefs(context).edit()
+    if (folders != null) edit.putString("folders", JSONArray(folders).toString())
+    edit
       .putBoolean("enabled", enabled)
       .putString("server", server)
       .putBoolean("wifiOnly", wifiOnly)
@@ -63,14 +76,25 @@ object Backup {
   }
 
   // Back up now: at once, on Wi-Fi only when that is set, unless `anyNetwork`
-  fun now(context: Context, anyNetwork: Boolean) {
+  // `selection`: for the photos chosen (phone_backup_selected) only
+  fun now(context: Context, anyNetwork: Boolean, selection: Boolean) {
     val wifiOnly = prefs(context).getBoolean("wifiOnly", true) && !anyNetwork
     val constraints = Constraints.Builder()
       .setRequiredNetworkType(if (wifiOnly) NetworkType.UNMETERED else NetworkType.CONNECTED)
       .build()
-    val request = OneTimeWorkRequestBuilder<BackupWorker>().setConstraints(constraints).build()
-    WorkManager.getInstance(context).enqueueUniqueWork(NOW, ExistingWorkPolicy.KEEP, request)
+    // Expedited: Android starts it at once (a plain request can wait several seconds for the system's turn)
+    val request = OneTimeWorkRequestBuilder<BackupWorker>()
+      .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+      .setConstraints(constraints)
+      .setInputData(workDataOf("selection" to selection))
+      .build()
+    // One already waiting or running: this one follows it (a selection backed up while another runs is kept)
+    WorkManager.getInstance(context).enqueueUniqueWork(NOW, ExistingWorkPolicy.APPEND_OR_REPLACE, request)
   }
+
+  // A Back up now waiting for its conditions (Wi-Fi) to start
+  fun waiting(context: Context): Boolean =
+    WorkManager.getInstance(context).getWorkInfosForUniqueWork(NOW).get().any { it.state == WorkInfo.State.ENQUEUED || it.state == WorkInfo.State.BLOCKED }
 
   fun channel(context: Context) {
     if (Build.VERSION.SDK_INT >= 26) {
@@ -112,7 +136,14 @@ class BackupWorker(context: Context, params: WorkerParameters) : Worker(context,
     }
     ticker.start()
     val outcome = try {
-      Native.backupPass(dataDir, server, media, prefs.getBoolean("videos", true))
+      Native.backupPass(
+        dataDir,
+        server,
+        media,
+        prefs.getBoolean("videos", true),
+        Backup.folders(applicationContext).toString(),
+        inputData.getBoolean("selection", false),
+      )
     } finally {
       ticker.interrupt()
     }
@@ -121,6 +152,9 @@ class BackupWorker(context: Context, params: WorkerParameters) : Worker(context,
       else -> Result.success()
     }
   }
+
+  // An expedited backup on Android before 12 runs as a foreground service from the start: its notification
+  override fun getForegroundInfo(): ForegroundInfo = foreground("Starting the backup", 0, 0)
 
   override fun onStopped() {
     Native.backupCancel()

@@ -18,19 +18,31 @@ pub fn init() -> TauriPlugin<Wry> {
         .build()
 }
 
-#[derive(Serialize)]
-struct ShareArgs<'a> {
-    path: &'a str,
-    mime: &'a str,
+// Photos to another app, through Android's share sheet: files of the app's (downloaded originals in its cache)
+// and photos of the phone's media store (id, video)
+pub fn share(app: &AppHandle, files: &[std::path::PathBuf], media: &[(i64, bool)], mime: &str) -> Result<(), String> {
+    let files: Vec<String> = files.iter().map(|p| p.to_string_lossy().to_string()).collect();
+    let media: Vec<serde_json::Value> = media.iter().map(|(id, video)| serde_json::json!({ "id": id, "video": video })).collect();
+    call(app, "share", serde_json::json!({ "files": files, "media": media, "mime": mime })).map(|_| ())
 }
 
-// A file of the app's to another app, through Android's share sheet
-pub fn share_file(app: &AppHandle, path: &Path, mime: &str) -> Result<(), String> {
-    app.state::<Phone>()
-        .0
-        .run_mobile_plugin::<serde_json::Value>("share", ShareArgs { path: &path.to_string_lossy(), mime })
-        .map(|_| ())
-        .map_err(|e| e.to_string())
+// Files into the phone's gallery (Pictures/Lumina, Movies/Lumina); answers how many were saved
+pub fn save_to_gallery(app: &AppHandle, files: &[std::path::PathBuf]) -> Result<usize, String> {
+    let files: Vec<String> = files.iter().map(|p| p.to_string_lossy().to_string()).collect();
+    let answer = call(app, "saveToGallery", serde_json::json!({ "files": files }))?;
+    Ok(answer["saved"].as_u64().unwrap_or(0) as usize)
+}
+
+// A file of the app's, or a photo of the media store, in another app
+pub fn open_with(app: &AppHandle, file: Option<&std::path::PathBuf>, media: Option<(i64, bool)>, mime: &str) -> Result<(), String> {
+    let files: Vec<String> = file.map(|p| p.to_string_lossy().to_string()).into_iter().collect();
+    let media: Vec<serde_json::Value> = media.map(|(id, video)| serde_json::json!({ "id": id, "video": video })).into_iter().collect();
+    call(app, "openWith", serde_json::json!({ "files": files, "media": media, "mime": mime })).map(|_| ())
+}
+
+// A short vibration
+pub fn haptic(app: &AppHandle) {
+    let _ = call(app, "haptic", serde_json::json!({}));
 }
 
 // A photo or video of the phone's media store (LuminaPlugin.listMedia)
@@ -106,10 +118,3 @@ pub fn open_media(id: i64, video: bool) -> Result<std::fs::File, String> {
     crate::android_jni::open_media(id, video)
 }
 
-// It to another app, through Android's share sheet
-pub fn share_media(app: &AppHandle, id: i64, video: bool, mime: &str) -> Result<(), String> {
-    plugin(app)
-        .run_mobile_plugin::<serde_json::Value>("shareMedia", MediaArgs { id, video, size: 0, mime })
-        .map(|_| ())
-        .map_err(|e| e.to_string())
-}

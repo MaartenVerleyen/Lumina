@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import { inDesktopApp, onAndroid } from "../api";
 
-// The web client on a phone gets its own simple layout (src/components/mobile); the full layout needs a
+// The web client on a phone gets its own simple layout (src/components/phone); the full layout needs a
 // big screen and a mouse. A phone held sideways is wide but short, so that counts as a phone too. Someone
 // who wants the full layout anyway can switch, and the choice is remembered in this browser.
 const PHONE_SCREEN = "(max-width: 767px), (pointer: coarse) and (max-height: 500px)";

@@ -689,8 +689,10 @@ async function editAll<T>(command: string, args: Record<string, unknown>, hashes
 
 // One engine per server among the sources (and this computer's when a local folder is one), this computer's
 // first and the servers by name, so the numbers albums get below stay the same between loads
+// The engines holding a library in the view. The phone's own photos aren't in an engine (phone.rs lists them): the
+// phone's engine has no library, and its smart search would wait for models the phone hasn't got
 function engines(): string[] {
-  return [...new Set([...all.sources.values()].map(engineOf))].sort((a, b) => (a === "" ? -1 : b === "" ? 1 : a.localeCompare(b)));
+  return [...new Set([...all.sources.values()].filter((s) => s.root !== PHONE_ROOT).map(engineOf))].sort((a, b) => (a === "" ? -1 : b === "" ? 1 : a.localeCompare(b)));
 }
 
 // A face's engine: the one of the copy whose faces the window shows, when this account may change it there
@@ -890,7 +892,7 @@ async function callAll<T>(command: string, args: Record<string, unknown>): Promi
       return albumCommand<T>(command, args, all.searches);
     case "semantic_status": {
       const list = await Promise.all(
-        [...all.sources.values()].map((s) =>
+        [...all.sources.values()].filter((s) => s.root !== PHONE_ROOT).map((s) =>
           engineTransport(engineOf(s))
             .call<SemanticStatus>("semantic_status", { rootFolder: s.root })
             .catch(() => null)
