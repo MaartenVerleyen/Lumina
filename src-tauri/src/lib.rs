@@ -22,6 +22,7 @@ mod android_jni;
 mod phone;
 mod phone_backup;
 mod offline;
+mod phone_update;
 mod follows;
 
 use db::*;
@@ -208,6 +209,9 @@ pub fn run() {
             offline::keep_thumbs,
             offline::keep_thumbs_progress,
             offline::stop_keep_thumbs,
+            phone_update::phone_update_check,
+            phone_update::phone_update_install,
+            phone_update::phone_update_progress,
             transfers::upload_paths,
             transfers::back_up,
             transfers::share_photos,
@@ -219,6 +223,8 @@ pub fn run() {
             phone_backup::phone_folders,
             phone_backup::phone_free_up_scan,
             phone_backup::phone_trash,
+            phone_backup::phone_follow_album,
+            phone_backup::phone_unfollow_album,
             phone::phone_thumbs_info,
             phone::clear_phone_thumbs,
             phone_backup::phone_backup_status,

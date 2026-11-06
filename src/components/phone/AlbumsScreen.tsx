@@ -1,5 +1,5 @@
-import { useMemo } from "react";
-import { CloudCheck, CloudOff, Eye, Sparkles } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { BellRing, CloudCheck, CloudOff, Eye, Plus, Sparkles } from "lucide-react";
 import { callLocal, mediaUrl, onAndroid } from "../../api";
 import type { LibraryState } from "../../hooks/useLibraryState";
 import { useServers } from "../../hooks/useServers";
@@ -32,7 +32,30 @@ export default function AlbumsScreen({
     go();
     onOpened();
   };
-  const server = servers.find((s) => s.signed_in)?.label;
+  // The albums under a heading per server ("On cachy")
+  const byServer = [...new Set(albums.map((a) => a.engine ?? ""))].map((engine) => ({
+    label: servers.find((x) => x.id === engine)?.label ?? (engine || "this phone"),
+    albums: albums.filter((a) => (a.engine ?? "") === engine),
+  }));
+  // Albums shared with you followed onto this phone (their photos come into Pictures/Lumina/<album>)
+  const [follows, setFollows] = useState<PhoneFollow[]>([]);
+  const loadFollows = () =>
+    callLocal<PhoneFollow[]>("album_follows")
+      .then((list) => setFollows(list.filter((f) => f.folder.startsWith("phone:"))))
+      .catch(() => {});
+  // Again every few seconds while shown: the photos of a follow come in the background
+  useEffect(() => {
+    if (!onAndroid) return;
+    void loadFollows();
+    const timer = window.setInterval(loadFollows, 5000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const followOf = (engine?: string, id?: number) => follows.find((f) => f.server === engine && f.album_id === id);
+  const toggleFollow = async (engine: string, id: number, name: string) => {
+    if (followOf(engine, id)) await callLocal("phone_unfollow_album", { server: engine, albumId: id });
+    else await callLocal("phone_follow_album", { server: engine, albumId: id, albumName: name });
+    await loadFollows();
+  };
 
   const toggleBackup = (folder: string, on: boolean) => {
     if (!settings) return;
@@ -46,23 +69,38 @@ export default function AlbumsScreen({
 
   return (
     <div className="flex-1 overflow-y-auto overscroll-contain pb-6">
-      {albums.length > 0 && (
-        <>
-          <Heading>{server ? `On ${server}` : "Albums"}</Heading>
+      {byServer.map((group) => (
+        <div key={group.label}>
+          <Heading>On {group.label}</Heading>
           <div className="grid grid-cols-2 min-[520px]:grid-cols-3 gap-3 px-3">
-            {albums.map((a) => (
-              <Card
-                key={a.id}
-                cover={byHash.get(a.hashes[0])}
-                title={a.name}
-                subtitle={`${(lib.albumCounts.get(a.id) ?? 0).toLocaleString()}${a.readOnly ? " · shared with you" : ""}`}
-                badge={a.dynamic ? <Sparkles className="w-3.5 h-3.5 text-indigo-300" /> : a.readOnly ? <Eye className="w-3.5 h-3.5 text-violet-300" /> : null}
-                onClick={() => open(() => lib.setActiveAlbumId(a.id))}
-              />
-            ))}
+            {group.albums.map((a) => {
+              const followed = followOf(a.engine, a.realId);
+              return (
+                <div key={a.id}>
+                  <Card
+                    cover={byHash.get(a.hashes[0])}
+                    title={a.name}
+                    subtitle={`${(lib.albumCounts.get(a.id) ?? 0).toLocaleString()}${a.readOnly ? " · shared with you" : ""}`}
+                    badge={a.dynamic ? <Sparkles className="w-3.5 h-3.5 text-indigo-300" /> : a.readOnly ? <Eye className="w-3.5 h-3.5 text-violet-300" /> : null}
+                    onClick={() => open(() => lib.setActiveAlbumId(a.id))}
+                  />
+                  {onAndroid && a.readOnly && a.engine && a.realId !== undefined && (
+                    <button
+                      onClick={() => void toggleFollow(a.engine!, a.realId!, a.name)}
+                      className={`mt-1 w-full flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] border ${
+                        followed ? "border-emerald-600/50 text-emerald-300" : "border-zinc-700 text-zinc-300"
+                      }`}
+                    >
+                      {followed ? <BellRing className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
+                      {followed ? `Following · ${followed.photos.toLocaleString()} on this phone` : "Follow onto this phone"}
+                    </button>
+                  )}
+                </div>
+              );
+            })}
           </div>
-        </>
-      )}
+        </div>
+      ))}
       {trips.length > 0 && (
         <>
           <Heading>Trips and events</Heading>
@@ -117,6 +155,14 @@ export default function AlbumsScreen({
       )}
     </div>
   );
+}
+
+interface PhoneFollow {
+  server: string;
+  album_id: number;
+  album_name: string;
+  folder: string;
+  photos: number;
 }
 
 function Heading({ children }: { children: React.ReactNode }) {

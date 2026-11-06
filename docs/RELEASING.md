@@ -48,6 +48,36 @@ and adds `linux-x86_64` and `darwin-aarch64` to `latest.json` once the release s
 - The Mac app needs macOS 13.4 or later (`bundle.macOS.minimumSystemVersion`), the version ONNX Runtime's
   prebuilt library is made for.
 
+## Android
+
+The same workflow builds the Android app (an APK for arm64 phones) and adds it to the release as
+`Lumina_<version>_android_arm64.apk`. The phone app looks for it on GitHub once a day (Settings → About shows
+"Lumina X is out" and an Update button); Android's installer then asks before it installs.
+
+The APK is signed with the **Android key**, a keystore of its own (not the update key). Android only installs an
+update signed with the same key as the app on the phone, so it is made once and kept like the update key:
+
+1. Make it on the release PC (with the JDK in `%LOCALAPPDATA%\Android`), and choose its password when asked:
+
+   ```
+   "%LOCALAPPDATA%\Android\jdk-17.0.21.0.2+1\bin\keytool" -genkeypair -v -keystore "%USERPROFILE%\.tauri\lumina-android.jks" -alias lumina -keyalg RSA -keysize 4096 -validity 36500
+   ```
+
+2. **Back it up** with its password (a password manager), next to the update key. Lost, the installed apps can't
+   update any more: every phone would have to uninstall and install again.
+3. Add four repository secrets (Settings → Secrets and variables → Actions): `ANDROID_KEYSTORE` (the file in
+   base64: `certutil -encode lumina-android.jks k.b64`, then the lines between the BEGIN and END lines joined),
+   `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` (`lumina`) and `ANDROID_KEY_PASSWORD` (the same password
+   unless you chose another for the key).
+
+Without the secrets the workflow still builds the APK, unsigned, as the run's artifact only (Android installs no
+unsigned APK). To build a signed APK on this PC, put `src-tauri/gen/android/keystore.properties` (never in git)
+with `storeFile=`, `password=`, `keyAlias=` and `keyPassword=` lines, then
+`npx tauri android build --apk --target aarch64`.
+
+The first time a phone goes from a debug build (tried over USB) to a release APK, Android refuses the update (the
+debug build is signed with another key): uninstall the debug build first, then sign in again.
+
 ## The update key
 
 Lumina only installs updates signed with the update key. Its public half is in `src-tauri/tauri.conf.json`

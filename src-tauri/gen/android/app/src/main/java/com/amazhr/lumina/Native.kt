@@ -19,10 +19,20 @@ object Native {
 
   @JvmStatic private external fun bridge()
 
-  // One backup of the phone's photos (media: PhoneStore.list as JSON, folders: the folders backed up as JSON) to
-  // the server, or (selection) of the photos chosen for it; answers "done", "busy", "retry: <why>", "signed-out"
-  // or "error: <why>"
-  @JvmStatic external fun backupPass(dataDir: String, server: String, media: String, videos: Boolean, folders: String, selection: Boolean): String
+  // One run of the background worker: the backup of the phone's photos (media: PhoneStore.list as JSON, folders:
+  // the folders backed up as JSON) to the server, or (selection) of the photos chosen for it, when `backup`; then
+  // the albums followed onto the phone, when `follows`. Answers "done", "busy", "retry: <why>", "signed-out" or
+  // "error: <why>".
+  @JvmStatic external fun backupPass(
+    dataDir: String,
+    server: String,
+    media: String,
+    videos: Boolean,
+    folders: String,
+    selection: Boolean,
+    backup: Boolean,
+    follows: Boolean,
+  ): String
 
   // How the backup running now is getting on, as JSON
   @JvmStatic external fun backupProgress(): String

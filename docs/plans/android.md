@@ -248,3 +248,31 @@ library of yours from the desktop instead.
 - Thumbnails the grid showed stay in the server cache (as before); Settings chooses its size (512 MB to 10 GB,
   the oldest out first) and **Keep all thumbnails** of a server fetches every one, four at a time, on Wi-Fi only,
   raising the cache to hold them.
+- **A faster start** (after milestone 4): the phone's list goes to the window compact (`PhoneList`: one template
+  of what the photos have in common and a row of values each; 9.2 MB of JSON became a fraction of it) and the kept
+  content ids are read in one query. `phone_photos` takes 0.7 s instead of 2 s; All photos shows after about
+  2.2 s and is up to date after 3.2 s (was 3.0 s and 5.4 s).
+
+### Milestone 5 (2026-11-06, checked on the same phone against a test server with an album shared with it)
+
+- Albums shared with you have **Follow onto this phone** in the Albums tab (and "Following · N on this phone").
+  A follow is the desktop's (`album_follows`, client.db) with the folder `phone:Pictures/Lumina/<album>`; the
+  window's own follow sync (follows.rs) leaves those to the phone.
+- The background worker (`Backup.kt`) runs the follows after the backup: the hourly run also with the backup off
+  while anything is followed, Back up now, and a run of its own on Follow and when the server says albums
+  changed (the app open). `follow_pass` (phone_backup.rs) asks the server for the album (`transfer::rpc`, no
+  window needed), skips photos taken already or on the phone, downloads the new ones (BLAKE3-checked) and Kotlin
+  puts them into the gallery folder (`PhoneStore.saveToGallery`, over JNI). An album no longer visible ends its
+  follow; what came stays. Checked: 3 photos on Follow within a second, a fourth added on the server reached
+  the phone 2 s later with the app open.
+
+### Milestone 6 (2026-11-06; waiting for the Android key and a release)
+
+- `.github/workflows/desktop.yml` has an `android` job: a release APK for arm64 (`npx tauri android build --apk
+  --target aarch64`), signed when the Android key's secrets are there (`keystore.properties`, read by
+  `build.gradle.kts`), added to the release as `Lumina_<version>_android_arm64.apk`; unsigned it stays an
+  artifact. The release build keeps the app's own classes from shrinking (`proguard-lumina.pro`: Rust calls
+  them by name over JNI). Making the key: docs/RELEASING.md, Android.
+- The app looks for a newer release once a day (`phone_update.rs`, GitHub's latest release): a dot on the account
+  button, "Lumina X is out" with the notes and Update in Settings → About; the APK is downloaded into the cache
+  and handed to Android's installer (`REQUEST_INSTALL_PACKAGES`).

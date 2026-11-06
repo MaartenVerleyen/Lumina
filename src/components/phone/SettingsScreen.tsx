@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import { Cloud, Download, Loader2, LogOut, Plus, Server, Smartphone, Trash2 } from "lucide-react";
-import { allPhotosOnServer, callLocal } from "../../api";
+import { allPhotosOnServer, callLocal, onAndroid } from "../../api";
 import { getVersion } from "../../api/platform";
 import { connectServer, removeServer, signOutServer, useServers } from "../../hooks/useServers";
 import { formatBytes } from "../../utils/photoHelpers";
 import { Page, Section } from "./PhoneParts";
+import { checkForUpdate, useUpdate } from "./useUpdate";
 
 // The phone app's Settings (docs/plans/android-app-ui.md), opened from the header's account button: the servers,
 // what the app keeps on the phone, and the app itself
@@ -255,9 +256,61 @@ function AboutSection() {
   useEffect(() => {
     getVersion().then(setVersion).catch(() => {});
   }, []);
+  const { update, checking, checkedAt, error } = useUpdate();
+  const [installing, setInstalling] = useState<{ done: number; total: number } | null>(null);
+  const [installError, setInstallError] = useState<string | null>(null);
+  const install = async () => {
+    if (!update) return;
+    setInstallError(null);
+    setInstalling({ done: 0, total: update.size });
+    const timer = window.setInterval(() => {
+      callLocal<{ done: number; total: number }>("phone_update_progress")
+        .then((p) => setInstalling({ done: p.done, total: p.total || update.size }))
+        .catch(() => {});
+    }, 500);
+    try {
+      // Downloads, then Android's installer asks
+      await callLocal("phone_update_install", { url: update.url });
+    } catch (e) {
+      setInstallError(String(e));
+    } finally {
+      window.clearInterval(timer);
+      setInstalling(null);
+    }
+  };
   return (
     <Section title="About">
       <div className="py-2 text-sm text-zinc-200">Lumina {version}</div>
+      {onAndroid && update ? (
+        <div className="py-1">
+          <div className="text-sm text-emerald-300">Lumina {update.version} is out</div>
+          {update.notes && <div className="pt-1 text-[11px] text-zinc-400 whitespace-pre-line line-clamp-6">{update.notes}</div>}
+          {installing ? (
+            <div className="pt-2">
+              <div className="h-1.5 rounded-full bg-zinc-800 overflow-hidden">
+                <div className="h-full bg-emerald-500" style={{ width: `${installing.total ? Math.round((installing.done / installing.total) * 100) : 0}%` }} />
+              </div>
+              <div className="pt-1 text-[11px] text-zinc-500">
+                Downloading {formatBytes(installing.done)} of {formatBytes(installing.total)}
+              </div>
+            </div>
+          ) : (
+            <button onClick={install} className="mt-2 w-full py-2.5 rounded-full bg-emerald-600 text-sm font-semibold text-white">
+              Update ({formatBytes(update.size)})
+            </button>
+          )}
+          {installError && <div className="pt-1 text-[11px] text-red-300">{installError}</div>}
+        </div>
+      ) : onAndroid ? (
+        <div className="flex items-center gap-2 pb-1 text-[11px] text-zinc-500">
+          <span className="flex-1">
+            {checking ? "Looking for updates…" : error ? error : checkedAt ? "This is the latest version." : ""}
+          </span>
+          <button onClick={() => void checkForUpdate(true)} disabled={checking} className="text-emerald-400">
+            Check now
+          </button>
+        </div>
+      ) : null}
       <div className="pb-1 text-[11px] text-zinc-500">Your photos on your own server. Photos on this phone are never changed by Lumina.</div>
     </Section>
   );

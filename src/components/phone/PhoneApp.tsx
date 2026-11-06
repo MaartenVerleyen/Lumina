@@ -20,6 +20,7 @@ import PhoneGrid, { COLUMN_STEPS } from "./PhoneGrid";
 import { saveToPhone, sharePhotos } from "./share";
 import { freeUpScan, moveToTrash } from "./freeUp";
 import { refreshBackup, usePhoneBackup } from "./usePhoneBackup";
+import { checkForUpdate, useUpdate } from "./useUpdate";
 import PhoneViewer from "./PhoneViewer";
 import luminaMark from "../../assets/lumina-mark.svg";
 
@@ -499,12 +500,17 @@ function Empty({ busy, filtered, onClear }: { busy: boolean; filtered: boolean; 
   );
 }
 
-// The phone app: who is signed in (the first letter of the name), opening Settings
+// The phone app: who is signed in (the first letter of the name), opening Settings; a dot when an update is out
 function SettingsButton({ onClick }: { onClick: () => void }) {
   const { servers } = useServers();
   const user = servers.find((s) => s.signed_in)?.user ?? "";
+  const { update } = useUpdate();
+  useEffect(() => {
+    void checkForUpdate();
+  }, []);
   return (
-    <button onClick={onClick} className="p-1.5 rounded-full active:bg-white/10" aria-label="Settings">
+    <button onClick={onClick} className="relative p-1.5 rounded-full active:bg-white/10" aria-label="Settings">
+      {update && <span className="absolute top-1 right-1 w-2.5 h-2.5 rounded-full bg-emerald-400 border-2 border-panel" />}
       <span className="w-8 h-8 rounded-full bg-emerald-700 text-white text-sm font-semibold flex items-center justify-center">
         {user ? user[0].toUpperCase() : <UserRound className="w-4 h-4" />}
       </span>

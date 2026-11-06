@@ -104,18 +104,31 @@ mod imp {
         let _ = conn.execute("INSERT OR IGNORE INTO phone_backup (server, hash, at) VALUES (?1, ?2, ?3)", params![server, hash, now()]);
     }
 
-    // `selection`: a Back up for chosen photos; with none left to do it does nothing (never a whole backup)
-    pub fn pass(dir: &Path, server: &str, media: &str, videos: bool, folders: &[String], selection: bool) -> String {
+    // One run of the background worker: the backup (`backup`; `selection`: a Back up for chosen photos, which with
+    // none left to do does nothing, never a whole backup), then the followed albums (`follows`)
+    #[allow(clippy::too_many_arguments)]
+    pub fn pass(dir: &Path, server: &str, media: &str, videos: bool, folders: &[String], selection: bool, backup: bool, follows: bool) -> String {
         if RUNNING.swap(true, Ordering::SeqCst) {
             return "busy".into();
         }
         CANCEL.store(false, Ordering::SeqCst);
         *STATE.lock().unwrap() = Progress { running: true, stage: "Looking for new photos".into(), ..Default::default() };
-        let outcome = run(dir, server, media, videos, folders, selection).unwrap_or_else(|e| e);
-        let p = STATE.lock().unwrap().clone();
-        let last = Last { at: now(), server: server.to_string(), uploaded: p.done, failed: p.failed, outcome: outcome.clone() };
-        if let Ok(bytes) = serde_json::to_vec(&last) {
-            let _ = fs::write(dir.join("phone-backup.json"), bytes);
+        let mut outcome = "done".to_string();
+        if backup && !server.is_empty() {
+            outcome = run(dir, server, media, videos, folders, selection).unwrap_or_else(|e| e);
+            let p = STATE.lock().unwrap().clone();
+            let last = Last { at: now(), server: server.to_string(), uploaded: p.done, failed: p.failed, outcome: outcome.clone() };
+            if let Ok(bytes) = serde_json::to_vec(&last) {
+                let _ = fs::write(dir.join("phone-backup.json"), bytes);
+            }
+        }
+        if follows && !CANCEL.load(Ordering::SeqCst) {
+            *STATE.lock().unwrap() = Progress { running: true, stage: "Looking at followed albums".into(), ..Default::default() };
+            let followed = follow_pass(dir).unwrap_or_else(|e| e);
+            // Android tries again later when either couldn't reach its server
+            if outcome == "done" || followed.starts_with("retry") {
+                outcome = followed;
+            }
         }
         update(|p| {
             p.running = false;
@@ -145,8 +158,17 @@ mod imp {
             .into_iter()
             .filter(|m| videos || !m.video)
             .collect();
-        // Debug builds only: a test backs up just the newest few (phone-backup-limit holds how many); a selection
-        // (Back up for chosen photos) is never cut short
+        // Debug builds only: a test backs up only photos taken since a moment (phone-backup-since, seconds since 1970:
+        // the overnight test sends new photos only), or just the newest few (phone-backup-limit holds how many); a
+        // selection (Back up for chosen photos) is never cut short
+        #[cfg(debug_assertions)]
+        if let Some(since) = fs::read_to_string(dir.join("phone-backup-since"))
+            .ok()
+            .and_then(|s| s.trim().parse::<i64>().ok())
+            .filter(|_| only.is_none())
+        {
+            media.retain(|m| (if m.taken > 0 { m.taken / 1000 } else { m.modified }) >= since);
+        }
         #[cfg(debug_assertions)]
         if let Some(limit) = fs::read_to_string(dir.join("phone-backup-limit"))
             .ok()
@@ -219,6 +241,99 @@ mod imp {
             forget_only(dir, only.as_ref());
         }
         outcome
+    }
+
+    // The followed albums of this phone (follows.rs, folder "phone:<the gallery's folder>"): the photos new in them
+    // are downloaded and go into that folder of the phone's gallery. A photo on the phone already isn't downloaded;
+    // an album no longer shared ends its follow, and what came stays.
+    fn follow_pass(dir: &Path) -> Result<String, String> {
+        let conn = client_db::open_at(dir).map_err(|e| format!("error: {e}"))?;
+        crate::follows::ensure_tables(&conn).map_err(|e| format!("error: {e}"))?;
+        ensure_table(&conn).map_err(|e| format!("error: {e}"))?;
+        let list: Vec<(String, i64, String, String)> = {
+            let mut stmt = conn
+                .prepare("SELECT server, album_id, album_name, folder FROM album_follows WHERE folder LIKE 'phone:%'")
+                .map_err(|e| format!("error: {e}"))?;
+            let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))).map_err(|e| format!("error: {e}"))?;
+            rows.filter_map(Result::ok).collect()
+        };
+        if list.is_empty() {
+            return Ok("done".into());
+        }
+        let on_phone: HashSet<String> = {
+            let mut stmt = conn.prepare("SELECT hash FROM phone_media").map_err(|e| format!("error: {e}"))?;
+            let rows = stmt.query_map([], |r| r.get::<_, String>(0)).map_err(|e| format!("error: {e}"))?;
+            rows.filter_map(Result::ok).collect()
+        };
+        let remote = Remote::load(dir.to_path_buf());
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|e| format!("error: {e}"))?;
+        let staging = dir.join("follow-download");
+        let mut outcome = "done".to_string();
+        for (server, album_id, album_name, folder) in list {
+            let (Ok(entry), Some(token)) = (remote.server(&server), remote.token(&server)) else { continue };
+            let c = Conn { http: remote.http.clone(), base: entry.url.clone(), token };
+            let taken: HashSet<String> = {
+                let mut stmt = conn.prepare("SELECT hash FROM follow_photos WHERE server = ?1 AND album_id = ?2").map_err(|e| format!("error: {e}"))?;
+                let rows = stmt.query_map(params![server, album_id], |r| r.get::<_, String>(0)).map_err(|e| format!("error: {e}"))?;
+                rows.filter_map(Result::ok).collect()
+            };
+            let take = |hash: &str| {
+                let _ = conn.execute("INSERT OR IGNORE INTO follow_photos (server, album_id, hash) VALUES (?1, ?2, ?3)", params![server, album_id, hash]);
+            };
+            let found = runtime.block_on(async {
+                let albums = transfer::rpc(&c, "get_albums", serde_json::json!({})).await?;
+                let album = albums.as_array().and_then(|a| a.iter().find(|a| a["id"].as_i64() == Some(album_id)).cloned());
+                Ok::<_, Failure>(album)
+            });
+            let album = match found {
+                Ok(Some(album)) => album,
+                Ok(None) => {
+                    // No longer shared with you: the follow ends, the photos stay
+                    let _ = conn.execute("DELETE FROM album_follows WHERE server = ?1 AND album_id = ?2", params![server, album_id]);
+                    let _ = conn.execute("DELETE FROM follow_photos WHERE server = ?1 AND album_id = ?2", params![server, album_id]);
+                    continue;
+                }
+                Err(f) => {
+                    outcome = failure(f);
+                    continue;
+                }
+            };
+            let mut new = Vec::new();
+            for hash in album["hashes"].as_array().into_iter().flatten().filter_map(|h| h.as_str()) {
+                if taken.contains(hash) {
+                    continue;
+                }
+                if on_phone.contains(hash) {
+                    take(hash);
+                } else {
+                    new.push(hash.to_string());
+                }
+            }
+            let gallery = folder.trim_start_matches(crate::follows::PHONE_FOLLOW).to_string();
+            for (n, hash) in new.iter().enumerate() {
+                if CANCEL.load(Ordering::SeqCst) {
+                    return Ok(outcome);
+                }
+                update(|p| p.stage = format!("Downloading “{album_name}” ({} of {})", n + 1, new.len()));
+                let got = runtime.block_on(transfer::download_one(&c, hash, &staging, &AtomicU64::new(0), &CANCEL));
+                match got {
+                    Ok((path, _)) => {
+                        let saved = crate::android_jni::save_to_gallery(&path, &gallery);
+                        let _ = fs::remove_file(&path);
+                        if saved {
+                            take(hash);
+                        }
+                    }
+                    Err(Failure::Refused(e)) => eprintln!("[follow] {album_name}: {e}"),
+                    Err(Failure::Cancelled) => return Ok(outcome),
+                    Err(f) => {
+                        outcome = failure(f);
+                        break;
+                    }
+                }
+            }
+        }
+        Ok(outcome)
     }
 
     // The photos chosen for a Back up of a selection, still to do
@@ -611,6 +726,60 @@ pub fn phone_backup_now(app: AppHandle, any_network: bool) -> Result<(), String>
         let _ = (app, any_network);
         Err("Backing up a phone is the phone app's".into())
     }
+}
+
+// Follow an album shared with you on this phone: its photos go into Pictures/Lumina/<album> of the phone's gallery,
+// now and as new ones come (the background worker, with the backup's conditions)
+#[tauri::command]
+pub async fn phone_follow_album(app: AppHandle, server: String, album_id: i64, album_name: String) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        let name: String = album_name.chars().map(|c| if "/\\:*?\"<>|".contains(c) || c.is_control() { '_' } else { c }).collect();
+        let folder = format!("{}Pictures/Lumina/{}", crate::follows::PHONE_FOLLOW, name.trim());
+        let conn = crate::client_db::open(&app)?;
+        crate::follows::ensure_tables(&conn)?;
+        conn.execute(
+            "INSERT OR REPLACE INTO album_follows (server, album_id, album_name, folder, upload_to, created_at)
+             VALUES (?1, ?2, ?3, ?4, NULL, strftime('%s','now'))",
+            rusqlite::params![server, album_id, album_name, folder],
+        )
+        .map_err(|e| e.to_string())?;
+        follows_changed(&app, true)
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (app, server, album_id, album_name);
+        Err("Following onto a phone is the phone app's".into())
+    }
+}
+
+// No more new photos from it; the ones that came stay in the gallery
+#[tauri::command]
+pub async fn phone_unfollow_album(app: AppHandle, server: String, album_id: i64) -> Result<(), String> {
+    crate::follows::unfollow_album(app.clone(), server, album_id)?;
+    #[cfg(target_os = "android")]
+    follows_changed(&app, false)?;
+    Ok(())
+}
+
+// Android keeps looking (hourly) while anything is followed, also with the backup off; a new follow is looked at
+// now
+#[cfg(target_os = "android")]
+fn follows_changed(app: &AppHandle, look_now: bool) -> Result<(), String> {
+    let conn = crate::client_db::open(app)?;
+    crate::follows::ensure_tables(&conn)?;
+    let following: i64 = conn
+        .query_row("SELECT COUNT(*) FROM album_follows WHERE folder LIKE 'phone:%'", [], |r| r.get(0))
+        .map_err(|e| e.to_string())?;
+    let app = app.clone();
+    // Off the main thread: the plugin's commands run there
+    std::thread::spawn(move || {
+        let _ = crate::android::call(&app, "setFollowing", serde_json::json!({ "following": following > 0 }));
+        if look_now {
+            let _ = crate::android::call(&app, "backupNow", serde_json::json!({ "followsOnly": true }));
+        }
+    });
+    Ok(())
 }
 
 // Back up for a selection: these photos now, also when they are in a folder the backup leaves out

@@ -63,6 +63,21 @@ pub fn file_blake3(path: &Path) -> Result<String, String> {
     Ok(hasher.finalize().to_hex().to_string())
 }
 
+// One of the server's commands (POST /api/rpc/{command}), for work without the app's window (the phone's
+// background pass); the window's own calls go through remote.rs
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+pub async fn rpc(conn: &Conn, command: &str, args: Value) -> Result<Value, Failure> {
+    let resp = conn.req(reqwest::Method::POST, &format!("/api/rpc/{command}")).timeout(Duration::from_secs(300)).json(&args).send().await.map_err(net)?;
+    if !resp.status().is_success() {
+        return Err(refused(resp).await);
+    }
+    let text = resp.text().await.map_err(net)?;
+    if text.is_empty() {
+        return Ok(Value::Null);
+    }
+    serde_json::from_str(&text).map_err(|e| Failure::Refused(format!("The server's answer wasn't understood: {e}")))
+}
+
 // Of these (hash, size), the hashes the server doesn't have
 pub async fn check_missing(conn: &Conn, files: &[(String, u64, String)]) -> Result<Vec<String>, Failure> {
     let files: Vec<Value> = files.iter().map(|(hash, size, name)| json!({ "hash": hash, "size": size, "name": name })).collect();

@@ -3,7 +3,6 @@ package com.amazhr.lumina
 import android.Manifest
 import android.app.Activity
 import android.content.ClipData
-import android.content.ContentValues
 import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
@@ -11,7 +10,6 @@ import android.os.Build
 import android.provider.MediaStore
 import android.util.Size
 import android.view.HapticFeedbackConstants
-import android.webkit.MimeTypeMap
 import androidx.core.content.FileProvider
 import androidx.activity.result.ActivityResult
 import androidx.activity.result.IntentSenderRequest
@@ -46,11 +44,18 @@ class BackupArgs {
 class BackupNowArgs {
   var anyNetwork: Boolean = false
   var selection: Boolean = false
+  var followsOnly: Boolean = false
+}
+
+@InvokeArg
+class FollowingArgs {
+  var following: Boolean = false
 }
 
 // Photos to another app: downloaded originals in the app's cache, and photos of the phone's media store
 @InvokeArg
 class ShareArgs {
+  var path: String? = null
   var files: List<String> = listOf()
   var media: List<MediaRef> = listOf()
   var mime: String = "*/*"
@@ -130,31 +135,8 @@ class LuminaPlugin(private val activity: Activity) : Plugin(activity) {
       return
     }
     pool.execute {
-      var saved = 0
-      try {
-        for (path in args.files) {
-          val file = File(path)
-          val ext = file.extension.lowercase()
-          val mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: "application/octet-stream"
-          val video = mime.startsWith("video/")
-          val values = ContentValues().apply {
-            put(MediaStore.MediaColumns.DISPLAY_NAME, file.name)
-            put(MediaStore.MediaColumns.MIME_TYPE, mime)
-            put(MediaStore.MediaColumns.RELATIVE_PATH, if (video) "Movies/Lumina" else "Pictures/Lumina")
-            put(MediaStore.MediaColumns.IS_PENDING, 1)
-          }
-          val resolver = activity.contentResolver
-          val uri = resolver.insert(PhoneStore.collection(video), values) ?: continue
-          resolver.openOutputStream(uri)?.use { out -> file.inputStream().use { it.copyTo(out) } }
-          values.clear()
-          values.put(MediaStore.MediaColumns.IS_PENDING, 0)
-          resolver.update(uri, values, null, null)
-          saved++
-        }
-        invoke.resolve(JSObject().put("saved", saved))
-      } catch (e: Exception) {
-        invoke.reject("Couldn't save to the phone: ${e.message}")
-      }
+      val saved = args.files.count { PhoneStore.saveToGallery(it, null) }
+      invoke.resolve(JSObject().put("saved", saved))
     }
   }
 
@@ -194,6 +176,23 @@ class LuminaPlugin(private val activity: Activity) : Plugin(activity) {
   @ActivityCallback
   fun trashResult(invoke: Invoke, result: ActivityResult) {
     invoke.resolve(JSObject().put("done", result.resultCode == Activity.RESULT_OK))
+  }
+
+  // An update: the downloaded APK to Android's installer, which asks first
+  @Command
+  fun installApk(invoke: Invoke) {
+    val args = invoke.parseArgs(ShareArgs::class.java)
+    val path = args.files.firstOrNull() ?: args.path
+    if (path == null) {
+      invoke.reject("No update to install")
+      return
+    }
+    val uri = FileProvider.getUriForFile(activity, "${activity.packageName}.fileprovider", File(path))
+    val install = Intent(Intent.ACTION_VIEW)
+      .setDataAndType(uri, "application/vnd.android.package-archive")
+      .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+    activity.startActivity(install)
+    invoke.resolve()
   }
 
   // A short vibration (a long-press selecting a photo)
@@ -298,10 +297,19 @@ class LuminaPlugin(private val activity: Activity) : Plugin(activity) {
     pool.execute { invoke.resolve(JSObject().put("waiting", Backup.waiting(activity))) }
   }
 
+  // Albums followed onto this phone or not: Android keeps looking (hourly) while there are
+  @Command
+  fun setFollowing(invoke: Invoke) {
+    val args = invoke.parseArgs(FollowingArgs::class.java)
+    Backup.prefs(activity).edit().putBoolean("following", args.following).commit()
+    Backup.schedule(activity)
+    invoke.resolve()
+  }
+
   @Command
   fun backupNow(invoke: Invoke) {
     val args = invoke.parseArgs(BackupNowArgs::class.java)
-    Backup.now(activity, args.anyNetwork, args.selection)
+    Backup.now(activity, args.anyNetwork, args.selection, args.followsOnly)
     invoke.resolve()
   }
 }

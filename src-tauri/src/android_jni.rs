@@ -62,6 +62,16 @@ pub fn reads_originals() -> bool {
     .unwrap_or(false)
 }
 
+// A downloaded photo into the phone's gallery, in `folder` ("Pictures/Lumina/Summer"): a followed album's
+pub fn save_to_gallery(path: &std::path::Path, folder: &str) -> bool {
+    with_env(|env, b| {
+        let class = <&JClass>::from(b.store.as_obj());
+        let (path, folder) = (env.new_string(path.to_string_lossy())?, env.new_string(folder)?);
+        env.call_static_method(class, "saveToGallery", "(Ljava/lang/String;Ljava/lang/String;)Z", &[JValue::Object(&path), JValue::Object(&folder)])?.z()
+    })
+    .unwrap_or(false)
+}
+
 pub fn token_get(name: &str) -> Option<String> {
     with_env(|env, b| {
         let class = <&JClass>::from(b.tokens.as_obj());
@@ -108,11 +118,14 @@ pub extern "system" fn Java_com_amazhr_lumina_Native_backupPass(
     videos: jboolean,
     folders: JString,
     selection: jboolean,
+    backup: jboolean,
+    follows: jboolean,
 ) -> jstring {
     let mut text = |s: &JString| env.get_string(s).map(String::from).unwrap_or_default();
     let (data_dir, server, media, folders) = (text(&data_dir), text(&server), text(&media), text(&folders));
     let folders: Vec<String> = serde_json::from_str(&folders).unwrap_or_default();
-    let outcome = crate::phone_backup::pass(std::path::Path::new(&data_dir), &server, &media, videos != 0, &folders, selection != 0);
+    let outcome =
+        crate::phone_backup::pass(std::path::Path::new(&data_dir), &server, &media, videos != 0, &folders, selection != 0, backup != 0, follows != 0);
     answer(&mut env, &outcome)
 }
 

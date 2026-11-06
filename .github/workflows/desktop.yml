@@ -1,4 +1,5 @@
-# Lumina for Linux (AppImage, .deb) and macOS (Apple Silicon .dmg), built on GitHub.
+# Lumina for Linux (AppImage, .deb), macOS (Apple Silicon .dmg) and Android (an APK for arm64 phones), built on
+# GitHub.
 #
 # Windows releases are still made on the release PC with scripts/release.ps1 (see docs/RELEASING.md). When
 # that release is published, this workflow builds the Linux and Mac versions of the same tag, adds them to
@@ -11,6 +12,11 @@
 # Updates need the update key as the repository secret TAURI_SIGNING_PRIVATE_KEY (the contents of
 # lumina-updater.key; Settings → Secrets and variables → Actions). Without it the apps are built without
 # update signatures and latest.json is left as it is.
+#
+# The Android app is signed with the Android key: the secrets ANDROID_KEYSTORE (the keystore file, base64),
+# ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS and ANDROID_KEY_PASSWORD (docs/RELEASING.md). Without them the APK
+# is built unsigned, kept as the run's artifact only (Android installs no unsigned APK). The phone app finds the
+# release's APK itself (phone_update.rs).
 name: Desktop builds
 
 on:
@@ -127,6 +133,90 @@ jobs:
       - name: Add to the release
         if: env.RELEASE != ''
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$RELEASE" "$RUNNER_TEMP"/out/* --clobber --repo "$GITHUB_REPOSITORY"
+
+  android:
+    runs-on: ubuntu-24.04
+    env:
+      REF: ${{ github.event.release.tag_name || inputs.ref }}
+      RELEASE: ${{ github.event.release.tag_name || inputs.release_tag }}
+      ANDROID_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.REF }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      # The SDK with its licenses accepted; Gradle fetches the platform and build tools it names itself
+      - uses: android-actions/setup-android@v3
+
+      - name: Android NDK
+        run: |
+          sdkmanager "ndk;29.0.14206865"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/29.0.14206865" >> "$GITHUB_ENV"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: android
+
+      - run: npm ci
+
+      # keystore.properties next to the Android project (build.gradle.kts reads it); never in git
+      - name: Signing key
+        if: env.ANDROID_KEYSTORE != ''
+        run: |
+          echo "$ANDROID_KEYSTORE" | base64 -d > "$RUNNER_TEMP/lumina-android.jks"
+          {
+            echo "storeFile=$RUNNER_TEMP/lumina-android.jks"
+            echo "password=$ANDROID_KEYSTORE_PASSWORD"
+            echo "keyAlias=$ANDROID_KEY_ALIAS"
+            echo "keyPassword=$ANDROID_KEY_PASSWORD"
+          } > src-tauri/gen/android/keystore.properties
+
+      - name: Build
+        run: npx tauri android build --apk --target aarch64
+
+      # Lumina_<version>_android_arm64.apk; only a signed one goes to the release
+      - name: Collect
+        id: collect
+        run: |
+          version=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          out="$RUNNER_TEMP/out"; mkdir -p "$out"
+          apk=$(ls src-tauri/gen/android/app/build/outputs/apk/universal/release/*.apk | head -1)
+          cp "$apk" "$out/Lumina_${version}_android_arm64.apk"
+          case "$apk" in
+            *unsigned*) echo "::warning::No Android signing key: the APK is unsigned and stays an artifact"; echo "signed=false" >> "$GITHUB_OUTPUT" ;;
+            *) echo "signed=true" >> "$GITHUB_OUTPUT" ;;
+          esac
+          ls -la "$out"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lumina-android-arm64
+          path: ${{ runner.temp }}/out/*
+          retention-days: 14
+
+      - name: Add to the release
+        if: env.RELEASE != '' && steps.collect.outputs.signed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "$RELEASE" "$RUNNER_TEMP"/out/* --clobber --repo "$GITHUB_REPOSITORY"

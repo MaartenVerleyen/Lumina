@@ -15,6 +15,12 @@ use tauri::Emitter;
 
 fn open(app: &AppHandle) -> Result<Connection, String> {
     let conn = client_db::open(app)?;
+    ensure_tables(&conn)?;
+    Ok(conn)
+}
+
+// The follows of this device (also the phone's background pass, which has no window: phone_backup.rs)
+pub fn ensure_tables(conn: &Connection) -> Result<(), String> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS album_follows (
              server TEXT NOT NULL,
@@ -34,8 +40,7 @@ fn open(app: &AppHandle) -> Result<Connection, String> {
              PRIMARY KEY (server, album_id, hash)
          );",
     )
-    .map_err(|e| e.to_string())?;
-    Ok(conn)
+    .map_err(|e| e.to_string())
 }
 
 #[derive(Serialize, Clone)]
@@ -121,11 +126,27 @@ pub fn unfollow_album(app: AppHandle, server: String, album_id: i64) -> Result<(
     Ok(())
 }
 
+// A follow of the phone app: its photos go into this folder of the phone's gallery (`phone:Pictures/Lumina/<album>`)
+pub const PHONE_FOLLOW: &str = "phone:";
+
 static SYNCING: AtomicBool = AtomicBool::new(false);
 static AGAIN: AtomicBool = AtomicBool::new(false);
 
-// Look at the followed albums soon (a burst of events is one look)
+// Look at the followed albums soon (a burst of events is one look). The phone's follows are its background
+// worker's: it runs for them now.
 pub fn nudge(app: &AppHandle) {
+    #[cfg(target_os = "android")]
+    {
+        let app = app.clone();
+        std::thread::spawn(move || {
+            let followed = open(&app)
+                .and_then(|c| c.query_row("SELECT COUNT(*) FROM album_follows WHERE folder LIKE 'phone:%'", [], |r| r.get::<_, i64>(0)).map_err(|e| e.to_string()))
+                .unwrap_or(0);
+            if followed > 0 {
+                let _ = crate::android::call(&app, "backupNow", json!({ "followsOnly": true }));
+            }
+        });
+    }
     if SYNCING.swap(true, Ordering::SeqCst) {
         AGAIN.store(true, Ordering::SeqCst);
         return;
@@ -158,7 +179,8 @@ async fn sync(app: &AppHandle) -> Result<(), String> {
     let list = follows(&open(app)?)?;
     let mut ended = Vec::new();
     for f in list {
-        if remote(app).token(&f.server).is_none() {
+        // The phone's follows land in its gallery: its background pass takes them (phone_backup.rs)
+        if remote(app).token(&f.server).is_none() || f.folder.starts_with(PHONE_FOLLOW) {
             continue;
         }
         // An unreachable server is looked at again next time

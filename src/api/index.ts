@@ -482,6 +482,59 @@ export function startAllPhotosFromKept() {
   fromKept = true;
 }
 
+// The phone's photos (phone.rs): a template of what they have in common and a row each, made into photos here
+type PhoneRow = [
+  hash: string,
+  name: string,
+  subfolder: string,
+  path: string,
+  sizeKb: number,
+  width: number,
+  height: number,
+  capturedAt: string,
+  durationMs: number | null,
+  latitude: number | null,
+  longitude: number | null,
+  location: string,
+  cameraModel: string,
+  lensModel: string | null,
+  focalLength: string | null,
+  aperture: string | null,
+  shutterSpeed: string | null,
+  iso: string | null,
+];
+
+async function phonePhotos(): Promise<PhotoItem[]> {
+  const { template, rows } = await callLocal<{ template: PhotoItem; rows: PhoneRow[] }>("phone_photos");
+  return rows.map(([hash, name, subfolder, path, size_kb, width, height, captured_at, duration_ms, latitude, longitude, location, camera_model, lens_model, focal_length, aperture, shutter_speed, iso]) => ({
+    ...template,
+    // Lists of its own: nothing shares them between photos
+    tags: [],
+    people: [],
+    faces: [],
+    hash,
+    name,
+    subfolder,
+    path,
+    thumb_path: path,
+    size_kb,
+    width,
+    height,
+    captured_at,
+    media_type: path.startsWith("phone:v:") ? "video" : "photo",
+    duration_ms,
+    latitude,
+    longitude,
+    location,
+    camera_model,
+    lens_model,
+    focal_length,
+    aperture,
+    shutter_speed,
+    iso,
+  }));
+}
+
 // The content ids of the photos a server holds (its thumbnails are what Keep all thumbnails keeps)
 export function allPhotosOnServer(server: string): string[] {
   const keys = new Set([...all.sources.values()].filter((s) => s.server === server).map(sourceKey));
@@ -618,7 +671,7 @@ async function loadAllNow(check?: string[]): Promise<PhotoItem[]> {
                 useKept
               )
             : source.root === PHONE_ROOT
-              ? await callLocal<PhotoItem[]>("phone_photos")
+              ? await phonePhotos()
               : checked
               ? await scanHere(source.root)
               : await callLocal<PhotoItem[]>("list_local_library", { root: source.root });

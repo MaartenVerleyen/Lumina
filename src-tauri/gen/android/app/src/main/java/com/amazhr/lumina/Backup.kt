@@ -61,23 +61,31 @@ object Backup {
       .putBoolean("charging", charging)
       .putBoolean("videos", videos)
       .commit()
+    schedule(context)
+  }
+
+  // Every hour while the conditions hold (Android may wait for them, or batch it with other apps' work), while the
+  // backup is on or albums are followed onto the phone
+  fun schedule(context: Context) {
+    val p = prefs(context)
     val work = WorkManager.getInstance(context)
-    if (!enabled || server == null) {
+    val backingUp = p.getBoolean("enabled", false) && p.getString("server", null) != null
+    if (!backingUp && !p.getBoolean("following", false)) {
       work.cancelUniqueWork(PERIODIC)
       return
     }
     val constraints = Constraints.Builder()
-      .setRequiredNetworkType(if (wifiOnly) NetworkType.UNMETERED else NetworkType.CONNECTED)
-      .setRequiresCharging(charging)
+      .setRequiredNetworkType(if (p.getBoolean("wifiOnly", true)) NetworkType.UNMETERED else NetworkType.CONNECTED)
+      .setRequiresCharging(p.getBoolean("charging", false))
       .build()
-    // Every hour while the conditions hold (Android may wait for them, or batch it with other apps' work)
     val request = PeriodicWorkRequestBuilder<BackupWorker>(1, TimeUnit.HOURS).setConstraints(constraints).build()
     work.enqueueUniquePeriodicWork(PERIODIC, ExistingPeriodicWorkPolicy.UPDATE, request)
   }
 
   // Back up now: at once, on Wi-Fi only when that is set, unless `anyNetwork`
-  // `selection`: for the photos chosen (phone_backup_selected) only
-  fun now(context: Context, anyNetwork: Boolean, selection: Boolean) {
+  // Back up now, and look at the followed albums; `selection`: back up the photos chosen (phone_backup_selected)
+  // only; `followsOnly`: look at the followed albums only (one just followed)
+  fun now(context: Context, anyNetwork: Boolean, selection: Boolean, followsOnly: Boolean) {
     val wifiOnly = prefs(context).getBoolean("wifiOnly", true) && !anyNetwork
     val constraints = Constraints.Builder()
       .setRequiredNetworkType(if (wifiOnly) NetworkType.UNMETERED else NetworkType.CONNECTED)
@@ -86,7 +94,7 @@ object Backup {
     val request = OneTimeWorkRequestBuilder<BackupWorker>()
       .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
       .setConstraints(constraints)
-      .setInputData(workDataOf("selection" to selection))
+      .setInputData(workDataOf("now" to true, "selection" to selection, "followsOnly" to followsOnly))
       .build()
     // One already waiting or running: this one follows it (a selection backed up while another runs is kept)
     WorkManager.getInstance(context).enqueueUniqueWork(NOW, ExistingWorkPolicy.APPEND_OR_REPLACE, request)
@@ -109,7 +117,14 @@ class BackupWorker(context: Context, params: WorkerParameters) : Worker(context,
 
   override fun doWork(): Result {
     val prefs = Backup.prefs(applicationContext)
-    val server = prefs.getString("server", null) ?: return Result.success()
+    // What this run does: a selection backs up the chosen photos only; a new follow looks at the followed albums
+    // only; Back up now does both; the hourly run backs up when the backup is on, and looks at the albums
+    val selection = inputData.getBoolean("selection", false)
+    val followsOnly = inputData.getBoolean("followsOnly", false)
+    val backup = !followsOnly && (inputData.getBoolean("now", false) || prefs.getBoolean("enabled", false))
+    val follows = !selection
+    val server = prefs.getString("server", null)
+    if (server == null && !follows) return Result.success()
     Native.init(applicationContext)
     Backup.channel(applicationContext)
     // In the foreground: a long first backup isn't stopped after Android's 10 minutes. Android may refuse
@@ -118,7 +133,7 @@ class BackupWorker(context: Context, params: WorkerParameters) : Worker(context,
       setForegroundAsync(foreground("Looking for new photos", 0, 0)).get()
     } catch (e: Exception) {
     }
-    val media = try {
+    val media = if (!backup) "[]" else try {
       PhoneStore.list(applicationContext).toString()
     } catch (e: SecurityException) {
       // Access to the photos was taken away: nothing to back up until it's given again
@@ -138,11 +153,13 @@ class BackupWorker(context: Context, params: WorkerParameters) : Worker(context,
     val outcome = try {
       Native.backupPass(
         dataDir,
-        server,
+        server ?: "",
         media,
         prefs.getBoolean("videos", true),
         Backup.folders(applicationContext).toString(),
-        inputData.getBoolean("selection", false),
+        selection,
+        backup,
+        follows,
       )
     } finally {
       ticker.interrupt()

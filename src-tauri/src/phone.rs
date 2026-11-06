@@ -71,7 +71,8 @@ mod imp {
         format!("phone-{}{}", if m.video { "v" } else { "p" }, m.id)
     }
 
-    fn photo_of(m: &PhoneMedia, hash: String, meta: Option<&PhoneMeta>) -> PhotoItem {
+    // A photo of the phone as a row of its own values: the window adds them to the template (PhoneList)
+    fn row_of(m: &PhoneMedia, hash: String, meta: Option<&PhoneMeta>) -> PhoneRow {
         let path = format!("phone:{}:{}", if m.video { "v" } else { "p" }, m.id);
         let when = if m.taken > 0 {
             std::time::UNIX_EPOCH + std::time::Duration::from_millis(m.taken as u64)
@@ -79,51 +80,54 @@ mod imp {
             std::time::UNIX_EPOCH + std::time::Duration::from_secs(m.modified.max(0) as u64)
         };
         let folder = m.folder.trim_end_matches('/');
-        PhotoItem {
+        PhoneRow(
             hash,
-            name: m.name.clone(),
-            subfolder: if folder.is_empty() { "Root".into() } else { folder.replace('/', " / ") },
-            path: path.clone(),
-            thumb_path: path,
-            size_kb: m.size / 1024,
-            width: m.width,
-            height: m.height,
-            thumb_ready: true,
-            captured_at: lumina_core::exif_meta::system_time_local_iso(when),
-            media_type: if m.video { "video" } else { "photo" }.into(),
-            duration_ms: m.duration,
-            latitude: meta.and_then(|x| x.lat),
-            longitude: meta.and_then(|x| x.lon),
-            location: meta.map(|x| x.location.clone()).unwrap_or_default(),
-            camera_model: meta.map(|x| x.camera_model.clone()).unwrap_or_default(),
-            lens_model: meta.and_then(|x| x.lens_model.clone()),
-            focal_length: meta.and_then(|x| x.focal_length.clone()),
-            aperture: meta.and_then(|x| x.aperture.clone()),
-            shutter_speed: meta.and_then(|x| x.shutter_speed.clone()),
-            iso: meta.and_then(|x| x.iso.clone()),
-            ..Default::default()
-        }
+            m.name.clone(),
+            if folder.is_empty() { "Root".into() } else { folder.replace('/', " / ") },
+            path,
+            m.size / 1024,
+            m.width,
+            m.height,
+            lumina_core::exif_meta::system_time_local_iso(when),
+            m.duration,
+            meta.and_then(|x| x.lat),
+            meta.and_then(|x| x.lon),
+            meta.map(|x| x.location.clone()).unwrap_or_default(),
+            meta.map(|x| x.camera_model.clone()).unwrap_or_default(),
+            meta.and_then(|x| x.lens_model.clone()),
+            meta.and_then(|x| x.focal_length.clone()),
+            meta.and_then(|x| x.aperture.clone()),
+            meta.and_then(|x| x.shutter_speed.clone()),
+            meta.and_then(|x| x.iso.clone()),
+        )
     }
 
-    pub async fn photos(app: AppHandle) -> Result<Vec<PhotoItem>, String> {
+    pub async fn photos(app: AppHandle) -> Result<PhoneList, String> {
         let app2 = app.clone();
-        let (photos, unread) = tauri::async_runtime::spawn_blocking(move || -> Result<_, String> {
+        let (rows, unread) = tauri::async_runtime::spawn_blocking(move || -> Result<_, String> {
             let media = android::list_media(&app2)?;
             let conn = client_db::open(&app2)?;
             ensure_table(&conn)?;
-            let mut known = conn
-                .prepare("SELECT hash, folder, meta FROM phone_media WHERE id = ?1 AND video = ?2 AND modified = ?3 AND size = ?4")
-                .map_err(|e| e.to_string())?;
+            // Everything kept, in one read (a query per photo takes a third of a second for 11,000)
+            type Kept = (i64, i64, String, String, Option<String>);
+            let mut kept: HashMap<(i64, bool), Kept> = HashMap::new();
+            {
+                let mut stmt = conn.prepare("SELECT id, video, modified, size, hash, folder, meta FROM phone_media").map_err(|e| e.to_string())?;
+                let found = stmt
+                    .query_map([], |r| Ok(((r.get(0)?, r.get(1)?), (r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?))))
+                    .map_err(|e| e.to_string())?;
+                kept.extend(found.filter_map(Result::ok));
+            }
             let originals = crate::android_jni::reads_originals();
-            let mut photos = Vec::with_capacity(media.len());
+            let mut rows = Vec::with_capacity(media.len());
             let mut unread = Vec::new();
             let mut moved = Vec::new();
             for m in &media {
-                let row = known
-                    .query_row(params![m.id, m.video, m.modified, m.size as i64], |r| {
-                        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?))
-                    })
-                    .ok();
+                // Kept while the photo is unchanged (same date and size)
+                let row = kept
+                    .remove(&(m.id, m.video))
+                    .filter(|(modified, size, ..)| *modified == m.modified && *size == m.size as i64)
+                    .map(|(_, _, hash, folder, meta)| (hash, folder, meta));
                 match row {
                     Some((hash, folder, meta)) => {
                         if folder != m.folder {
@@ -135,17 +139,16 @@ mod imp {
                         if meta.is_none() {
                             unread.push(m.clone());
                         }
-                        photos.push(photo_of(m, hash, meta.as_ref()));
+                        rows.push(row_of(m, hash, meta.as_ref()));
                     }
                     None => {
                         unread.push(m.clone());
-                        photos.push(photo_of(m, stand_in(m), None));
+                        rows.push(row_of(m, stand_in(m), None));
                     }
                 }
             }
-            drop(known);
             remember_folders(&conn, &media, &moved)?;
-            Ok((photos, unread))
+            Ok((rows, unread))
         })
         .await
         .map_err(|e| e.to_string())??;
@@ -155,7 +158,7 @@ mod imp {
                 READING.store(false, Ordering::SeqCst);
             });
         }
-        Ok(photos)
+        Ok(PhoneList { template: template(), rows })
     }
 
     // The content ids of photos seen for the first time; the window lists the phone again every 500 and at
@@ -324,9 +327,48 @@ mod imp {
 #[cfg(target_os = "android")]
 pub use imp::{ensure_table, known_id, original, parse, read_id, serve};
 
+// The phone's photos for the window, compact: 11,000 whole photos are 9 MB of JSON (every field a photo can have,
+// mostly empty), and sending and reading that took longer than listing them. The window makes each photo from the
+// template and its row (src/api/index.ts).
+#[derive(serde::Serialize, Default)]
+pub struct PhoneList {
+    template: PhotoItem,
+    rows: Vec<PhoneRow>,
+}
+
+// hash, name, subfolder, path, size_kb, width, height, captured_at, duration_ms, latitude, longitude, location,
+// camera_model, lens_model, focal_length, aperture, shutter_speed, iso
+#[derive(serde::Serialize)]
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+pub struct PhoneRow(
+    String,
+    String,
+    String,
+    String,
+    u64,
+    u32,
+    u32,
+    String,
+    Option<u64>,
+    Option<f64>,
+    Option<f64>,
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+);
+
+// What every photo of the phone has in common
+fn template() -> PhotoItem {
+    PhotoItem { thumb_ready: true, media_type: "photo".into(), ..Default::default() }
+}
+
 // The phone's photos and videos (the phone app's "This phone" in All photos)
 #[tauri::command]
-pub async fn phone_photos(app: AppHandle) -> Result<Vec<PhotoItem>, String> {
+pub async fn phone_photos(app: AppHandle) -> Result<PhoneList, String> {
     #[cfg(target_os = "android")]
     {
         imp::photos(app).await
@@ -334,7 +376,7 @@ pub async fn phone_photos(app: AppHandle) -> Result<Vec<PhotoItem>, String> {
     #[cfg(not(target_os = "android"))]
     {
         let _ = app;
-        Ok(Vec::new())
+        Ok(PhoneList { template: template(), rows: Vec::new() })
     }
 }
 

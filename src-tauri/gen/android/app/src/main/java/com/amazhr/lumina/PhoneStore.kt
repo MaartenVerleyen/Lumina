@@ -3,13 +3,16 @@ package com.amazhr.lumina
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.ContentUris
+import android.content.ContentValues
 import android.content.Context
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
+import android.webkit.MimeTypeMap
 import app.tauri.plugin.JSArray
 import app.tauri.plugin.JSObject
+import java.io.File
 
 // The phone's photos and videos in Android's media store: the list (All photos, the backup) and their files,
 // which Rust reads itself (content ids, uploads) through `open`
@@ -79,6 +82,33 @@ object PhoneStore {
       context.contentResolver.openFileDescriptor(uri, "r")?.detachFd() ?: -1
     } catch (e: Exception) {
       -1
+    }
+  }
+
+  // A downloaded photo into the phone's gallery: in `folder` ("Pictures/Lumina/Summer", a followed album's), or
+  // Pictures/Lumina (videos Movies/Lumina). Rust's follow pass calls it from its own thread.
+  @JvmStatic
+  fun saveToGallery(path: String, folder: String?): Boolean {
+    if (Build.VERSION.SDK_INT < 29) return false
+    return try {
+      val file = File(path)
+      val mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(file.extension.lowercase()) ?: "application/octet-stream"
+      val video = mime.startsWith("video/")
+      val values = ContentValues().apply {
+        put(MediaStore.MediaColumns.DISPLAY_NAME, file.name)
+        put(MediaStore.MediaColumns.MIME_TYPE, mime)
+        put(MediaStore.MediaColumns.RELATIVE_PATH, folder ?: if (video) "Movies/Lumina" else "Pictures/Lumina")
+        put(MediaStore.MediaColumns.IS_PENDING, 1)
+      }
+      val resolver = context.contentResolver
+      val uri = resolver.insert(collection(video), values) ?: return false
+      resolver.openOutputStream(uri)?.use { out -> file.inputStream().use { it.copyTo(out) } }
+      values.clear()
+      values.put(MediaStore.MediaColumns.IS_PENDING, 0)
+      resolver.update(uri, values, null, null)
+      true
+    } catch (e: Exception) {
+      false
     }
   }
 
