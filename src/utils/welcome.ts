@@ -17,9 +17,7 @@ export const RELEASE_NOTES: ReleaseNotes[] = [
     version: "5.2.0",
     items: [
       { title: "Check suggested faces on the phone", text: "Search → People shows how many faces Lumina thinks are someone you named (+3 on their photo). Tap it, tick the faces that are them and confirm, or say they aren't, so they aren't suggested again." },
-      { title: "Name faces in groups", text: "\"Without a name\" shows faces that look like the same person, grouped. Name a group and every face in it gets the name; tap a face that is someone else to leave it out, or say it's nobody you know." },
-      { title: "On the computer too", text: "In All photos the desktop app now also shows how many faces are waiting to be checked for each person, also for people on a server." },
-    ],
+      { title: "Name faces in groups", text: "\"Without a name\" shows faces that look like the same person, grouped. Name a group and every face in it gets the name; tap a face that is someone else to leave it out, or say it's nobody you know." },    ],
   },
   {
     version: "5.1.2",
