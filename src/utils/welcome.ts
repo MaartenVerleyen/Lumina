@@ -14,6 +14,12 @@ export interface ReleaseNotes {
 // Newest first. Add an entry for every release that should greet updating users with "What's new".
 export const RELEASE_NOTES: ReleaseNotes[] = [
   {
+    version: "5.1.1",
+    items: [
+      { title: "The phone app opens", text: "The Android app from 5.1.0 closed straight away when you opened it. This one opens. Nothing changes on Windows, Linux and the Mac." },
+    ],
+  },
+  {
     version: "5.1.0",
     items: [
       { title: "Lumina on your phone", text: "Lumina for Android: your phone's photos and your server's library in one timeline, each photo once. An amber mark shows what isn't backed up yet, a cloud what is only on the server. Pinch to change the size, drag the handle on the edge to jump through the years, long-press and drag to select. Install the APK from the release; the app tells you when there is a newer one." },
