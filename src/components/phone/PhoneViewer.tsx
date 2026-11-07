@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { ChevronLeft, Cloud, CloudOff, CloudUpload, Download, ExternalLink, FileImage, FolderOpen, Info, Loader2, MapPin, Camera, MoreVertical, Share2, Smartphone, X } from "lucide-react";
-import { allPhotosCanBackUp, allPhotosSources, callLocal, mediaUrl, onAndroid, openLibraryIsAll } from "../../api";
+import { ChevronLeft, Cloud, CloudOff, CloudUpload, Download, ExternalLink, FileImage, FolderOpen, Info, Loader2, MapPin, Camera, MoreVertical, Share2, Smartphone, UserRound, X } from "lucide-react";
+import { allPhotosCanBackUp, allPhotosSources, call, callLocal, canEditPhoto, mediaUrl, onAndroid, openLibraryIsAll } from "../../api";
 import { whereabouts, type Source } from "../../api/allPhotos";
 import { useServers } from "../../hooks/useServers";
 import { openWith, saveToPhone, serverOf, sharePhotos } from "./share";
-import type { PhotoItem } from "../../types/lumina";
+import type { FaceInstance, PersonItem, PhotoItem } from "../../types/lumina";
 import { formatBytes, thumbSrc } from "../../utils/photoHelpers";
 import { isVideo } from "../../utils/media";
 import LoupeVideo from "../modals/LoupeVideo";
@@ -43,12 +43,17 @@ export default function PhoneViewer({
   onClose,
   onPerson,
   onShowFolder,
+  people,
+  onFaces,
 }: {
   photos: PhotoItem[];
   index: number;
   onIndex: (index: number) => void;
   onClose: () => void;
   onPerson: (name: string) => void;
+  // The names to suggest when naming a face, and where a photo's renamed faces go
+  people: PersonItem[];
+  onFaces: (faces: Record<string, FaceInstance[]>) => void;
   // The phone app: the phone's folder this photo is in (Albums)
   onShowFolder?: (photo: PhotoItem) => void;
 }) {
@@ -274,6 +279,8 @@ export default function PhoneViewer({
           onClose={() => setInfo(false)}
           onPerson={onPerson}
           onAction={(what) => void act(what, photo, setNotice)}
+          people={people}
+          onFaces={onFaces}
         />
       )}
       {menu && (
@@ -418,16 +425,38 @@ function Details({
   onClose,
   onPerson,
   onAction,
+  people,
+  onFaces,
 }: {
   photo: PhotoItem;
   onClose: () => void;
   onPerson: (name: string) => void;
   onAction: (what: Action) => void;
+  people: PersonItem[];
+  onFaces: (faces: Record<string, FaceInstance[]>) => void;
 }) {
   const { servers } = useServers();
+  const [naming, setNaming] = useState<FaceInstance | null>(null);
   const where = whereOf(photo);
   const labelOf = (id: string) => servers.find((x) => x.id === id)?.label ?? id;
   const faces = (photo.faces ?? []).filter((f) => f.face_thumb);
+  // Where the account may change the photo, every face shows and a tap names it; elsewhere only the named ones
+  const canName = canEditPhoto(photo.hash);
+  const shownFaces = canName ? faces : faces.filter((f) => f.person_name);
+  if (naming) {
+    return (
+      <FaceSheet
+        face={naming}
+        people={people}
+        onClose={() => setNaming(null)}
+        onPerson={onPerson}
+        onDone={(changed) => {
+          onFaces(changed);
+          setNaming(null);
+        }}
+      />
+    );
+  }
   const aperture = photo.aperture ? `f/${String(photo.aperture).replace(/^f\//, "")}` : "";
   // A phone's lens name often holds the aperture already ("5.96mm f/1.6")
   const exposure = [aperture && !(photo.lens_model ?? "").includes(aperture) && aperture, photo.shutter_speed, photo.iso && `ISO ${String(photo.iso).replace(/^ISO\s*/i, "")}`]
@@ -500,22 +529,30 @@ function Details({
             <span>{[photo.camera_model, photo.lens_model, exposure].filter(Boolean).join(" · ")}</span>
           </div>
         )}
-        {faces.some((f) => f.person_name) && (
+        {shownFaces.length > 0 && (
           <div className="mt-4">
             <div className="text-[11px] uppercase tracking-wider text-zinc-500 mb-2">People</div>
             <div className="flex gap-3 overflow-x-auto pb-1">
-              {faces
-                .filter((f) => f.person_name)
-                .map((f) => (
-                  <button key={f.face_id} onClick={() => onPerson(f.person_name!)} className="shrink-0 flex flex-col items-center gap-1 w-14">
-                    <img src={mediaUrl({ kind: "face", path: f.face_thumb })} alt="" className="w-12 h-12 rounded-full object-cover bg-zinc-800" />
-                    <span className="text-[11px] text-zinc-300 truncate w-full text-center">{f.person_name}</span>
-                  </button>
-                ))}
+              {shownFaces.map((f) => (
+                <button
+                  key={f.face_id}
+                  onClick={() => (canName ? setNaming(f) : onPerson(f.person_name!))}
+                  className="shrink-0 flex flex-col items-center gap-1 w-14"
+                >
+                  <img
+                    src={mediaUrl({ kind: "face", path: f.face_thumb })}
+                    alt=""
+                    className={`w-12 h-12 rounded-full object-cover bg-zinc-800 ${f.person_name ? "" : "ring-2 ring-amber-400/70"}`}
+                  />
+                  <span className={`text-[11px] truncate w-full text-center ${f.person_name ? "text-zinc-300" : "text-amber-300"}`}>
+                    {f.person_name || "Who's this?"}
+                  </span>
+                </button>
+              ))}
             </div>
           </div>
         )}
-        {!faces.some((f) => f.person_name) && photo.people.length > 0 && (
+        {!shownFaces.some((f) => f.person_name) && photo.people.length > 0 && (
           <div className="mt-4">
             <div className="text-[11px] uppercase tracking-wider text-zinc-500 mb-1.5">People</div>
             <div className="flex flex-wrap gap-1.5">
@@ -549,6 +586,130 @@ function Details({
             </div>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+// One face of the photo: give it a name (typed, or one of the people already known), change it, or take it off
+function FaceSheet({
+  face,
+  people,
+  onClose,
+  onPerson,
+  onDone,
+}: {
+  face: FaceInstance;
+  people: PersonItem[];
+  onClose: () => void;
+  onPerson: (name: string) => void;
+  onDone: (faces: Record<string, FaceInstance[]>) => void;
+}) {
+  const current = face.person_name ?? "";
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const typed = text.trim().toLowerCase();
+  // The people in the most photos first; while typing, the names that start with it before those that contain it
+  const suggestions = people
+    .filter((p) => !p.hidden && p.name.toLowerCase() !== current.toLowerCase() && (!typed || p.name.toLowerCase().includes(typed)))
+    .sort((a, b) => Number(b.name.toLowerCase().startsWith(typed)) - Number(a.name.toLowerCase().startsWith(typed)) || b.photo_count - a.photo_count)
+    .slice(0, 8);
+  const isNew = typed !== "" && !people.some((p) => p.name.toLowerCase() === typed);
+
+  const run = async (command: string, personName: string) => {
+    setBusy(true);
+    setError(null);
+    try {
+      onDone(await call<Record<string, FaceInstance[]>>(command, { faceIds: [face.face_id], personName }));
+    } catch (e) {
+      setError(String(e));
+      setBusy(false);
+    }
+  };
+  const name = (personName: string) => void run("assign_faces_to_person_batch", personName.trim());
+
+  return (
+    <div data-viewer-chrome className="absolute inset-0 flex flex-col justify-end" onClick={onClose}>
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="max-h-[80%] overflow-y-auto rounded-t-2xl bg-raised border-t border-zinc-700/80 px-4 pt-4 text-sm text-zinc-200"
+        style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 1rem)" }}
+      >
+        <div className="flex items-center gap-3">
+          <img src={mediaUrl({ kind: "face", path: face.face_thumb })} alt="" className="w-14 h-14 rounded-full object-cover bg-zinc-800" />
+          <div className="flex-1 min-w-0">
+            <div className="font-semibold text-zinc-100 truncate">{current || "Who's this?"}</div>
+            {current && (
+              <button onClick={() => onPerson(current)} className="text-xs text-emerald-400 active:text-emerald-300">
+                All photos of {current}
+              </button>
+            )}
+          </div>
+          <button onClick={onClose} className="p-2 -mr-2 rounded-full text-zinc-400 active:bg-white/10" aria-label="Close">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <form
+          className="mt-4 flex gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (text.trim()) name(text);
+          }}
+        >
+          <input
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder={current ? "Someone else? Type their name" : "Type a name"}
+            autoCapitalize="words"
+            autoComplete="off"
+            enterKeyHint="done"
+            className="flex-1 min-w-0 rounded-xl bg-zinc-900 border border-zinc-700 px-3 py-2.5 text-base text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-emerald-500"
+          />
+          <button
+            type="submit"
+            disabled={busy || !text.trim()}
+            className="px-4 rounded-xl bg-emerald-600 text-white font-medium disabled:opacity-40 active:bg-emerald-700"
+          >
+            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : "Save"}
+          </button>
+        </form>
+        {isNew && <div className="mt-1.5 text-xs text-zinc-500">{text.trim()} is someone new: saving adds them to People.</div>}
+
+        {suggestions.length > 0 && (
+          <div className="mt-3 flex flex-col">
+            {suggestions.map((p) => (
+              <button
+                key={p.name}
+                disabled={busy}
+                onClick={() => name(p.name)}
+                className="flex items-center gap-3 py-2 text-left active:bg-white/5 rounded-lg"
+              >
+                {p.cover_thumb ? (
+                  <img src={mediaUrl({ kind: "face", path: p.cover_thumb })} alt="" className="w-9 h-9 rounded-full object-cover bg-zinc-800" />
+                ) : (
+                  <span className="w-9 h-9 rounded-full bg-zinc-800 flex items-center justify-center">
+                    <UserRound className="w-4 h-4 text-zinc-500" />
+                  </span>
+                )}
+                <span className="flex-1 truncate text-zinc-100">{p.name}</span>
+                <span className="text-xs text-zinc-500">{p.photo_count}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {current && (
+          <button
+            disabled={busy}
+            onClick={() => void run("unassign_faces_batch", current)}
+            className="mt-4 w-full py-2.5 rounded-xl border border-zinc-700 text-zinc-300 active:bg-white/5"
+          >
+            This isn't {current}
+          </button>
+        )}
+        {error && <div className="mt-3 text-xs text-red-300">{error}</div>}
       </div>
     </div>
   );

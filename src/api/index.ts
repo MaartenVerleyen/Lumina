@@ -325,6 +325,12 @@ export function allPhotosServerOf(hash: string): string | null {
   return engine ? engine : null;
 }
 
+// This account may change the photo (name its faces, rate it): All photos knows a home for it. A library open on
+// its own leaves it to the engine, which refuses what the account's role can't do.
+export function canEditPhoto(hash: string): boolean {
+  return openLibrary !== ALL_PHOTOS || !!all.copies.get(hash)?.home;
+}
+
 // Sent when All photos has listed its libraries again: albums, smart albums and people are asked again
 export const ALL_PHOTOS_LOADED = "lumina-all-photos-loaded";
 

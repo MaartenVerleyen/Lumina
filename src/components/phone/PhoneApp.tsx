@@ -333,6 +333,22 @@ export default function PhoneApp() {
             showPerson(name);
           }}
           onShowFolder={onAndroid ? (photo) => void showFolderOf(photo) : undefined}
+          people={lib.people}
+          onFaces={(changed) => {
+            // The photo's faces as the server has them now; its people are the names on them plus those given
+            // to the photo without a face (the old name of a renamed face goes)
+            lib.setPhotos((prev) =>
+              prev.map((p) => {
+                const faces = changed[p.hash];
+                if (!faces) return p;
+                const before = new Set((p.faces ?? []).map((f) => f.person_name?.toLowerCase()).filter(Boolean));
+                const named = faces.map((f) => f.person_name?.trim()).filter((n): n is string => !!n);
+                const kept = p.people.filter((n) => !before.has(n.toLowerCase()));
+                return { ...p, faces, people: [...new Set([...kept, ...named])].sort() };
+              })
+            );
+            void lib.refreshPeople();
+          }}
         />
       )}
       {page === "backup" && <BackupScreen onBack={closePage} onRemoved={() => void refresh()} />}

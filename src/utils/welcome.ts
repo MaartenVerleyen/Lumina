@@ -14,6 +14,12 @@ export interface ReleaseNotes {
 // Newest first. Add an entry for every release that should greet updating users with "What's new".
 export const RELEASE_NOTES: ReleaseNotes[] = [
   {
+    version: "5.1.2",
+    items: [
+      { title: "Name faces on the phone", text: "In a photo's details on the phone, tap a face to say who it is: type a name or pick someone you named before. Faces without a name say \"Who's this?\". Tap a named face to see all photos of that person, or to take off a wrong name." },
+    ],
+  },
+  {
     version: "5.1.1",
     items: [
       { title: "The phone app opens", text: "The Android app from 5.1.0 closed straight away when you opened it. This one opens. Nothing changes on Windows, Linux and the Mac." },
