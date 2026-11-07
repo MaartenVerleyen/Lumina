@@ -7,31 +7,19 @@ import type { PhotoItem } from "../../types/lumina";
 import { thumbSrc } from "../../utils/photoHelpers";
 import { orderFolders } from "./BackupScreen";
 import { setBackupSettings, usePhoneBackup } from "./usePhoneBackup";
-import { usePhoneFolders, type PhoneFolder } from "./usePhoneFolders";
+import { usePhoneFolders } from "./usePhoneFolders";
+import type { Scope } from "./navigation";
 
 // The phone app's Albums tab (docs/plans/android-app-ui.md): the server's albums, trips and events, and the
 // phone's own folders with whether each is backed up
 
-export default function AlbumsScreen({
-  lib,
-  onOpened,
-  onOpenFolder,
-}: {
-  lib: LibraryState;
-  onOpened: () => void;
-  onOpenFolder: (folder: PhoneFolder) => void;
-}) {
+export default function AlbumsScreen({ lib, onOpen }: { lib: LibraryState; onOpen: (title: string, scope: Scope) => void }) {
   const { servers } = useServers();
   const { settings, status } = usePhoneBackup();
   const folders = usePhoneFolders(settings?.server ?? null, status?.backed_up);
   const byHash = useMemo(() => new Map(lib.photos.map((p) => [p.hash, p])), [lib.photos]);
   const albums = lib.albums.filter((a) => (lib.albumCounts.get(a.id) ?? 0) > 0);
   const trips = lib.autoEvents;
-  const open = (go: () => void) => {
-    lib.clearAllFilters();
-    go();
-    onOpened();
-  };
   // The albums under a heading per server ("On cachy")
   const byServer = [...new Set(albums.map((a) => a.engine ?? ""))].map((engine) => ({
     label: servers.find((x) => x.id === engine)?.label ?? (engine || "this phone"),
@@ -82,7 +70,7 @@ export default function AlbumsScreen({
                     title={a.name}
                     subtitle={`${(lib.albumCounts.get(a.id) ?? 0).toLocaleString()}${a.readOnly ? " · shared with you" : ""}`}
                     badge={a.dynamic ? <Sparkles className="w-3.5 h-3.5 text-indigo-300" /> : a.readOnly ? <Eye className="w-3.5 h-3.5 text-violet-300" /> : null}
-                    onClick={() => open(() => lib.setActiveAlbumId(a.id))}
+                    onClick={() => onOpen(a.name, { album: a.id })}
                   />
                   {onAndroid && a.readOnly && a.engine && a.realId !== undefined && (
                     <button
@@ -113,7 +101,7 @@ export default function AlbumsScreen({
                   byHash={byHash}
                   title={t.label}
                   subtitle={t.count.toLocaleString()}
-                  onClick={() => open(() => lib.setActiveEvent(t.id))}
+                  onClick={() => onOpen(t.label, { event: t.id })}
                 />
               </div>
             ))}
@@ -133,7 +121,7 @@ export default function AlbumsScreen({
                     coverUrl={mediaUrl({ kind: "thumb", hash: "", path: f.cover })}
                     title={f.name}
                     subtitle={f.count.toLocaleString()}
-                    onClick={() => onOpenFolder(f)}
+                    onClick={() => onOpen(f.name, { folder: f.name, hashes: f.hashes })}
                   />
                   <button
                     onClick={() => toggleBackup(f.folder, !on)}

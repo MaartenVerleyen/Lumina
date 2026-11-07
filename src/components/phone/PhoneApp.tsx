@@ -1,20 +1,21 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertCircle, ArrowLeft, CloudUpload, Download, Images, Loader2, Search, Share2, SquareLibrary, Trash2, UserRound, X } from "lucide-react";
+import { AlertCircle, ArrowLeft, ChevronRight, CloudUpload, Download, Images, Loader2, Search, Share2, SquareLibrary, Trash2, UserRound, Users, X } from "lucide-react";
 import { ALL_PHOTOS, ALL_PHOTOS_LOADED, allPhotosOffline, startAllPhotosFromKept, callLocal, onAndroid, openLibraryIsAll, openLibraryServer, allPhotosCanBackUp, allPhotosSources } from "../../api";
 import { whereabouts } from "../../api/allPhotos";
 import { refreshServers, useServers } from "../../hooks/useServers";
 import { useLibraryState, type LibraryState } from "../../hooks/useLibraryState";
-import { describePeopleExpr } from "../../utils/peopleQuery";
 import type { MediaFilter, PhotoItem } from "../../types/lumina";
-import { useAccount } from "../auth/ServerGate";
+import { useAccess, useAccount } from "../auth/ServerGate";
 import { usePhoneLayout } from "../../app/usePhoneLayout";
 import ConfirmDialog from "../modals/ConfirmDialog";
 import { NoLibrary } from "../views/EmptyStates";
+import PhotoMap from "../views/PhotoMap";
 import { WebUploadButton } from "../servers/WebUpload";
 import AlbumsScreen from "./AlbumsScreen";
 import BackupScreen, { BackupBanner, BackupRing } from "./BackupScreen";
 import SettingsScreen from "./SettingsScreen";
-import SearchScreen from "./SearchScreen";
+import SearchScreen, { PeopleScreen } from "./SearchScreen";
+import { ReviewPerson, UnnamedGroups } from "./FaceReview";
 import type { PhoneFolder } from "./usePhoneFolders";
 import PhoneGrid, { COLUMN_STEPS } from "./PhoneGrid";
 import { saveToPhone, sharePhotos } from "./share";
@@ -23,37 +24,25 @@ import { refreshBackup, usePhoneBackup } from "./usePhoneBackup";
 import { checkForUpdate, useUpdate } from "./useUpdate";
 import PhoneViewer from "./PhoneViewer";
 import { withFaces } from "./faces";
+import { useScreens, type Scope, type Tab } from "./navigation";
 import luminaMark from "../../assets/lumina-mark.svg";
-
-type Tab = "photos" | "search" | "albums";
 
 const TABS: { id: Tab; label: string; icon: typeof Images }[] = [
   { id: "photos", label: "Photos", icon: Images },
   { id: "search", label: "Search", icon: Search },
+  { id: "people", label: "People", icon: Users },
   { id: "albums", label: "Albums", icon: SquareLibrary },
 ];
 
-// The phone app's pages over the tabs: Backup (the header's backup button) and Settings (its account button)
-type PageId = "backup" | "settings";
-
 // The phone layout (docs/plans/android-app-ui.md): the phone app's screens, and the web client's on a phone.
-// It shares the library state with the full layout (useLibraryState).
+// It shares the library state with the full layout (useLibraryState). What is open is a stack of screens over
+// the tabs (navigation.ts): back, from the phone or the arrow at the top left, closes the top one.
 export default function PhoneApp() {
   const lib = useLibraryState();
-  const [tab, setTab] = useState<Tab>("photos");
-  const [viewerIndex, setViewerIndex] = useState<number | null>(null);
-  // A folder of the phone opened from Albums: the grid shows its photos
-  const [phoneFolder, setPhoneFolder] = useState<{ name: string; hashes: Set<string> } | null>(null);
+  const screens = useScreens();
+  const { stack, top, tab, push, back } = screens;
   const libraryRef = useRef<HTMLDivElement>(null);
-  const [page, setPage] = useState<PageId | null>(null);
-  const openPage = (id: PageId) => {
-    history.pushState({ luminaPage: id }, "");
-    setPage(id);
-  };
-  const closePage = () => {
-    if (history.state?.luminaPage) history.back();
-    else setPage(null);
-  };
+  const canEdit = useAccess().edit;
 
   // The phone app opens on All photos (the phone's photos with the server's) once it is signed in to a server
   const { servers } = useServers();
@@ -103,11 +92,39 @@ export default function PhoneApp() {
     } catch {}
   };
 
-  // Selection (long-press); the back gesture ends it
+  // The grid shows what the topmost grid screen is narrowed to (a person, an album, a search); the library's
+  // filters follow it, so going back shows the grid under it as it was
+  const grid = [...stack].reverse().find((s) => s.kind === "grid") ?? null;
+  const scope = grid?.kind === "grid" ? grid.scope : null;
+  const scopeKey = JSON.stringify(scope && "folder" in scope ? { folder: scope.folder } : scope);
+  useEffect(() => {
+    const media = lib.mediaFilter;
+    lib.clearAllFilters();
+    lib.setMediaFilter(media);
+    if (!scope) return;
+    if ("person" in scope) lib.setPeopleFilter({ person: scope.person });
+    else if ("album" in scope) lib.setActiveAlbumId(scope.album);
+    else if ("event" in scope) lib.setActiveEvent(scope.event);
+    else if ("query" in scope) lib.setSearchQuery(scope.query);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scopeKey]);
+  const folderHashes = useMemo(() => (scope && "folder" in scope ? new Set(scope.hashes) : null), [scope]);
+  const photos = useMemo(
+    () => (folderHashes ? lib.visiblePhotos.filter((p) => folderHashes.has(p.hash)) : lib.visiblePhotos),
+    [lib.visiblePhotos, folderHashes]
+  );
+  const openGrid = (title: string, to: Scope) => push({ kind: "grid", title, scope: to });
+  const showPerson = (name: string) => openGrid(name, { person: name });
+
+  // Selection (long-press) is a screen too: back ends it
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const selecting = top?.kind === "select";
+  useEffect(() => {
+    if (!selecting) setSelected(new Set());
+  }, [selecting]);
   const select = (next: Set<string>) => {
-    if (selected.size === 0 && next.size > 0) history.pushState({ luminaSelect: true }, "");
-    if (selected.size > 0 && next.size === 0 && history.state?.luminaSelect) history.back();
+    if (!selecting && next.size > 0) push({ kind: "select" });
+    if (selecting && next.size === 0) back();
     setSelected(next);
   };
   const haptic = () => {
@@ -125,56 +142,17 @@ export default function PhoneApp() {
     }
   };
   const backup = usePhoneBackup();
-  const viewerOpen = useRef(false);
-  viewerOpen.current = viewerIndex !== null;
-  const pageOpen = useRef(false);
-  pageOpen.current = page !== null;
 
-  // The phone's back button (or swipe) closes the viewer, or ends a selection, instead of leaving the page
-  useEffect(() => {
-    const onPop = () => {
-      if (pageOpen.current) setPage(null);
-      else if (viewerOpen.current) setViewerIndex(null);
-      else setSelected(new Set());
-    };
-    window.addEventListener("popstate", onPop);
-    return () => window.removeEventListener("popstate", onPop);
-  }, []);
-  const openViewer = (index: number) => {
-    if (viewerIndex === null) history.pushState({ luminaViewer: true }, "");
-    setViewerIndex(index);
-  };
-  const closeViewer = () => {
-    if (history.state?.luminaViewer) history.back();
-    else setViewerIndex(null);
-  };
-
-  const photos = useMemo(
-    () => (phoneFolder ? lib.visiblePhotos.filter((p) => phoneFolder.hashes.has(p.hash)) : lib.visiblePhotos),
-    [lib.visiblePhotos, phoneFolder]
-  );
-  const scope = phoneFolder?.name ?? scopeOf(lib);
-  const clearScope = () => {
-    setPhoneFolder(null);
-    lib.clearAllFilters();
-  };
-  const showPerson = (name: string) => {
-    clearScope();
-    lib.setPeopleFilter({ person: name });
-    setTab("photos");
-  };
-  const openFolder = (f: Pick<PhoneFolder, "name" | "hashes">) => {
-    lib.clearAllFilters();
-    setPhoneFolder({ name: f.name, hashes: new Set(f.hashes) });
-    setTab("photos");
-  };
+  // The viewer, with its details over it or not
+  const details = top?.kind === "details";
+  const viewer = details ? stack[stack.length - 2] : top;
+  const viewerIndex = viewer?.kind === "viewer" ? photos.findIndex((p) => p.hash === viewer.hash) : -1;
+  const openViewer = (index: number) => push({ kind: "viewer", hash: photos[index].hash });
   // The viewer's "Show in its folder": the phone's folder that holds this photo
   const showFolderOf = async (photo: PhotoItem) => {
     const folders = await callLocal<PhoneFolder[]>("phone_folders", { server: backup.settings?.server ?? null }).catch(() => []);
     const f = folders.find((x) => x.hashes.includes(photo.hash));
-    if (!f) return;
-    closeViewer();
-    openFolder(f);
+    if (f) openGrid(f.name, { folder: f.name, hashes: f.hashes });
   };
   // Smart search can't see into photos only on this phone (the server analyses what it has): say how many
   const notSearched = useMemo(() => {
@@ -193,6 +171,13 @@ export default function PhoneApp() {
       </Shell>
     );
   }
+
+  // The screen under the overlays (viewer, selection, full-screen pages): a tab's first screen, a grid, the map
+  const shown = [...stack].reverse().find((s) => s.kind === "grid" || s.kind === "map" || s.kind === "tab") ?? null;
+  const showsGrid = shown === null || shown.kind === "grid";
+  const title = shown?.kind === "grid" ? shown.title : shown?.kind === "map" ? "Places" : TABS.find((t) => t.id === tab)!.label;
+  const person = scope && "person" in scope ? scope.person : null;
+  const toCheck = person && canEdit ? (lib.pendingFaceCounts[person] ?? 0) : 0;
 
   return (
     <Shell>
@@ -213,54 +198,68 @@ export default function PhoneApp() {
           />
         ) : (
           <div className="h-12 flex items-center gap-1">
-            {scope && tab === "photos" ? (
-              <button
-                onClick={clearScope}
-                className="p-2 rounded-full text-zinc-300 active:bg-white/10"
-                aria-label="Show all photos"
-              >
+            {shown && shown.kind !== "tab" ? (
+              <button onClick={back} className="p-2 rounded-full text-zinc-300 active:bg-white/10" aria-label="Back">
                 <ArrowLeft className="w-5 h-5" />
               </button>
             ) : (
               <img src={luminaMark} alt="" className="w-6 h-6 mx-2 object-contain" />
             )}
             <div className="flex-1 min-w-0">
-              <div className="text-[15px] font-semibold text-zinc-100 truncate">{(tab === "photos" && scope) || TABS.find((t) => t.id === tab)!.label}</div>
-              {tab === "photos" && (
+              <div className="text-[15px] font-semibold text-zinc-100 truncate">{title}</div>
+              {showsGrid && (
                 <div className="text-[11px] text-zinc-500">
                   {photos.length.toLocaleString()} {photos.length === 1 ? "item" : "items"}
                   {lib.isScanningFolder && photos.length > 0 ? " · updating" : offline.length > 0 ? ` · offline: ${offlineLabels} as last seen` : ""}
                 </div>
               )}
             </div>
-            {onAndroid ? <BackupRing onClick={() => openPage("backup")} /> : <WebUploadButton />}
-            {onAndroid ? <SettingsButton onClick={() => openPage("settings")} /> : <AccountButton />}
+            {onAndroid ? <BackupRing onClick={() => push({ kind: "backup" })} /> : <WebUploadButton />}
+            {onAndroid ? <SettingsButton onClick={() => push({ kind: "settings" })} /> : <AccountButton />}
           </div>
         )}
         {/* Kept while selecting: the grid must not move under the finger that just selected */}
-        {tab === "photos" && <MediaChips lib={lib} />}
+        {showsGrid && <MediaChips lib={lib} />}
       </header>
 
       <Errors lib={lib} />
 
       <main className="relative flex-1 min-h-0 flex flex-col">
         {/* Floats over the bottom of the screen: the grid doesn't move when it comes and goes */}
-        {onAndroid && <BackupBanner onOpen={() => openPage("backup")} onFinished={() => void refresh()} />}
-        {tab === "photos" && lib.smartSearch && lib.searchQuery.trim() && offline.length > 0 && (
+        {onAndroid && <BackupBanner onOpen={() => push({ kind: "backup" })} onFinished={() => void refresh()} />}
+        {showsGrid && toCheck > 0 && (
+          <button
+            onClick={() => push({ kind: "review", name: person! })}
+            className="mx-2 mt-2 flex items-center gap-2 rounded-xl bg-emerald-950/70 border border-emerald-700/40 px-3 py-2.5 text-left text-sm text-emerald-100 active:bg-emerald-900/70"
+          >
+            <span className="flex-1">
+              {toCheck} more {toCheck === 1 ? "face" : "faces"} might be {person}
+            </span>
+            <span className="font-semibold text-emerald-300">Check</span>
+            <ChevronRight className="w-4 h-4 text-emerald-300" />
+          </button>
+        )}
+        {showsGrid && lib.smartSearch && lib.searchQuery.trim() && offline.length > 0 && (
           <div className="mx-2 mt-2 rounded-xl bg-indigo-950/70 border border-indigo-700/40 px-3 py-2 text-xs text-indigo-200">
             Smart search needs a connection to {offlineLabels}.
           </div>
         )}
-        {tab === "photos" && notSearched > 0 && offline.length === 0 && (
+        {showsGrid && notSearched > 0 && offline.length === 0 && (
           <div className="mx-2 mt-2 rounded-xl bg-indigo-950/70 border border-indigo-700/40 px-3 py-2 text-xs text-indigo-200">
             {notSearched.toLocaleString()} photos only on this phone aren't searched by what's in them until they're backed up.
           </div>
         )}
-        {tab === "photos" &&
+        {showsGrid &&
           (photos.length === 0 ? (
-            <Empty busy={lib.progress !== null || lib.isScanningFolder || !serversKnown} filtered={!!scope || lib.mediaFilter !== "ALL"} onClear={lib.clearAllFilters} />
+            <Empty
+              busy={lib.progress !== null || lib.isScanningFolder || !serversKnown}
+              filtered={!!scope || lib.mediaFilter !== "ALL"}
+              onClear={scope ? back : () => lib.setMediaFilter("ALL")}
+            />
           ) : (
             <PhoneGrid
+              // A new grid starts at its top, not where the last one was scrolled to
+              key={scopeKey}
               photos={photos}
               byDate={!lib.semanticScores && lib.gridSortBy.startsWith("DATE")}
               columns={columns}
@@ -275,33 +274,32 @@ export default function PhoneApp() {
               onLongPress={haptic}
             />
           ))}
-        {tab === "search" && (
+        {shown?.kind === "map" && (
+          <div className="flex-1 min-h-0 flex flex-col">
+            <PhotoMap
+              photos={lib.photos}
+              onSelectPhoto={(hash) => {
+                if (photos.some((p) => p.hash === hash)) push({ kind: "viewer", hash });
+              }}
+            />
+          </div>
+        )}
+        {shown?.kind === "tab" && shown.tab === "search" && (
           <SearchScreen
             lib={lib}
-            onSearch={() => {
-              setPhoneFolder(null);
-              setTab("photos");
-            }}
-            onOpenPhoto={(hash) => {
-              const i = photos.findIndex((p) => p.hash === hash);
-              if (i >= 0) {
-                setTab("photos");
-                openViewer(i);
-              }
-            }}
+            onSearch={(query) => openGrid(`“${query}”`, { query })}
+            onPerson={showPerson}
+            onPeople={() => screens.openTab("people")}
+            onMap={() => push({ kind: "map" })}
+            onGroups={() => push({ kind: "groups" })}
           />
         )}
-        {tab === "albums" && (
-          <AlbumsScreen
-            lib={lib}
-            onOpened={() => {
-              setPhoneFolder(null);
-              setTab("photos");
-            }}
-            onOpenFolder={openFolder}
-          />
+        {shown?.kind === "tab" && shown.tab === "people" && (
+          <PeopleScreen lib={lib} onPerson={showPerson} onReview={(name) => push({ kind: "review", name })} onGroups={() => push({ kind: "groups" })} />
         )}
-
+        {shown?.kind === "tab" && shown.tab === "albums" && (
+          <AlbumsScreen lib={lib} onOpen={openGrid} />
+        )}
       </main>
 
       <nav
@@ -311,7 +309,7 @@ export default function PhoneApp() {
         {TABS.map(({ id, label, icon: Icon }) => (
           <button
             key={id}
-            onClick={() => setTab(id)}
+            onClick={() => screens.openTab(id)}
             className={`flex-1 h-14 flex flex-col items-center justify-center gap-0.5 text-[11px] ${
               tab === id ? "text-emerald-400" : "text-zinc-500"
             }`}
@@ -323,16 +321,18 @@ export default function PhoneApp() {
         ))}
       </nav>
 
-      {viewerIndex !== null && photos[viewerIndex] && (
+      {viewerIndex >= 0 && (
         <PhoneViewer
           photos={photos}
           index={viewerIndex}
-          onIndex={setViewerIndex}
-          onClose={closeViewer}
-          onPerson={(name) => {
-            closeViewer();
-            showPerson(name);
+          onIndex={(i) => photos[i] && !details && screens.replaceTop({ kind: "viewer", hash: photos[i].hash })}
+          onClose={back}
+          info={details}
+          onInfo={(open) => {
+            if (open && !details) push({ kind: "details" });
+            else if (!open && details) back();
           }}
+          onPerson={showPerson}
           onShowFolder={onAndroid ? (photo) => void showFolderOf(photo) : undefined}
           people={lib.people}
           onFaces={(changed) => {
@@ -341,8 +341,10 @@ export default function PhoneApp() {
           }}
         />
       )}
-      {page === "backup" && <BackupScreen onBack={closePage} onRemoved={() => void refresh()} />}
-      {page === "settings" && <SettingsScreen onBack={closePage} />}
+      {top?.kind === "review" && <ReviewPerson lib={lib} name={top.name} onBack={back} />}
+      {top?.kind === "groups" && <UnnamedGroups lib={lib} onBack={back} />}
+      {top?.kind === "backup" && <BackupScreen onBack={back} onRemoved={() => void refresh()} />}
+      {top?.kind === "settings" && <SettingsScreen onBack={back} />}
       <ConfirmDialog />
     </Shell>
   );
@@ -433,15 +435,6 @@ function SelectionBar({
 
 function Shell({ children }: { children: React.ReactNode }) {
   return <div className="h-dvh flex flex-col bg-surface text-zinc-200 overflow-hidden">{children}</div>;
-}
-
-// What the photos are narrowed to, as a title ("Anna", "Summer 2024", "beach"); null for everything
-function scopeOf(lib: LibraryState): string | null {
-  if (lib.peopleFilter) return describePeopleExpr(lib.peopleFilter);
-  if (lib.activeAlbumId !== null) return lib.albums.find((a) => a.id === lib.activeAlbumId)?.name ?? "Album";
-  if (lib.activeEvent !== "ALL") return lib.autoEvents.find((e) => e.id === lib.activeEvent)?.label ?? "Trip";
-  if (lib.searchQuery.trim()) return `“${lib.searchQuery.trim()}”`;
-  return null;
 }
 
 const MEDIA: { id: MediaFilter; label: string }[] = [

@@ -8,6 +8,7 @@ import type { FaceInstance, PersonItem, PhotoItem } from "../../types/lumina";
 import { formatBytes, thumbSrc } from "../../utils/photoHelpers";
 import { isVideo } from "../../utils/media";
 import LoupeVideo from "../modals/LoupeVideo";
+import { useBackCloses } from "./navigation";
 
 const MAX_ZOOM = 5;
 const DOUBLE_TAP_MS = 280;
@@ -41,6 +42,8 @@ export default function PhoneViewer({
   index,
   onIndex,
   onClose,
+  info,
+  onInfo,
   onPerson,
   onShowFolder,
   people,
@@ -50,6 +53,9 @@ export default function PhoneViewer({
   index: number;
   onIndex: (index: number) => void;
   onClose: () => void;
+  // The details sheet (swipe up): a screen of its own, so the phone's back closes it before the photo
+  info: boolean;
+  onInfo: (open: boolean) => void;
   onPerson: (name: string) => void;
   // The names to suggest when naming a face, and where a photo's renamed faces go
   people: PersonItem[];
@@ -63,7 +69,6 @@ export default function PhoneViewer({
   const [drag, setDrag] = useState({ dx: 0, dy: 0 });
   const [touching, setTouching] = useState(false);
   const [chrome, setChrome] = useState(true);
-  const [info, setInfo] = useState(false);
   const [menu, setMenu] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -94,7 +99,7 @@ export default function PhoneViewer({
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "ArrowRight") go(1);
       else if (e.key === "ArrowLeft") go(-1);
-      else if (e.key === "Escape") (info ? setInfo(false) : onClose());
+      else if (e.key === "Escape") (info ? onInfo(false) : onClose());
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -169,7 +174,7 @@ export default function PhoneViewer({
     if (g.mode === "swipe" && g.moved) {
       if (Math.abs(dx) > 70 && Math.abs(dx) > Math.abs(dy)) go(dx < 0 ? 1 : -1);
       else if (dy > 110 && dy > Math.abs(dx)) onClose();
-      else if (dy < -80 && -dy > Math.abs(dx)) setInfo(true);
+      else if (dy < -80 && -dy > Math.abs(dx)) onInfo(true);
     } else if ((g.mode === "swipe" || g.mode === "pan") && !g.moved && Date.now() - g.startTime < 300) {
       tap(e.changedTouches[0].clientX, e.changedTouches[0].clientY);
     }
@@ -254,7 +259,7 @@ export default function PhoneViewer({
             </div>
           </div>
           {onAndroid && <ShareButton photo={photo} />}
-          <button onClick={() => setInfo(true)} className="p-2 rounded-full text-white active:bg-white/20" aria-label="Details">
+          <button onClick={() => onInfo(true)} className="p-2 rounded-full text-white active:bg-white/20" aria-label="Details">
             <Info className="w-5 h-5" />
           </button>
           {onAndroid && (
@@ -276,7 +281,7 @@ export default function PhoneViewer({
       {info && (
         <Details
           photo={photo}
-          onClose={() => setInfo(false)}
+          onClose={() => onInfo(false)}
           onPerson={onPerson}
           onAction={(what) => void act(what, photo, setNotice)}
           people={people}
@@ -336,6 +341,7 @@ async function act(what: Action, photo: PhotoItem, notify: (text: string | null)
 
 // ⋮: what can be done with this photo here
 function Menu({ photo, onClose, onAction, canShowFolder }: { photo: PhotoItem; onClose: () => void; onAction: (what: Action) => void; canShowFolder: boolean }) {
+  useBackCloses(onClose);
   const where = whereOf(photo);
   const items: { what: Action; label: string; icon: typeof Share2 }[] = [
     { what: "share", label: "Share", icon: Share2 },
@@ -615,6 +621,7 @@ export function FaceSheet({
   onPerson?: (name: string) => void;
   onDone: (faces: Record<string, FaceInstance[]>) => void;
 }) {
+  useBackCloses(onClose);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);

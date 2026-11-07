@@ -1,17 +1,16 @@
 import { useMemo, useRef, useState } from "react";
-import { ArrowLeft, ChevronRight, Clock, Map as MapIcon, Search, Sparkles, UserRound, Users, X } from "lucide-react";
+import { ChevronRight, Clock, Map as MapIcon, Search, Sparkles, UserRound, Users, X } from "lucide-react";
 import { mediaUrl } from "../../api";
 import { useAccess } from "../auth/ServerGate";
-import { ReviewPerson, UnnamedGroups } from "./FaceReview";
 import type { LibraryState } from "../../hooks/useLibraryState";
 import type { PhotoItem } from "../../types/lumina";
 import { thumbSrc } from "../../utils/photoHelpers";
-import PhotoMap from "../views/PhotoMap";
 
 // The phone app's Search tab (docs/plans/android-app-ui.md): a search field with smart search, and an explore
-// page of people, places and things to tap; results show in the Photos grid
+// page of people, places and things to tap; results open in a grid of their own
 
 const RECENT_KEY = "lumina_recent_searches";
+let lastText = "";
 
 function recentSearches(): string[] {
   try {
@@ -55,95 +54,43 @@ function topOf(photos: PhotoItem[], valuesOf: (p: PhotoItem) => string[], limit:
     });
 }
 
-export default function SearchScreen({ lib, onSearch, onOpenPhoto }: { lib: LibraryState; onSearch: () => void; onOpenPhoto: (hash: string) => void }) {
-  const [view, setView] = useState<"explore" | "people" | "map">("explore");
-  // Face review over the People page: one person's suggested faces, or the groups without a name
-  const [review, setReview] = useState<string | null>(null);
-  const [groups, setGroups] = useState(false);
+export default function SearchScreen({
+  lib,
+  onSearch,
+  onPerson,
+  onPeople,
+  onMap,
+  onGroups,
+}: {
+  lib: LibraryState;
+  // Results show in a grid screen of their own
+  onSearch: (query: string) => void;
+  onPerson: (name: string) => void;
+  onPeople: () => void;
+  onMap: () => void;
+  onGroups: () => void;
+}) {
   const canEdit = useAccess().edit;
   const input = useRef<HTMLInputElement>(null);
+  // What was searched for last stays in the field when its results are closed again
+  const [text, setTextState] = useState(lastText);
+  const setText = (value: string) => {
+    lastText = value;
+    setTextState(value);
+  };
   const [recent, setRecent] = useState(recentSearches);
-  const people = useMemo(
-    () => lib.people.filter((p) => !p.hidden && p.photo_count > 0).sort((a, b) => Number(b.starred) - Number(a.starred) || b.photo_count - a.photo_count),
-    [lib.people]
-  );
+  const people = useNamedPeople(lib);
   const places = useMemo(() => topOf(lib.photos, (p) => (p.location ? [p.location.split(",")[0].trim()] : []), 15), [lib.photos]);
   const things = useMemo(() => topOf(lib.photos, (p) => p.tags, 18), [lib.photos]);
-  const pendingOf = (name: string) => lib.pendingFaceCounts[name] ?? 0;
-  const toCheck = people.filter((p) => pendingOf(p.name) > 0).sort((a, b) => pendingOf(b.name) - pendingOf(a.name));
-  const pendingTotal = toCheck.reduce((n, p) => n + pendingOf(p.name), 0);
+  const pendingTotal = people.reduce((n, p) => n + (lib.pendingFaceCounts[p.name] ?? 0), 0);
 
   const search = (query: string) => {
-    lib.clearAllFilters();
-    lib.setSearchQuery(query);
-    remember(query);
+    const q = query.trim();
+    if (!q) return;
+    remember(q);
     setRecent(recentSearches());
-    onSearch();
+    onSearch(q);
   };
-  const showPerson = (name: string) => {
-    lib.clearAllFilters();
-    lib.setPeopleFilter({ person: name });
-    onSearch();
-  };
-
-  // Full-screen pages of their own; Back returns to where they were opened
-  if (review) return <ReviewPerson lib={lib} name={review} onBack={() => setReview(null)} />;
-  if (groups) return <UnnamedGroups lib={lib} onBack={() => setGroups(false)} />;
-
-  if (view === "people") {
-    return (
-      <SubPage title="People" onBack={() => setView("explore")}>
-        {canEdit && (
-          <div className="mx-3 mt-3 rounded-2xl bg-raised/70 border border-zinc-800 divide-y divide-zinc-800">
-            {toCheck.slice(0, 5).map((p) => (
-              <button key={p.id} onClick={() => setReview(p.name)} className="w-full flex items-center gap-3 px-3 py-2.5 text-left active:bg-white/5">
-                <FaceThumb thumb={p.cover_thumb} />
-                <span className="flex-1 min-w-0">
-                  <span className="block text-sm text-zinc-100 truncate">Is this {p.name}?</span>
-                  <span className="block text-xs text-zinc-500">
-                    {pendingOf(p.name)} {pendingOf(p.name) === 1 ? "face" : "faces"} to check
-                  </span>
-                </span>
-                <ChevronRight className="w-4 h-4 text-zinc-500" />
-              </button>
-            ))}
-            <button onClick={() => setGroups(true)} className="w-full flex items-center gap-3 px-3 py-2.5 text-left active:bg-white/5">
-              <span className="w-10 h-10 shrink-0 rounded-full bg-amber-500/15 border border-amber-500/40 flex items-center justify-center">
-                <Users className="w-5 h-5 text-amber-300" />
-              </span>
-              <span className="flex-1 min-w-0">
-                <span className="block text-sm text-zinc-100">Without a name</span>
-                <span className="block text-xs text-zinc-500">Faces that come back often, to name at once</span>
-              </span>
-              <ChevronRight className="w-4 h-4 text-zinc-500" />
-            </button>
-          </div>
-        )}
-        <div className="grid grid-cols-3 min-[520px]:grid-cols-5 gap-x-2 gap-y-4 p-3">
-          {people.map((p) => (
-            <Face
-              key={p.id}
-              name={p.name}
-              thumb={p.cover_thumb}
-              count={p.photo_count}
-              pending={canEdit ? pendingOf(p.name) : 0}
-              onClick={() => showPerson(p.name)}
-              onPending={() => setReview(p.name)}
-            />
-          ))}
-        </div>
-      </SubPage>
-    );
-  }
-  if (view === "map") {
-    return (
-      <SubPage title="Places" onBack={() => setView("explore")}>
-        <div className="flex-1 min-h-0 flex flex-col">
-          <PhotoMap photos={lib.photos} onSelectPhoto={onOpenPhoto} />
-        </div>
-      </SubPage>
-    );
-  }
 
   return (
     <div className="flex-1 overflow-y-auto overscroll-contain pb-6">
@@ -152,7 +99,7 @@ export default function SearchScreen({ lib, onSearch, onOpenPhoto }: { lib: Libr
         onSubmit={(e) => {
           e.preventDefault();
           input.current?.blur();
-          search(lib.searchQuery);
+          search(text);
         }}
       >
         <div className={`flex-1 flex items-center gap-2 h-11 rounded-full px-4 border ${lib.smartSearch ? "border-indigo-500/60" : "border-zinc-700"} bg-zinc-900`}>
@@ -161,13 +108,13 @@ export default function SearchScreen({ lib, onSearch, onOpenPhoto }: { lib: Libr
             ref={input}
             type="search"
             enterKeyHint="search"
-            value={lib.searchQuery}
-            onChange={(e) => lib.setSearchQuery(e.target.value)}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
             placeholder={lib.smartSearch ? "Describe a photo" : "Search your photos"}
             className="flex-1 min-w-0 bg-transparent text-base text-zinc-100 placeholder-zinc-500 outline-none"
           />
-          {lib.searchQuery && (
-            <button type="button" onClick={() => lib.setSearchQuery("")} className="text-zinc-500" aria-label="Clear search">
+          {text && (
+            <button type="button" onClick={() => setText("")} className="text-zinc-500" aria-label="Clear search">
               <X className="w-4 h-4" />
             </button>
           )}
@@ -200,9 +147,9 @@ export default function SearchScreen({ lib, onSearch, onOpenPhoto }: { lib: Libr
       )}
 
       {people.length > 0 && (
-        <Row title="People" onAll={() => setView("people")}>
+        <Row title="People" onAll={onPeople}>
           {canEdit && pendingTotal > 0 && (
-            <button onClick={() => setView("people")} className="mx-4 mb-2 flex items-center gap-1.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 px-3 py-1 text-xs text-emerald-200 active:bg-emerald-500/30">
+            <button onClick={onPeople} className="mx-4 mb-2 flex items-center gap-1.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 px-3 py-1 text-xs text-emerald-200 active:bg-emerald-500/30">
               {pendingTotal} {pendingTotal === 1 ? "face" : "faces"} to check
               <ChevronRight className="w-3 h-3" />
             </button>
@@ -210,7 +157,7 @@ export default function SearchScreen({ lib, onSearch, onOpenPhoto }: { lib: Libr
           <Scroller>
             {people.slice(0, 12).map((p) => (
               <div key={p.id} className="w-[72px] shrink-0">
-                <Face name={p.name} thumb={p.cover_thumb} onClick={() => showPerson(p.name)} />
+                <Face name={p.name} thumb={p.cover_thumb} onClick={() => onPerson(p.name)} />
               </div>
             ))}
           </Scroller>
@@ -219,22 +166,15 @@ export default function SearchScreen({ lib, onSearch, onOpenPhoto }: { lib: Libr
 
       {people.length === 0 && canEdit && (
         <Row title="People">
-          <button onClick={() => setGroups(true)} className="mx-4 flex items-center gap-3 rounded-2xl bg-raised/70 border border-zinc-800 px-3 py-2.5 text-left active:bg-white/5">
-            <span className="w-10 h-10 shrink-0 rounded-full bg-amber-500/15 border border-amber-500/40 flex items-center justify-center">
-              <Users className="w-5 h-5 text-amber-300" />
-            </span>
-            <span className="flex-1 min-w-0">
-              <span className="block text-sm text-zinc-100">Name the people in your photos</span>
-              <span className="block text-xs text-zinc-500">Faces that come back often, grouped</span>
-            </span>
-            <ChevronRight className="w-4 h-4 text-zinc-500" />
-          </button>
+          <div className="mx-3 rounded-2xl bg-raised/70 border border-zinc-800">
+            <GroupsButton title="Name the people in your photos" onClick={onGroups} />
+          </div>
         </Row>
       )}
 
-      <Row title="Places" onAll={() => setView("map")}>
+      <Row title="Places" onAll={onMap}>
         <Scroller>
-          <button onClick={() => setView("map")} className="w-28 shrink-0 text-left active:opacity-70">
+          <button onClick={onMap} className="w-28 shrink-0 text-left active:opacity-70">
             <div className="aspect-square rounded-xl bg-emerald-900/40 border border-emerald-700/40 flex items-center justify-center">
               <MapIcon className="w-8 h-8 text-emerald-300" />
             </div>
@@ -259,17 +199,83 @@ export default function SearchScreen({ lib, onSearch, onOpenPhoto }: { lib: Libr
   );
 }
 
-function SubPage({ title, onBack, children }: { title: string; onBack: () => void; children: React.ReactNode }) {
+// The named people with photos: the starred first, then those in the most photos
+function useNamedPeople(lib: LibraryState) {
+  return useMemo(
+    () => lib.people.filter((p) => !p.hidden && p.photo_count > 0).sort((a, b) => Number(b.starred) - Number(a.starred) || b.photo_count - a.photo_count),
+    [lib.people]
+  );
+}
+
+// The People tab: the faces to check first (those the server thinks are someone already named, and the groups
+// without a name), then everyone. A person opens their photos, the badge on them the faces to check.
+export function PeopleScreen({
+  lib,
+  onPerson,
+  onReview,
+  onGroups,
+}: {
+  lib: LibraryState;
+  onPerson: (name: string) => void;
+  onReview: (name: string) => void;
+  onGroups: () => void;
+}) {
+  const canEdit = useAccess().edit;
+  const people = useNamedPeople(lib);
+  const pendingOf = (name: string) => lib.pendingFaceCounts[name] ?? 0;
+  const toCheck = people.filter((p) => pendingOf(p.name) > 0).sort((a, b) => pendingOf(b.name) - pendingOf(a.name));
   return (
-    <div className="flex-1 min-h-0 flex flex-col">
-      <div className="shrink-0 h-12 flex items-center gap-1 px-2 border-b border-zinc-800/80">
-        <button onClick={onBack} className="p-2 rounded-full text-zinc-300 active:bg-white/10" aria-label="Back">
-          <ArrowLeft className="w-5 h-5" />
-        </button>
-        <div className="text-[15px] font-semibold text-zinc-100">{title}</div>
-      </div>
-      <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain flex flex-col">{children}</div>
+    <div className="flex-1 overflow-y-auto overscroll-contain pb-6">
+      {canEdit && (
+        <div className="mx-3 mt-3 rounded-2xl bg-raised/70 border border-zinc-800 divide-y divide-zinc-800">
+          {toCheck.slice(0, 5).map((p) => (
+            <button key={p.id} onClick={() => onReview(p.name)} className="w-full flex items-center gap-3 px-3 py-2.5 text-left active:bg-white/5">
+              <FaceThumb thumb={p.cover_thumb} />
+              <span className="flex-1 min-w-0">
+                <span className="block text-sm text-zinc-100 truncate">Is this {p.name}?</span>
+                <span className="block text-xs text-zinc-500">
+                  {pendingOf(p.name)} {pendingOf(p.name) === 1 ? "face" : "faces"} to check
+                </span>
+              </span>
+              <ChevronRight className="w-4 h-4 text-zinc-500" />
+            </button>
+          ))}
+          <GroupsButton title="Without a name" onClick={onGroups} />
+        </div>
+      )}
+      {people.length === 0 ? (
+        <div className="p-8 text-center text-sm text-zinc-400">Nobody has a name yet.</div>
+      ) : (
+        <div className="grid grid-cols-3 min-[520px]:grid-cols-5 gap-x-2 gap-y-4 p-3">
+          {people.map((p) => (
+            <Face
+              key={p.id}
+              name={p.name}
+              thumb={p.cover_thumb}
+              count={p.photo_count}
+              pending={canEdit ? pendingOf(p.name) : 0}
+              onClick={() => onPerson(p.name)}
+              onPending={() => onReview(p.name)}
+            />
+          ))}
+        </div>
+      )}
     </div>
+  );
+}
+
+function GroupsButton({ title, onClick }: { title: string; onClick: () => void }) {
+  return (
+    <button onClick={onClick} className="w-full flex items-center gap-3 px-3 py-2.5 text-left active:bg-white/5">
+      <span className="w-10 h-10 shrink-0 rounded-full bg-amber-500/15 border border-amber-500/40 flex items-center justify-center">
+        <Users className="w-5 h-5 text-amber-300" />
+      </span>
+      <span className="flex-1 min-w-0">
+        <span className="block text-sm text-zinc-100">{title}</span>
+        <span className="block text-xs text-zinc-500">Faces that come back often, to name at once</span>
+      </span>
+      <ChevronRight className="w-4 h-4 text-zinc-500" />
+    </button>
   );
 }
 

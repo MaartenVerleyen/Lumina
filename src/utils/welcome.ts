@@ -14,6 +14,13 @@ export interface ReleaseNotes {
 // Newest first. Add an entry for every release that should greet updating users with "What's new".
 export const RELEASE_NOTES: ReleaseNotes[] = [
   {
+    version: "5.3.0",
+    items: [
+      { title: "Back works on the phone", text: "The phone's back button closes what you opened last (a photo's details, the photo, a person, an album) instead of closing the app, just like the arrow at the top left. From another tab it goes back to Photos." },
+      { title: "People has its own tab", text: "The phone app's People tab shows the faces to check first, then everyone. A person's photos say when more faces might be them: tap Check to confirm them right there." },
+    ],
+  },
+  {
     version: "5.2.0",
     items: [
       { title: "Check suggested faces on the phone", text: "Search → People shows how many faces Lumina thinks are someone you named (+3 on their photo). Tap it, tick the faces that are them and confirm, or say they aren't, so they aren't suggested again." },

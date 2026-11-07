@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Check, Loader2, UserRound, X } from "lucide-react";
 import { call, mediaUrl } from "../../api";
 import type { LibraryState } from "../../hooks/useLibraryState";
@@ -7,12 +7,19 @@ import { FaceSheet } from "./PhoneViewer";
 import { Page } from "./PhoneParts";
 import { withFaces } from "./faces";
 
-// The phone app's face review (Search → People): the faces the server thinks are someone already named, to
+// The phone app's face review (the People tab): the faces the server thinks are someone already named, to
 // confirm or turn down, and the groups of faces of someone without a name, to name at once. The server works
 // both out (face_review.rs); the desktop's Review Studio and "Unknown faces" do the same on a big screen.
 
 // At or above this similarity a suggestion was right every time in face_eval: those start ticked
 const LIKELY = 62;
+
+// The people's counts and covers again once the page closes, by its arrow or by the phone's back
+function useRefreshOnLeave(lib: LibraryState) {
+  const refresh = useRef(lib.refreshPeople);
+  refresh.current = lib.refreshPeople;
+  useEffect(() => () => void refresh.current(), []);
+}
 
 export function ReviewPerson({ lib, name, onBack }: { lib: LibraryState; name: string; onBack: () => void }) {
   const [candidates, setCandidates] = useState<SimilarFaceCandidate[] | null>(null);
@@ -66,13 +73,10 @@ export function ReviewPerson({ lib, name, onBack }: { lib: LibraryState; name: s
     }
   };
 
-  const leave = () => {
-    void lib.refreshPeople();
-    onBack();
-  };
+  useRefreshOnLeave(lib);
 
   return (
-    <Page title={`Is this ${name}?`} onBack={leave}>
+    <Page title={`Is this ${name}?`} onBack={onBack}>
       <div className="flex items-center gap-3 px-4 pt-4">
         <div className="w-16 h-16 shrink-0 rounded-full overflow-hidden bg-zinc-800 border-2 border-emerald-500/70">
           {person?.cover_thumb ? (
@@ -194,13 +198,10 @@ export function UnnamedGroups({ lib, onBack }: { lib: LibraryState; onBack: () =
     }
   };
 
-  const leave = () => {
-    void lib.refreshPeople();
-    onBack();
-  };
+  useRefreshOnLeave(lib);
 
   return (
-    <Page title="Without a name" onBack={leave}>
+    <Page title="Without a name" onBack={onBack}>
       <p className="px-4 pt-4 text-sm text-zinc-300">
         {groups === null
           ? "Grouping the faces without a name…"
