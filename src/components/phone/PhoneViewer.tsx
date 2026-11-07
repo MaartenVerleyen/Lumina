@@ -446,7 +446,9 @@ function Details({
   if (naming) {
     return (
       <FaceSheet
-        face={naming}
+        faceIds={[naming.face_id]}
+        thumb={naming.face_thumb}
+        current={naming.person_name ?? ""}
         people={people}
         onClose={() => setNaming(null)}
         onPerson={onPerson}
@@ -591,21 +593,28 @@ function Details({
   );
 }
 
-// One face of the photo: give it a name (typed, or one of the people already known), change it, or take it off
-function FaceSheet({
-  face,
+// Faces of one person (a face of a photo, or a group the server found): give them a name (typed, or one of the
+// people already known), change it, or take it off
+export function FaceSheet({
+  faceIds,
+  thumb,
+  current,
+  title,
   people,
   onClose,
   onPerson,
   onDone,
 }: {
-  face: FaceInstance;
+  faceIds: string[];
+  thumb: string;
+  current: string;
+  // In place of "Who's this?" (a group: "12 faces")
+  title?: string;
   people: PersonItem[];
   onClose: () => void;
-  onPerson: (name: string) => void;
+  onPerson?: (name: string) => void;
   onDone: (faces: Record<string, FaceInstance[]>) => void;
 }) {
-  const current = face.person_name ?? "";
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -621,7 +630,7 @@ function FaceSheet({
     setBusy(true);
     setError(null);
     try {
-      onDone(await call<Record<string, FaceInstance[]>>(command, { faceIds: [face.face_id], personName }));
+      onDone(await call<Record<string, FaceInstance[]>>(command, { faceIds, personName }));
     } catch (e) {
       setError(String(e));
       setBusy(false);
@@ -630,17 +639,17 @@ function FaceSheet({
   const name = (personName: string) => void run("assign_faces_to_person_batch", personName.trim());
 
   return (
-    <div data-viewer-chrome className="absolute inset-0 flex flex-col justify-end" onClick={onClose}>
+    <div data-viewer-chrome className="fixed inset-0 z-50 flex flex-col justify-end bg-black/40" onClick={onClose}>
       <div
         onClick={(e) => e.stopPropagation()}
         className="max-h-[80%] overflow-y-auto rounded-t-2xl bg-raised border-t border-zinc-700/80 px-4 pt-4 text-sm text-zinc-200"
         style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 1rem)" }}
       >
         <div className="flex items-center gap-3">
-          <img src={mediaUrl({ kind: "face", path: face.face_thumb })} alt="" className="w-14 h-14 rounded-full object-cover bg-zinc-800" />
+          <img src={mediaUrl({ kind: "face", path: thumb })} alt="" className="w-14 h-14 rounded-full object-cover bg-zinc-800" />
           <div className="flex-1 min-w-0">
-            <div className="font-semibold text-zinc-100 truncate">{current || "Who's this?"}</div>
-            {current && (
+            <div className="font-semibold text-zinc-100 truncate">{current || title || "Who's this?"}</div>
+            {current && onPerson && (
               <button onClick={() => onPerson(current)} className="text-xs text-emerald-400 active:text-emerald-300">
                 All photos of {current}
               </button>

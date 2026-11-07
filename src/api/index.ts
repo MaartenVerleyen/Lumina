@@ -41,7 +41,7 @@ import {
   type LocalValues,
   type Source,
 } from "./allPhotos.ts";
-import type { PersonItem, PhotoItem, SemanticHit, SemanticStatus } from "../types/lumina";
+import type { FaceCluster, PersonItem, PhotoItem, SemanticHit, SemanticStatus, SimilarFaceCandidate } from "../types/lumina";
 
 export type { EngineEvent, MediaRef, Transport, RemoteUser, Role, LibraryRef, ServerInfo, Source };
 export { libraryRefFromString, libraryRefToString };
@@ -818,6 +818,17 @@ function engines(): string[] {
   return [...new Set([...all.sources.values()].filter((s) => s.root !== PHONE_ROOT).map(engineOf))].sort((a, b) => (a === "" ? -1 : b === "" ? 1 : a.localeCompare(b)));
 }
 
+// A face an engine suggests, as the window shows it: its photo by All photos' id, its crop served by that engine,
+// the person it has now by their shown name (face ids stay the engine's: faceCommand reads them either way)
+function fromEngineFace(engine: string, c: SimilarFaceCandidate): SimilarFaceCandidate {
+  if (c.face_thumb) all.faces.set(c.face_thumb, engine);
+  return {
+    ...c,
+    hash: engine === "" ? all.fromLocal.get(c.hash) ?? c.hash : c.hash,
+    current_person: c.current_person ? showOn(engine)(c.current_person) : c.current_person,
+  };
+}
+
 // A face's engine: the one of the copy whose faces the window shows, when this account may change it there
 function faceEngine(faceId: string): { engine: string | undefined; id: string } {
   const own = faceId.split("_")[0];
@@ -986,9 +997,49 @@ async function callAll<T>(command: string, args: Record<string, unknown>): Promi
       }
       return undefined as T;
     }
-    // Suggestions are worked out per library: the person's own library shows them
-    case "get_pending_face_match_counts":
-      return {} as T;
+    // Suggested faces are worked out by each engine for its own people, over all its libraries; a person of
+    // several engines adds them up under the name the window shows
+    case "get_pending_face_match_counts": {
+      const counts: Record<string, number> = {};
+      await Promise.all(
+        engines()
+          .filter(engineEditable)
+          .map(async (engine) => {
+            const part = await engineTransport(engine)
+              .call<Record<string, number>>(command, { rootFolder: null })
+              .catch(() => ({}) as Record<string, number>);
+            const show = showOn(engine);
+            for (const [name, n] of Object.entries(part)) counts[show(name)] = (counts[show(name)] ?? 0) + n;
+          })
+      );
+      return counts as T;
+    }
+    case "find_similar_faces": {
+      const parts = allPhotosPersonParts(String(args.personName ?? "")).filter((p) => p.editable);
+      const lists = await Promise.all(
+        parts.map(async (p) => {
+          const found = await engineTransport(p.engine).call<SimilarFaceCandidate[]>(command, { ...args, personName: p.name, rootFolder: null });
+          return found.map((c) => fromEngineFace(p.engine, c));
+        })
+      );
+      return lists.flat().sort((a, b) => b.similarity - a.similarity) as T;
+    }
+    case "get_unknown_face_clusters": {
+      const lists = await Promise.all(
+        engines()
+          .filter(engineEditable)
+          .map(async (engine) => {
+            const clusters = await engineTransport(engine)
+              .call<FaceCluster[]>(command, { rootFolder: null })
+              .catch(() => [] as FaceCluster[]);
+            return clusters.map((c) => ({
+              ...c,
+              samples: c.samples.map((s) => fromEngineFace(engine, s)),
+            }));
+          })
+      );
+      return lists.flat().sort((a, b) => b.size - a.size) as T;
+    }
     // Albums and smart albums of every library, each in its own
     case "get_albums":
       return (await listCollections("get_albums", all.albums)) as T;

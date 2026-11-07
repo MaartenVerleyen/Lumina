@@ -1,6 +1,8 @@
 import { useMemo, useRef, useState } from "react";
-import { ArrowLeft, Clock, Map as MapIcon, Search, Sparkles, UserRound, X } from "lucide-react";
+import { ArrowLeft, ChevronRight, Clock, Map as MapIcon, Search, Sparkles, UserRound, Users, X } from "lucide-react";
 import { mediaUrl } from "../../api";
+import { useAccess } from "../auth/ServerGate";
+import { ReviewPerson, UnnamedGroups } from "./FaceReview";
 import type { LibraryState } from "../../hooks/useLibraryState";
 import type { PhotoItem } from "../../types/lumina";
 import { thumbSrc } from "../../utils/photoHelpers";
@@ -55,6 +57,10 @@ function topOf(photos: PhotoItem[], valuesOf: (p: PhotoItem) => string[], limit:
 
 export default function SearchScreen({ lib, onSearch, onOpenPhoto }: { lib: LibraryState; onSearch: () => void; onOpenPhoto: (hash: string) => void }) {
   const [view, setView] = useState<"explore" | "people" | "map">("explore");
+  // Face review over the People page: one person's suggested faces, or the groups without a name
+  const [review, setReview] = useState<string | null>(null);
+  const [groups, setGroups] = useState(false);
+  const canEdit = useAccess().edit;
   const input = useRef<HTMLInputElement>(null);
   const [recent, setRecent] = useState(recentSearches);
   const people = useMemo(
@@ -63,6 +69,9 @@ export default function SearchScreen({ lib, onSearch, onOpenPhoto }: { lib: Libr
   );
   const places = useMemo(() => topOf(lib.photos, (p) => (p.location ? [p.location.split(",")[0].trim()] : []), 15), [lib.photos]);
   const things = useMemo(() => topOf(lib.photos, (p) => p.tags, 18), [lib.photos]);
+  const pendingOf = (name: string) => lib.pendingFaceCounts[name] ?? 0;
+  const toCheck = people.filter((p) => pendingOf(p.name) > 0).sort((a, b) => pendingOf(b.name) - pendingOf(a.name));
+  const pendingTotal = toCheck.reduce((n, p) => n + pendingOf(p.name), 0);
 
   const search = (query: string) => {
     lib.clearAllFilters();
@@ -77,12 +86,50 @@ export default function SearchScreen({ lib, onSearch, onOpenPhoto }: { lib: Libr
     onSearch();
   };
 
+  // Full-screen pages of their own; Back returns to where they were opened
+  if (review) return <ReviewPerson lib={lib} name={review} onBack={() => setReview(null)} />;
+  if (groups) return <UnnamedGroups lib={lib} onBack={() => setGroups(false)} />;
+
   if (view === "people") {
     return (
       <SubPage title="People" onBack={() => setView("explore")}>
+        {canEdit && (
+          <div className="mx-3 mt-3 rounded-2xl bg-raised/70 border border-zinc-800 divide-y divide-zinc-800">
+            {toCheck.slice(0, 5).map((p) => (
+              <button key={p.id} onClick={() => setReview(p.name)} className="w-full flex items-center gap-3 px-3 py-2.5 text-left active:bg-white/5">
+                <FaceThumb thumb={p.cover_thumb} />
+                <span className="flex-1 min-w-0">
+                  <span className="block text-sm text-zinc-100 truncate">Is this {p.name}?</span>
+                  <span className="block text-xs text-zinc-500">
+                    {pendingOf(p.name)} {pendingOf(p.name) === 1 ? "face" : "faces"} to check
+                  </span>
+                </span>
+                <ChevronRight className="w-4 h-4 text-zinc-500" />
+              </button>
+            ))}
+            <button onClick={() => setGroups(true)} className="w-full flex items-center gap-3 px-3 py-2.5 text-left active:bg-white/5">
+              <span className="w-10 h-10 shrink-0 rounded-full bg-amber-500/15 border border-amber-500/40 flex items-center justify-center">
+                <Users className="w-5 h-5 text-amber-300" />
+              </span>
+              <span className="flex-1 min-w-0">
+                <span className="block text-sm text-zinc-100">Without a name</span>
+                <span className="block text-xs text-zinc-500">Faces that come back often, to name at once</span>
+              </span>
+              <ChevronRight className="w-4 h-4 text-zinc-500" />
+            </button>
+          </div>
+        )}
         <div className="grid grid-cols-3 min-[520px]:grid-cols-5 gap-x-2 gap-y-4 p-3">
           {people.map((p) => (
-            <Face key={p.id} name={p.name} thumb={p.cover_thumb} count={p.photo_count} onClick={() => showPerson(p.name)} />
+            <Face
+              key={p.id}
+              name={p.name}
+              thumb={p.cover_thumb}
+              count={p.photo_count}
+              pending={canEdit ? pendingOf(p.name) : 0}
+              onClick={() => showPerson(p.name)}
+              onPending={() => setReview(p.name)}
+            />
           ))}
         </div>
       </SubPage>
@@ -154,6 +201,12 @@ export default function SearchScreen({ lib, onSearch, onOpenPhoto }: { lib: Libr
 
       {people.length > 0 && (
         <Row title="People" onAll={() => setView("people")}>
+          {canEdit && pendingTotal > 0 && (
+            <button onClick={() => setView("people")} className="mx-4 mb-2 flex items-center gap-1.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 px-3 py-1 text-xs text-emerald-200 active:bg-emerald-500/30">
+              {pendingTotal} {pendingTotal === 1 ? "face" : "faces"} to check
+              <ChevronRight className="w-3 h-3" />
+            </button>
+          )}
           <Scroller>
             {people.slice(0, 12).map((p) => (
               <div key={p.id} className="w-[72px] shrink-0">
@@ -161,6 +214,21 @@ export default function SearchScreen({ lib, onSearch, onOpenPhoto }: { lib: Libr
               </div>
             ))}
           </Scroller>
+        </Row>
+      )}
+
+      {people.length === 0 && canEdit && (
+        <Row title="People">
+          <button onClick={() => setGroups(true)} className="mx-4 flex items-center gap-3 rounded-2xl bg-raised/70 border border-zinc-800 px-3 py-2.5 text-left active:bg-white/5">
+            <span className="w-10 h-10 shrink-0 rounded-full bg-amber-500/15 border border-amber-500/40 flex items-center justify-center">
+              <Users className="w-5 h-5 text-amber-300" />
+            </span>
+            <span className="flex-1 min-w-0">
+              <span className="block text-sm text-zinc-100">Name the people in your photos</span>
+              <span className="block text-xs text-zinc-500">Faces that come back often, grouped</span>
+            </span>
+            <ChevronRight className="w-4 h-4 text-zinc-500" />
+          </button>
         </Row>
       )}
 
@@ -225,19 +293,53 @@ function Scroller({ children }: { children: React.ReactNode }) {
   return <div className="flex gap-3 overflow-x-auto px-4 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">{children}</div>;
 }
 
-function Face({ name, thumb, count, onClick }: { name: string; thumb?: string | null; count?: number; onClick: () => void }) {
+function Face({
+  name,
+  thumb,
+  count,
+  pending = 0,
+  onClick,
+  onPending,
+}: {
+  name: string;
+  thumb?: string | null;
+  count?: number;
+  // Faces the server thinks are this person too: the badge opens them to check
+  pending?: number;
+  onClick: () => void;
+  onPending?: () => void;
+}) {
   return (
-    <button onClick={onClick} className="w-full flex flex-col items-center gap-1.5 active:opacity-70">
-      <div className="w-full aspect-square rounded-full overflow-hidden bg-zinc-800 border border-zinc-700/60">
-        {thumb ? (
-          <img src={mediaUrl({ kind: "face", path: thumb })} alt="" loading="lazy" className="w-full h-full object-cover" />
-        ) : (
-          <UserRound className="w-1/2 h-1/2 m-auto mt-[25%] text-zinc-600" />
-        )}
-      </div>
-      <div className="text-xs text-zinc-200 font-medium truncate max-w-full">{name}</div>
-      {count !== undefined && <div className="text-[10px] text-zinc-500 -mt-1">{count}</div>}
-    </button>
+    <div className="relative w-full">
+      <button onClick={onClick} className="w-full flex flex-col items-center gap-1.5 active:opacity-70">
+        <div className="w-full aspect-square rounded-full overflow-hidden bg-zinc-800 border border-zinc-700/60">
+          {thumb ? (
+            <img src={mediaUrl({ kind: "face", path: thumb })} alt="" loading="lazy" className="w-full h-full object-cover" />
+          ) : (
+            <UserRound className="w-1/2 h-1/2 m-auto mt-[25%] text-zinc-600" />
+          )}
+        </div>
+        <div className="text-xs text-zinc-200 font-medium truncate max-w-full">{name}</div>
+        {count !== undefined && <div className="text-[10px] text-zinc-500 -mt-1">{count}</div>}
+      </button>
+      {pending > 0 && onPending && (
+        <button
+          onClick={onPending}
+          aria-label={`Check ${pending} faces for ${name}`}
+          className="absolute top-0 right-0 min-w-7 h-7 px-1.5 rounded-full bg-emerald-600 border-2 border-surface text-[11px] font-semibold text-white active:bg-emerald-700"
+        >
+          +{pending}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function FaceThumb({ thumb }: { thumb?: string | null }) {
+  return (
+    <span className="w-10 h-10 shrink-0 rounded-full overflow-hidden bg-zinc-800">
+      {thumb ? <img src={mediaUrl({ kind: "face", path: thumb })} alt="" loading="lazy" className="w-full h-full object-cover" /> : null}
+    </span>
   );
 }
 

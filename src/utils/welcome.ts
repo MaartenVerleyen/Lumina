@@ -14,6 +14,14 @@ export interface ReleaseNotes {
 // Newest first. Add an entry for every release that should greet updating users with "What's new".
 export const RELEASE_NOTES: ReleaseNotes[] = [
   {
+    version: "5.2.0",
+    items: [
+      { title: "Check suggested faces on the phone", text: "Search → People shows how many faces Lumina thinks are someone you named (+3 on their photo). Tap it, tick the faces that are them and confirm, or say they aren't, so they aren't suggested again." },
+      { title: "Name faces in groups", text: "\"Without a name\" shows faces that look like the same person, grouped. Name a group and every face in it gets the name; tap a face that is someone else to leave it out, or say it's nobody you know." },
+      { title: "On the computer too", text: "In All photos the desktop app now also shows how many faces are waiting to be checked for each person, also for people on a server." },
+    ],
+  },
+  {
     version: "5.1.2",
     items: [
       { title: "Name faces on the phone", text: "In a photo's details on the phone, tap a face to say who it is: type a name or pick someone you named before. Faces without a name say \"Who's this?\". Tap a named face to see all photos of that person, or to take off a wrong name." },
