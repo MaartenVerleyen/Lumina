@@ -541,7 +541,7 @@ export default function FaceMatchReviewModal({
               <ScanFace className="w-5 h-5 text-zinc-400" />
             </div>
             <div>
-              <h2 className="text-base font-bold text-zinc-100 flex items-center gap-2">
+              <h2 className="text-base font-semibold text-zinc-100 flex items-center gap-2">
                 <span>Face Review</span>
               </h2>
               <p className="text-xs text-zinc-400">
@@ -735,7 +735,7 @@ export default function FaceMatchReviewModal({
                         <div className="text-[11px] text-zinc-500 font-mono">{p.photo_count} confirmed</div>
                       </div>
                       {pending > 0 && (
-                        <span className="px-2 py-0.5 rounded-full bg-amber-500/20 border border-amber-400/40 text-amber-300 font-mono text-[11px] font-bold shrink-0">
+                        <span className="px-2 py-0.5 rounded-full bg-amber-500/20 border border-amber-400/40 text-amber-300 font-mono text-[11px] font-semibold shrink-0">
                           +{pending}?
                         </span>
                       )}
@@ -872,7 +872,7 @@ export default function FaceMatchReviewModal({
                     className="w-7 h-7 rounded-full object-cover border border-emerald-500/50"
                   />
                 )}
-                <span className="font-bold text-sm text-zinc-100 capitalize">
+                <span className="font-semibold text-sm text-zinc-100 capitalize">
                   {activePerson}
                 </span>
                 <span className="text-zinc-400">
@@ -1026,7 +1026,7 @@ export default function FaceMatchReviewModal({
               </div>
             ) : loadFailed ? (
               <div className="flex-1 flex flex-col items-center justify-center gap-2 text-center p-8">
-                <h3 className="text-sm font-bold text-red-200">Faces for "{activePerson}" could not be loaded</h3>
+                <h3 className="text-sm font-semibold text-red-200">Faces for "{activePerson}" could not be loaded</h3>
                 <p className="text-xs text-zinc-500 max-w-sm">The error is shown above. This is not the same as having no matches.</p>
                 <button
                   onClick={() => loadDataForPerson(activePerson, statusTab)}
@@ -1041,7 +1041,7 @@ export default function FaceMatchReviewModal({
                 <div className="w-12 h-12 rounded-2xl bg-zinc-900 border border-zinc-800 flex items-center justify-center mb-1">
                   <Check className="w-6 h-6 text-emerald-400" />
                 </div>
-                <h3 className="text-sm font-bold text-zinc-200">
+                <h3 className="text-sm font-semibold text-zinc-200">
                   {statusTab === "pending" &&
                     `No Pending Suggestions Remaining for "${activePerson}"`}
                   {statusTab === "confirmed" &&
@@ -1111,13 +1111,13 @@ export default function FaceMatchReviewModal({
                             alt={cand.photo_name}
                             decoding="async"
                             loading="lazy"
-                            className="w-full h-full object-cover group-hover:scale-105 transition duration-200"
+                            className="w-full h-full object-cover"
                           />
 
                           {/* Status / Similarity Pill */}
                           {statusTab === "pending" && (
                             <span
-                              className={`absolute top-2.5 left-2.5 px-2 py-0.5 rounded-md text-[11px] font-mono font-bold backdrop-blur-md shadow ${
+                              className={`absolute top-2.5 left-2.5 px-2 py-0.5 rounded-md text-[11px] font-mono font-semibold backdrop-blur-md shadow ${
                                 cand.similarity >= strongMatchPercent
                                   ? "bg-emerald-950/90 text-emerald-300 border border-emerald-500/40"
                                   : "bg-amber-950/90 text-amber-300 border border-amber-500/40"
@@ -1127,12 +1127,12 @@ export default function FaceMatchReviewModal({
                             </span>
                           )}
                           {statusTab === "confirmed" && (
-                            <span className="absolute top-2.5 left-2.5 px-2 py-0.5 rounded-md text-[11px] font-mono font-bold bg-emerald-950/90 text-emerald-300 border border-emerald-500/40 backdrop-blur-md">
+                            <span className="absolute top-2.5 left-2.5 px-2 py-0.5 rounded-md text-[11px] font-mono font-semibold bg-emerald-950/90 text-emerald-300 border border-emerald-500/40 backdrop-blur-md">
                               ✓ Confirmed {activePerson}
                             </span>
                           )}
                           {statusTab === "denied" && (
-                            <span className="absolute top-2.5 left-2.5 px-2 py-0.5 rounded-md text-[11px] font-mono font-bold bg-red-950/90 text-red-300 border border-red-500/40 backdrop-blur-md">
+                            <span className="absolute top-2.5 left-2.5 px-2 py-0.5 rounded-md text-[11px] font-mono font-semibold bg-red-950/90 text-red-300 border border-red-500/40 backdrop-blur-md">
                               ✕ Denied
                             </span>
                           )}
@@ -1266,7 +1266,7 @@ export default function FaceMatchReviewModal({
                         }}
                         className="absolute rounded-md border-2 border-emerald-400 bg-emerald-500/20 pointer-events-none"
                       >
-                        <span className="absolute -top-6 left-0 px-2 py-0.5 rounded bg-emerald-600 text-white text-[11px] font-bold whitespace-nowrap shadow">
+                        <span className="absolute -top-6 left-0 px-2 py-0.5 rounded bg-emerald-600 text-white text-[11px] font-semibold whitespace-nowrap shadow">
                           {activePerson}? ({currentSpotlight.similarity}%)
                         </span>
                       </div>
@@ -1311,7 +1311,7 @@ export default function FaceMatchReviewModal({
                       />
 
                       <div>
-                        <div className="text-base font-bold text-zinc-100">
+                        <div className="text-base font-semibold text-zinc-100">
                           Is this <span className="text-emerald-400 capitalize">{activePerson}</span>?
                         </div>
                         <div className="text-xs font-mono text-zinc-400 mt-0.5">
@@ -1329,7 +1329,7 @@ export default function FaceMatchReviewModal({
                     <div className="flex flex-col gap-2.5">
                       <button
                         onClick={() => handleAcceptBatch([currentSpotlight.face_id])}
-                        className="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm flex items-center justify-center gap-2 shadow-lg transition"
+                        className="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-sm flex items-center justify-center gap-2 shadow-lg transition"
                       >
                         <Check className="w-4 h-4" />
                         <span>Accept Match (Y / Enter)</span>

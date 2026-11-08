@@ -391,7 +391,7 @@ function Filmstrip({ photos, index, onIndex }: { photos: PhotoItem[]; index: num
             key={p.hash}
             data-current={i === index ? "" : undefined}
             onClick={() => onIndex(i)}
-            className={`shrink-0 overflow-hidden rounded transition-all ${i === index ? "w-12 h-14 ring-2 ring-white" : "w-9 h-14 opacity-70"}`}
+            className={`shrink-0 overflow-hidden rounded transition-[width] ${i === index ? "w-12 h-14 ring-2 ring-white" : "w-9 h-14 opacity-70"}`}
           >
             {p.thumb_ready && <img src={thumbSrc(p)} alt="" draggable={false} className="w-full h-full object-cover" />}
           </button>

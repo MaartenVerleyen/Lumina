@@ -57,7 +57,7 @@ export default function ProfilePicturePicker({ person, currentCover, onPick, onC
           <div className="flex items-center gap-2.5">
             <UserCircle className="w-5 h-5 text-emerald-400" />
             <div>
-              <h2 className="text-sm font-bold text-zinc-100">
+              <h2 className="text-sm font-semibold text-zinc-100">
                 Profile picture for <span className="capitalize">{person}</span>
               </h2>
               <p className="text-xs text-zinc-400">Click one of their faces</p>
@@ -98,7 +98,7 @@ export default function ProfilePicturePicker({ person, currentCover, onPick, onC
                       onClose();
                     }}
                     title={f.photo_name}
-                    className={`relative aspect-square rounded-full overflow-hidden border-2 transition hover:scale-105 disabled:opacity-60 ${
+                    className={`relative aspect-square rounded-full overflow-hidden border-2 transition active:scale-95 disabled:opacity-60 ${
                       current ? "border-emerald-400" : "border-zinc-800 hover:border-emerald-500/60"
                     }`}
                   >

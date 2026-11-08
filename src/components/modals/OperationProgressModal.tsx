@@ -87,7 +87,7 @@ export default function OperationProgressModal({
             <Loader2 className="w-5 h-5 animate-spin text-emerald-400" />
           </div>
           <div>
-            <h3 className="text-sm font-bold text-zinc-100">{title}</h3>
+            <h3 className="text-sm font-semibold text-zinc-100">{title}</h3>
             <p className="text-xs text-zinc-400">{stage}</p>
           </div>
         </div>
@@ -98,7 +98,7 @@ export default function OperationProgressModal({
             {known ? (
               <div
                 style={{ width: `${percent}%` }}
-                className="h-full bg-emerald-500 rounded-full transition-all duration-200 shadow-[0_0_10px_rgba(16,185,129,0.5)]"
+                className="h-full bg-emerald-500 rounded-full transition-[width] duration-200"
               />
             ) : (
               <div className="h-full w-1/3 bg-emerald-500/70 rounded-full animate-pulse" />

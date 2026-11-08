@@ -281,7 +281,7 @@ export default function TimelineDrawer({
         <div className="flex items-center gap-3 flex-wrap">
           <div className="flex items-center gap-1.5">
             <SlidersHorizontal className="w-4 h-4 text-emerald-400" />
-            <span className="font-bold text-zinc-100 text-xs">Dynamic Timeline</span>
+            <span className="font-semibold text-zinc-100 text-xs">Dynamic Timeline</span>
           </div>
 
           {/* Scale Level Indicator Pills */}
@@ -463,7 +463,7 @@ export default function TimelineDrawer({
                   className={`text-[11px] font-mono mb-1 transition-opacity ${
                     b.count > 0
                       ? isDaySelected
-                        ? "text-emerald-300 font-bold opacity-100"
+                        ? "text-emerald-300 font-semibold opacity-100"
                         : "text-zinc-400 group-hover:text-emerald-300 opacity-90"
                       : "opacity-0"
                   }`}
@@ -475,7 +475,7 @@ export default function TimelineDrawer({
                 <div className="w-full flex-1 flex items-end">
                   <div
                     style={{ height: `${heightPercent}%` }}
-                    className={`w-full rounded-t-md transition-all duration-150 ${
+                    className={`w-full rounded-t-md transition-[height,background-color] duration-150 ${
                       isDragHighlighted || isDaySelected
                         ? "bg-emerald-500"
                         : b.count > 0

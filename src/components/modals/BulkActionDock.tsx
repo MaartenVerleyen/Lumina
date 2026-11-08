@@ -401,22 +401,22 @@ export default function BulkActionDock({
         <div className="flex items-center gap-1 border-r border-zinc-700 pr-2.5">
           <button
             onClick={() => handleSetColorLabel("red")}
-            className="w-3.5 h-3.5 rounded-full bg-red-500 hover:scale-110 transition"
+            className="w-3.5 h-3.5 rounded-full bg-red-500 hover:brightness-125 active:scale-95 transition"
             title="Red (6)"
           />
           <button
             onClick={() => handleSetColorLabel("yellow")}
-            className="w-3.5 h-3.5 rounded-full bg-yellow-400 hover:scale-110 transition"
+            className="w-3.5 h-3.5 rounded-full bg-yellow-400 hover:brightness-125 active:scale-95 transition"
             title="Yellow (7)"
           />
           <button
             onClick={() => handleSetColorLabel("green")}
-            className="w-3.5 h-3.5 rounded-full bg-emerald-500 hover:scale-110 transition"
+            className="w-3.5 h-3.5 rounded-full bg-emerald-500 hover:brightness-125 active:scale-95 transition"
             title="Green (8)"
           />
           <button
             onClick={() => handleSetColorLabel("blue")}
-            className="w-3.5 h-3.5 rounded-full bg-blue-500 hover:scale-110 transition"
+            className="w-3.5 h-3.5 rounded-full bg-blue-500 hover:brightness-125 active:scale-95 transition"
             title="Blue (9)"
           />
           <button

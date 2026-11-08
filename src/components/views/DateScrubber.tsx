@@ -174,7 +174,7 @@ export default function DateScrubber({ rows, scrollRef, scrollTop }: DateScrubbe
           ))}
           {hovered && hoverY !== null && trackRef.current && (
             <div
-              className="absolute right-6 -translate-y-1/2 px-2 py-0.5 rounded-md bg-emerald-500 text-zinc-950 text-[11px] font-bold whitespace-nowrap shadow-lg pointer-events-none"
+              className="absolute right-6 -translate-y-1/2 px-2 py-0.5 rounded-md bg-emerald-500 text-zinc-950 text-[11px] font-semibold whitespace-nowrap shadow-lg pointer-events-none"
               style={{ top: hoverY - trackRef.current.getBoundingClientRect().top }}
             >
               {hovered.label}

@@ -342,7 +342,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
 
         <div className="flex items-center gap-2 mr-0.5">
           <img src={luminaMark} alt="Lumina" className="w-6 h-6 object-contain" />
-          <span className="text-zinc-100 font-bold tracking-tight text-sm hidden sm:inline">
+          <span className="text-zinc-100 font-semibold tracking-tight text-sm hidden sm:inline">
             Lumina
           </span>
         </div>
@@ -549,7 +549,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                 {tab.icon}
                 <span>{tab.label}</span>
                 {tab.id === "people" && totalPendingFaceMatches > 0 && (
-                  <span className="px-1.5 rounded-full bg-amber-500 text-zinc-950 font-mono text-[11px] font-bold">
+                  <span className="px-1.5 rounded-full bg-amber-500 text-zinc-950 font-mono text-[11px] font-semibold">
                     {totalPendingFaceMatches}
                   </span>
                 )}
@@ -768,7 +768,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                   <ScanFace className="w-3.5 h-3.5 text-zinc-400" />
                   <span>Scan faces</span>
                   {totalPendingFaceMatches > 0 && (
-                    <span className="px-1.5 py-0.2 rounded-full bg-amber-500 text-zinc-950 font-mono text-[11px] font-bold">
+                    <span className="px-1.5 py-0.2 rounded-full bg-amber-500 text-zinc-950 font-mono text-[11px] font-semibold">
                       +{totalPendingFaceMatches}
                     </span>
                   )}
@@ -858,7 +858,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                       <span>Review face matches</span>
                     </span>
                     {totalPendingFaceMatches > 0 && (
-                      <span className="px-2 py-0.5 rounded-full bg-amber-500 text-zinc-950 font-mono text-[11px] font-bold">
+                      <span className="px-2 py-0.5 rounded-full bg-amber-500 text-zinc-950 font-mono text-[11px] font-semibold">
                         +{totalPendingFaceMatches} matches
                       </span>
                     )}
@@ -1059,7 +1059,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                       }}
                       className={`px-2 py-0.5 rounded ${
                         simpleMode
-                          ? "bg-emerald-500/20 text-emerald-300 font-bold"
+                          ? "bg-emerald-500/20 text-emerald-300 font-semibold"
                           : "text-zinc-500"
                       }`}
                     >
@@ -1071,7 +1071,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                       }}
                       className={`px-2 py-0.5 rounded ${
                         !simpleMode
-                          ? "bg-emerald-500/15 text-emerald-300 font-bold"
+                          ? "bg-emerald-500/15 text-emerald-300 font-semibold"
                           : "text-zinc-500"
                       }`}
                     >
@@ -1114,7 +1114,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                         title={hint}
                         className={`px-2 py-0.5 rounded ${
                           setting.value === value
-                            ? "bg-emerald-500/20 text-emerald-300 font-bold"
+                            ? "bg-emerald-500/20 text-emerald-300 font-semibold"
                             : "text-zinc-500"
                         }`}
                       >

@@ -122,7 +122,7 @@ export default function LoupeVideo({ photo }: { photo: PhotoItem }) {
                 : `Making a playable copy… ${conversion.percent}%`}
             </span>
             <div className="w-full h-1.5 rounded-full bg-zinc-800 overflow-hidden">
-              <div className="h-full bg-emerald-500 transition-all" style={{ width: `${conversion.percent}%` }} />
+              <div className="h-full bg-emerald-500 transition-[width]" style={{ width: `${conversion.percent}%` }} />
             </div>
             <button
               onClick={() => call("cancel_playable_copy").catch(() => {})}

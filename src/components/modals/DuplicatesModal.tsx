@@ -183,7 +183,7 @@ export default function DuplicatesModal({ duplicates, photoByHash, folder, onClo
                               )}
                             </div>
                             <span
-                              className={`absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded-md text-[10px] font-bold flex items-center gap-1 ${
+                              className={`absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded-md text-[10px] font-semibold flex items-center gap-1 ${
                                 isKeep ? "bg-emerald-500 text-zinc-950" : "bg-black/70 text-zinc-300"
                               }`}
                             >

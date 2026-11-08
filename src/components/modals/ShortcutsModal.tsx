@@ -22,7 +22,7 @@ export default function ShortcutsModal({ lib }: { lib: LibraryState }) {
             className="bg-raised border border-zinc-800 rounded-2xl w-full max-w-lg p-5 shadow-2xl flex flex-col gap-3 text-xs"
           >
             <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
-              <span className="text-sm font-bold text-zinc-100 flex items-center gap-2">
+              <span className="text-sm font-semibold text-zinc-100 flex items-center gap-2">
                 <HelpCircle className="w-4 h-4 text-emerald-400" />
                 Lumina Keyboard Shortcuts
               </span>

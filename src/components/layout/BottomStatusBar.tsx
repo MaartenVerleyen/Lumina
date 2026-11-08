@@ -161,7 +161,7 @@ export default function BottomStatusBar({
                         {percent === null ? (
                           <div className="h-full w-1/3 bg-emerald-500/70 rounded-full animate-pulse" />
                         ) : (
-                          <div style={{ width: `${percent}%` }} className="h-full bg-emerald-500 rounded-full transition-all duration-300" />
+                          <div style={{ width: `${percent}%` }} className="h-full bg-emerald-500 rounded-full transition-[width] duration-300" />
                         )}
                       </div>
                       <div className="flex items-center justify-between gap-2 text-[11px] text-zinc-500 font-mono">

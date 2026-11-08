@@ -102,7 +102,7 @@ export default function HighlightsModal({
                       src={thumbSrc(p)}
                       alt={p.name}
                       draggable={false}
-                      className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
+                      className="w-full h-full object-cover"
                       style={p.rotation ? { transform: `rotate(${p.rotation}deg)` } : undefined}
                     />
                   )}

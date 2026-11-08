@@ -71,7 +71,7 @@ export default function UpdateBanner({ updater }: { updater: Updater }) {
         <div className="flex flex-col gap-1.5">
           <div className="h-1.5 rounded-full bg-zinc-800 overflow-hidden">
             <div
-              className="h-full bg-emerald-500 transition-all"
+              className="h-full bg-emerald-500 transition-[width]"
               style={{ width: state.total > 0 ? `${Math.min(100, (state.downloaded / state.total) * 100)}%` : "15%" }}
             />
           </div>

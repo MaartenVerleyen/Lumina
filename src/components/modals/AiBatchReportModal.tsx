@@ -37,7 +37,7 @@ export default function AiBatchReportModal({
             ) : (
               <AlertTriangle className="w-5 h-5 text-amber-400" />
             )}
-            <h3 className="text-sm font-bold text-zinc-100">AI Batch Tagging Report</h3>
+            <h3 className="text-sm font-semibold text-zinc-100">AI Batch Tagging Report</h3>
           </div>
           <button onClick={onClose} className="text-zinc-500 hover:text-zinc-300" aria-label="Close">
             <X className="w-4 h-4" />
@@ -49,11 +49,11 @@ export default function AiBatchReportModal({
           <div className="grid grid-cols-2 gap-3">
             <div className="p-3 bg-zinc-900/60 border border-zinc-800 rounded-xl">
               <span className="text-xs font-medium text-zinc-500">Done</span>
-              <div className="text-lg font-bold text-emerald-400 mt-1 font-mono">{succeededCount} photos</div>
+              <div className="text-lg font-semibold text-emerald-400 mt-1 font-mono">{succeededCount} photos</div>
             </div>
             <div className="p-3 bg-zinc-900/60 border border-zinc-800 rounded-xl">
               <span className="text-xs font-medium text-zinc-500">Failed</span>
-              <div className="text-lg font-bold text-red-400 mt-1 font-mono">{failures.length} photos</div>
+              <div className="text-lg font-semibold text-red-400 mt-1 font-mono">{failures.length} photos</div>
             </div>
           </div>
 

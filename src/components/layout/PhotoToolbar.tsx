@@ -61,7 +61,7 @@ function Menu({ label, icon, active, children }: { label: string; icon: React.Re
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
         className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium border transition ${
-          active ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/40" : "bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border-zinc-800"
+          active ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/40" : "hover:bg-zinc-800 text-zinc-300 border-transparent"
         }`}
       >
         {icon}
@@ -117,11 +117,11 @@ export default function PhotoToolbar({ lib }: { lib: LibraryState }) {
           className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium border transition ${
             lib.isTimelineOpen || lib.selectedPeriodRange
               ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/40"
-              : "bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border-zinc-800"
+              : "hover:bg-zinc-800 text-zinc-300 border-transparent"
           }`}
           title="Day-by-day timeline: drag to pick a date range"
         >
-          <Calendar className="w-3.5 h-3.5 text-emerald-400" />
+          <Calendar className="w-3.5 h-3.5 text-zinc-400" />
           <span>
             {lib.selectedPeriodRange
               ? `${lib.selectedPeriodRange[0]} ➔ ${lib.selectedPeriodRange[1]}`
@@ -186,12 +186,12 @@ export default function PhotoToolbar({ lib }: { lib: LibraryState }) {
             onClick={() => lib.setShowAllBurstVersions((prev) => !prev)}
             className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium border transition ${
               lib.showAllBurstVersions
-                ? "bg-amber-500/20 text-amber-300 border-amber-500/40"
-                : "bg-zinc-900 hover:bg-zinc-800 text-zinc-400 border-zinc-800"
+                ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/40"
+                : "hover:bg-zinc-800 text-zinc-300 border-transparent"
             }`}
             title="Expand or collapse all burst / duplicate stacks"
           >
-            <Layers className="w-3.5 h-3.5 text-amber-400" />
+            <Layers className="w-3.5 h-3.5 text-zinc-400" />
             <span>{lib.showAllBurstVersions ? "Collapse bursts" : lib.simpleMode ? "Show similar shots" : "Show all bursts"}</span>
           </button>
         )}
@@ -205,7 +205,7 @@ export default function PhotoToolbar({ lib }: { lib: LibraryState }) {
           className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium border transition ${
             lib.viewMode === "compare"
               ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/40"
-              : "bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border-zinc-800"
+              : "hover:bg-zinc-800 text-zinc-300 border-transparent"
           }`}
           title="Compare the selected photos side by side (C)"
         >
@@ -216,10 +216,10 @@ export default function PhotoToolbar({ lib }: { lib: LibraryState }) {
         <button
           onClick={() => lib.openHighlights(scopeTitle(lib), lib.visiblePhotos)}
           disabled={lib.visiblePhotos.length < 2}
-          className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium border transition bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border-zinc-800 disabled:opacity-40"
+          className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium border transition hover:bg-zinc-800 text-zinc-300 border-transparent disabled:opacity-40"
           title="The best photos of what is shown: sharp, eyes open, your favourites, and varied"
         >
-          <Trophy className="w-3.5 h-3.5 text-amber-400" />
+          <Trophy className="w-3.5 h-3.5 text-zinc-400" />
           <span>Highlights</span>
         </button>
 
@@ -236,7 +236,7 @@ export default function PhotoToolbar({ lib }: { lib: LibraryState }) {
         {activeFilterCount > 0 && (
           <button
             onClick={lib.clearAllFilters}
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium border transition bg-zinc-900 hover:bg-red-950/50 text-zinc-300 hover:text-red-200 border-zinc-800 hover:border-red-500/40"
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium border transition hover:bg-red-950/50 text-zinc-300 hover:text-red-200 border-transparent hover:border-red-500/40"
             title="Show all photos again: clears the date, folder, people, search, album and other filters"
           >
             <FilterX className="w-3.5 h-3.5" />
@@ -246,7 +246,7 @@ export default function PhotoToolbar({ lib }: { lib: LibraryState }) {
       </div>
 
       <div className="flex items-center gap-2">
-        <Menu label="View" icon={<SlidersHorizontal className="w-3.5 h-3.5 text-emerald-400" />} active={viewChanged}>
+        <Menu label="View" icon={<SlidersHorizontal className="w-3.5 h-3.5 text-zinc-400" />} active={viewChanged}>
           {(close) => (
             <>
               <span className={sectionLabel}>Sort by</span>
@@ -332,7 +332,7 @@ export default function PhotoToolbar({ lib }: { lib: LibraryState }) {
                 className="w-full flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200"
                 title="Exact copies and the same photo saved as different files, across all folders"
               >
-                <Copy className="w-3.5 h-3.5 text-sky-300" />
+                <Copy className="w-3.5 h-3.5 text-zinc-400" />
                 Find duplicates…
               </button>
               {lib.totalBurstGroups > 0 && (
@@ -343,7 +343,7 @@ export default function PhotoToolbar({ lib }: { lib: LibraryState }) {
                   }}
                   className="w-full flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200"
                 >
-                  <Trophy className="w-3.5 h-3.5 text-amber-400" />
+                  <Trophy className="w-3.5 h-3.5 text-zinc-400" />
                   Keep the best of each burst
                 </button>
               )}

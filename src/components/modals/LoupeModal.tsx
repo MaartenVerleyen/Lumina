@@ -319,7 +319,7 @@ export default function LoupeModal({
             onClick={(e) => e.stopPropagation()}
             onMouseEnter={() => setLivePlaying(true)}
             onMouseLeave={() => setLivePlaying(false)}
-            className={`absolute top-3 left-1/2 -translate-x-1/2 z-40 px-3 py-1 rounded-full text-[11px] font-bold tracking-widest border backdrop-blur transition ${
+            className={`absolute top-3 left-1/2 -translate-x-1/2 z-40 px-3 py-1 rounded-full text-[11px] font-semibold tracking-widest border backdrop-blur transition ${
               livePlaying ? "bg-white text-black border-white" : "bg-black/60 text-white border-white/30 hover:bg-black/80"
             }`}
             title="Hover (or hold L) to play the Live Photo"
@@ -471,7 +471,7 @@ export default function LoupeModal({
                   handleBatchRate(star);
                   if (autoAdvance) navigateByOffset(1, false);
                 }}
-                className="p-0.5 hover:scale-110 transition"
+                className="p-0.5 hover:brightness-125 active:scale-95 transition"
                 title={`Rate ${star}★`}
               >
                 <Star

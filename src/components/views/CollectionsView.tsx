@@ -291,7 +291,7 @@ export default function CollectionsView({
   return (
     <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-7">
       <div className="flex items-center justify-between gap-3">
-        <h1 className="text-lg font-bold text-zinc-100">Collections</h1>
+        <h1 className="text-lg font-semibold text-zinc-100">Collections</h1>
         <div className="relative w-64">
           <Search className="w-3.5 h-3.5 absolute left-2.5 top-2 text-zinc-500" />
           <input

@@ -39,7 +39,7 @@ export default function CommitModal({
       <div ref={dialogRef} role="dialog" aria-modal="true" aria-label="Review staged disk moves" tabIndex={-1} className="bg-raised border border-zinc-800 rounded-2xl w-full max-w-2xl max-h-[80vh] flex flex-col overflow-hidden shadow-2xl">
         <div className="p-5 border-b border-zinc-800 flex justify-between items-center">
           <div>
-            <h2 className="text-base font-bold text-zinc-100 flex items-center gap-2">
+            <h2 className="text-base font-semibold text-zinc-100 flex items-center gap-2">
               <CheckCircle className="w-5 h-5 text-emerald-400" />
               Review Staged Disk Moves
             </h2>

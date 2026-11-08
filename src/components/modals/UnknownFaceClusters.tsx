@@ -115,7 +115,7 @@ export default function UnknownFaceClusters({
     <div className="flex-1 flex flex-col min-h-0">
       <div className="px-6 py-3 bg-card border-b border-zinc-800/80 flex items-center justify-between text-xs shrink-0">
         <div className="text-zinc-300">
-          <span className="font-bold text-zinc-100">Who is this?</span>
+          <span className="font-semibold text-zinc-100">Who is this?</span>
           <span className="text-zinc-500 ml-2">
             Unnamed faces that look like the same person. Name a group to assign all of its faces at once, or
             ignore faces you don't want to name.
@@ -158,7 +158,7 @@ export default function UnknownFaceClusters({
       ) : clusters.length === 0 ? (
         <div className="flex-1 flex flex-col items-center justify-center gap-2 text-center p-8 text-xs text-zinc-400">
           <Users className="w-8 h-8 text-zinc-600" />
-          <span className="text-sm font-bold text-zinc-200">No groups of unknown faces</span>
+          <span className="text-sm font-semibold text-zinc-200">No groups of unknown faces</span>
           <span>Every recurring face is either named or already suggested for someone. Run Scan faces to find more.</span>
         </div>
       ) : (

@@ -83,7 +83,7 @@ export default function FollowAlbumDialog({ album, onClose, onFollowed }: { albu
         className="bg-raised border border-zinc-800 rounded-2xl w-full max-w-md p-5 shadow-2xl flex flex-col gap-3 text-xs"
       >
         <div className="flex items-center justify-between">
-          <span className="font-bold text-sm text-zinc-100 flex items-center gap-2 min-w-0">
+          <span className="font-semibold text-sm text-zinc-100 flex items-center gap-2 min-w-0">
             <FolderDown className="w-4 h-4 text-sky-400 shrink-0" />
             <span className="truncate">Follow “{album.name}”</span>
           </span>

@@ -79,7 +79,7 @@ export default function ExportModal({ isOpen, count, defaultDir, onClose, onExpo
         className="bg-raised border border-zinc-800 rounded-2xl w-full max-w-md p-5 shadow-2xl flex flex-col gap-4 text-xs"
       >
         <div className="flex items-center justify-between">
-          <span className="font-bold text-sm text-zinc-100 flex items-center gap-2">
+          <span className="font-semibold text-sm text-zinc-100 flex items-center gap-2">
             <Download className="w-4 h-4 text-emerald-400" />
             Export {count} photo{count === 1 ? "" : "s"}
           </span>

@@ -28,20 +28,9 @@ import peopleShot from "../../assets/tour/people.jpg";
 import textShot from "../../assets/tour/text-search.jpg";
 import mapShot from "../../assets/tour/map.jpg";
 
-type Accent = "emerald" | "indigo" | "amber" | "sky";
-
-// Literal class names per accent, so Tailwind can see them
-const ACCENTS: Record<Accent, { tile: string; glow: string; text: string }> = {
-  emerald: { tile: "bg-emerald-500/10 border-emerald-500/25 text-emerald-300", glow: "from-emerald-500/20", text: "text-emerald-300" },
-  indigo: { tile: "bg-indigo-500/10 border-indigo-500/25 text-indigo-300", glow: "from-indigo-500/20", text: "text-indigo-300" },
-  amber: { tile: "bg-amber-500/10 border-amber-500/25 text-amber-300", glow: "from-amber-500/20", text: "text-amber-300" },
-  sky: { tile: "bg-sky-500/10 border-sky-500/25 text-sky-300", glow: "from-sky-500/20", text: "text-sky-300" },
-};
-
 interface TourStep {
   id: string;
   icon: typeof Sparkles;
-  accent: Accent;
   eyebrow: string;
   title: string;
   text: string;
@@ -55,7 +44,6 @@ const TOUR: TourStep[] = [
   {
     id: "photos",
     icon: LayoutGrid,
-    accent: "emerald",
     eyebrow: "Photos",
     title: "Cull at keyboard speed",
     text: "Open a folder and Lumina shows every photo, grouped by month. Keep, reject and rate without reaching for the mouse.",
@@ -71,7 +59,6 @@ const TOUR: TourStep[] = [
   {
     id: "compare",
     icon: Columns2,
-    accent: "amber",
     eyebrow: "Bursts",
     title: "Keep the best of every burst",
     text: "Similar shots are stacked together. Compare them side by side with synchronised zoom and a focus score under each, then keep the sharpest.",
@@ -82,7 +69,6 @@ const TOUR: TourStep[] = [
   {
     id: "search",
     icon: Search,
-    accent: "sky",
     eyebrow: "Search",
     title: "Find any photo",
     text: "Search for a person, tag, place or text inside a photo. Switch on Smart and simply describe what you're looking for, in about 50 languages.",
@@ -94,7 +80,6 @@ const TOUR: TourStep[] = [
   {
     id: "people",
     icon: ScanFace,
-    accent: "emerald",
     eyebrow: "People",
     title: "Name a face once",
     text: "Scan faces finds the people in your photos. Name someone once and Lumina suggests them in all your other photos. Review the matches in the People tab.",
@@ -105,7 +90,6 @@ const TOUR: TourStep[] = [
   {
     id: "ai",
     icon: Wand2,
-    accent: "indigo",
     eyebrow: "AI",
     title: "Captions, tags and text",
     text: "Batch AI writes a caption and tags for each photo and reads any text in it, using a vision model that runs on your PC through Ollama.",
@@ -116,7 +100,6 @@ const TOUR: TourStep[] = [
   {
     id: "places",
     icon: MapIcon,
-    accent: "sky",
     eyebrow: "Map and Collections",
     title: "Trips, places and albums",
     text: "Geotagged photos appear on the map. Lumina spots your trips by itself, and Collections gathers your albums, smart albums and trips.",
@@ -214,7 +197,6 @@ export default function WelcomeTour({ isOpen, version, notes, hidden, hasFolder,
   };
 
   const tourStep = step >= 1 && step <= TOUR.length ? TOUR[step - 1] : null;
-  const accent = ACCENTS[tourStep?.accent ?? (step === 0 && isUpdate ? "indigo" : "emerald")];
 
   return (
     <div className="fixed inset-0 z-[9980] bg-black/80 backdrop-blur-sm flex items-center justify-center p-6 select-none">
@@ -241,7 +223,7 @@ export default function WelcomeTour({ isOpen, version, notes, hidden, hasFolder,
             {step === 0 && !isUpdate && (
               <>
                 <img src={luminaMark} alt="" className="w-11 h-11 mb-5" draggable={false} />
-                <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-emerald-300 mb-2">Welcome</p>
+                <p className="text-xs font-medium text-zinc-500 mb-2">Welcome</p>
                 <h2 className="text-[28px] leading-tight font-semibold text-zinc-50 mb-3">Your photos, finally sorted</h2>
                 <p className="text-sm text-zinc-400 leading-relaxed mb-6">
                   Lumina helps you work through a big photo library: keep the good ones, find anything in seconds and
@@ -261,7 +243,7 @@ export default function WelcomeTour({ isOpen, version, notes, hidden, hasFolder,
                     <span className="text-zinc-300">Nothing on disk changes until you say so, and you can undo.</span>
                   </li>
                   <li className="flex gap-3 items-start">
-                    <Sparkles className="w-4 h-4 mt-0.5 text-indigo-300 shrink-0" />
+                    <Sparkles className="w-4 h-4 mt-0.5 text-emerald-400 shrink-0" />
                     <span className="text-zinc-300">Faces, captions and smart search, powered by AI on your own GPU.</span>
                   </li>
                 </ul>
@@ -270,13 +252,13 @@ export default function WelcomeTour({ isOpen, version, notes, hidden, hasFolder,
 
             {step === 0 && isUpdate && (
               <>
-                <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-indigo-300 mb-2">Updated to {version}</p>
+                <p className="text-xs font-medium text-zinc-500 mb-2">Updated to {version}</p>
                 <h2 className="text-[28px] leading-tight font-semibold text-zinc-50 mb-5">What's new in Lumina</h2>
                 <ul className="flex flex-col gap-3.5">
                   {notes.flatMap((n) =>
                     n.items.map((item) => (
                       <li key={`${n.version}-${item.title}`} className="flex gap-3 items-start">
-                        <span className="mt-[7px] w-1.5 h-1.5 rounded-full bg-indigo-400 shrink-0" />
+                        <span className="mt-[7px] w-1.5 h-1.5 rounded-full bg-zinc-500 shrink-0" />
                         <span className="text-[13px] leading-relaxed text-zinc-400">
                           <b className="font-semibold text-zinc-100">{item.title}.</b> {item.text}
                         </span>
@@ -289,10 +271,10 @@ export default function WelcomeTour({ isOpen, version, notes, hidden, hasFolder,
 
             {tourStep && (
               <>
-                <span className={`w-11 h-11 mb-5 rounded-xl border grid place-items-center ${ACCENTS[tourStep.accent].tile}`}>
+                <span className={`w-11 h-11 mb-5 rounded-xl border grid place-items-center bg-zinc-800/60 border-zinc-700 text-zinc-200`}>
                   <tourStep.icon className="w-5 h-5" />
                 </span>
-                <p className={`text-[11px] font-bold uppercase tracking-[0.14em] mb-2 ${accent.text}`}>{tourStep.eyebrow}</p>
+                <p className="text-xs font-medium text-zinc-500 mb-2">{tourStep.eyebrow}</p>
                 <h2 className="text-[26px] leading-tight font-semibold text-zinc-50 mb-3">{tourStep.title}</h2>
                 <p className="text-sm text-zinc-400 leading-relaxed mb-5">{tourStep.text}</p>
                 {tourStep.examples && (
@@ -319,10 +301,10 @@ export default function WelcomeTour({ isOpen, version, notes, hidden, hasFolder,
 
             {step === lastStep && (
               <>
-                <span className="w-11 h-11 mb-5 rounded-xl border grid place-items-center bg-emerald-500/10 border-emerald-500/25 text-emerald-300">
+                <span className="w-11 h-11 mb-5 rounded-xl border grid place-items-center bg-zinc-800/60 border-zinc-700 text-zinc-200">
                   <ShieldCheck className="w-5 h-5" />
                 </span>
-                <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-emerald-300 mb-2">You're all set</p>
+                <p className="text-xs font-medium text-zinc-500 mb-2">You're all set</p>
                 <h2 className="text-[26px] leading-tight font-semibold text-zinc-50 mb-3">Safe to explore</h2>
                 <p className="text-sm text-zinc-400 leading-relaxed mb-5">Try things out: Lumina is careful with your files.</p>
                 <ul className="flex flex-col gap-2.5">
@@ -338,7 +320,7 @@ export default function WelcomeTour({ isOpen, version, notes, hidden, hasFolder,
           </div>
 
           {/* Right: the picture */}
-          <div className={`relative overflow-hidden bg-panel border-l border-zinc-800 bg-gradient-to-br ${accent.glow} to-transparent`}>
+          <div className={`relative overflow-hidden bg-panel border-l border-zinc-800`}>
             {step === 0 && !isUpdate && (
               <div key="collage" className="lumina-tour-enter absolute inset-0">
                 <Shot src={mapShot} alt="" className="w-[78%] left-[30%] top-[6%] opacity-60" />
@@ -387,7 +369,7 @@ export default function WelcomeTour({ isOpen, version, notes, hidden, hasFolder,
                 key={i}
                 tabIndex={-1}
                 onClick={() => go(i)}
-                className={`h-1.5 rounded-full transition-all ${i === step ? "w-5 bg-emerald-400" : "w-1.5 bg-zinc-700 hover:bg-zinc-500"}`}
+                className={`h-1.5 rounded-full transition-[width,background-color] ${i === step ? "w-5 bg-emerald-400" : "w-1.5 bg-zinc-700 hover:bg-zinc-500"}`}
               />
             ))}
           </div>

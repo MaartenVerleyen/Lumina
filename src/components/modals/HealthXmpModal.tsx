@@ -29,7 +29,7 @@ export default function HealthXmpModal({
       <div ref={dialogRef} role="dialog" aria-modal="true" aria-label="Library health" tabIndex={-1} className="bg-raised border border-zinc-800 rounded-2xl w-full max-w-xl overflow-hidden shadow-2xl flex flex-col">
         <div className="p-5 border-b border-zinc-800 flex justify-between items-center">
           <div>
-            <h2 className="text-base font-bold text-zinc-100 flex items-center gap-2">
+            <h2 className="text-base font-semibold text-zinc-100 flex items-center gap-2">
               <HardDrive className="w-5 h-5 text-emerald-400" />
               Library Health, Storage & XMP Portability
             </h2>
@@ -48,7 +48,7 @@ export default function HealthXmpModal({
             <div className="grid grid-cols-3 gap-3">
               <div className="p-3 bg-zinc-900/80 border border-zinc-800 rounded-xl">
                 <div className="text-zinc-500 text-xs font-medium">Library</div>
-                <div className="text-lg font-bold text-zinc-100 mt-0.5">
+                <div className="text-lg font-semibold text-zinc-100 mt-0.5">
                   {healthStats.total_photos} photos
                 </div>
                 <div className="text-emerald-400 font-mono text-[11px]">
@@ -59,7 +59,7 @@ export default function HealthXmpModal({
                 <div className="text-zinc-500 text-xs font-medium">
                   Burst duplicates
                 </div>
-                <div className="text-lg font-bold text-amber-300 mt-0.5">
+                <div className="text-lg font-semibold text-amber-300 mt-0.5">
                   {healthStats.duplicate_extras_count} extras
                 </div>
                 <div className="text-amber-400/80 font-mono text-[11px]">
@@ -70,7 +70,7 @@ export default function HealthXmpModal({
                 <div className="text-zinc-500 text-xs font-medium">
                   Thumbnail and face cache
                 </div>
-                <div className="text-lg font-bold text-zinc-100 mt-0.5">
+                <div className="text-lg font-semibold text-zinc-100 mt-0.5">
                   {healthStats.cache_files_count} files
                 </div>
                 <div className="text-zinc-400 font-mono text-[11px]">

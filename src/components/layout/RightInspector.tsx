@@ -138,7 +138,7 @@ function HistogramCanvas({ imageSrc }: { imageSrc: string }) {
     <div className="flex flex-col gap-1 p-2 bg-zinc-900/90 rounded-xl border border-zinc-800">
       <div className="flex items-center justify-between text-xs text-zinc-500 px-1">
         <span>Histogram</span>
-        <span className="flex items-center gap-1.5 font-bold">
+        <span className="flex items-center gap-1.5 font-semibold">
           <span className="text-zinc-300">L</span>
           <span className="text-red-400">R</span>
           <span className="text-emerald-400">G</span>
@@ -361,7 +361,7 @@ function RightInspector({
                   }`}
                 >
                   <span
-                    className={`absolute -top-5 left-0 px-1.5 py-0.2 rounded text-[11px] font-bold whitespace-nowrap shadow ${
+                    className={`absolute -top-5 left-0 px-1.5 py-0.2 rounded text-[11px] font-semibold whitespace-nowrap shadow ${
                       face.person_name
                         ? "bg-emerald-600 text-white"
                         : "bg-amber-500 text-zinc-950"
@@ -383,7 +383,7 @@ function RightInspector({
                 }}
                 className="absolute rounded-md border-2 border-indigo-400 bg-indigo-500/25 pointer-events-none"
               >
-                <span className="absolute -top-5 left-0 px-1.5 py-0.2 rounded bg-indigo-600 text-white text-[11px] font-bold">
+                <span className="absolute -top-5 left-0 px-1.5 py-0.2 rounded bg-indigo-600 text-white text-[11px] font-semibold">
                   Selected Face
                 </span>
               </div>
@@ -796,7 +796,7 @@ function RightInspector({
                   onClick={() =>
                     handleBatchRate(activePhoto.rating === star ? 0 : star)
                   }
-                  className="p-0.5 hover:scale-110 transition"
+                  className="p-0.5 hover:brightness-125 active:scale-95 transition"
                   title={`Rate ${star} star${star === 1 ? "" : "s"} (Click again to clear)`}
                 >
                   <Star

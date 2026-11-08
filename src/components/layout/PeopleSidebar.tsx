@@ -226,7 +226,7 @@ export default function PeopleSidebar({
             {avatar(p)}
             {/* In a narrow panel the count rides on the avatar, so the name keeps its room (review via ⋯) */}
             {pending > 0 && (
-              <span className="@[17rem]:hidden absolute -top-1 -right-1.5 min-w-4 px-1 rounded-full bg-amber-500 text-zinc-950 text-[10px] font-bold leading-4 text-center">
+              <span className="@[17rem]:hidden absolute -top-1 -right-1.5 min-w-4 px-1 rounded-full bg-amber-500 text-zinc-950 text-[10px] font-semibold leading-4 text-center">
                 {pending}
               </span>
             )}

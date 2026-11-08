@@ -58,7 +58,7 @@ export default function SessionLogModal({
         <div className="p-4 border-b border-zinc-800 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <FileText className="w-5 h-5 text-emerald-400" />
-            <h3 className="text-sm font-bold text-zinc-100">Session Activity Log ({logs.length})</h3>
+            <h3 className="text-sm font-semibold text-zinc-100">Session Activity Log ({logs.length})</h3>
           </div>
           <button onClick={onClose} className="text-zinc-500 hover:text-zinc-300" aria-label="Close">
             <X className="w-4 h-4" />
@@ -81,7 +81,7 @@ export default function SessionLogModal({
                 key={cat}
                 onClick={() => setFilter(cat)}
                 className={`px-2 py-0.5 rounded transition ${
-                  filter === cat ? "bg-emerald-500/15 text-emerald-300 font-bold" : "text-zinc-400"
+                  filter === cat ? "bg-emerald-500/15 text-emerald-300 font-semibold" : "text-zinc-400"
                 }`}
               >
                 {cat}
@@ -117,7 +117,7 @@ export default function SessionLogModal({
               >
                 <span className="text-zinc-500 shrink-0">{l.timestamp}</span>
                 <span
-                  className={`px-1.5 py-0.2 rounded text-[11px] font-bold shrink-0 ${
+                  className={`px-1.5 py-0.2 rounded text-[11px] font-semibold shrink-0 ${
                     l.category === "TRIAGE"
                       ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
                       : l.category === "DISK"

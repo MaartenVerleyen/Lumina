@@ -53,7 +53,7 @@ function ServerLibraries({ lib, gridContainerRef }: { lib: LibraryState; gridCon
         <div className="w-14 h-14 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center mb-4">
           <Images className="w-7 h-7 text-emerald-400" />
         </div>
-        <h2 className="text-lg font-bold text-zinc-100">Photo libraries on this server</h2>
+        <h2 className="text-lg font-semibold text-zinc-100">Photo libraries on this server</h2>
         {error && <p className="text-xs text-red-400 mt-2">{error}</p>}
         {libraries?.length === 0 && (
           <p className="text-xs text-zinc-400 mt-2">
@@ -100,7 +100,7 @@ function DesktopStart({ lib, gridContainerRef }: { lib: LibraryState; gridContai
         <div className="w-14 h-14 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center mb-4">
           <FolderOpen className="w-7 h-7 text-emerald-400" />
         </div>
-        <h2 className="text-lg font-bold text-zinc-100">
+        <h2 className="text-lg font-semibold text-zinc-100">
           Welcome to Lumina Photo Studio
         </h2>
         {!platform.fullApp && (
@@ -189,7 +189,7 @@ export function NoMatches({ lib, gridContainerRef }: { lib: LibraryState; gridCo
     >
       <div className="max-w-sm text-center flex flex-col items-center gap-2 text-xs text-zinc-400">
         <Search className="w-8 h-8 text-zinc-600" />
-        <span className="text-sm font-bold text-zinc-200">No photos match these filters</span>
+        <span className="text-sm font-semibold text-zinc-200">No photos match these filters</span>
         <span>
           {lib.photos.length} photo(s) are in this library, but the current search, filter, folder, person or
           date range hides all of them.

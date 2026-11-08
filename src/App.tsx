@@ -520,12 +520,9 @@ export default function App() {
       {/* Startup splash is the native splash window (closed by close_splashscreen once React runs) */}
       {/* Full-Window Drag-and-Drop Overlay */}
       {isDraggingOverWindow && (
-        <div className="fixed inset-0 z-[99990] bg-emerald-950/80 backdrop-blur-md border-4 border-dashed border-emerald-400 flex flex-col items-center justify-center gap-3 pointer-events-none animate-in fade-in">
-          <FolderOpen className="w-16 h-16 text-emerald-400 animate-bounce" />
-          <h2 className="text-xl font-bold text-white">Drop Photo Folder to Open in Lumina</h2>
-          <p className="text-xs text-emerald-200 font-mono">
-            Instant SQLite WAL indexing & RAW / HEIC preview extraction
-          </p>
+        <div className="fixed inset-0 z-[99990] bg-zinc-950/85 backdrop-blur-sm border-2 border-dashed border-emerald-500/60 flex flex-col items-center justify-center gap-3 pointer-events-none animate-in fade-in">
+          <FolderOpen className="w-12 h-12 text-emerald-400" />
+          <h2 className="text-xl font-semibold text-white">Drop a folder to open it</h2>
         </div>
       )}
 

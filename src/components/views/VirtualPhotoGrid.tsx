@@ -437,7 +437,7 @@ const PhotoCard = memo(function PhotoCard({
 
           {photo.pair_raw_path && (
             <span
-              className={`px-1.5 py-0.5 rounded bg-amber-950/90 border border-amber-500/40 text-amber-300 text-[11px] font-mono font-bold backdrop-blur-md ${secondary}`}
+              className={`px-1.5 py-0.5 rounded bg-amber-950/90 border border-amber-500/40 text-amber-300 text-[11px] font-mono font-semibold backdrop-blur-md ${secondary}`}
               title={`Linked RAW+JPEG Pair: ${photo.pair_raw_path}`}
             >
               RAW+J
@@ -446,7 +446,7 @@ const PhotoCard = memo(function PhotoCard({
 
           {photo.live_video_hash && (
             <span
-              className={`px-1.5 py-0.5 rounded bg-black/70 border border-white/30 text-white text-[11px] font-bold tracking-wide backdrop-blur-md ${secondary}`}
+              className={`px-1.5 py-0.5 rounded bg-black/70 border border-white/30 text-white text-[11px] font-semibold tracking-wide backdrop-blur-md ${secondary}`}
               title="Live Photo: open it and hover LIVE (or hold L) to play its clip"
             >
               LIVE
@@ -472,7 +472,7 @@ const PhotoCard = memo(function PhotoCard({
 
           {photo.damaged && (
             <span
-              className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-orange-950/90 border border-orange-500/50 text-orange-300 text-[11px] font-mono font-bold backdrop-blur-md"
+              className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-orange-950/90 border border-orange-500/50 text-orange-300 text-[11px] font-mono font-semibold backdrop-blur-md"
               title="Damaged file: it is incomplete or corrupt (for example an interrupted download). The preview shows only the data that is present. Replace it from the original source if you can."
             >
               <AlertTriangle className="w-3 h-3" />
@@ -505,7 +505,7 @@ const PhotoCard = memo(function PhotoCard({
 
         {/* Star Badge */}
         {photo.rating > 0 && (
-          <div className="absolute top-2 right-2 px-1.5 py-0.5 rounded bg-black/75 backdrop-blur-md text-amber-400 text-[11px] font-bold flex items-center gap-0.5 z-20">
+          <div className="absolute top-2 right-2 px-1.5 py-0.5 rounded bg-black/75 backdrop-blur-md text-amber-400 text-[11px] font-semibold flex items-center gap-0.5 z-20">
             <Star className="w-2.5 h-2.5 fill-amber-400 text-amber-400" />
             <span>{photo.rating}</span>
           </div>
