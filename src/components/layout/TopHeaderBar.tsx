@@ -8,7 +8,6 @@ import { confirmDialog } from "../../confirm";
 import { ALL_PHOTOS, call, callLocal, inDesktopApp } from "../../api";
 import { libraryName } from "../../utils/photoHelpers";
 import luminaMark from "../../assets/lumina-mark.svg";
-import type { GridStyle, CardDetails } from "../views/VirtualPhotoGrid";
 import { completeTerm, termBeingTyped, TermKey } from "../../utils/searchQuery";
 import type { FaceScanScope } from "../../hooks/library/usePeople";
 import { DEFAULT_AI_MODEL } from "../../hooks/library/shared";
@@ -29,7 +28,6 @@ import {
   Search,
   Sparkles,
   Power,
-  Cpu,
   CheckCircle,
   PanelLeftClose,
   PanelLeftOpen,
@@ -43,28 +41,23 @@ import {
   HardDrive,
   ChevronDown,
   X,
-  XCircle,
   Undo2,
   Redo2,
   HelpCircle,
   Download,
   Settings,
-  Sliders,
   FileText,
   Library,
   Upload,
   Layers,
 } from "lucide-react";
+import { plural } from "../../utils/plural";
 
 interface TopHeaderBarProps {
   // Values for search autocomplete (people, tags, cameras, albums, ...)
   getSearchSuggestions: (key: TermKey, partial: string) => string[];
   smartSearch: boolean;
   onToggleSmartSearch: () => void;
-  gridStyle: GridStyle;
-  setGridStyle: (value: GridStyle) => void;
-  cardDetails: CardDetails;
-  setCardDetails: (value: CardDetails) => void;
   folder: string;
   photos: PhotoItem[];
   visiblePhotos: PhotoItem[];
@@ -110,8 +103,6 @@ interface TopHeaderBarProps {
   onUpload?: () => void;
   serverLabel?: string;
   handleRescanFolder: () => Promise<void>;
-  handleRescanAndProcessFolder: () => Promise<void>;
-  handleOpenHealthDashboard: () => Promise<void>;
   setIsCommitModalOpen: React.Dispatch<React.SetStateAction<boolean>>;
   handleDismissAllStaged: () => Promise<void>;
   handleBatchScanFacesOnnx: (scope?: FaceScanScope, visible?: PhotoItem[]) => Promise<void>;
@@ -137,10 +128,6 @@ export default function TopHeaderBar({
   getSearchSuggestions,
   smartSearch,
   onToggleSmartSearch,
-  gridStyle,
-  setGridStyle,
-  cardDetails,
-  setCardDetails,
   folder,
   photos,
   visiblePhotos,
@@ -175,8 +162,6 @@ export default function TopHeaderBar({
   onUpload,
   serverLabel,
   handleRescanFolder,
-  handleRescanAndProcessFolder,
-  handleOpenHealthDashboard,
   setIsCommitModalOpen,
   handleDismissAllStaged,
   handleBatchScanFacesOnnx,
@@ -236,7 +221,7 @@ export default function TopHeaderBar({
   async function enableFlashAttention() {
     const ok = await confirmDialog(
       "Ollama runs about 10–15% faster with flash attention, with the same results.\n\nLumina saves OLLAMA_FLASH_ATTENTION=1 in your Windows user settings and restarts Ollama. Anything else using Ollama pauses for a few seconds.",
-      { title: "Faster AI tagging", kind: "info", okLabel: "Turn on and restart Ollama", cancelLabel: "Not now" }
+      { title: "Faster AI captions", kind: "info", okLabel: "Turn on and restart Ollama", cancelLabel: "Not now" }
     );
     if (!ok) return;
     setTuningState("working");
@@ -308,7 +293,7 @@ export default function TopHeaderBar({
 
   async function triggerModelPull(model = DEFAULT_AI_MODEL) {
     const ok = await confirmDialog(
-      `Batch AI needs a vision model. Download ${model} now?
+      `AI captions need a vision model. Download ${model} now?
 
 It is about 6 GB and is stored by Ollama. You can cancel the download at any time.`,
       { title: "Download AI model", kind: "info", okLabel: "Download", cancelLabel: "Not now" }
@@ -351,7 +336,8 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
         <div ref={libraryMenuRef} className="relative flex items-center">
           <div className="flex items-center bg-zinc-900 border border-zinc-700/80 rounded-lg overflow-hidden shadow-sm">
             <button
-              onClick={handleOpenFolder}
+              // With a library open, its name opens the Library menu (switch, import); without one, a folder picker
+              onClick={folder ? () => setIsLibraryMenuOpen((p) => !p) : handleOpenFolder}
               className="flex items-center gap-1.5 px-3 py-1.5 hover:bg-zinc-800 text-zinc-100 text-xs font-medium transition"
               title={folder || "Open a photo library folder"}
             >
@@ -364,7 +350,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                 onClick={() => setIsLibraryMenuOpen((p) => !p)}
                 disabled={isScanningFolder}
                 className="px-1.5 py-1.5 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 border-l border-zinc-800 transition"
-                title="Library Rescan & Folder Options"
+                title="Libraries and import"
               >
                 {isScanningFolder ? (
                   <RefreshCw className="w-3.5 h-3.5 text-emerald-400 animate-spin" />
@@ -405,9 +391,9 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
               >
                 <FolderOpen className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
                 <div>
-                  <div className="font-medium text-zinc-200">{serverLabel || folder === ALL_PHOTOS ? "Open a Folder on This PC…" : "Switch library folder…"}</div>
+                  <div className="font-medium text-zinc-200">{serverLabel || folder === ALL_PHOTOS ? "Open a folder on this PC…" : "Open another folder…"}</div>
                   <div className="text-[11px] text-zinc-500 truncate max-w-[180px]">
-                    {serverLabel || folder === ALL_PHOTOS ? "Choose a folder" : folder}
+                    Choose a folder on this PC
                   </div>
                 </div>
               </button>
@@ -493,31 +479,14 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                 }}
                 className="w-full flex items-start gap-2.5 p-2 rounded-lg hover:bg-zinc-800/80 text-left transition"
               >
-                <RefreshCw className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                <RefreshCw className="w-4 h-4 text-zinc-400 shrink-0 mt-0.5" />
                 <div>
-                  <div className="font-medium text-zinc-200">{platform.localFiles ? "Quick rescan" : "Reload library"}</div>
+                  <div className="font-medium text-zinc-200">{platform.localFiles ? "Look for new photos" : "Reload library"}</div>
                   <div className="text-[11px] text-zinc-500">
-                    {platform.localFiles ? "Detect added/removed files & refresh EXIF" : "Get the latest from the server"}
+                    {platform.localFiles ? "Photos added or removed outside Lumina" : "Get the latest from the server"}
                   </div>
                 </div>
               </button>
-              {platform.localFiles && (
-              <button
-                onClick={() => {
-                  setIsLibraryMenuOpen(false);
-                  handleRescanAndProcessFolder();
-                }}
-                className="w-full flex items-start gap-2.5 p-2 rounded-lg hover:bg-zinc-800/80 text-left transition mt-0.5"
-              >
-                <Zap className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-                <div>
-                  <div className="font-medium text-zinc-200">Deep reprocess thumbnails</div>
-                  <div className="text-[11px] text-zinc-500">
-                    Rebuild 360px thumbs, dHash & focus scores
-                  </div>
-                </div>
-              </button>
-              )}
             </div>
           )}
         </div>
@@ -549,7 +518,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                 {tab.icon}
                 <span>{tab.label}</span>
                 {tab.id === "people" && totalPendingFaceMatches > 0 && (
-                  <span className="px-1.5 rounded-full bg-amber-500 text-zinc-950 font-mono text-[11px] font-semibold">
+                  <span className="px-1.5 rounded-full bg-emerald-500/15 text-emerald-300 text-[11px] tabular-nums" title="Faces to check">
                     {totalPendingFaceMatches}
                   </span>
                 )}
@@ -710,10 +679,10 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
         {stagedPhotosCount > 0 && !access.admin && access.edit && (
           <span
             className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500/10 text-emerald-300/80 border border-emerald-500/30 rounded-lg text-xs font-semibold"
-            title="Planned moves and photos for _Trash: an admin commits them"
+            title="Planned moves and photos for _Trash: an admin applies them"
           >
             <CheckCircle className="w-3.5 h-3.5 text-emerald-400/70" />
-            <span>{stagedPhotosCount} staged</span>
+            <span>{stagedPhotosCount} to apply</span>
           </span>
         )}
         {stagedPhotosCount > 0 && access.admin && (
@@ -723,423 +692,333 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
               className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/40 rounded-lg text-xs font-semibold shadow-sm transition"
             >
               <CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Commit ({stagedPhotosCount})</span>
+              <span>Apply changes ({stagedPhotosCount})</span>
             </button>
             <button
               onClick={handleDismissAllStaged}
               className="p-1.5 bg-zinc-900 hover:bg-red-950/60 text-zinc-400 hover:text-red-300 border border-zinc-800 hover:border-red-800/50 rounded-lg transition"
-              title="Dismiss all staged moves"
+              title="Cancel all changes"
             >
               <RotateCcw className="w-3.5 h-3.5" />
             </button>
           </div>
         )}
 
-        {/* Unified AI & Face Recognition Studio Split-Button */}
+        {/* AI: one button for faces and captions; while a job runs it shows how far it is */}
         {photos.length > 0 && access.edit && (
           <div ref={aiMenuRef} className="relative flex items-center">
-            <div className="flex items-center rounded-lg overflow-hidden border border-zinc-700 bg-zinc-800/80 shadow-sm">
-              {/* Primary Action: Scan Faces or Show Progress */}
-              {faceScanProgress ? (
-                <span className="flex items-center gap-1.5 px-2.5 py-1.5 text-zinc-200 text-xs font-mono">
-                  <Loader2 className="w-3.5 h-3.5 animate-spin text-zinc-400" />
-                  <span title={faceModelDownload ? `${faceModelDownload.downloaded_mb} / ${faceModelDownload.total_mb} MB (one-time download)` : undefined}>
-                    {faceModelDownload
-                      ? `Face models ${faceModelDownload.percent}%`
-                      : `Faces ${faceScanProgress.completed}/${faceScanProgress.total}`}
-                  </span>
-                  {access.admin && (
-                  <button
-                    onClick={handleCancelFaceScan}
-                    className="ml-1 p-0.5 rounded hover:bg-zinc-700 text-zinc-400 hover:text-white transition"
-                    title="Stop the face scan after the current batch (photos not yet scanned keep their faces)"
-                    aria-label="Stop face scan"
-                  >
-                    <XCircle className="w-3.5 h-3.5" />
-                  </button>
-                  )}
-                </span>
-              ) : access.admin && (
-                <button
-                  onClick={() => handleBatchScanFacesOnnx("all")}
-                  className="flex items-center gap-1.5 px-2.5 py-1.5 hover:bg-zinc-700 text-zinc-200 text-xs font-medium transition border-r border-zinc-700"
-                  title="Find the faces in every photo and video of the library and match them with the people you named (only photos, only videos or only the visible ones: in the menu on the right)"
-                >
-                  <ScanFace className="w-3.5 h-3.5 text-zinc-400" />
-                  <span>Scan faces</span>
-                  {totalPendingFaceMatches > 0 && (
-                    <span className="px-1.5 py-0.2 rounded-full bg-amber-500 text-zinc-950 font-mono text-[11px] font-semibold">
-                      +{totalPendingFaceMatches}
-                    </span>
-                  )}
-                </button>
-              )}
-
-              {/* Secondary Action: Batch AI Tagging (a long job: admin work on a server) */}
-              {!access.admin ? null : aiBatchProgress ? (
-                <button
-                  onClick={handleStopAiBatch}
-                  disabled={aiBatchProgress.stopping}
-                  className="flex items-center gap-1.5 px-2.5 py-1.5 bg-red-600 hover:bg-red-500 disabled:opacity-70 text-white text-xs font-semibold transition"
-                >
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  <span>
-                    {aiBatchProgress.stopping
-                      ? "Stopping…"
-                      : `Stop (${aiBatchProgress.current}/${aiBatchProgress.total})`}
-                  </span>
-                </button>
-              ) : platform.localFiles && ollamaStatus && !ollamaStatus.running ? (
-                <button
-                  onClick={startOllama}
-                  disabled={isStartingOllama}
-                  className="flex items-center gap-1.5 px-2.5 py-1.5 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-70 text-zinc-100 text-xs font-semibold transition"
-                  title="Batch AI needs Ollama, which isn't running. Click to start it."
-                >
-                  {isStartingOllama ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  ) : (
-                    <Power className="w-3.5 h-3.5 text-red-300" />
-                  )}
-                  <span>{isStartingOllama ? "Starting Ollama…" : "Start Ollama"}</span>
-                </button>
-              ) : ollamaStatus?.running && !hasVisionModel ? (
-                <button
-                  onClick={() => triggerModelPull(DEFAULT_AI_MODEL)}
-                  className="flex items-center gap-1.5 px-2.5 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-white text-xs font-semibold transition"
-                  title="No vision model installed yet: download one to use Batch AI"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  <span>Get AI Model</span>
-                </button>
+            <button
+              onClick={() => setIsAiMenuOpen((p) => !p)}
+              aria-expanded={isAiMenuOpen}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-200 text-xs font-medium transition"
+              title="Faces and AI captions"
+            >
+              {faceScanProgress || aiBatchProgress ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-zinc-400" />
               ) : (
-                <button
-                  onClick={() => runBatchAiOnList(visiblePhotos)}
-                  disabled={!ollamaStatus}
-                  className="flex items-center gap-1.5 px-2.5 py-1.5 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-60 text-white text-xs font-semibold transition"
-                  title="Run AI captioning & tagging on the visible photos (photos that already have AI results are skipped unless you choose otherwise)"
-                >
-                  <Sparkles className="w-3.5 h-3.5" />
-                  <span>Batch AI</span>
-                </button>
+                <Sparkles className="w-3.5 h-3.5 text-zinc-400" />
               )}
-
-              {/* Dropdown Trigger for AI Engine / Model / VRAM / Face Review */}
-              <button
-                onClick={() => setIsAiMenuOpen((p) => !p)}
-                className="px-1.5 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border-l border-zinc-700 transition flex items-center gap-1"
-                title="AI Model, GPU VRAM & Face Review Studio"
-              >
-                <span
-                  className={`w-1.5 h-1.5 rounded-full ${
-                    ollamaStatus?.active_vram_model
-                      ? "bg-emerald-300"
-                      : ollamaStatus?.running
-                      ? "bg-emerald-400"
-                      : "bg-red-400"
-                  }`}
-                />
-                <ChevronDown className="w-3.5 h-3.5" />
-              </button>
-            </div>
+              <span className="tabular-nums">
+                {faceScanProgress
+                  ? faceModelDownload
+                    ? `Face models ${faceModelDownload.percent}%`
+                    : `Faces ${faceScanProgress.completed}/${faceScanProgress.total}`
+                  : aiBatchProgress
+                  ? `Captions ${aiBatchProgress.current}/${aiBatchProgress.total}`
+                  : "AI"}
+              </span>
+              {totalPendingFaceMatches > 0 && !faceScanProgress && !aiBatchProgress && (
+                <span className="px-1.5 rounded-full bg-emerald-500/15 text-emerald-300 text-[11px] tabular-nums" title="Faces to check">
+                  {totalPendingFaceMatches}
+                </span>
+              )}
+              <ChevronDown className="w-3 h-3 text-zinc-500" />
+            </button>
 
             {isAiMenuOpen && (
-              <div className="absolute right-0 top-full mt-1.5 w-76 bg-raised border border-zinc-700/80 rounded-xl shadow-2xl p-3 z-50 flex flex-col gap-2.5 text-xs">
+              <div className="absolute right-0 top-full mt-1.5 w-80 bg-raised border border-zinc-700/80 rounded-xl shadow-2xl p-3 z-50 flex flex-col gap-3 text-xs">
                 {onOpenFaceReviewStudio && (
                   <button
                     onClick={() => {
                       setIsAiMenuOpen(false);
                       onOpenFaceReviewStudio();
                     }}
-                    className="w-full p-2.5 rounded-xl bg-zinc-800/80 hover:bg-zinc-700 border border-zinc-700 text-zinc-200 flex items-center justify-between transition"
+                    className="w-full px-2.5 py-2 rounded-lg bg-zinc-800/80 hover:bg-zinc-700 border border-zinc-700 text-zinc-200 flex items-center justify-between transition"
                   >
-                    <span className="flex items-center gap-2 font-semibold">
+                    <span className="flex items-center gap-2 font-medium">
                       <ScanFace className="w-4 h-4 text-zinc-400" />
-                      <span>Review face matches</span>
+                      <span>Check faces and names</span>
                     </span>
                     {totalPendingFaceMatches > 0 && (
-                      <span className="px-2 py-0.5 rounded-full bg-amber-500 text-zinc-950 font-mono text-[11px] font-semibold">
-                        +{totalPendingFaceMatches} matches
-                      </span>
+                      <span className="text-[11px] text-emerald-300 tabular-nums">{plural(totalPendingFaceMatches, "face")} to check</span>
                     )}
                   </button>
                 )}
 
-                {/* Face scans, the AI engine and its models: admin work on a server */}
+                {/* Face scans and the caption model: admin work on a server */}
                 {access.admin && (
-                <>
-                <div className="flex flex-col gap-1">
-                  <span className="text-xs text-zinc-500 font-medium">Scan faces in</span>
-                  <div className="grid grid-cols-2 gap-1">
-                    {(
-                      [
-                        ["all", "Everything"],
-                        ["photos", "Photos only"],
-                        ["videos", "Videos only"],
-                        ["visible", `Visible (${visiblePhotos.length})`],
-                      ] as const
-                    ).map(([scope, label]) => (
-                      <button
-                        key={scope}
-                        disabled={Boolean(faceScanProgress) || (scope === "visible" && visiblePhotos.length === 0)}
-                        onClick={() => {
-                          setIsAiMenuOpen(false);
-                          handleBatchScanFacesOnnx(scope, visiblePhotos);
-                        }}
-                        className="px-2 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-200 text-left disabled:opacity-40"
-                      >
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
+                  <>
+                    <div className="flex flex-col gap-1.5">
+                      <span className="text-xs text-zinc-500 font-medium">Find faces</span>
+                      {faceScanProgress ? (
+                        <div className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800">
+                          <span className="text-zinc-300 tabular-nums">
+                            {faceModelDownload
+                              ? `Downloading face models: ${faceModelDownload.downloaded_mb} of ${faceModelDownload.total_mb} MB`
+                              : `${faceScanProgress.completed.toLocaleString()} of ${plural(faceScanProgress.total, "photo")}`}
+                          </span>
+                          <button onClick={handleCancelFaceScan} className="text-zinc-400 hover:text-zinc-100" title="Photos not scanned yet keep their faces">
+                            Stop
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-2 gap-1">
+                          {(
+                            [
+                              ["all", "In everything"],
+                              ["visible", `In what's shown (${visiblePhotos.length.toLocaleString()})`],
+                              ["photos", "In photos only"],
+                              ["videos", "In videos only"],
+                            ] as const
+                          ).map(([scope, label]) => (
+                            <button
+                              key={scope}
+                              disabled={scope === "visible" && visiblePhotos.length === 0}
+                              onClick={() => {
+                                setIsAiMenuOpen(false);
+                                handleBatchScanFacesOnnx(scope, visiblePhotos);
+                              }}
+                              className="px-2 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-200 text-left disabled:opacity-40"
+                            >
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
 
-                <div className="h-[1px] bg-zinc-800/80" />
+                    <div className="h-px bg-zinc-800/80" />
 
-                <div className="flex items-center justify-between text-zinc-400 font-semibold text-[11px]">
-                  <span className="flex items-center gap-1.5">
-                    <Cpu className="w-3.5 h-3.5 text-zinc-400" />
-                    Ollama Vision Engine
-                  </span>
-                  {ollamaStatus?.running ? (
-                    <span className="text-[11px] text-emerald-400 font-mono">
-                      {ollamaStatus.active_vram_model ? "VRAM Active" : "Online"}
-                    </span>
-                  ) : platform.localFiles ? (
-                    <button
-                      onClick={startOllama}
-                      disabled={isStartingOllama}
-                      className="text-[11px] bg-red-950/60 border border-red-800/60 text-red-300 px-2 py-0.5 rounded hover:bg-red-900/60"
-                    >
-                      {isStartingOllama ? "Starting…" : "Start Ollama"}
-                    </button>
-                  ) : (
-                    <span className="text-[11px] text-red-300 font-mono">Offline</span>
-                  )}
-                </div>
-
-                {(flashAttentionOff || tuningState === "done" || tuningState === "error") && (
-                  <div className="p-2 rounded-lg bg-emerald-950/30 border border-emerald-500/30 flex flex-col gap-1.5">
-                    {tuningState === "done" ? (
-                      <span className="text-[11px] text-emerald-300">
-                        Flash attention is on: AI tagging is now about 10–15% faster.
-                      </span>
-                    ) : (
-                      <>
-                        <span className="text-[11px] text-zinc-300">
-                          Ollama runs without flash attention. Turning it on makes AI tagging about 10–15% faster.
+                    <div className="flex flex-col gap-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-zinc-500 font-medium">AI captions</span>
+                        <span className={`text-[11px] ${ollamaStatus?.running ? "text-zinc-500" : "text-red-300"}`}>
+                          {ollamaStatus?.running ? "Ollama is running" : "Ollama isn't running"}
                         </span>
+                      </div>
+                      <span className="text-[11px] text-zinc-500">A caption, tags and the text in each photo, written on this computer.</span>
+                      {aiBatchProgress ? (
+                        <div className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800">
+                          <span className="text-zinc-300 tabular-nums">
+                            {aiBatchProgress.stopping ? "Stopping…" : `${aiBatchProgress.current.toLocaleString()} of ${plural(aiBatchProgress.total, "photo")}`}
+                          </span>
+                          <button onClick={handleStopAiBatch} disabled={aiBatchProgress.stopping} className="text-zinc-400 hover:text-zinc-100 disabled:opacity-50">
+                            Stop
+                          </button>
+                        </div>
+                      ) : platform.localFiles && ollamaStatus && !ollamaStatus.running ? (
                         <button
-                          onClick={enableFlashAttention}
-                          disabled={tuningState === "working" || Boolean(aiBatchProgress)}
-                          title={aiBatchProgress ? "Wait for Batch AI to finish" : undefined}
-                          className="self-start flex items-center gap-1 text-[11px] bg-emerald-700 hover:bg-emerald-600 disabled:opacity-60 text-white px-2.5 py-1 rounded-lg font-medium"
+                          onClick={startOllama}
+                          disabled={isStartingOllama}
+                          className="w-full flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-100 disabled:opacity-60"
                         >
-                          <Zap className="w-3 h-3" />
-                          <span>{tuningState === "working" ? "Restarting Ollama…" : "Turn on flash attention"}</span>
+                          {isStartingOllama ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Power className="w-3.5 h-3.5" />}
+                          <span>{isStartingOllama ? "Starting Ollama…" : "Start Ollama"}</span>
                         </button>
-                        {tuningState === "error" && <span className="text-[11px] text-red-300">{tuningError}</span>}
-                      </>
-                    )}
-                  </div>
-                )}
+                      ) : ollamaStatus?.running && !hasVisionModel ? (
+                        <button
+                          onClick={() => {
+                            setIsAiMenuOpen(false);
+                            triggerModelPull(DEFAULT_AI_MODEL);
+                          }}
+                          className="w-full flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                          <span>Download the AI model (about 6 GB)</span>
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => {
+                            setIsAiMenuOpen(false);
+                            runBatchAiOnList(visiblePhotos);
+                          }}
+                          disabled={!ollamaStatus || visiblePhotos.length === 0}
+                          className="w-full flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium disabled:opacity-50"
+                          title="Photos that already have a caption are skipped unless you choose otherwise"
+                        >
+                          <Sparkles className="w-3.5 h-3.5" />
+                          <span>Write captions for the {plural(visiblePhotos.length, "photo")} shown</span>
+                        </button>
+                      )}
+                    </div>
 
-                {ollamaStatus?.running &&
-                  (hasVisionModel ? (
-                    <>
-                      <div className="flex flex-col gap-1">
-                        <label className="text-xs text-zinc-500 font-medium">
-                          Vision model
-                        </label>
+                    {(flashAttentionOff || tuningState === "done" || tuningState === "error") && (
+                      <div className="p-2 rounded-lg bg-zinc-900 border border-zinc-800 flex flex-col gap-1.5">
+                        {tuningState === "done" ? (
+                          <span className="text-[11px] text-zinc-300">Faster captions are on: about 10–15% faster.</span>
+                        ) : (
+                          <>
+                            <span className="text-[11px] text-zinc-300">Captions can be about 10–15% faster, with the same results.</span>
+                            <button
+                              onClick={enableFlashAttention}
+                              disabled={tuningState === "working" || Boolean(aiBatchProgress)}
+                              title={aiBatchProgress ? "Wait for the AI captions to finish" : "Turns on Ollama's flash attention and restarts Ollama"}
+                              className="self-start flex items-center gap-1 text-[11px] bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 disabled:opacity-60 text-zinc-100 px-2.5 py-1 rounded-lg font-medium"
+                            >
+                              <Zap className="w-3 h-3" />
+                              <span>{tuningState === "working" ? "Restarting Ollama…" : "Make captions faster"}</span>
+                            </button>
+                            {tuningState === "error" && <span className="text-[11px] text-red-300">{tuningError}</span>}
+                          </>
+                        )}
+                      </div>
+                    )}
+
+                    {ollamaStatus?.running && hasVisionModel && (
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-xs text-zinc-500 font-medium">AI model</label>
                         <select
                           value={aiModel}
                           onChange={(e) => setAiModel(e.target.value)}
-                          className="bg-zinc-950 border border-zinc-800 rounded-lg px-2 py-1.5 text-zinc-200 font-mono text-[11px] focus:outline-none focus:border-emerald-500/80"
+                          className="bg-zinc-950 border border-zinc-800 rounded-lg px-2 py-1.5 text-zinc-200 text-[11px] focus:outline-none focus:border-emerald-500/80"
                         >
                           {ollamaStatus.installed_models.map((m) => (
-                            <option
-                              key={m.name}
-                              value={m.name}
-                              className="bg-zinc-900 text-zinc-200"
-                            >
-                              {m.name} ({m.size_gb}GB)
+                            <option key={m.name} value={m.name} className="bg-zinc-900 text-zinc-200">
+                              {m.name} ({m.size_gb} GB)
                             </option>
                           ))}
                         </select>
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] text-zinc-500">
+                            {ollamaStatus.active_vram_model ? "Ready on the graphics card" : "Loads with the first photo"}
+                          </span>
+                          {ollamaStatus.active_vram_model ? (
+                            <button
+                              onClick={async () => {
+                                if (ollamaStatus.active_vram_model) {
+                                  await call("unload_ollama_vram", { modelName: ollamaStatus.active_vram_model });
+                                  setOllamaStatus(await call<OllamaStatus>("check_ollama_status"));
+                                }
+                              }}
+                              className="text-[11px] text-zinc-400 hover:text-zinc-100"
+                              title="Frees the graphics card's memory for other programs"
+                            >
+                              Free memory
+                            </button>
+                          ) : (
+                            <button
+                              onClick={async () => {
+                                setIsLoadingVram(true);
+                                try {
+                                  await call("preload_ollama_vram", { modelName: aiModel });
+                                  setOllamaStatus(await call<OllamaStatus>("check_ollama_status"));
+                                } catch (err) {
+                                  console.error("Loading the AI model failed:", err);
+                                } finally {
+                                  // Never leave the button stuck in its disabled "loading" state
+                                  setIsLoadingVram(false);
+                                }
+                              }}
+                              disabled={isLoadingVram}
+                              className="text-[11px] text-zinc-400 hover:text-zinc-100 disabled:opacity-50"
+                              title="Loads the model now, so the first caption doesn't wait for it"
+                            >
+                              {isLoadingVram ? "Loading…" : "Load now"}
+                            </button>
+                          )}
+                        </div>
                       </div>
-
-                      <div className="pt-1 border-t border-zinc-800/80 flex items-center justify-between">
-                        <span className="text-[11px] text-zinc-400">
-                          {ollamaStatus.active_vram_model
-                            ? "Loaded in GPU VRAM"
-                            : "In disk cache"}
-                        </span>
-                        {ollamaStatus.active_vram_model ? (
-                          <button
-                            onClick={async () => {
-                              if (ollamaStatus.active_vram_model) {
-                                await call("unload_ollama_vram", {
-                                  modelName: ollamaStatus.active_vram_model,
-                                });
-                                const s = await call<OllamaStatus>("check_ollama_status");
-                                setOllamaStatus(s);
-                              }
-                            }}
-                            className="flex items-center gap-1 text-[11px] bg-red-950/60 border border-red-800/50 text-red-300 hover:bg-red-900/60 px-2.5 py-1 rounded-lg transition font-medium"
-                          >
-                            <Power className="w-3 h-3" />
-                            <span>Eject VRAM</span>
-                          </button>
-                        ) : (
-                          <button
-                            onClick={async () => {
-                              setIsLoadingVram(true);
-                              try {
-                                await call("preload_ollama_vram", { modelName: aiModel });
-                                const s = await call<OllamaStatus>("check_ollama_status");
-                                setOllamaStatus(s);
-                              } catch (err) {
-                                console.error("Warm up VRAM failed:", err);
-                              } finally {
-                                // Never leave the button stuck in its disabled "loading" state
-                                setIsLoadingVram(false);
-                              }
-                            }}
-                            disabled={isLoadingVram}
-                            className="flex items-center gap-1 text-[11px] bg-zinc-800/80 border border-zinc-700 text-zinc-400 hover:bg-zinc-700 px-2.5 py-1 rounded-lg transition font-medium"
-                          >
-                            <Cpu className="w-3 h-3" />
-                            <span>{isLoadingVram ? "Loading…" : "Warm Up VRAM"}</span>
-                          </button>
-                        )}
-                      </div>
-                    </>
-                  ) : (
-                    <button
-                      onClick={() => {
-                        setIsAiMenuOpen(false);
-                        triggerModelPull(DEFAULT_AI_MODEL);
-                      }}
-                      className="w-full py-2 px-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-semibold flex items-center justify-center gap-1.5 shadow transition"
-                    >
-                      <Download className="w-3.5 h-3.5" />
-                      <span>Download Qwen3-VL:8B</span>
-                    </button>
-                  ))}
-                </>
+                    )}
+                  </>
                 )}
               </div>
             )}
           </div>
         )}
 
-        {/* Unified Studio Tools & Settings Menu (Replaces 4 separate buttons!) */}
+        {/* Settings and help: Settings first, the interface mode, then help */}
         <div ref={toolsMenuRef} className="relative">
           <button
             onClick={() => setIsToolsMenuOpen((p) => !p)}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-300 hover:text-white border border-zinc-800 text-xs font-medium transition"
-            title="Studio Tools, Mode Switch, Health & Shortcuts"
+            className="p-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-300 hover:text-white border border-zinc-800 transition"
+            title="Settings and help"
+            aria-label="Settings and help"
           >
-            <Sliders className="w-3.5 h-3.5 text-emerald-400" />
-            <span className="hidden xl:inline">{simpleMode ? "Simple" : "Studio"}</span>
-            <ChevronDown className="w-3 h-3 text-zinc-500" />
+            <Settings className="w-4 h-4" />
           </button>
 
           {isToolsMenuOpen && (
             <div className="absolute right-0 top-full mt-1.5 w-64 bg-raised border border-zinc-700/80 rounded-xl shadow-2xl p-2 z-50 flex flex-col gap-1 text-xs">
-              {toggleSimpleMode && (
-                <div className="p-2 rounded-lg bg-zinc-900/80 flex items-center justify-between mb-1">
-                  <span className="text-[11px] font-semibold text-zinc-300">
-                    Interface Mode
+              {onOpenSettings && (
+                <button
+                  onClick={() => {
+                    setIsToolsMenuOpen(false);
+                    onOpenSettings();
+                  }}
+                  className="w-full flex items-center justify-between px-2.5 py-2 rounded-lg hover:bg-zinc-800 text-zinc-200 transition text-left"
+                >
+                  <span className="flex items-center gap-2.5">
+                    <Settings className="w-4 h-4 text-zinc-400 shrink-0" />
+                    <span>Settings</span>
                   </span>
-                  <div className="flex bg-zinc-950 border border-zinc-800 rounded-md p-0.5 text-[11px]">
-                    <button
-                      onClick={() => {
-                        if (!simpleMode) toggleSimpleMode();
-                      }}
-                      className={`px-2 py-0.5 rounded ${
-                        simpleMode
-                          ? "bg-emerald-500/20 text-emerald-300 font-semibold"
-                          : "text-zinc-500"
-                      }`}
-                    >
-                      Simple
-                    </button>
-                    <button
-                      onClick={() => {
-                        if (simpleMode) toggleSimpleMode();
-                      }}
-                      className={`px-2 py-0.5 rounded ${
-                        !simpleMode
-                          ? "bg-emerald-500/15 text-emerald-300 font-semibold"
-                          : "text-zinc-500"
-                      }`}
-                    >
-                      Pro
-                    </button>
-                  </div>
-                </div>
+                  <kbd className="px-1.5 py-0.2 bg-zinc-950 border border-zinc-700 rounded text-[11px] font-mono text-zinc-400">Ctrl+,</kbd>
+                </button>
               )}
 
-              {[
-                {
-                  label: "Grid",
-                  value: gridStyle,
-                  set: setGridStyle,
-                  options: [
-                    ["justified", "Justified", "Rows keep each photo's shape"],
-                    ["square", "Square", "Equal cards with a name line"],
-                  ],
-                },
-                {
-                  label: "Card details",
-                  value: cardDetails,
-                  set: setCardDetails,
-                  options: [
-                    ["hover", "On hover", "Extra badges show on hover and on the selected photo"],
-                    ["always", "Always", "All badges always visible"],
-                  ],
-                },
-              ].map((setting) => (
-                <div
-                  key={setting.label}
-                  className="p-2 rounded-lg bg-zinc-900/80 flex items-center justify-between mb-1"
-                >
-                  <span className="text-[11px] font-semibold text-zinc-300">{setting.label}</span>
+              {toggleSimpleMode && (
+                <div className="p-2 rounded-lg bg-zinc-900/80 flex items-center justify-between" title="Simple hides the more technical tools; Advanced shows everything">
+                  <span className="text-xs text-zinc-300">Interface</span>
                   <div className="flex bg-zinc-950 border border-zinc-800 rounded-md p-0.5 text-[11px]">
-                    {setting.options.map(([value, text, hint]) => (
+                    {([
+                      [true, "Simple"],
+                      [false, "Advanced"],
+                    ] as const).map(([simple, label]) => (
                       <button
-                        key={value}
-                        onClick={() => (setting.set as (v: string) => void)(value)}
-                        title={hint}
+                        key={label}
+                        onClick={() => {
+                          if (simpleMode !== simple) toggleSimpleMode();
+                        }}
                         className={`px-2 py-0.5 rounded ${
-                          setting.value === value
-                            ? "bg-emerald-500/20 text-emerald-300 font-semibold"
-                            : "text-zinc-500"
+                          simpleMode === simple ? "bg-emerald-500/15 text-emerald-300 font-semibold" : "text-zinc-500"
                         }`}
                       >
-                        {text}
+                        {label}
                       </button>
                     ))}
                   </div>
                 </div>
-              ))}
+              )}
 
-              {photos.length > 0 && access.admin && (
+              <div className="my-1 border-t border-zinc-800" />
+
+              {setIsShortcutsModalOpen && (
                 <button
                   onClick={() => {
                     setIsToolsMenuOpen(false);
-                    handleOpenHealthDashboard();
+                    setIsShortcutsModalOpen(true);
                   }}
-                  className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg hover:bg-zinc-800 text-zinc-200 transition text-left"
+                  className="w-full flex items-center justify-between px-2.5 py-2 rounded-lg hover:bg-zinc-800 text-zinc-200 transition text-left"
                 >
-                  <HardDrive className="w-4 h-4 text-emerald-400 shrink-0" />
-                  <div>
-                    <div className="font-medium">Storage Health & XMP</div>
-                    <div className="text-[11px] text-zinc-500">
-                      Cache stats & Lightroom sidecars
-                    </div>
-                  </div>
+                  <span className="flex items-center gap-2.5">
+                    <HelpCircle className="w-4 h-4 text-zinc-400 shrink-0" />
+                    <span>Keyboard shortcuts</span>
+                  </span>
+                  <kbd className="px-1.5 py-0.2 bg-zinc-950 border border-zinc-700 rounded text-[11px] font-mono text-zinc-400">?</kbd>
+                </button>
+              )}
+
+              {onOpenWelcomeTour && (
+                <button
+                  onClick={() => {
+                    setIsToolsMenuOpen(false);
+                    onOpenWelcomeTour();
+                  }}
+                  className="w-full flex items-center justify-between px-2.5 py-2 rounded-lg hover:bg-zinc-800 text-zinc-200 transition text-left"
+                >
+                  <span className="flex items-center gap-2.5">
+                    <Sparkles className="w-4 h-4 text-zinc-400 shrink-0" />
+                    <span>Welcome tour</span>
+                  </span>
                 </button>
               )}
 
@@ -1152,63 +1031,10 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                   className="w-full flex items-center justify-between px-2.5 py-2 rounded-lg hover:bg-zinc-800 text-zinc-200 transition text-left"
                 >
                   <span className="flex items-center gap-2.5">
-                    <FileText className="w-4 h-4 text-cyan-400 shrink-0" />
-                    <span>Session activity log</span>
+                    <FileText className="w-4 h-4 text-zinc-400 shrink-0" />
+                    <span>What Lumina did</span>
                   </span>
-                  {sessionLogsCount > 0 && (
-                    <span className="px-1.5 py-0.2 rounded-full bg-emerald-500/15 text-emerald-300 font-mono text-[11px]">
-                      {sessionLogsCount}
-                    </span>
-                  )}
-                </button>
-              )}
-
-              {setIsShortcutsModalOpen && (
-                <button
-                  onClick={() => {
-                    setIsToolsMenuOpen(false);
-                    setIsShortcutsModalOpen(true);
-                  }}
-                  className="w-full flex items-center justify-between px-2.5 py-2 rounded-lg hover:bg-zinc-800 text-zinc-200 transition text-left"
-                >
-                  <span className="flex items-center gap-2.5">
-                    <HelpCircle className="w-4 h-4 text-amber-400 shrink-0" />
-                    <span>Keyboard shortcuts</span>
-                  </span>
-                  <kbd className="px-1.5 py-0.2 bg-zinc-950 border border-zinc-700 rounded text-[11px] font-mono text-zinc-400">
-                    ?
-                  </kbd>
-                </button>
-              )}
-
-              {onOpenSettings && (
-                <button
-                  onClick={() => {
-                    setIsToolsMenuOpen(false);
-                    onOpenSettings();
-                  }}
-                  className="w-full flex items-center justify-between px-2.5 py-2 rounded-lg hover:bg-zinc-800 text-zinc-200 transition text-left"
-                >
-                  <span className="flex items-center gap-2.5">
-                    <Settings className="w-4 h-4 text-zinc-300 shrink-0" />
-                    <span>Settings</span>
-                  </span>
-                  <kbd className="px-1.5 py-0.2 bg-zinc-950 border border-zinc-700 rounded text-[11px] font-mono text-zinc-400">
-                    Ctrl+,
-                  </kbd>
-                </button>
-              )}
-
-              {onOpenWelcomeTour && (
-                <button
-                  onClick={() => {
-                    setIsToolsMenuOpen(false);
-                    onOpenWelcomeTour();
-                  }}
-                  className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg hover:bg-zinc-800 text-zinc-200 transition text-left"
-                >
-                  <Sparkles className="w-4 h-4 text-zinc-400 shrink-0" />
-                  <span>Welcome tour</span>
+                  {sessionLogsCount > 0 && <span className="text-[11px] text-zinc-500 tabular-nums">{sessionLogsCount}</span>}
                 </button>
               )}
             </div>

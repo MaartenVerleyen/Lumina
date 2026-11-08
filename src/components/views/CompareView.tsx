@@ -15,6 +15,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
+import { plural } from "../../utils/plural";
 
 interface CompareViewProps {
   comparePhotos: PhotoItem[];
@@ -137,7 +138,7 @@ export default function CompareView({
                   if (prev) jumpToBurstGroup(prev);
                 }}
                 className="p-0.5 hover:bg-zinc-700 rounded"
-                title="Previous Burst Group"
+                title="Previous burst"
               >
                 <ChevronLeft className="w-3.5 h-3.5" />
               </button>
@@ -150,7 +151,7 @@ export default function CompareView({
                   if (next) jumpToBurstGroup(next);
                 }}
                 className="p-0.5 hover:bg-zinc-700 rounded"
-                title="Skip to Next Burst Group"
+                title="Next burst"
               >
                 <ChevronRight className="w-3.5 h-3.5" />
               </button>
@@ -314,7 +315,7 @@ export default function CompareView({
                           setAutoMatchNotice(
                             currentGroupId
                               ? `Kept "${cp.name}" — All burst groups resolved!`
-                              : `Kept "${cp.name}" and staged ${others.length} other photo(s) for _Trash.`
+                              : `Kept "${cp.name}" and marked ${plural(others.length, "other photo", "other photos")} for _Trash.`
                           );
                         }
                       }

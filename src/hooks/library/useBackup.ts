@@ -13,6 +13,7 @@ import {
 } from "../../utils/backup";
 import type { BackupManifest, BackupResult, RestoreResult } from "../../types/lumina";
 import type { LibraryCore } from "./core";
+import { plural } from "../../utils/plural";
 
 // The first automatic backup waits until Lumina has settled after starting; later ones are checked hourly
 const AUTO_FIRST_DELAY_MS = 3 * 60_000;
@@ -127,7 +128,7 @@ export function useBackup(core: LibraryCore, recentFolders: string[]) {
           for (const [key, value] of Object.entries(saved)) localStorage.setItem(key, value);
         } catch {}
       }
-      addLog("DISK", `Restored ${result.photos} photo(s) from a backup; restarting`, restoreTarget.path);
+      addLog("DISK", `Restored ${plural(result.photos, "photo")} from a backup; restarting`, restoreTarget.path);
       await call("restart_app");
     } catch (err) {
       setError(`Restore failed: ${String(err)}`);
@@ -146,7 +147,7 @@ export function useBackup(core: LibraryCore, recentFolders: string[]) {
     setBackupBusy("csv");
     try {
       const rows = await call<number>("export_library_csv", { destPath: dest, rootFolder: folder || null });
-      setAutoMatchNotice(`${rows.toLocaleString()} photo(s) listed in ${dest}`);
+      setAutoMatchNotice(`${plural(rows, "photo")} listed in ${dest}`);
     } catch (err) {
       setError(`CSV export failed: ${String(err)}`);
     } finally {

@@ -6,6 +6,7 @@ import { expandWithLivePairs, isVideo } from "../../utils/media";
 import { captureSnapshots } from "./undo";
 import type { LibraryView } from "./useLibraryView";
 import type { LibraryCore } from "./core";
+import { plural } from "../../utils/plural";
 
 // Culling actions on photos: flag, reject, rate, colour label, rotate, tag, basket, time shift, keep sharpest
 export function useTriage(core: LibraryCore, view: LibraryView) {
@@ -41,14 +42,14 @@ export function useTriage(core: LibraryCore, view: LibraryView) {
       const after = before.map((s: PhotoActionSnapshot) => ({ ...s, flag }));
       await call("set_photo_flag", { hashes, flag });
       undo.pushUndoEntry({
-        description: `Flag (${flag || "unflag"}) on ${hashes.length} photo(s)`,
+        description: `Flag (${flag || "unflag"}) on ${plural(hashes.length, "photo")}`,
         previousActiveHash: activeHash,
         previousSelectedHashes: hashes,
         before,
         after,
       });
       setPhotos((prev) => prev.map((p) => (hashSet.has(p.hash) ? { ...p, flag } : p)));
-      addLog("TRIAGE", `Set flag "${flag || "unflagged"}" on ${hashes.length} photo(s)`);
+      addLog("TRIAGE", `Set flag "${flag || "unflagged"}" on ${plural(hashes.length, "photo")}`);
     } catch (err) {
       setError(String(err));
     }
@@ -71,7 +72,7 @@ export function useTriage(core: LibraryCore, view: LibraryView) {
         ops: hashes.map((hash) => ({ hash, target_subfolder: "_Trash" })),
       });
       undo.pushUndoEntry({
-        description: `Reject & stage to _Trash on ${hashes.length} photo(s)`,
+        description: `Reject & stage to _Trash on ${plural(hashes.length, "photo")}`,
         previousActiveHash: activeHash,
         previousSelectedHashes: hashes,
         before,
@@ -82,7 +83,7 @@ export function useTriage(core: LibraryCore, view: LibraryView) {
           hashSet.has(p.hash) ? { ...p, flag: "reject", staged_target: "_Trash" } : p
         )
       );
-      addLog("TRIAGE", `Rejected & staged ${hashes.length} photo(s) to _Trash`);
+      addLog("TRIAGE", `Rejected & staged ${plural(hashes.length, "photo")} to _Trash`);
     } catch (err) {
       setError(String(err));
     }
@@ -109,7 +110,7 @@ export function useTriage(core: LibraryCore, view: LibraryView) {
         });
       }
       undo.pushUndoEntry({
-        description: `Keep 1 & trash ${rest.length} photo(s) (Compare)`,
+        description: `Keep 1 & trash ${plural(rest.length, "photo")} (Compare)`,
         previousActiveHash: activeHash,
         previousSelectedHashes: keep,
         before,
@@ -141,7 +142,7 @@ export function useTriage(core: LibraryCore, view: LibraryView) {
       const after = before.map((s: PhotoActionSnapshot) => ({ ...s, color_label: color }));
       await call("set_photo_color_label", { hashes, color });
       undo.pushUndoEntry({
-        description: `Color label (${color || "clear"}) on ${hashes.length} photo(s)`,
+        description: `Color label (${color || "clear"}) on ${plural(hashes.length, "photo")}`,
         previousActiveHash: activeHash,
         previousSelectedHashes: hashes,
         before,
@@ -150,7 +151,7 @@ export function useTriage(core: LibraryCore, view: LibraryView) {
       setPhotos((prev) =>
         prev.map((p) => (hashSet.has(p.hash) ? { ...p, color_label: color } : p))
       );
-      addLog("TRIAGE", `Set color label "${color || "none"}" on ${hashes.length} photo(s)`);
+      addLog("TRIAGE", `Set color label "${color || "none"}" on ${plural(hashes.length, "photo")}`);
     } catch (err) {
       setError(String(err));
     }
@@ -173,7 +174,7 @@ export function useTriage(core: LibraryCore, view: LibraryView) {
         rotation: res[s.hash] !== undefined ? res[s.hash] : (s.rotation + deltaDegrees + 360) % 360,
       }));
       undo.pushUndoEntry({
-        description: `Rotate (${deltaDegrees > 0 ? "+" : ""}${deltaDegrees}°) on ${hashes.length} photo(s)`,
+        description: `Rotate (${deltaDegrees > 0 ? "+" : ""}${deltaDegrees}°) on ${plural(hashes.length, "photo")}`,
         previousActiveHash: activeHash,
         previousSelectedHashes: hashes,
         before,
@@ -182,7 +183,7 @@ export function useTriage(core: LibraryCore, view: LibraryView) {
       setPhotos((prev) =>
         prev.map((p) => (res[p.hash] !== undefined ? { ...p, rotation: res[p.hash] } : p))
       );
-      addLog("TRIAGE", `Rotated ${hashes.length} photo(s) by ${deltaDegrees}°`);
+      addLog("TRIAGE", `Rotated ${plural(hashes.length, "photo")} by ${deltaDegrees}°`);
     } catch (err) {
       setError(String(err));
     }
@@ -197,14 +198,14 @@ export function useTriage(core: LibraryCore, view: LibraryView) {
       const after = before.map((s: PhotoActionSnapshot) => ({ ...s, rating }));
       await call("set_photos_rating", { hashes, rating });
       undo.pushUndoEntry({
-        description: `Rating (${rating}★) on ${hashes.length} photo(s)`,
+        description: `Rating (${rating}★) on ${plural(hashes.length, "photo")}`,
         previousActiveHash: activeHash,
         previousSelectedHashes: hashes,
         before,
         after,
       });
       setPhotos((prev) => prev.map((p) => (hashSet.has(p.hash) ? { ...p, rating } : p)));
-      addLog("TRIAGE", `Rated ${hashes.length} photo(s) ${rating}★`);
+      addLog("TRIAGE", `Rated ${plural(hashes.length, "photo")} ${rating}★`);
     } catch (err) {
       setError(String(err));
     }
@@ -229,7 +230,7 @@ export function useTriage(core: LibraryCore, view: LibraryView) {
       applyTag(true);
       if (added.length > 0) {
         pushCustomUndo(
-          `Tag #${clean} on ${added.length} photo(s)`,
+          `Tag #${clean} on ${plural(added.length, "photo")}`,
           hashes,
           async () => {
             await call("remove_tag_batch", { hashes: added, tag: clean });
@@ -241,7 +242,7 @@ export function useTriage(core: LibraryCore, view: LibraryView) {
           }
         );
       }
-      addLog("TRIAGE", `Added tag "#${clean}" to ${hashes.length} photo(s)`);
+      addLog("TRIAGE", `Added tag "#${clean}" to ${plural(hashes.length, "photo")}`);
       setTagInput("");
       setBulkInput("");
       setActiveBulkPopover(null);
@@ -260,7 +261,7 @@ export function useTriage(core: LibraryCore, view: LibraryView) {
       const before = captureSnapshots(photos, hashSet);
       await call("set_photo_basket", { hashes, inBasket: anyNotInBasket });
       pushSnapshotUndo(
-        `${anyNotInBasket ? "Pin" : "Unpin"} ${hashes.length} photo(s) ${anyNotInBasket ? "to" : "from"} Basket`,
+        `${anyNotInBasket ? "Pin" : "Unpin"} ${plural(hashes.length, "photo")}`,
         before,
         before.map((s) => ({ ...s, in_basket: anyNotInBasket }))
       );
@@ -271,7 +272,7 @@ export function useTriage(core: LibraryCore, view: LibraryView) {
       );
       addLog(
         "TRIAGE",
-        `${anyNotInBasket ? "Pinned" : "Unpinned"} ${hashes.length} photo(s) ${
+        `${anyNotInBasket ? "Pinned" : "Unpinned"} ${plural(hashes.length, "photo")} ${
           anyNotInBasket ? "to" : "from"
         } Basket`
       );
@@ -302,7 +303,7 @@ export function useTriage(core: LibraryCore, view: LibraryView) {
       const label = `${totalMinutes > 0 ? `+${totalMinutes}` : totalMinutes} min`;
       if (shiftedHashes.length > 0) {
         pushCustomUndo(
-          `Shift capture time ${label} on ${shiftedHashes.length} photo(s)`,
+          `Shift capture time ${label} on ${plural(shiftedHashes.length, "photo")}`,
           shiftedHashes,
           async () =>
             applyShift(
@@ -321,8 +322,8 @@ export function useTriage(core: LibraryCore, view: LibraryView) {
         );
       }
       setActiveBulkPopover(null);
-      addLog("TRIAGE", `Shifted timestamps on ${shifted.length} photo(s) by ${totalMinutes} min`);
-      setAutoMatchNotice(`Shifted ${shifted.length} timestamp(s) by ${label}.`);
+      addLog("TRIAGE", `Shifted timestamps on ${plural(shifted.length, "photo")} by ${totalMinutes} min`);
+      setAutoMatchNotice(`Shifted ${plural(shifted.length, "timestamp")} by ${label}.`);
     } catch (err) {
       setError(String(err));
     }
@@ -338,8 +339,8 @@ export function useTriage(core: LibraryCore, view: LibraryView) {
       );
       if (toTrash.length === 0) return;
       const ok = await confirmAction(
-        `Keep the best photo of each of the ${totalBurstGroups} burst groups (open eyes and a sharp face first, then the sharpest) and stage the other ${toTrash.length} photo(s) for _Trash?\n\nNothing is deleted until you Commit. You can undo this with Ctrl+Z.`,
-        "Stage for _Trash",
+        `Keep the best photo of each of the ${totalBurstGroups} burst groups (open eyes and a sharp face first, then the sharpest) and mark the other ${plural(toTrash.length, "photo")} for _Trash?\n\nThey move when you apply the changes. Ctrl+Z undoes this.`,
+        "Mark for _Trash",
         { title: "Keep the best of each burst" }
       );
       if (!ok) return;
@@ -348,7 +349,7 @@ export function useTriage(core: LibraryCore, view: LibraryView) {
       const ops = toTrash.map((p) => ({ hash: p.hash, target_subfolder: "_Trash" }));
       await call("stage_photos_move", { ops });
       pushSnapshotUndo(
-        `Keep best: stage ${toTrash.length} photo(s) for _Trash`,
+        `Keep best: stage ${plural(toTrash.length, "photo")} for _Trash`,
         before,
         before.map((s) => ({ ...s, staged_target: "_Trash" }))
       );

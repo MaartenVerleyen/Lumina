@@ -14,6 +14,16 @@ export interface ReleaseNotes {
 // Newest first. Add an entry for every release that should greet updating users with "What's new".
 export const RELEASE_NOTES: ReleaseNotes[] = [
   {
+    version: "5.5.0",
+    items: [
+      { title: "A tidier header", text: "One AI button for finding faces and writing captions (it shows how far a job is), and a gear for Settings, the Simple or Advanced view, shortcuts and the tour. Click the library's name for the Library menu. Layout and photo details are under View." },
+      { title: "One name for each thing", text: "Pinned photos (search is:pinned), AI caption for the A key, Library backup for saving ratings and names, and Apply changes for moves and rejected photos. Counts say 1 photo or 3 photos." },
+      { title: "Clearer deleting", text: "A rejected photo shows its X and Apply changes in the header. Empty _Trash only counts what is really in the _Trash folder, and nothing is deleted for good until you empty it." },
+      { title: "Working on a selection", text: "With several photos selected, the panel on the right says its changes go to all of them. The selection bar fits on one row, with the rest under More, and the right-click menu has stars, labels and rotate." },
+      { title: "Faces", text: "In Who is this?, click a face that is someone else to leave it out before you name the group. Face review's close button stays at the top right." },
+    ],
+  },
+  {
     version: "5.4.0",
     items: [
       { title: "A calmer look", text: "One accent colour instead of many, grey icons, labels in plain sentence case instead of capitals, and quieter buttons and badges, so your photos stand out. The phone app gets the same treatment." },

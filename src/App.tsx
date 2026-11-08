@@ -76,6 +76,7 @@ import FollowAlbumDialog, { type FollowTarget } from "./components/modals/Follow
 import AdminPage from "./components/admin/AdminPage";
 import { useConfirmRequest } from "./confirm";
 import { useAccess } from "./components/auth/ServerGate";
+import { plural } from "./utils/plural";
 
 export default function App() {
   const lib = useLibraryState();
@@ -290,6 +291,16 @@ export default function App() {
     rowVirtualizer.scrollToOffset(0);
   }, [lib.gridSortBy]);
 
+  // When a library opens, the photo shown on the right is scrolled into view, once its rows are laid out
+  const revealedFolderRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!lib.folder || revealedFolderRef.current === lib.folder || layout.rows.length === 0) return;
+    revealedFolderRef.current = lib.folder;
+    const idx = lib.activeHash ? lib.visiblePhotos.findIndex((p) => p.hash === lib.activeHash) : -1;
+    if (idx > 0) rowVirtualizer.scrollToIndex(layout.rowOfPhoto[idx] ?? 0, { align: "center" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lib.folder, layout]);
+
   const navigateToIndex = useCallback(
     (nextIdx: number, extendSelection: boolean) => {
       const targetPhoto = lib.visiblePhotos[nextIdx];
@@ -453,7 +464,7 @@ export default function App() {
       default:
         return;
     }
-    lib.setAutoMatchNotice(`${target.label}: ${hashes.length} photo(s). Ctrl+Z undoes it.`);
+    lib.setAutoMatchNotice(`${target.label}: ${plural(hashes.length, "photo")}. Ctrl+Z undoes it.`);
   };
   const { drag, onCardPointerDown: startPhotoDrag } = usePhotoDrag(hashesForDrag, handleDropPhotos);
   // Dropping photos on a folder, person or filter changes them: not for users who may only look
@@ -561,8 +572,6 @@ export default function App() {
         onUpload={client.pickAndUpload}
         serverLabel={client.server ? client.serverLabel : undefined}
         handleRescanFolder={lib.handleRescanFolder}
-        handleRescanAndProcessFolder={lib.handleRescanAndProcessFolder}
-        handleOpenHealthDashboard={lib.handleOpenHealthDashboard}
         setIsCommitModalOpen={lib.setIsCommitModalOpen}
         handleDismissAllStaged={lib.handleDismissAllStaged}
         handleBatchScanFacesOnnx={lib.handleBatchScanFacesOnnx}
@@ -570,10 +579,6 @@ export default function App() {
         runBatchAiOnList={lib.runBatchAiOnList}
         simpleMode={lib.simpleMode}
         toggleSimpleMode={lib.toggleSimpleMode}
-        gridStyle={lib.gridStyle}
-        setGridStyle={lib.setGridStyle}
-        cardDetails={lib.cardDetails}
-        setCardDetails={lib.setCardDetails}
         smartSearch={lib.smartSearch}
         onToggleSmartSearch={lib.toggleSmartSearch}
         getSearchSuggestions={getSearchSuggestions}
@@ -846,6 +851,7 @@ export default function App() {
               rightWidth={rightWidth}
               simpleMode={lib.simpleMode}
               activePhoto={lib.activePhoto}
+              selectedCount={lib.selectedHashes.size}
               setPhotos={lib.setPhotos}
               selectedFaceId={lib.selectedFaceId}
               setSelectedFaceId={lib.setSelectedFaceId}
@@ -962,6 +968,15 @@ export default function App() {
         onFindSimilar={() => {
           if (contextPhoto) lib.handleFindSimilar(contextPhoto);
         }}
+        onRate={!access.edit ? undefined : (stars) => {
+          if (contextPhoto) lib.handleBatchRate(stars, contextMenuTargets(contextPhoto.hash));
+        }}
+        onColorLabel={!access.edit ? undefined : (color) => {
+          if (contextPhoto) lib.handleSetColorLabel(color, contextMenuTargets(contextPhoto.hash));
+        }}
+        onRotate={!access.edit ? undefined : (degrees) => {
+          if (contextPhoto) lib.handleRotateSelection(degrees, contextMenuTargets(contextPhoto.hash));
+        }}
         onExport={!platform.localFiles ? undefined : () => {
           if (contextPhoto) lib.openExport(contextMenuTargets(contextPhoto.hash));
         }}
@@ -1026,7 +1041,7 @@ export default function App() {
         title={
           lib.ollamaPullProgress
             ? `Downloading AI Vision Model (${lib.ollamaPullProgress.model})`
-            : lib.progressTitle ?? "Loading & Indexing Photo Library"
+            : lib.progressTitle ?? "Loading the library"
         }
         stage={
           lib.ollamaPullProgress

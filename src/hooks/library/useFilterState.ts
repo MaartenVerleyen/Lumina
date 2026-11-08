@@ -17,7 +17,7 @@ export function useFilterState() {
   const [activeAlbumId, setActiveAlbumId] = useState<number | null>(null);
   // A named set of photos ("Just imported", "Highlights · Paris"), shown as a chip; null when not filtering on it
   const [hashFilter, setHashFilter] = useState<{ label: string; hashes: Set<string> } | null>(null);
-  const [sortBy, setSortBy] = useState<SortOption>("NAME_ASC");
+  const [sortBy, setSortBy] = useState<SortOption>("DATE_DESC");
 
   // Slide-Out Timeline Slicer State
   const [isTimelineOpen, setIsTimelineOpen] = useState<boolean>(false);

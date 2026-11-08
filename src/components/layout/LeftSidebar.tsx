@@ -23,6 +23,7 @@ import {
   Trash2,
   XCircle,
 } from "lucide-react";
+import { plural } from "../../utils/plural";
 
 interface LeftSidebarProps {
   leftWidth: number;
@@ -67,7 +68,7 @@ interface LeftSidebarProps {
 // Quick filters that accept dropped photos: Picks flags them, Basket pins them, Rejects rejects + stages them
 const DROP_FILTERS: Record<string, Record<string, string>> = {
   PICKS: { "data-drop-kind": "pick", "data-drop-label": "Flag as pick" },
-  BASKET: { "data-drop-kind": "basket", "data-drop-label": "Pin to Basket" },
+  BASKET: { "data-drop-kind": "basket", "data-drop-label": "Pin" },
   REJECTS: { "data-drop-kind": "trash", "data-drop-label": "Reject & stage for _Trash" },
 };
 
@@ -222,7 +223,8 @@ function LeftSidebar({
     let ocr = 0;
     for (let i = 0; i < photos.length; i++) {
       const p = photos[i];
-      if (p.subfolder === "_Trash" || p.staged_target === "_Trash") trash++;
+      // Only what is in the _Trash folder already: photos marked for it move there when the changes are applied
+      if (p.subfolder === "_Trash") trash++;
       if (p.rating >= 4) favs++;
       if (p.tags.length > 0 || p.ai_caption.length > 0) aiTagged++;
       else untagged++;
@@ -272,7 +274,7 @@ function LeftSidebar({
     },
     {
       id: "BASKET",
-      label: simpleMode ? "Saved to pinboard" : "Pinboard basket (B)",
+      label: simpleMode ? "Pinned" : "Pinned (B)",
       count: basketCount,
       icon: <Pin className="w-3.5 h-3.5" />,
       hideInSimple: false,
@@ -293,7 +295,7 @@ function LeftSidebar({
     },
     {
       id: "AI_TAGGED",
-      label: "AI tagged",
+      label: "AI captioned",
       count: aiTaggedCount,
       icon: <BrainCircuit className="w-3.5 h-3.5" />,
       hideInSimple: true,
@@ -368,7 +370,7 @@ function LeftSidebar({
       ? [
           {
             id: "STAGED",
-            label: simpleMode ? "Pending folder moves" : "Staged moves",
+            label: simpleMode ? "Changes to apply" : "Changes to apply",
             count: stagedPhotosCount,
             icon: <Package className="w-3.5 h-3.5" />,
             hideInSimple: false,
@@ -435,10 +437,10 @@ function LeftSidebar({
           <button
             onClick={handleEmptyTrashToRecycleBin}
             className="mt-2.5 w-full px-2.5 py-1.5 bg-red-950/40 hover:bg-red-900/60 border border-red-800/50 text-red-300 rounded-lg text-xs font-medium flex items-center justify-center gap-1.5 transition"
-            title="Safely move all _Trash photos to your Windows/Linux Recycle Bin"
+            title={`Moves the ${plural(trashFolderCount, "photo")} in the _Trash folder to the Recycle Bin`}
           >
             <Trash2 className="w-3.5 h-3.5 text-red-400" />
-            <span>Empty _Trash to Recycle Bin ({trashFolderCount})</span>
+            <span>Empty _Trash ({trashFolderCount})</span>
           </button>
         )}
       </div>

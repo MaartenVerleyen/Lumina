@@ -6,6 +6,7 @@ import { PhotoItem, SemanticStatus, SemanticProgress, SemanticHit } from "../../
 import { SEMANTIC_CANCELLED } from "./shared";
 import type { LibraryCore } from "./core";
 import type { FilterState } from "./useFilterState";
+import { plural } from "../../utils/plural";
 
 // Smart search (CLIP): indexing, text queries and "find similar"
 export function useSmartSearch(core: LibraryCore, filters: FilterState, thumbnailsBusy: boolean) {
@@ -46,7 +47,7 @@ export function useSmartSearch(core: LibraryCore, filters: FilterState, thumbnai
         setSemanticProgress(null);
         refreshSemanticStatus(folderRef.current);
         if (prog.stage === "index" && prog.completed > 0) {
-          addLog("AI", `Smart search: indexed ${prog.completed} of ${prog.total} photo(s)${prog.cancelled ? " (stopped)" : ""}`);
+          addLog("AI", `Smart search: indexed ${prog.completed} of ${plural(prog.total, "photo")}${prog.cancelled ? " (stopped)" : ""}`);
         }
       } else {
         setSemanticProgress(prog);

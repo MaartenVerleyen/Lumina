@@ -160,6 +160,8 @@ interface RightInspectorProps {
   rightWidth: number;
   simpleMode: boolean;
   activePhoto: PhotoItem;
+  // More than one: pick, reject, rating, labels, rotation, tags and place below go to all of them
+  selectedCount: number;
   setPhotos: React.Dispatch<React.SetStateAction<PhotoItem[]>>;
   selectedFaceId: string | null;
   setSelectedFaceId: React.Dispatch<React.SetStateAction<string | null>>;
@@ -205,6 +207,7 @@ interface RightInspectorProps {
 
 function RightInspector({
   rightWidth,
+  selectedCount,
   simpleMode,
   activePhoto,
   setPhotos,
@@ -307,6 +310,12 @@ function RightInspector({
       style={{ width: `${rightWidth}px` }}
       className="bg-panel flex flex-col p-4 gap-3.5 overflow-y-auto shrink-0"
     >
+      {selectedCount > 1 && (
+        <div className="shrink-0 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100">
+          <div className="font-medium">{selectedCount.toLocaleString()} photos selected</div>
+          <div className="text-emerald-200/70">Pick, reject, rating, labels, rotation, tags and place below change all of them. Shown: {activePhoto.name}</div>
+        </div>
+      )}
       {/* Proportional Preview with Aspect-Ratio Lock & Face Canvas */}
       <div className="flex flex-col gap-2 shrink-0">
         <div className="relative w-full bg-zinc-950 rounded-xl overflow-hidden border border-zinc-800 flex items-center justify-center p-1">
@@ -597,7 +606,14 @@ function RightInspector({
             </div>
           )}
 
-          {access.edit && (
+          {/* No faces and none being drawn: say so, instead of a name field with nothing to name */}
+          {access.edit && activePhoto.faces.length === 0 && !drawnBox && !video && (
+            <p className="text-xs text-zinc-500">
+              No faces found. Missed one? Use “Draw face box” on the photo.
+            </p>
+          )}
+
+          {access.edit && (activePhoto.faces.length > 0 || drawnBox) && (
           <form onSubmit={handleSaveFaceAndAutomatch} className="flex gap-1.5">
             <input
               ref={faceInputRef}
@@ -612,7 +628,7 @@ function RightInspector({
               placeholder={
                 selectedFaceId || drawnBox
                   ? "Enter person name…"
-                  : "Click face or “Draw face box”…"
+                  : "Click a face to name it"
               }
               className="flex-1 bg-zinc-950 border border-zinc-800 rounded-lg px-2.5 py-1 text-xs text-zinc-200 select-text cursor-text focus:outline-none focus:border-emerald-500/80"
             />
@@ -886,7 +902,7 @@ function RightInspector({
               ) : (
                 <Sparkles className="w-3.5 h-3.5" />
               )}
-              <span>{analyzingHashes.has(activePhoto.hash) ? "Tagging…" : "AI (A)"}</span>
+              <span>{analyzingHashes.has(activePhoto.hash) ? "Captioning…" : "AI caption (A)"}</span>
             </button>
           )}
         </div>
@@ -902,7 +918,7 @@ function RightInspector({
               <button
                 onClick={() => setViewMode("map")}
                 className="inline-flex items-center gap-1 px-2 py-0.5 hover:bg-emerald-900/60 transition"
-                title="View on Map"
+                title="Show on the map"
               >
                 <MapPin className="w-3 h-3 text-emerald-400" />
                 <span>{activePhoto.location}</span>

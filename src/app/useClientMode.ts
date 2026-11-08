@@ -16,6 +16,7 @@ import {
 } from "../hooks/useTransfers";
 import { useOnDeviceTracking } from "../hooks/useOnDevice";
 import { useServers } from "../hooks/useServers";
+import { plural } from "../utils/plural";
 
 // A server's library open in the desktop app: uploading to it, downloading its originals, and which of its
 // photos are on this PC. Everything here is a no-op for a library on this computer.
@@ -107,7 +108,7 @@ export function useClientMode(lib: LibraryState, access: Access) {
     } catch {
       // no Pictures folder: the picker starts where it likes
     }
-    const folder = await open({ directory: true, multiple: false, title: `Download ${photos.length} original(s) to…`, defaultPath });
+    const folder = await open({ directory: true, multiple: false, title: `Download ${plural(photos.length, "original")} to…`, defaultPath });
     if (!folder || Array.isArray(folder)) return;
     try {
       const queued = await downloadOriginals(server, photos, folder);
@@ -121,7 +122,7 @@ export function useClientMode(lib: LibraryState, access: Access) {
     if (!server) return;
     const hashes = selectedPhotos().map((p) => p.hash);
     const ok = await confirmDialog(
-      `The copies on this PC of the ${hashes.length} selected photo(s) go to the Recycle Bin, but only for photos ${label} has. The server's photos stay as they are.`,
+      `The copies on this PC of the ${plural(hashes.length, "selected photo", "selected photos")} go to the Recycle Bin, but only for photos ${label} has. The server's photos stay as they are.`,
       { title: "Remove from this PC?", kind: "warning", okLabel: "Remove from this PC", cancelLabel: "Keep" }
     );
     if (!ok) return;

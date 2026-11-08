@@ -5,6 +5,7 @@ import { MatchContext } from "../../utils/searchQuery";
 import { computeTrips, tripLabel } from "../../utils/trips";
 import type { LibraryCore } from "./core";
 import type { FilterState } from "./useFilterState";
+import { plural } from "../../utils/plural";
 
 // Trips found from dates and places, albums and smart albums (saved searches)
 export function useCollections(core: LibraryCore, filters: FilterState) {
@@ -157,7 +158,7 @@ export function useCollections(core: LibraryCore, filters: FilterState) {
     const album = albums.find((a) => a.id === id);
     if (!album) return;
     const ok = await confirmAction(
-      `Delete the album "${album.name}"?\n\nOnly the album goes; its ${album.hashes.length} photo(s) stay where they are.`,
+      `Delete the album "${album.name}"?\n\nOnly the album goes; its ${plural(album.hashes.length, "photo")} stay where they are.`,
       "Delete album",
       { title: "Delete album", kind: "danger" }
     );
@@ -181,7 +182,7 @@ export function useCollections(core: LibraryCore, filters: FilterState) {
       patchAlbumHashes(id, added, []);
       if (added.length > 0) {
         pushCustomUndo(
-          `Add ${added.length} photo(s) to album "${name}"`,
+          `Add ${plural(added.length, "photo")} to album "${name}"`,
           hashes,
           async () => {
             await call("remove_from_album", { id, hashes: added });
@@ -193,7 +194,7 @@ export function useCollections(core: LibraryCore, filters: FilterState) {
           }
         );
       }
-      addLog("LIBRARY", `Added ${added.length} photo(s) to album "${name}"`);
+      addLog("LIBRARY", `Added ${plural(added.length, "photo")} to album "${name}"`);
       setActiveBulkPopover(null);
     } catch (err) {
       setError(String(err));
@@ -209,7 +210,7 @@ export function useCollections(core: LibraryCore, filters: FilterState) {
       patchAlbumHashes(id, [], removed);
       if (removed.length > 0) {
         pushCustomUndo(
-          `Remove ${removed.length} photo(s) from album "${name}"`,
+          `Remove ${plural(removed.length, "photo")} from album "${name}"`,
           hashes,
           async () => {
             await call("add_to_album", { id, hashes: removed });
@@ -221,7 +222,7 @@ export function useCollections(core: LibraryCore, filters: FilterState) {
           }
         );
       }
-      addLog("LIBRARY", `Removed ${removed.length} photo(s) from album "${name}"`);
+      addLog("LIBRARY", `Removed ${plural(removed.length, "photo")} from album "${name}"`);
     } catch (err) {
       setError(String(err));
     }

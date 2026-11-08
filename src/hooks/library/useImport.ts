@@ -7,6 +7,7 @@ import { isSameFolder } from "./shared";
 import type { LibraryCore } from "./core";
 import type { FilterState } from "./useFilterState";
 import type { useFolder } from "./useFolder";
+import { plural } from "../../utils/plural";
 
 const IMPORT_CANCELLED = "Import cancelled";
 const norm = (p: string) => p.replace(/\//g, "\\").toLowerCase();
@@ -65,7 +66,7 @@ export function useImport(core: LibraryCore, filters: FilterState, folderHook: R
       ].filter(Boolean);
       addLog("DISK", `${result.cancelled ? "Import stopped: " : "Import finished: "}${parts.join(", ")}`);
       if (result.failures.length > 0) {
-        setError(`${result.failures.length} file(s) could not be imported and were left on the card. See the Session Log.`);
+        setError(`${plural(result.failures.length, "file")} could not be imported and were left on the card. See the Session Log.`);
       }
 
       // Show the new photos: rescan the library they went into, then select and filter on them

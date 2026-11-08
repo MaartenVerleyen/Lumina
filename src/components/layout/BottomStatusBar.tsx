@@ -93,8 +93,11 @@ export default function BottomStatusBar({
     <footer className="h-7 px-4 bg-panel border-t border-zinc-800/80 flex items-center justify-between text-[11px] text-zinc-400 select-none shrink-0 z-20">
       {/* Left: library counts and background jobs */}
       <div className="flex items-center gap-3 min-w-0">
-        <span className="flex items-center gap-1.5 text-zinc-300 font-medium shrink-0">
-          <Images className="w-3.5 h-3.5 text-emerald-400" />
+        <span
+          className="flex items-center gap-1.5 text-zinc-300 font-medium shrink-0"
+          title={visibleCount < totalPhotos ? "The others are hidden by a filter or search, or folded into a burst (Show similar shots unfolds them)" : undefined}
+        >
+          <Images className="w-3.5 h-3.5 text-zinc-400" />
           <span>
             Showing <strong className="text-zinc-100 font-mono">{visibleCount}</strong> of{" "}
             <span className="font-mono">{totalPhotos}</span>
@@ -189,7 +192,7 @@ export default function BottomStatusBar({
           ["X", "Reject", "text-red-400", access.edit],
           ["1-5", "Rate", "text-amber-400", access.edit],
           ["C", "Compare", "text-zinc-400", true],
-          ["A", "AI Tag", "text-zinc-400", access.edit],
+          ["A", "AI caption", "text-zinc-400", access.edit],
         ] as [string, string, string, boolean][]).filter(([, , , shown]) => shown).map(([key, label, color]) => (
           <span key={key}>
             <kbd className={`px-1 py-0.2 bg-zinc-900 border border-zinc-800 rounded ${color}`}>{key}</kbd> {label}

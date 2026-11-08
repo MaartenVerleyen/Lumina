@@ -81,7 +81,7 @@ export default function ProfilePicturePicker({ person, currentCover, onPick, onC
             </div>
           ) : faces.length === 0 ? (
             <p className="text-xs text-zinc-400 py-8 text-center">
-              No named faces yet. Name this person on a face (Face Review or the inspector) to pick a picture.
+              No named faces yet. Name this person on a face (face review or the photo's details) to pick a picture.
             </p>
           ) : (
             <div className="grid grid-cols-[repeat(auto-fill,minmax(88px,1fr))] gap-3">

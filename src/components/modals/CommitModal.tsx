@@ -3,6 +3,7 @@ import { useDialogFocus } from "../../hooks/useDialogFocus";
 import { call } from "../../api";
 import { PhotoItem } from "../../types/lumina";
 import { ArrowRight, CheckCircle, Folder, Sparkles, X } from "lucide-react";
+import { plural } from "../../utils/plural";
 
 interface CommitModalProps {
   isOpen: boolean;
@@ -36,28 +37,32 @@ export default function CommitModal({
 
   return (
     <div className="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-sm flex items-center justify-center p-6">
-      <div ref={dialogRef} role="dialog" aria-modal="true" aria-label="Review staged disk moves" tabIndex={-1} className="bg-raised border border-zinc-800 rounded-2xl w-full max-w-2xl max-h-[80vh] flex flex-col overflow-hidden shadow-2xl">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-label="Apply changes" tabIndex={-1} className="bg-raised border border-zinc-800 rounded-2xl w-full max-w-2xl max-h-[80vh] flex flex-col overflow-hidden shadow-2xl">
         <div className="p-5 border-b border-zinc-800 flex justify-between items-center">
           <div>
             <h2 className="text-base font-semibold text-zinc-100 flex items-center gap-2">
               <CheckCircle className="w-5 h-5 text-emerald-400" />
-              Review Staged Disk Moves
+              Apply changes
             </h2>
             <p className="text-xs text-zinc-400 mt-0.5">
               {moveCount > 0 && (
                 <>
-                  <strong className="text-zinc-200">{moveCount}</strong> file(s) move into{" "}
-                  <strong className="text-zinc-200">{moveTargets.size}</strong> folder(s)
+                  {plural(moveCount, "file")} move into {plural(moveTargets.size, "folder")}
                 </>
               )}
               {moveCount > 0 && trashCount > 0 && " · "}
               {trashCount > 0 && (
                 <>
-                  <strong className="text-red-300">{trashCount}</strong> go to _Trash
+                  {plural(trashCount, "file")} go to the _Trash folder
                 </>
               )}
-              . Paired RAW files and .xmp sidecars move along. Files are moved on your drive.
+              . RAW files paired with a photo, and .xmp sidecars, move along.
             </p>
+            {trashCount > 0 && (
+              <p className="text-xs text-zinc-500 mt-1">
+                _Trash is a folder in your library: nothing is deleted for good until you empty it to the Recycle Bin.
+              </p>
+            )}
           </div>
           <button onClick={onClose} className="text-zinc-500 hover:text-zinc-300" aria-label="Close">
             <X className="w-4 h-4" />
@@ -121,7 +126,7 @@ export default function CommitModal({
             />
             <Sparkles className="w-3.5 h-3.5 text-zinc-400" />
             <span>
-              <strong>Smart Chronological Rename</strong> on Commit (
+              Rename by date and place (
               <code className="text-emerald-400">YYYY-MM-DD_HHMMSS_City_001.jpg</code>)
             </span>
           </label>
@@ -135,7 +140,7 @@ export default function CommitModal({
               onClick={handleDismissAllStaged}
               className="px-3.5 py-1.5 bg-red-950/60 hover:bg-red-900/70 text-red-300 border border-red-800/50 rounded-lg text-xs font-medium"
             >
-              Dismiss All
+              Cancel all changes
             </button>
             <button
               onClick={onClose}
@@ -147,7 +152,7 @@ export default function CommitModal({
               onClick={handleCommitAllStaged}
               className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold shadow"
             >
-              Commit to Disk
+              Apply changes
             </button>
           </div>
         </div>

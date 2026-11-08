@@ -6,6 +6,7 @@ import { useAccount } from "../auth/ServerGate";
 import { ConnectServerForm, ServerLibraryList } from "../servers/Servers";
 import { platform } from "../../api/platform";
 import { useServers } from "../../hooks/useServers";
+import { plural } from "../../utils/plural";
 
 type GridRef = RefObject<HTMLDivElement | null>;
 
@@ -101,7 +102,7 @@ function DesktopStart({ lib, gridContainerRef }: { lib: LibraryState; gridContai
           <FolderOpen className="w-7 h-7 text-emerald-400" />
         </div>
         <h2 className="text-lg font-semibold text-zinc-100">
-          Welcome to Lumina Photo Studio
+          Welcome to Lumina
         </h2>
         {!platform.fullApp && (
           <p className="text-xs text-zinc-400 mt-1 max-w-md leading-relaxed">
@@ -124,7 +125,7 @@ function DesktopStart({ lib, gridContainerRef }: { lib: LibraryState; gridContai
             className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold shadow-lg transition flex items-center gap-2 cursor-pointer"
           >
             <FolderOpen className="w-4 h-4" />
-            <span>Choose Photo Folder...</span>
+            <span>Choose a photo folder…</span>
           </button>
           <button
             onClick={() => lib.openImport()}
@@ -191,7 +192,7 @@ export function NoMatches({ lib, gridContainerRef }: { lib: LibraryState; gridCo
         <Search className="w-8 h-8 text-zinc-600" />
         <span className="text-sm font-semibold text-zinc-200">No photos match these filters</span>
         <span>
-          {lib.photos.length} photo(s) are in this library, but the current search, filter, folder, person or
+          {plural(lib.photos.length, "photo")} are in this library, but the current search, filter, folder, person or
           date range hides all of them.
         </span>
         <button

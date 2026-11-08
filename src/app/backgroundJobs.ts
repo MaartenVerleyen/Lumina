@@ -110,7 +110,7 @@ export function backgroundJobsOf(lib: LibraryState): BackgroundJob[] {
   if (lib.aiBatchProgress) {
     jobs.push({
       id: "ai-batch",
-      label: "Batch AI",
+      label: "AI captions",
       detail: aiBatchRate ? `${aiBatchRate.perMinute.toFixed(1)} photos/min` : lib.aiBatchProgress.currentFile,
       completed: lib.aiBatchProgress.current,
       total: lib.aiBatchProgress.total,

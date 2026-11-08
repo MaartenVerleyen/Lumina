@@ -392,7 +392,7 @@ const PhotoCard = memo(function PhotoCard({
         {isAnalyzing && (
           <div className="absolute inset-0 bg-zinc-800/80 backdrop-blur-[2px] flex flex-col items-center justify-center gap-1.5 z-10">
             <Loader2 className="w-6 h-6 text-zinc-400 animate-spin" />
-            <span className="text-xs font-medium text-zinc-200">AI tagging…</span>
+            <span className="text-xs font-medium text-zinc-200">Writing caption…</span>
           </div>
         )}
 
@@ -403,7 +403,7 @@ const PhotoCard = memo(function PhotoCard({
           {photo.in_basket && (
             <span
               className="p-1 rounded bg-cyan-950/90 border border-cyan-400/60 text-cyan-300 backdrop-blur shadow"
-              title="Pinned to Basket (B)"
+              title="Pinned (B)"
             >
               <Pin className="w-3 h-3" />
             </span>
@@ -425,13 +425,14 @@ const PhotoCard = memo(function PhotoCard({
             </span>
           )}
 
-          {photo.staged_target && (
+          {/* A rejected photo marked for _Trash already shows the reject mark */}
+          {photo.staged_target && !(photo.flag === "reject" && photo.staged_target === "_Trash") && (
             <div
               className="px-1.5 py-0.5 rounded bg-emerald-950/90 border border-emerald-500/40 text-emerald-300 text-[11px] font-mono flex items-center gap-1 backdrop-blur-md"
-              title={`Staged to move to ${photo.staged_target}`}
+              title={`Moves to ${photo.staged_target} when you apply the changes`}
             >
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-              <span>Staged</span>
+              <span>{photo.staged_target === "_Trash" ? "To _Trash" : "To move"}</span>
             </div>
           )}
 

@@ -10,6 +10,7 @@ export type FaceScanScope = "all" | "photos" | "videos" | "visible";
 import { removeFromExpr, renameInExpr } from "../../utils/peopleQuery";
 import type { LibraryCore } from "./core";
 import type { FilterState } from "./useFilterState";
+import { plural } from "../../utils/plural";
 
 // People: face scans, naming faces, matches to review, rename / merge / hide, profile pictures
 export function usePeople(core: LibraryCore, filters: FilterState) {
@@ -149,7 +150,7 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
             total_matched === 1 ? "" : "s"
           }!`
         );
-        addLog("FACE", `Auto-matched "${person_name}" across ${total_matched} photo(s)`);
+        addLog("FACE", `Auto-matched "${person_name}" across ${plural(total_matched, "photo")}`);
       } else {
         setAutoMatchNotice(`Saved "${person_name}"!`);
       }
@@ -209,7 +210,7 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
         refreshPeople(folder, false).then(() => {
           if (!ours) return;
           setAutoMatchNotice(
-            `Face Scan complete: detected ${prog.faces_found} face(s) & updated potential match badges!`
+            `Face scan done: ${plural(prog.faces_found, "face")} found`
           );
         });
       } else {
@@ -237,10 +238,10 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
         setSelectedFaceId(detected[0].face_id);
         setFaceNameInput(detected[0].person_name || "");
       }
-      addLog("FACE", `Detected ${detected.length} face(s) in ${activePhoto.name}`);
+      addLog("FACE", `Detected ${plural(detected.length, "face")} in ${activePhoto.name}`);
       setAutoMatchNotice(
         detected.length > 0
-          ? `ONNX Neural Detector found ${detected.length} human face(s) in ${activePhoto.name}!`
+          ? `Found ${plural(detected.length, "face")} in ${activePhoto.name}`
           : `ONNX Neural Detector confirmed 0 human faces in ${activePhoto.name}.`
       );
     } catch (err) {
@@ -308,7 +309,7 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
         if (outdated.length > 0) {
           await startFaceScan(
             outdated,
-            `Upgrading faces in ${outdated.length} photo(s) to the new face engine (names and rejections are kept)`
+            `Upgrading faces in ${plural(outdated.length, "photo")} to the new face engine (names and rejections are kept)`
           );
         }
       } catch {}
@@ -324,7 +325,7 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
       const { batch, done, completed, total } = event.payload;
       setPhotos((prev) => prev.map((p) => (p.hash in batch ? { ...p, faces: batch[p.hash] } : p)));
       setFaceQualityProgress(done ? null : { completed, total });
-      if (done) addLog("FACE", `Checked eyes and focus in ${total} photo(s)`);
+      if (done) addLog("FACE", `Checked eyes and focus in ${plural(total, "photo")}`);
     });
     return () => {
       unlisten.then((f) => f());
@@ -468,7 +469,7 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
       applyPerson(true);
       if (added.length > 0) {
         pushCustomUndo(
-          `Person "${clean}" on ${added.length} photo(s)`,
+          `Person "${clean}" on ${plural(added.length, "photo")}`,
           hashes,
           async () => {
             await call("remove_person_from_photos", { hashes: added, name: clean });
@@ -482,7 +483,7 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
           }
         );
       }
-      addLog("FACE", `Assigned person "${clean}" to ${hashes.length} selected photo(s)`);
+      addLog("FACE", `Assigned person "${clean}" to ${plural(hashes.length, "selected photo", "selected photos")}`);
       setBulkInput("");
       setActiveBulkPopover(null);
       refreshPeople();

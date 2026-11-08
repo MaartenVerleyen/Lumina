@@ -11,7 +11,10 @@ import {
   Flag,
   Folder,
   FolderPlus,
+  RotateCcw,
+  RotateCw,
   Sparkles,
+  Star,
   Trash2,
 } from "lucide-react";
 
@@ -43,6 +46,10 @@ interface PhotoContextMenuProps {
   onCreateAlbum?: (name: string) => void;
   // Set while an album is shown: removes the right-clicked photos from it
   onRemoveFromAlbum?: () => void;
+  // Rating, colour label and rotation, for the photo or the selection it belongs to
+  onRate?: (stars: number) => void;
+  onColorLabel?: (color: "red" | "yellow" | "green" | "blue" | null) => void;
+  onRotate?: (degrees: number) => void;
 }
 
 export function PhotoContextMenu({
@@ -61,6 +68,9 @@ export function PhotoContextMenu({
   onAddToAlbum,
   onCreateAlbum,
   onRemoveFromAlbum,
+  onRate,
+  onColorLabel,
+  onRotate,
 }: PhotoContextMenuProps) {
   const ref = useRef<HTMLDivElement>(null);
   const [albumsOpen, setAlbumsOpen] = useState(false);
@@ -108,7 +118,7 @@ export function PhotoContextMenu({
           className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-zinc-800 text-zinc-200 transition text-left"
         >
           <Eye className="w-3.5 h-3.5 text-emerald-400" />
-          <span>Open in Default Viewer</span>
+          <span>Open in the default viewer</span>
         </button>
       )}
 
@@ -121,7 +131,7 @@ export function PhotoContextMenu({
           className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-zinc-800 text-zinc-200 transition text-left"
         >
           <ExternalLink className="w-3.5 h-3.5 text-cyan-400" />
-          <span>Reveal in File Explorer</span>
+          <span>Show in File Explorer</span>
         </button>
       )}
 
@@ -134,7 +144,7 @@ export function PhotoContextMenu({
           className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-zinc-800 text-zinc-200 transition text-left"
         >
           <Copy className="w-3.5 h-3.5 text-zinc-400" />
-          <span>Copy image (Full resolution)</span>
+          <span>Copy image (full resolution)</span>
         </button>
       )}
 
@@ -160,7 +170,7 @@ export function PhotoContextMenu({
           >
             <span className="flex items-center gap-2">
               <BookImage className="w-3.5 h-3.5 text-zinc-400" />
-              <span>Add to Album</span>
+              <span>Add to album</span>
             </span>
             <ChevronRight className={`w-3.5 h-3.5 text-zinc-500 transition-transform ${albumsOpen ? "rotate-90" : ""}`} />
           </button>
@@ -217,7 +227,7 @@ export function PhotoContextMenu({
           className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-zinc-800 text-zinc-300 transition text-left"
         >
           <BookImage className="w-3.5 h-3.5 text-zinc-500" />
-          <span>Remove from This Album</span>
+          <span>Remove from this album</span>
         </button>
       )}
 
@@ -243,7 +253,7 @@ export function PhotoContextMenu({
           className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-zinc-800 text-zinc-200 transition text-left"
         >
           <Globe className="w-3.5 h-3.5 text-emerald-400" />
-          <span>Share as Web Gallery…</span>
+          <span>Share as a web gallery…</span>
         </button>
       )}
 
@@ -262,6 +272,60 @@ export function PhotoContextMenu({
 
       <div className="h-[1px] bg-zinc-800 my-1" />
 
+      {(onRate || onColorLabel || onRotate) && (
+        <div className="flex items-center justify-between gap-2 px-2 py-1">
+          {onRate && (
+            <div className="flex items-center" role="group" aria-label="Rating">
+              {[1, 2, 3, 4, 5].map((n) => (
+                <button
+                  key={n}
+                  onClick={() => {
+                    onRate(n);
+                    onClose();
+                  }}
+                  className="p-0.5 text-zinc-500 hover:text-amber-300"
+                  title={`${n} ${n === 1 ? "star" : "stars"} (${n})`}
+                >
+                  <Star className="w-3.5 h-3.5" />
+                </button>
+              ))}
+            </div>
+          )}
+          {onColorLabel && (
+            <div className="flex items-center gap-1" role="group" aria-label="Colour label">
+              {(
+                [
+                  ["red", "bg-red-500"],
+                  ["yellow", "bg-yellow-400"],
+                  ["green", "bg-emerald-500"],
+                  ["blue", "bg-blue-500"],
+                ] as const
+              ).map(([color, bg]) => (
+                <button
+                  key={color}
+                  onClick={() => {
+                    onColorLabel(color);
+                    onClose();
+                  }}
+                  className={`w-3.5 h-3.5 rounded-full ${bg} hover:brightness-125`}
+                  title={`${color[0].toUpperCase()}${color.slice(1)} label`}
+                />
+              ))}
+            </div>
+          )}
+          {onRotate && (
+            <div className="flex items-center" role="group" aria-label="Rotate">
+              <button onClick={() => { onRotate(-90); onClose(); }} className="p-0.5 text-zinc-400 hover:text-zinc-100" title="Rotate left ([)">
+                <RotateCcw className="w-3.5 h-3.5" />
+              </button>
+              <button onClick={() => { onRotate(90); onClose(); }} className="p-0.5 text-zinc-400 hover:text-zinc-100" title="Rotate right (])">
+                <RotateCw className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
       {onPickPhoto && (
         <button
           onClick={() => {
@@ -271,7 +335,7 @@ export function PhotoContextMenu({
           className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-emerald-950/60 text-emerald-300 transition text-left"
         >
           <Flag className="w-3.5 h-3.5 text-emerald-400" />
-          <span>Mark as Pick (P)</span>
+          <span>Pick (P)</span>
         </button>
       )}
 
@@ -284,7 +348,7 @@ export function PhotoContextMenu({
           className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-red-950/60 text-red-300 transition text-left"
         >
           <Trash2 className="w-3.5 h-3.5 text-red-400" />
-          <span>Reject & Stage for _Trash (X)</span>
+          <span>Reject (X)</span>
         </button>
       )}
     </div>
@@ -352,7 +416,7 @@ export function FolderContextMenu({
           className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-zinc-800 text-zinc-200 transition text-left"
         >
           <Folder className="w-3.5 h-3.5 text-emerald-400" />
-          <span>Open Folder in Explorer</span>
+          <span>Open folder in Explorer</span>
         </button>
       )}
 

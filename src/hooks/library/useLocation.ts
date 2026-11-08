@@ -5,6 +5,7 @@ import { expandWithRawPairs } from "../../utils/rawPairs";
 import { expandWithLivePairs } from "../../utils/media";
 import { LocationValue } from "./shared";
 import type { LibraryCore } from "./core";
+import { plural } from "../../utils/plural";
 
 // Places: city search, setting a location by name or on the map (with undo)
 export function useLocation(core: LibraryCore) {
@@ -113,10 +114,10 @@ export function useLocation(core: LibraryCore) {
         longitude: c.longitude,
       };
       await call("set_manual_location", { hashes: targets, ...value });
-      pushLocationUndo(`Location "${value.location}" on ${targets.length} photo(s)`, targets, () => value, value);
+      pushLocationUndo(`Location "${value.location}" on ${plural(targets.length, "photo")}`, targets, () => value, value);
       const targetSet = new Set(targets);
       setPhotos((prev) => prev.map((p) => (targetSet.has(p.hash) ? { ...p, ...value } : p)));
-      addLog("TRIAGE", `Assigned location "${value.location}" to ${targets.length} photo(s)`);
+      addLog("TRIAGE", `Assigned location "${value.location}" to ${plural(targets.length, "photo")}`);
       setActiveBulkPopover(null);
       setIsEditingInspectorLocation(false);
       setCitySearchResults([]);
@@ -146,7 +147,7 @@ export function useLocation(core: LibraryCore) {
       const redoArgs = { location: clean, latitude: null, longitude: null };
       await call("set_manual_location", { hashes: targets, ...redoArgs });
       pushLocationUndo(
-        clean ? `Location "${clean}" on ${targets.length} photo(s)` : `Clear location on ${targets.length} photo(s)`,
+        clean ? `Location "${clean}" on ${plural(targets.length, "photo")}` : `Clear location on ${plural(targets.length, "photo")}`,
         targets,
         nextValue,
         redoArgs
@@ -159,7 +160,7 @@ export function useLocation(core: LibraryCore) {
             : p
         )
       );
-      addLog("TRIAGE", `Set custom location "${clean || "cleared"}" on ${targets.length} photo(s)`);
+      addLog("TRIAGE", `Set custom location "${clean || "cleared"}" on ${plural(targets.length, "photo")}`);
       setIsEditingInspectorLocation(false);
       setActiveBulkPopover(null);
       setInspectorLocationQuery("");
@@ -181,13 +182,13 @@ export function useLocation(core: LibraryCore) {
         longitude: lon,
       });
       const value: LocationValue = { location, latitude: lat, longitude: lon };
-      pushLocationUndo(`Map location on ${hashes.length} photo(s)`, hashes, () => value, value);
+      pushLocationUndo(`Map location on ${plural(hashes.length, "photo")}`, hashes, () => value, value);
       // Patch just these photos (this used to rescan the whole folder)
       setPhotos((prev) => prev.map((p) => (hashSet.has(p.hash) ? { ...p, ...value } : p)));
       setIsPickingMapLocation(false);
-      addLog("TRIAGE", `Assigned map GPS (${lat.toFixed(4)}, ${lon.toFixed(4)}) to ${hashes.length} photo(s)`);
+      addLog("TRIAGE", `Assigned map GPS (${lat.toFixed(4)}, ${lon.toFixed(4)}) to ${plural(hashes.length, "photo")}`);
       setAutoMatchNotice(
-        `Assigned GPS (${lat.toFixed(4)}, ${lon.toFixed(4)}) to ${hashes.length} photo(s)!`
+        `Placed ${plural(hashes.length, "photo")} on the map`
       );
     } catch (err) {
       setError(String(err));

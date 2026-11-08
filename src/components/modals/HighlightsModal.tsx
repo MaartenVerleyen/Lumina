@@ -52,8 +52,8 @@ export default function HighlightsModal({
         className="bg-raised border border-zinc-800 rounded-2xl shadow-2xl w-[min(1180px,100%)] h-[min(820px,100%)] flex flex-col overflow-hidden"
       >
         <div className="flex items-center gap-4 px-6 py-4 border-b border-zinc-800">
-          <span className="w-9 h-9 rounded-xl bg-amber-500/10 border border-amber-500/25 grid place-items-center shrink-0">
-            <Trophy className="w-4 h-4 text-amber-300" />
+          <span className="w-9 h-9 rounded-xl bg-zinc-800/60 border border-zinc-700 grid place-items-center shrink-0">
+            <Trophy className="w-4 h-4 text-zinc-300" />
           </span>
           <div className="min-w-0 flex-1">
             <h2 className="text-[15px] font-semibold text-zinc-100 truncate">Highlights · {highlights.title}</h2>
@@ -69,7 +69,7 @@ export default function HighlightsModal({
                 onClick={() => onCount(n)}
                 aria-pressed={highlights.count === n}
                 className={`px-3 py-1 rounded-md transition ${
-                  highlights.count === n ? "bg-amber-500/20 text-amber-200 font-semibold" : "text-zinc-400 hover:text-zinc-200"
+                  highlights.count === n ? "bg-emerald-500/15 text-emerald-300 font-semibold" : "text-zinc-400 hover:text-zinc-200"
                 }`}
               >
                 {n}
@@ -94,7 +94,7 @@ export default function HighlightsModal({
                 <button
                   key={p.hash}
                   onClick={() => onOpenPhoto(p.hash)}
-                  className="group relative aspect-[4/3] rounded-xl overflow-hidden bg-zinc-950 border border-zinc-800 hover:border-amber-400/60 lumina-tour-enter"
+                  className="group relative aspect-[4/3] rounded-xl overflow-hidden bg-zinc-950 border border-zinc-800 hover:border-zinc-600 lumina-tour-enter"
                   title={p.name}
                 >
                   {p.thumb_ready && (

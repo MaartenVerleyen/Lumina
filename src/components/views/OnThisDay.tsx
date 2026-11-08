@@ -4,6 +4,7 @@ import type { PhotoItem } from "../../types/lumina";
 import type { CullingSettings } from "../../utils/culling";
 import { onThisDay } from "../../utils/highlights";
 import { thumbSrc } from "../../utils/photoHelpers";
+import { plural } from "../../utils/plural";
 
 const DISMISS_KEY = "lumina_on_this_day_dismissed";
 
@@ -69,7 +70,7 @@ export default function OnThisDay({
             key={g.date}
             onClick={() => onOpenDay(g.date, all)}
             className="flex items-center gap-2 shrink-0 rounded-xl p-1 pr-3 hover:bg-zinc-800/60 transition"
-            title={`Show the ${all.length} photo(s) of ${g.date}`}
+            title={`Show the ${plural(all.length, "photo")} of ${g.date}`}
           >
             <span className="flex -space-x-3">
               {g.photos.slice(0, 4).map((p) => (

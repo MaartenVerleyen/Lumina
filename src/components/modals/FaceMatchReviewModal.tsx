@@ -27,6 +27,7 @@ import {
   Users,
   X,
 } from "lucide-react";
+import { plural } from "../../utils/plural";
 
 interface FaceMatchReviewModalProps {
   // "Show photos" for the active person: filter the photo grid to them
@@ -271,7 +272,7 @@ export default function FaceMatchReviewModal({
         await refreshPeople(undefined, true);
       } catch (err) {
         restoreCandidates(affectedItems);
-        setActionError(`Could not confirm ${faceIds.length} face(s) as "${person}": ${String(err)}`);
+        setActionError(`Could not confirm ${plural(faceIds.length, "face")} as "${person}": ${String(err)}`);
       }
     },
     [listPerson, isLoading, candidates, syncUpdatedFacesToPhotos, refreshPeople, reducePendingCount]
@@ -311,7 +312,7 @@ export default function FaceMatchReviewModal({
         await refreshPeople(undefined, true);
       } catch (err) {
         restoreCandidates(affectedItems);
-        setActionError(`Could not deny ${faceIds.length} face(s) for "${person}": ${String(err)}`);
+        setActionError(`Could not deny ${plural(faceIds.length, "face")} for "${person}": ${String(err)}`);
       }
     },
     [listPerson, isLoading, candidates, refreshPeople, reducePendingCount]
@@ -400,7 +401,7 @@ export default function FaceMatchReviewModal({
         await refreshPeople();
       } catch (err) {
         setConfirmedFaces((prev) => [...removed, ...prev]);
-        setActionError(`Could not unassign ${faceIds.length} face(s) from "${person}": ${String(err)}`);
+        setActionError(`Could not unassign ${plural(faceIds.length, "face")} from "${person}": ${String(err)}`);
       }
     },
     [listPerson, isLoading, confirmedFaces, syncUpdatedFacesToPhotos, refreshPeople]
@@ -437,7 +438,7 @@ export default function FaceMatchReviewModal({
         await refreshPeople();
       } catch (err) {
         setDeniedFaces((prev) => [...removed, ...prev]);
-        setActionError(`Could not restore ${faceIds.length} face(s) for "${person}": ${String(err)}`);
+        setActionError(`Could not restore ${plural(faceIds.length, "face")} for "${person}": ${String(err)}`);
       }
     },
     [listPerson, isLoading, deniedFaces, syncUpdatedFacesToPhotos, refreshPeople]
@@ -535,14 +536,14 @@ export default function FaceMatchReviewModal({
         className="bg-card border border-zinc-800 rounded-2xl w-full max-w-6xl h-[86vh] shadow-2xl flex flex-col overflow-hidden"
       >
         {/* Top Modal Header */}
-        <div className="px-6 py-4 bg-raised border-b border-zinc-800 flex items-center justify-between shrink-0 gap-4 flex-wrap">
+        <div className="relative px-6 pr-16 py-4 bg-raised border-b border-zinc-800 flex items-center justify-between shrink-0 gap-4 flex-wrap">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-xl bg-zinc-800/80 border border-zinc-700 flex items-center justify-center">
               <ScanFace className="w-5 h-5 text-zinc-400" />
             </div>
             <div>
               <h2 className="text-base font-semibold text-zinc-100 flex items-center gap-2">
-                <span>Face Review</span>
+                <span>Face review</span>
               </h2>
               <p className="text-xs text-zinc-400">
                 Review suggested matches, name unknown faces and manage everyone you've named.
@@ -556,18 +557,18 @@ export default function FaceMatchReviewModal({
               onClick={() => handleSwitchTab("pending")}
               className={`px-3 py-1.5 rounded-lg font-semibold flex items-center gap-1.5 transition ${
                 statusTab === "pending"
-                  ? "bg-amber-500/20 text-amber-300 border border-amber-500/40"
+                  ? "bg-zinc-800 text-zinc-100 border border-zinc-700"
                   : "text-zinc-400 hover:text-zinc-200"
               }`}
             >
               <Sparkles className="w-3.5 h-3.5" />
-              <span>Pending Matches ({pendingCounts[activePerson] ?? candidates.length})</span>
+              <span>To check ({pendingCounts[activePerson] ?? candidates.length})</span>
             </button>
             <button
               onClick={() => handleSwitchTab("confirmed")}
               className={`px-3 py-1.5 rounded-lg font-semibold flex items-center gap-1.5 transition ${
                 statusTab === "confirmed"
-                  ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
+                  ? "bg-zinc-800 text-zinc-100 border border-zinc-700"
                   : "text-zinc-400 hover:text-zinc-200"
               }`}
             >
@@ -578,12 +579,12 @@ export default function FaceMatchReviewModal({
               onClick={() => handleSwitchTab("denied")}
               className={`px-3 py-1.5 rounded-lg font-semibold flex items-center gap-1.5 transition ${
                 statusTab === "denied"
-                  ? "bg-red-500/20 text-red-300 border border-red-500/40"
+                  ? "bg-zinc-800 text-zinc-100 border border-zinc-700"
                   : "text-zinc-400 hover:text-zinc-200"
               }`}
             >
               <X className="w-3.5 h-3.5" />
-              <span>Denied / Ignored</span>
+              <span>Not this person</span>
             </button>
           </div>
 
@@ -592,12 +593,12 @@ export default function FaceMatchReviewModal({
             {historyStack.length > 0 && (
               <button
                 onClick={handleUndoLastDecision}
-                className="px-3 py-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-300 text-xs font-semibold flex items-center gap-1.5 transition"
-                title="Undo last Accept or Deny action (Ctrl+Z)"
+                className="px-3 py-1.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-200 text-xs font-semibold flex items-center gap-1.5 transition"
+                title="Undo the last yes or no (Ctrl+Z)"
               >
                 <RotateCcw className="w-3.5 h-3.5" />
                 <span>
-                  Undo {historyStack[historyStack.length - 1].action === "accept" ? "Accept" : "Deny"}
+                  Undo {historyStack[historyStack.length - 1].action === "accept" ? "yes" : "no"}
                 </span>
               </button>
             )}
@@ -614,7 +615,7 @@ export default function FaceMatchReviewModal({
                   }`}
                 >
                   <LayoutGrid className="w-3.5 h-3.5" />
-                  <span>3-Col Grid</span>
+                  <span>Grid</span>
                 </button>
                 <button
                   onClick={() => setReviewMode("spotlight")}
@@ -625,7 +626,7 @@ export default function FaceMatchReviewModal({
                   }`}
                 >
                   <Sparkles className="w-3.5 h-3.5" />
-                  <span>Spotlight (Y/N)</span>
+                  <span>One by one (Y/N)</span>
                 </button>
               </div>
             )}
@@ -641,10 +642,11 @@ export default function FaceMatchReviewModal({
               </button>
             )}
 
+            {/* Always at the top right, however the header wraps */}
             <button
               onClick={onClose}
-              className="p-2 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-white border border-zinc-800"
-              aria-label="Close Face Review"
+              className="absolute top-4 right-5 p-2 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-white border border-zinc-800"
+              aria-label="Close face review"
             >
               <X className="w-4 h-4" />
             </button>
@@ -732,11 +734,11 @@ export default function FaceMatchReviewModal({
                           <span className="truncate">{p.name}</span>
                           {p.starred && <Star className="w-3 h-3 text-amber-300 fill-current shrink-0" aria-label="Starred" />}
                         </div>
-                        <div className="text-[11px] text-zinc-500 font-mono">{p.photo_count} confirmed</div>
+                        <div className="text-[11px] text-zinc-500 tabular-nums whitespace-nowrap">{p.photo_count} confirmed</div>
                       </div>
                       {pending > 0 && (
-                        <span className="px-2 py-0.5 rounded-full bg-amber-500/20 border border-amber-400/40 text-amber-300 font-mono text-[11px] font-semibold shrink-0">
-                          +{pending}?
+                        <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 text-[11px] tabular-nums shrink-0">
+                          {pending} to check
                         </span>
                       )}
                     </button>
@@ -969,10 +971,10 @@ export default function FaceMatchReviewModal({
                     <button
                       onClick={() => handleUnassignConfirmed(Array.from(selectedIds))}
                       disabled={selectedIds.size === 0}
-                      className="px-3.5 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 disabled:opacity-40 text-white font-semibold flex items-center gap-1.5 shadow transition"
+                      className="px-3.5 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 disabled:opacity-40 text-zinc-100 font-semibold flex items-center gap-1.5 transition"
                     >
                       <UserMinus className="w-3.5 h-3.5" />
-                      <span>Remove Selected from "{activePerson}" ({selectedIds.size})</span>
+                      <span>Not {activePerson} ({selectedIds.size})</span>
                     </button>
                   )}
 
@@ -1058,7 +1060,7 @@ export default function FaceMatchReviewModal({
                     className="mt-2 px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center gap-1.5 shadow"
                   >
                     <RefreshCw className="w-3.5 h-3.5" />
-                    <span>Scan for More Matches Using Newly Confirmed Faces</span>
+                    <span>Look for more matches with the faces you confirmed</span>
                   </button>
                 )}
               </div>

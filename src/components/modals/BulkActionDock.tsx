@@ -23,6 +23,7 @@ import {
   BookImage,
   Download,
   HardDriveDownload,
+  MoreHorizontal,
 } from "lucide-react";
 
 // Number field that accepts a leading "-" while typing: the text is kept as typed and the parent
@@ -130,6 +131,7 @@ export default function BulkActionDock({
   runBatchAiOnList,
   handleBatchAssignPerson,
 }: BulkActionDockProps) {
+  const [showMore, setShowMore] = useState(false);
   const access = useAccess();
   if (selectedHashes.size <= 1) return null;
 
@@ -140,8 +142,8 @@ export default function BulkActionDock({
         <div className="bg-card border border-zinc-700 p-3 rounded-xl shadow-2xl flex flex-col gap-2 w-80 text-xs">
           <div className="flex justify-between items-center text-zinc-300 font-semibold">
             <span>
-              {activeBulkPopover === "tag" && "Add Tag to Selection"}
-              {activeBulkPopover === "person" && "Assign Person to Selection"}
+              {activeBulkPopover === "tag" && "Add a tag to the selection"}
+              {activeBulkPopover === "person" && "Add a person to the selection"}
               {activeBulkPopover === "move" && "Stage move selection"}
               {activeBulkPopover === "location" && "Set manual location (City/GPS)"}
               {activeBulkPopover === "time" && "Shift capture times"}
@@ -341,10 +343,10 @@ export default function BulkActionDock({
       )}
 
       {/* Main Dock */}
-      <div className="bg-raised/95 border border-zinc-700/60 shadow-2xl backdrop-blur-xl px-4 py-2 rounded-2xl flex flex-wrap justify-center items-center gap-x-2.5 gap-y-1.5 text-xs">
+      <div className="bg-raised/95 border border-zinc-700/60 shadow-2xl backdrop-blur-xl px-3 py-2 rounded-2xl flex flex-wrap justify-center items-center gap-x-2 gap-y-1.5 text-xs">
         <div className="flex items-center gap-1.5 font-semibold text-zinc-200 border-r border-zinc-700 pr-2.5">
           <CheckSquare className="w-4 h-4 text-emerald-400" />
-          <span>{selectedHashes.size} Selected</span>
+          <span>{selectedHashes.size} selected</span>
         </div>
 
         {access.edit && (
@@ -369,10 +371,11 @@ export default function BulkActionDock({
           </button>
           <button
             onClick={() => handleSetFlag(null)}
-            className="px-1.5 py-1 text-zinc-500 hover:text-zinc-300"
-            title="Unflag (U)"
+            className="p-1 text-zinc-500 hover:text-zinc-300"
+            title="Remove the pick or reject (U)"
+            aria-label="Remove the pick or reject"
           >
-            Unflag
+            <X className="w-3.5 h-3.5" />
           </button>
         </div>
 
@@ -390,10 +393,11 @@ export default function BulkActionDock({
           ))}
           <button
             onClick={() => handleBatchRate(0)}
-            className="text-[11px] text-zinc-500 hover:text-zinc-300 ml-1"
-            title="Clear rating (0)"
+            className="p-0.5 text-zinc-500 hover:text-zinc-300 ml-0.5"
+            title="Clear the rating (0)"
+            aria-label="Clear the rating"
           >
-            0★
+            <X className="w-3.5 h-3.5" />
           </button>
         </div>
 
@@ -421,13 +425,16 @@ export default function BulkActionDock({
           />
           <button
             onClick={() => handleSetColorLabel(null)}
-            className="text-[11px] text-zinc-500 hover:text-zinc-300 ml-1"
+            className="p-0.5 text-zinc-500 hover:text-zinc-300 ml-0.5"
+            title="Clear the colour label"
+            aria-label="Clear the colour label"
           >
-            Clear
+            <X className="w-3.5 h-3.5" />
           </button>
         </div>
 
-        {/* Non-Destructive Rotation */}
+        {/* Non-Destructive Rotation (also in the panel on the right) */}
+        {showMore && (
         <div className="flex items-center gap-1 border-r border-zinc-700 pr-2.5">
           <button
             onClick={() => handleRotateSelection(-90)}
@@ -444,6 +451,7 @@ export default function BulkActionDock({
             <RotateCw className="w-3.5 h-3.5" />
           </button>
         </div>
+        )}
 
         {/* Popover Action Buttons */}
         <button
@@ -478,7 +486,7 @@ export default function BulkActionDock({
               setBulkInput("");
             }}
             className="flex items-center gap-1 text-zinc-300 hover:text-white"
-            title="Assign Person to selected photos"
+            title="Add a person to the selected photos"
           >
             <User className="w-3.5 h-3.5 text-zinc-400" />
             <span>Person</span>
@@ -492,10 +500,22 @@ export default function BulkActionDock({
           }}
           className="flex items-center gap-1 text-zinc-300 hover:text-white"
         >
-          <Folder className="w-3.5 h-3.5 text-emerald-400" />
+          <Folder className="w-3.5 h-3.5 text-zinc-400" />
           <span>Move</span>
         </button>
 
+        {/* The less frequent actions wait behind More, so the bar stays one row */}
+        <button
+          onClick={() => setShowMore((m) => !m)}
+          aria-expanded={showMore}
+          className="flex items-center gap-1 text-zinc-300 hover:text-white"
+        >
+          <MoreHorizontal className="w-3.5 h-3.5 text-zinc-400" />
+          <span>{showMore ? "Less" : "More"}</span>
+        </button>
+
+        {showMore && (
+          <>
         <button
           onClick={() => {
             setActiveBulkPopover(activeBulkPopover === "location" ? null : "location");
@@ -503,8 +523,8 @@ export default function BulkActionDock({
           }}
           className="flex items-center gap-1 text-zinc-300 hover:text-white"
         >
-          <MapPin className="w-3.5 h-3.5 text-emerald-400" />
-          <span>Location</span>
+          <MapPin className="w-3.5 h-3.5 text-zinc-400" />
+          <span>Place</span>
         </button>
 
         <button
@@ -512,10 +532,10 @@ export default function BulkActionDock({
             setActiveBulkPopover(activeBulkPopover === "time" ? null : "time");
           }}
           className="flex items-center gap-1 text-zinc-300 hover:text-white"
-          title="Shift capture timestamps (± Hours/Min)"
+          title="Shift the capture time by hours or minutes"
         >
-          <Clock className="w-3.5 h-3.5 text-cyan-400" />
-          <span>Time</span>
+          <Clock className="w-3.5 h-3.5 text-zinc-400" />
+          <span>Shift time</span>
         </button>
 
         {onExport && (
@@ -524,7 +544,7 @@ export default function BulkActionDock({
             className="flex items-center gap-1 text-zinc-300 hover:text-white"
             title="Export the selected photos as JPEGs"
           >
-            <Download className="w-3.5 h-3.5 text-emerald-400" />
+            <Download className="w-3.5 h-3.5 text-zinc-400" />
             <span>Export</span>
           </button>
         )}
@@ -535,7 +555,7 @@ export default function BulkActionDock({
             className="flex items-center gap-1 text-zinc-300 hover:text-white"
             title="Download the originals of the selected photos to this PC"
           >
-            <HardDriveDownload className="w-3.5 h-3.5 text-emerald-400" />
+            <HardDriveDownload className="w-3.5 h-3.5 text-zinc-400" />
             <span>Download</span>
           </button>
         )}
@@ -553,15 +573,18 @@ export default function BulkActionDock({
         <button
           onClick={() => handleToggleBasketSelection()}
           className="flex items-center gap-1 text-zinc-300 hover:text-white"
-          title="Toggle pinboard basket (B)"
+          title="Pin or unpin (B)"
         >
-          <Pin className="w-3.5 h-3.5 text-cyan-400" />
+          <Pin className="w-3.5 h-3.5 text-zinc-400" />
           <span>Pin</span>
         </button>
+          </>
+        )}
 
           </>
         )}
 
+        {showMore && (
         <button
           onClick={() => {
             setCompareZoom(1);
@@ -571,23 +594,24 @@ export default function BulkActionDock({
           className="flex items-center gap-1 text-zinc-300 hover:text-white"
           title="Compare selected photos side-by-side (C)"
         >
-          <Columns className="w-3.5 h-3.5 text-emerald-400" />
+          <Columns className="w-3.5 h-3.5 text-zinc-400" />
           <span>Compare</span>
         </button>
+        )}
 
-        {access.edit && (
+        {access.edit && showMore && (
         <button
           onClick={handleForceRescanExifSelected}
           className="flex items-center gap-1 text-zinc-300 hover:text-white"
-          title="Force refresh EXIF headers on selected photos"
+          title="Read the date, camera and place from the files again"
         >
           <RefreshCw className="w-3.5 h-3.5 text-zinc-400" />
-          <span>EXIF</span>
+          <span>Reread file info</span>
         </button>
         )}
 
         {/* Batch AI is a long job: admin work on a server */}
-        {access.admin && (
+        {access.admin && showMore && (
         <button
           onClick={() => {
             const targets = visiblePhotos.filter((p) => selectedHashes.has(p.hash));
@@ -596,7 +620,7 @@ export default function BulkActionDock({
           className="flex items-center gap-1 text-zinc-400 hover:text-zinc-100 font-medium"
         >
           <Sparkles className="w-3.5 h-3.5" />
-          <span>AI</span>
+          <span>AI captions</span>
         </button>
         )}
 
@@ -613,6 +637,8 @@ export default function BulkActionDock({
         <button
           onClick={() => setSelectedHashes(new Set())}
           className="text-zinc-500 hover:text-zinc-300 ml-1"
+          title="Clear the selection"
+          aria-label="Clear the selection"
         >
           <X className="w-4 h-4" />
         </button>

@@ -32,6 +32,7 @@ import { isSameFolder, SCAN_CANCELLED } from "./shared";
 import { useSettings } from "../../settings";
 import type { LibraryCore } from "./core";
 import type { FilterState } from "./useFilterState";
+import { plural } from "../../utils/plural";
 
 // The open library folder: opening, scanning, thumbnails as they arrive, rescans, _Trash, Explorer actions
 // A photo with what a thumbnail pass found for it (its thumbnail, fingerprint, size, automatic tags)
@@ -307,14 +308,14 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
       return;
     }
     if (summary.photos === 0 && summary.orphan_sidecars === 0) {
-      setAutoMatchNotice("_Trash is empty: commit staged rejects first to move them there.");
+      setAutoMatchNotice("_Trash is empty: apply your changes first to move rejected photos there.");
       return;
     }
     const { bin } = summary;
     const what =
       summary.photos > 0
-        ? `${summary.photos} photo(s) in _Trash (${formatBytes(summary.bytes)}) and their sidecars`
-        : `${summary.orphan_sidecars} leftover sidecar file(s) in _Trash`;
+        ? `${plural(summary.photos, "photo")} in _Trash (${formatBytes(summary.bytes)}) and their sidecars`
+        : `${plural(summary.orphan_sidecars, "leftover sidecar file", "leftover sidecar files")} in _Trash`;
     // Windows deletes for good what doesn't fit, so stay well under the limit
     const fits = bin.supported && (bin.capacity === null || summary.bytes <= bin.capacity * 0.95);
     let permanent = false;
@@ -362,17 +363,17 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
       const left = summary.photos - result.recycled;
       if (result.refused_permanent) {
         setError(
-          `The Recycle Bin on ${bin.drive} couldn't take more files, so Lumina stopped instead of letting Windows delete them permanently. ${left} photo(s) are still in _Trash.`
+          `The Recycle Bin on ${bin.drive} couldn't take more files, so Lumina stopped instead of letting Windows delete them permanently. ${plural(left, "photo")} are still in _Trash.`
         );
       } else if (result.failures.length > 0) {
-        setError(`${result.failures.length} file(s) could not be removed and were left in place. See the Session Log.`);
+        setError(`${plural(result.failures.length, "file")} could not be removed and were left in place. See the Session Log.`);
       }
       const verb = permanent ? "Deleted" : "Moved";
       const where = permanent ? "permanently" : "to the Recycle Bin";
-      const sidecars = result.sidecars > 0 ? ` and ${result.sidecars} sidecar(s)` : "";
-      const stopped = result.cancelled ? ` Stopped: ${left} photo(s) are still in _Trash.` : "";
-      setAutoMatchNotice(`${verb} ${result.recycled} photo(s)${sidecars} ${where}.${stopped}`);
-      addLog("DISK", `${verb} ${result.recycled} _Trash photo(s)${sidecars} ${where}`);
+      const sidecars = result.sidecars > 0 ? ` and ${plural(result.sidecars, "sidecar")}` : "";
+      const stopped = result.cancelled ? ` Stopped: ${plural(left, "photo")} are still in _Trash.` : "";
+      setAutoMatchNotice(`${verb} ${plural(result.recycled, "photo")}${sidecars} ${where}.${stopped}`);
+      addLog("DISK", `${verb} ${plural(result.recycled, "_Trash photo", "_Trash photos")}${sidecars} ${where}`);
     } catch (err) {
       setError(String(err));
     } finally {
@@ -416,7 +417,7 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
   async function handleRescanAndProcessFolder() {
     if (!folder || isScanningFolder) return;
     const ok = await confirmAction(
-      `Rebuild thumbnails, duplicate detection and focus scores for all ${photos.length} photo(s)?\n\nThis reads every file again and can take several minutes on a large library. Ratings, tags, faces and AI results are kept.`,
+      `Rebuild thumbnails, duplicate detection and focus scores for all ${plural(photos.length, "photo")}?\n\nThis reads every file again and can take several minutes on a large library. Ratings, tags, faces and AI results are kept.`,
       "Reprocess",
       { title: "Rebuild thumbnails" }
     );
@@ -478,7 +479,7 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
           };
         })
       );
-      addLog("LIBRARY", `Refreshed EXIF headers on ${results.length} photo(s)`);
+      addLog("LIBRARY", `Refreshed EXIF headers on ${plural(results.length, "photo")}`);
       const first = results[0];
       if (first) {
         setAutoMatchNotice(

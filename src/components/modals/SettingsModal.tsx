@@ -28,6 +28,7 @@ import { useSettings, updateSettings } from "../../settings";
 import type { Updater } from "../../hooks/useUpdater";
 import { defaultBackupDir } from "../../hooks/library/useBackup";
 import { DEFAULT_AI_MODEL } from "../../hooks/library/shared";
+import { plural } from "../../utils/plural";
 
 export type SettingsSection = "general" | "library" | "allphotos" | "servers" | "ai" | "faces" | "search" | "updates" | "about";
 
@@ -376,12 +377,12 @@ export default function SettingsModal({
             {section === "general" && (
               <>
                 <Group title="Appearance">
-                  <Row label="Interface" hint="Simple hides the more technical tools; Studio shows everything.">
+                  <Row label="Interface" hint="Simple hides the more technical tools; Advanced shows everything.">
                     <Segmented
                       value={lib.simpleMode ? "simple" : "studio"}
                       options={[
                         { value: "simple", label: "Simple" },
-                        { value: "studio", label: "Studio" },
+                        { value: "studio", label: "Advanced" },
                       ]}
                       onChange={(v) => (v === "simple") !== lib.simpleMode && lib.toggleSimpleMode()}
                     />
@@ -471,7 +472,7 @@ export default function SettingsModal({
                     </Button>
                   </Row>
                   {hasPhotos && (
-                    <Row label="Photos" hint={`${lib.photos.length.toLocaleString()} photos · ${lib.stagedPhotos.length} staged change(s)`} />
+                    <Row label="Photos" hint={`${lib.photos.length.toLocaleString()} photos · ${plural(lib.stagedPhotos.length, "change", "changes")} to apply`} />
                   )}
                 </Group>
                 {platform.localFiles && (
@@ -495,7 +496,7 @@ export default function SettingsModal({
                 </Group>
                 <Group title="Backup and restore">
                   <Row
-                    label="Back up the library"
+                    label="Library backup"
                     hint={`Ratings, flags, people, captions, albums and settings: not the photos themselves. ${lastBackup ? `Last backup: ${lastBackup}.` : "No backup yet."}`}
                   >
                     <Button primary disabled={lib.backupBusy !== null} onClick={() => lib.backupNow()}>
@@ -577,7 +578,7 @@ export default function SettingsModal({
                       </Button>
                     )}
                   </Row>
-                  <Row label="Vision model" hint={models.length === 0 ? `No model installed yet (${DEFAULT_AI_MODEL} is about 6 GB).` : "Used for Batch AI and the A key."}>
+                  <Row label="Vision model" hint={models.length === 0 ? `No model installed yet (${DEFAULT_AI_MODEL} is about 6 GB).` : "Used for AI captions and the A key."}>
                     {models.length > 0 ? (
                       <select
                         value={lib.aiModel}
@@ -619,7 +620,7 @@ export default function SettingsModal({
               <>
                 <Group title="Face recognition">
                   {access.edit && (
-                  <Row label="People" hint={`${lib.people.length} named · ${pending} suggestion(s) to review`}>
+                  <Row label="People" hint={`${lib.people.length} named · ${plural(pending, "suggestion")} to review`}>
                     <Button disabled={!hasPhotos} onClick={then(() => lib.setFaceReviewPerson(UNKNOWN_FACES))}>
                       Who is this?
                     </Button>
@@ -654,7 +655,7 @@ export default function SettingsModal({
             {section === "search" && (
               <>
                 <Group title="Smart search">
-                  <Row label="Smart search" hint="Find photos by describing them, in about 50 languages. The models (about 470 MB) download the first time.">
+                  <Row label="Use smart search" hint="Find photos by describing them, in about 50 languages. The models (about 470 MB) download the first time.">
                     <Switch checked={lib.smartSearch} onChange={() => lib.toggleSmartSearch()} label="Smart search" />
                   </Row>
                   <Row
@@ -746,7 +747,7 @@ export default function SettingsModal({
                           Open folder
                         </Button>
                       </Row>
-                      <Row label="Privacy" hint="Everything runs on this PC. Photos, names and captions are never uploaded." />
+                      <Row label="Privacy" hint="Everything runs on this PC. Photos, names and captions only leave it when you upload them to a Lumina server of your own." />
                     </>
                   ) : (
                     <Row label="Privacy" hint="Photos, names and captions stay on this Lumina server. Only people with an account on it can see them." />

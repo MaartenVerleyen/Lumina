@@ -4,6 +4,7 @@ import { ExportProgress, ExportResult } from "../../types/lumina";
 import type { ExportSettings } from "../../components/modals/ExportModal";
 import type { GallerySettings } from "../../components/modals/GalleryModal";
 import type { LibraryCore } from "./core";
+import { plural } from "../../utils/plural";
 
 // Exporting photos as JPEG (full size or resized, GPS optionally removed), and as a web gallery
 export function useExport(core: LibraryCore) {
@@ -49,12 +50,12 @@ export function useExport(core: LibraryCore) {
         },
       });
       for (const f of result.failures) addLog("DISK", `Could not export ${f.file}`, f.error);
-      addLog("DISK", `Exported ${result.exported} photo(s)`, settings.destDir);
+      addLog("DISK", `Exported ${plural(result.exported, "photo")}`, settings.destDir);
       if (result.failures.length > 0) {
-        setError(`${result.failures.length} photo(s) could not be exported. See the Session Log.`);
+        setError(`${plural(result.failures.length, "photo")} could not be exported. See the Session Log.`);
       }
       setAutoMatchNotice(
-        `${result.cancelled ? "Export stopped: " : ""}${result.exported} photo(s) exported to ${settings.destDir}`
+        `${result.cancelled ? "Export stopped: " : ""}${plural(result.exported, "photo")} exported to ${settings.destDir}`
       );
     } catch (err) {
       setError(`Export failed: ${String(err)}`);
@@ -93,9 +94,9 @@ export function useExport(core: LibraryCore) {
         }
       );
       for (const f of result.failures) addLog("DISK", `Could not add ${f.file} to the gallery`, f.error);
-      addLog("DISK", `Web gallery with ${result.exported} photo(s)`, result.folder);
-      if (result.failures.length > 0) setError(`${result.failures.length} photo(s) could not be added. See the Session Log.`);
-      notify(`${result.cancelled ? "Gallery stopped: " : "Gallery ready: "}${result.exported} photo(s) in ${result.folder}`, "info", {
+      addLog("DISK", `Web gallery with ${plural(result.exported, "photo")}`, result.folder);
+      if (result.failures.length > 0) setError(`${plural(result.failures.length, "photo")} could not be added. See the Session Log.`);
+      notify(`${result.cancelled ? "Gallery stopped: " : "Gallery ready: "}${plural(result.exported, "photo")} in ${result.folder}`, "info", {
         label: "Open the gallery",
         run: () => call("open_in_default_app", { path: result.index }).catch((e) => setError(String(e))),
       });

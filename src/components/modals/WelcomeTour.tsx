@@ -92,7 +92,7 @@ const TOUR: TourStep[] = [
     icon: Wand2,
     eyebrow: "AI",
     title: "Captions, tags and text",
-    text: "Batch AI writes a caption and tags for each photo and reads any text in it, using a vision model that runs on your PC through Ollama.",
+    text: "AI captions writes a caption and tags for each photo and reads any text in it, using a vision model that runs on your PC through Ollama.",
     keys: [{ keys: ["A"], label: "Analyse this photo" }],
     image: textShot,
     alt: "A screenshot found by its booking reference, with caption, tags and detected text",
@@ -111,7 +111,7 @@ const TOUR: TourStep[] = [
 
 const SAFETY = [
   "Rejected photos wait in a _Trash folder until you empty it.",
-  "Moves and renames are only staged until you commit them.",
+  "Moves and renames wait until you apply them.",
   "Almost everything can be undone with Ctrl+Z.",
   "Your originals are never edited, and nothing is uploaded.",
 ];
@@ -120,7 +120,7 @@ const TIPS = [
   { icon: Command, keys: ["Ctrl", "P"], title: "Command palette", text: "Find any action by its name." },
   { icon: HelpCircle, keys: ["?"], title: "Shortcuts", text: "Every keyboard shortcut on one page." },
   { icon: Undo2, keys: ["Ctrl", "Z"], title: "Undo", text: "Changed your mind? Step back." },
-  { icon: Sparkles, keys: [], title: "This tour", text: "Reopen it from the Simple / Studio menu." },
+  { icon: Sparkles, keys: [], title: "This tour", text: "Reopen it from the settings menu (the gear at the top right)." },
 ];
 
 function Keys({ keys }: { keys: string[] }) {
@@ -163,6 +163,7 @@ export default function WelcomeTour({ isOpen, version, notes, hidden, hasFolder,
   const [step, setStep] = useState(0);
   const [dontShowAgain, setDontShowAgain] = useState(hidden);
   const isUpdate = notes.length > 0;
+  const notesOnly = isUpdate && step === 0;
   const lastStep = TOUR.length + 1;
 
   useEffect(() => {
@@ -234,7 +235,7 @@ export default function WelcomeTour({ isOpen, version, notes, hidden, hasFolder,
                     <Lock className="w-4 h-4 mt-0.5 text-emerald-400 shrink-0" />
                     <span className="text-zinc-300">
                       {platform.localFiles
-                        ? "Everything runs on this PC. Your photos are never uploaded."
+                        ? "Everything runs on this PC. Your photos only leave it if you upload them to a Lumina server of your own."
                         : "Everything runs on your own Lumina server. Your photos never leave it."}
                     </span>
                   </li>
@@ -329,7 +330,7 @@ export default function WelcomeTour({ isOpen, version, notes, hidden, hasFolder,
               </div>
             )}
             {step === 0 && isUpdate && (
-              <Shot key="update" src={peopleShot} alt="The new People tab" className="lumina-tour-enter w-[125%] left-10 top-10" />
+              <Shot key="update" src={photosShot} alt="The Lumina window" className="lumina-tour-enter w-[125%] left-10 top-10" />
             )}
             {tourStep && (
               <Shot key={tourStep.id} src={tourStep.image} alt={tourStep.alt} className="lumina-tour-enter w-[125%] left-10 top-10" />
@@ -353,6 +354,11 @@ export default function WelcomeTour({ isOpen, version, notes, hidden, hasFolder,
 
         {/* Footer: don't-show-again, progress, navigation */}
         <div className="flex items-center gap-4 px-6 py-3.5 border-t border-zinc-800 bg-panel">
+          {/* "What's new" shows once per update: no checkbox or tour progress until the tour itself starts */}
+          {notesOnly ? (
+            <div className="flex-1" />
+          ) : (
+          <>
           <label className="flex items-center gap-2 text-[12px] text-zinc-400 cursor-pointer">
             <input
               type="checkbox"
@@ -373,6 +379,8 @@ export default function WelcomeTour({ isOpen, version, notes, hidden, hasFolder,
               />
             ))}
           </div>
+          </>
+          )}
 
           <div className="flex items-center gap-2">
             {step === 0 ? (

@@ -67,7 +67,7 @@ export function useDuplicates(core: LibraryCore) {
         return { sets: d.sets.filter((set) => !set.hashes.some((h) => done.has(h))) };
       });
       addLog("TRIAGE", `Duplicates: staged ${extras.length} extra copies for _Trash (${stages.length} sets)`);
-      notify(`Staged ${extras.length.toLocaleString()} extra cop${extras.length === 1 ? "y" : "ies"} for _Trash. Nothing is deleted until you Commit.`);
+      notify(`Marked ${extras.length.toLocaleString()} extra cop${extras.length === 1 ? "y" : "ies"} for _Trash. Nothing moves until you apply the changes.`);
       return true;
     } catch (err) {
       setError(`Could not stage the duplicates: ${String(err)}`);

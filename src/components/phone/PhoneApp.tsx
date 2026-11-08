@@ -122,7 +122,22 @@ export default function PhoneApp() {
   useEffect(() => {
     if (!selecting) setSelected(new Set());
   }, [selecting]);
+  // Selecting is a long-press, which nothing on screen shows: a tip until the first selection (or OK)
+  const [selectTip, setSelectTip] = useState(() => {
+    try {
+      return localStorage.getItem("lumina_phone_select_tip") !== "seen";
+    } catch {
+      return false;
+    }
+  });
+  const hideSelectTip = () => {
+    setSelectTip(false);
+    try {
+      localStorage.setItem("lumina_phone_select_tip", "seen");
+    } catch {}
+  };
   const select = (next: Set<string>) => {
+    if (next.size > 0 && selectTip) hideSelectTip();
     if (!selecting && next.size > 0) push({ kind: "select" });
     if (selecting && next.size === 0) back();
     setSelected(next);
@@ -242,6 +257,14 @@ export default function PhoneApp() {
         {showsGrid && lib.smartSearch && lib.searchQuery.trim() && offline.length > 0 && (
           <div className="mx-2 mt-2 rounded-xl bg-indigo-950/70 border border-indigo-700/40 px-3 py-2 text-xs text-indigo-200">
             Smart search needs a connection to {offlineLabels}.
+          </div>
+        )}
+        {showsGrid && selectTip && selected.size === 0 && photos.length > 0 && (
+          <div className="mx-2 mt-2 flex items-center gap-3 rounded-xl bg-zinc-900 border border-zinc-800 px-3 py-2 text-xs text-zinc-300">
+            <span className="flex-1">Press and hold a photo to select it, then drag to select more.</span>
+            <button onClick={hideSelectTip} className="font-semibold text-emerald-400">
+              OK
+            </button>
           </div>
         )}
         {showsGrid && notSearched > 0 && offline.length === 0 && (

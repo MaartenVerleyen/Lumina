@@ -3,6 +3,7 @@ import { call } from "../../api";
 import { confirmDialog } from "../../confirm";
 import { LibraryHealthStats, XmpExportResult } from "../../types/lumina";
 import type { LibraryCore } from "./core";
+import { plural } from "../../utils/plural";
 
 // Library health: cache statistics, XMP sidecar export, pruning orphaned cache files
 export function useHealth(core: LibraryCore) {
@@ -39,7 +40,7 @@ export function useHealth(core: LibraryCore) {
         res.skipped_raw_pair > 0 && `${res.skipped_raw_pair} JPEG(s) covered by their RAW's sidecar`,
         res.failed > 0 && `${res.failed} failed to write`,
       ].filter(Boolean);
-      const summary = `Exported ${res.exported} .xmp sidecar file(s)`;
+      const summary = `Exported ${plural(res.exported, ".xmp sidecar file", ".xmp sidecar files")}`;
       addLog("DISK", summary, notes.join(" · ") || undefined);
       setAutoMatchNotice(notes.length > 0 ? `${summary} — ${notes.join(", ")}` : `${summary}!`);
     } catch (err) {
@@ -66,7 +67,7 @@ export function useHealth(core: LibraryCore) {
     try {
       const forgotten = await call<number>("forget_missing_files", { rootFolder: folder });
       setHealthStats(await call<LibraryHealthStats>("get_library_health_stats", { rootFolder: folder }));
-      addLog("DISK", `Forgot ${forgotten} photo(s) whose file is gone, and ${people} person(s) without photos`);
+      addLog("DISK", `Forgot ${plural(forgotten, "photo")} whose file is gone, and ${plural(people, "person", "people")} without photos`);
       setAutoMatchNotice(
         [
           forgotten > 0 && `Forgot ${forgotten} photo${forgotten === 1 ? "" : "s"} whose file is gone`,
@@ -87,8 +88,8 @@ export function useHealth(core: LibraryCore) {
         rootFolder: folder || null,
       });
       setHealthStats(stats);
-      addLog("DISK", `Pruned ${removed} orphaned cache file(s)`);
-      setAutoMatchNotice(`Pruned ${removed} orphaned cache file(s)!`);
+      addLog("DISK", `Pruned ${plural(removed, "orphaned cache file", "orphaned cache files")}`);
+      setAutoMatchNotice(`Pruned ${plural(removed, "orphaned cache file", "orphaned cache files")}!`);
     } catch (err) {
       setError(String(err));
     }

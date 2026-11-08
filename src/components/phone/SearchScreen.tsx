@@ -190,7 +190,7 @@ export default function SearchScreen({
         <Row title="Things">
           <div className="grid grid-cols-3 gap-2 px-3">
             {things.map((t) => (
-              <Tile key={t.name} photo={t.cover} title={t.name} onClick={() => search(t.name)} grid />
+              <Tile key={t.name} photo={t.cover} title={t.name.charAt(0).toUpperCase() + t.name.slice(1)} onClick={() => search(t.name)} grid />
             ))}
           </div>
         </Row>

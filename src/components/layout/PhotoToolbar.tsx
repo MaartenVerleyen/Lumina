@@ -282,6 +282,24 @@ export default function PhotoToolbar({ lib }: { lib: LibraryState }) {
                   </button>
                 ))}
               </div>
+              <span className={sectionLabel}>Layout</span>
+              <Segments
+                value={lib.gridStyle}
+                onChange={(v) => lib.setGridStyle(v as typeof lib.gridStyle)}
+                options={[
+                  ["justified", "Justified", "Rows keep each photo's shape"],
+                  ["square", "Square", "Equal cards with a name line"],
+                ]}
+              />
+              <span className={sectionLabel}>Details on photos</span>
+              <Segments
+                value={lib.cardDetails}
+                onChange={(v) => lib.setCardDetails(v as typeof lib.cardDetails)}
+                options={[
+                  ["hover", "On hover", "Badges show on hover and on the selected photo"],
+                  ["always", "Always", "All badges always visible"],
+                ]}
+              />
               <label className="flex items-center justify-between px-2 py-1.5 rounded-lg hover:bg-zinc-800 text-zinc-300 cursor-pointer">
                 <span>
                   Auto-advance
@@ -303,7 +321,7 @@ export default function PhotoToolbar({ lib }: { lib: LibraryState }) {
         <Menu label="Organize" icon={<FolderSync className="w-3.5 h-3.5 text-zinc-400" />}>
           {(close) => (
             <>
-              <span className={sectionLabel}>Folder rule for Auto-Stage</span>
+              <span className={sectionLabel}>Folder rule for auto-sort</span>
               {RULES.map((r) => (
                 <button
                   key={r.value}
@@ -319,10 +337,10 @@ export default function PhotoToolbar({ lib }: { lib: LibraryState }) {
                   close();
                   lib.handleAutoOrganizeByPreset();
                 }}
-                className="mt-1 w-full flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium"
+                className="mt-1 w-full flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200"
               >
                 <FolderSync className="w-3.5 h-3.5" />
-                {lib.simpleMode ? "Auto-sort visible photos" : "Auto-stage visible photos"}
+                "Auto-sort visible photos"
               </button>
               <button
                 onClick={() => {
@@ -521,6 +539,26 @@ function WhereFilter({ lib }: { lib: LibraryState }) {
           }`}
         >
           {w.text}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// A row of choices in a menu, like the photo shapes
+function Segments({ value, onChange, options }: { value: string; onChange: (v: string) => void; options: [string, string, string][] }) {
+  return (
+    <div className="flex gap-1 px-1.5 pb-1">
+      {options.map(([v, label, hint]) => (
+        <button
+          key={v}
+          onClick={() => onChange(v)}
+          title={hint}
+          className={`flex-1 px-2 py-1 rounded-md border text-[11px] ${
+            value === v ? "bg-emerald-500/15 text-emerald-200 border-emerald-500/40" : "text-zinc-400 border-zinc-800 hover:bg-zinc-800"
+          }`}
+        >
+          {label}
         </button>
       ))}
     </div>

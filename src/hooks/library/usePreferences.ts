@@ -17,7 +17,7 @@ export function usePreferences(core: LibraryCore) {
   function toggleSimpleMode() {
     const next = !simpleMode;
     updateSettings({ simpleMode: next });
-    addLog("LIBRARY", `Switched UI to ${next ? "Simple Mode" : "Pro Studio Mode"}`);
+    addLog("LIBRARY", `Switched to ${next ? "Simple" : "Advanced"}`);
   }
 
   return {

@@ -226,7 +226,7 @@ export default function PeopleSidebar({
             {avatar(p)}
             {/* In a narrow panel the count rides on the avatar, so the name keeps its room (review via ⋯) */}
             {pending > 0 && (
-              <span className="@[17rem]:hidden absolute -top-1 -right-1.5 min-w-4 px-1 rounded-full bg-amber-500 text-zinc-950 text-[10px] font-semibold leading-4 text-center">
+              <span className="@[17rem]:hidden absolute -top-1 -right-1.5 min-w-4 px-1 rounded-full bg-emerald-600 text-white text-[11px] font-semibold leading-4 text-center tabular-nums">
                 {pending}
               </span>
             )}
@@ -243,10 +243,10 @@ export default function PeopleSidebar({
         {pending > 0 && access.edit && (
           <button
             onClick={() => onReview(p.name)}
-            className="hidden @[17rem]:block shrink-0 px-2 py-0.5 rounded-full bg-amber-500/15 hover:bg-amber-500/30 border border-amber-400/40 text-amber-300 text-[11px] font-semibold"
+            className="hidden @[17rem]:block shrink-0 px-2 py-0.5 rounded-full bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 text-[11px] font-semibold"
             title={`Review ${pending} suggested match${pending === 1 ? "" : "es"} for ${p.name}`}
           >
-            {pending} to review
+            {pending} to check
           </button>
         )}
         {!p.hidden && !access.edit && p.starred && (

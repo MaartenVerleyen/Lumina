@@ -7,6 +7,7 @@ import type { LibraryView } from "./useLibraryView";
 import type { LibraryCore } from "./core";
 import type { FilterState } from "./useFilterState";
 import type { useFolder } from "./useFolder";
+import { plural } from "../../utils/plural";
 
 // Staged moves: stage to a folder, auto-organize by rule, dismiss, and commit to disk
 export function useStaging(
@@ -50,7 +51,7 @@ export function useStaging(
       }));
       await call("stage_photos_move", { ops });
       undo.pushUndoEntry({
-        description: `Stage move (${targetSub || "clear"}) on ${hashes.length} photo(s)`,
+        description: `Stage move (${targetSub || "clear"}) on ${plural(hashes.length, "photo")}`,
         previousActiveHash: activeHash,
         previousSelectedHashes: hashes,
         before,
@@ -59,7 +60,7 @@ export function useStaging(
       setPhotos((prev) =>
         prev.map((p) => (hashSet.has(p.hash) ? { ...p, staged_target: targetSub } : p))
       );
-      addLog("DISK", `Staged ${hashes.length} photo(s) for move`, targetSub || "Cleared");
+      addLog("DISK", `Staged ${plural(hashes.length, "photo")} for move`, targetSub || "Cleared");
       setBulkInput("");
       setActiveBulkPopover(null);
     } catch (err) {
@@ -73,14 +74,14 @@ export function useStaging(
       const before = captureSnapshots(staged, staged.map((p) => p.hash));
       const count = await call<number>("clear_all_staged", { rootFolder: folder || null });
       pushSnapshotUndo(
-        `Dismiss ${before.length} staged move(s)`,
+        `Cancel ${plural(before.length, "change")}`,
         before,
         before.map((s) => ({ ...s, staged_target: null }))
       );
       setPhotos((prev) => prev.map((p) => (p.staged_target ? { ...p, staged_target: null } : p)));
       setIsCommitModalOpen(false);
       if (smartFilter === "STAGED") setSmartFilter("ALL");
-      addLog("DISK", `Dismissed ${count} staged move(s)`);
+      addLog("DISK", `Dismissed ${plural(count, "staged move", "staged moves")}`);
     } catch (err) {
       setError(String(err));
     }
@@ -102,9 +103,9 @@ export function useStaging(
       }
       const restaged = visiblePhotos.filter((p) => updates.has(p.hash) && p.staged_target).length;
       const ok = await confirmAction(
-        `Stage ${ops.length} visible photo(s) into folders with this rule?` +
-          (restaged > 0 ? `\n\n${restaged} of them are already staged elsewhere and will get the new target.` : "") +
-          "\n\nNothing moves on disk until you Commit. You can undo this with Ctrl+Z.",
+        `Sort ${plural(ops.length, "visible photo", "visible photos")} into folders with this rule?` +
+          (restaged > 0 ? `\n\n${restaged} of them were already set to move elsewhere and get the new folder.` : "") +
+          "\n\nNothing moves on disk until you apply the changes. Ctrl+Z undoes this.",
         "Stage photos",
         { title: "Stage photos", kind: "info" }
       );
@@ -112,7 +113,7 @@ export function useStaging(
       const before = captureSnapshots(photos, Array.from(updates.keys()));
       await call("stage_photos_move", { ops });
       pushSnapshotUndo(
-        `Auto-stage ${ops.length} photo(s)`,
+        `Auto-stage ${plural(ops.length, "photo")}`,
         before,
         before.map((s) => ({ ...s, staged_target: updates.get(s.hash) ?? s.staged_target }))
       );
@@ -132,7 +133,7 @@ export function useStaging(
     // The moves are Lumina's own: the folder watcher shouldn't rescan for each of them
     watchQuietUntilRef.current = Number.POSITIVE_INFINITY;
     try {
-      setProgressTitle("Committing changes to disk");
+      setProgressTitle("Applying changes");
       const result = await call<CommitResult>("commit_staged_operations", {
         rootFolder: folder,
         smartRename: smartRenameOnCommit,
@@ -146,15 +147,15 @@ export function useStaging(
       setIsCommitModalOpen(false);
       addLog(
         "DISK",
-        `Committed ${result.moved} physical file move(s) to disk`,
-        smartRenameOnCommit ? "With Smart Chronological Rename" : "Original filenames"
+        `Moved ${plural(result.moved, "file")}`,
+        smartRenameOnCommit ? "Renamed by date" : "Original filenames"
       );
       for (const f of result.failures) {
         addLog("DISK", `Could not move ${f.file}`, f.error);
       }
       if (result.failures.length > 0) {
         setError(
-          `${result.failures.length} file(s) could not be moved (they stay staged). See the Session Log for details.`
+          `${plural(result.failures.length, "file")} could not be moved (they stay staged). See the Session Log for details.`
         );
       }
     } catch (err) {

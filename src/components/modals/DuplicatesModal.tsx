@@ -81,7 +81,7 @@ export default function DuplicatesModal({ duplicates, photoByHash, folder, onClo
   async function stageAll() {
     const extras = extrasOf(sets);
     const ok = await confirmAction(
-      `Stage ${extras.toLocaleString()} extra cop${extras === 1 ? "y" : "ies"} (${formatSize(extraSize(sets))}) from ${sets.length.toLocaleString()} sets for _Trash?\n\nEach set keeps the copy marked Keep, which takes over the stars, tags, people and albums of the others. Nothing is deleted until you Commit, and Ctrl+Z undoes it.`,
+      `Move ${extras.toLocaleString()} extra cop${extras === 1 ? "y" : "ies"} (${formatSize(extraSize(sets))}) from ${sets.length.toLocaleString()} sets for _Trash?\n\nEach set keeps the copy marked Keep, which takes over the stars, tags, people and albums of the others. They move when you apply the changes, and Ctrl+Z undoes it.`,
       "Stage for _Trash",
       { title: KINDS.find((k) => k.kind === kind)!.label }
     );

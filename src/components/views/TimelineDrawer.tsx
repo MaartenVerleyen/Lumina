@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { TimelineBucket } from "../../types/lumina";
 import { Calendar, RotateCcw, SlidersHorizontal, ZoomOut } from "lucide-react";
+import { plural } from "../../utils/plural";
 
 interface TimelineDrawerProps {
   timelineBuckets: TimelineBucket[];
@@ -456,7 +457,7 @@ export default function TimelineDrawer({
                   setDragAnchorBucket(null);
                 }}
                 className="flex-1 min-w-[28px] h-full flex flex-col justify-end items-center group cursor-pointer"
-                title={`${b.startDate} to ${b.endDate}: ${b.count} photo(s) — Click or drag across bars to filter`}
+                title={`${b.startDate} to ${b.endDate}: ${plural(b.count, "photo")}. Click or drag across the bars to filter`}
               >
                 {/* Count badge above bar */}
                 <span

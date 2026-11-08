@@ -25,7 +25,7 @@ export default function DragGhost({
               {drag.count} photo{drag.count === 1 ? "" : "s"}
             </span>
             <span className={drag.target ? "text-emerald-300" : "text-zinc-400"}>
-              {drag.target ? drag.target.label : "Drop on a folder, person, Picks, Basket or Rejects"}
+              {drag.target ? drag.target.label : "Drop on a folder, person, Picks, Pinned or Rejects"}
             </span>
           </div>
         </div>

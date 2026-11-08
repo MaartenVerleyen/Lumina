@@ -41,15 +41,15 @@ export default function ShortcutsModal({ lib }: { lib: LibraryState }) {
                 ["1 – 5 / 0", "Set Star Rating / Clear Rating"],
                 ["6 / 7 / 8 / 9", "Red / Yellow / Green / Blue Label"],
                 ["[ / ]", "Rotate Left / Right 90°"],
-                ["B", "Toggle pinboard basket"],
+                ["B", "Pin or unpin"],
                 ["A", "Run AI Vision on Active Photo"],
                 ["C / G / M", "Compare / Grid / Map View"],
                 ["Ctrl + 1 – 4", "Photos / Map / People / Collections"],
                 ["Ctrl + Z / Y", "Undo / Redo Last Action"],
                 ["Ctrl + K", "Search"],
                 ["Ctrl + P", "Command Palette (every action)"],
-                ["Ctrl + L", "Open Session Activity Log"],
-                ["?", "Show This Cheat Sheet"],
+                ["Ctrl + L", "What Lumina did (activity log)"],
+                ["?", "Show these shortcuts"],
                 ["Esc", "Close Dialog / Loupe"],
               ].map(([key, desc]) => (
                 <div

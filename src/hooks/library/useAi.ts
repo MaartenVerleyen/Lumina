@@ -6,6 +6,7 @@ import { diskPathOf } from "../../utils/rawPairs";
 import { isVideo, photosOnly } from "../../utils/media";
 import { AI_CANCELLED, DEFAULT_AI_MODEL, PULL_CANCELLED, summarizeAiPerf, topLibraryTags } from "./shared";
 import type { LibraryCore } from "./core";
+import { plural } from "../../utils/plural";
 
 // AI captions, tags and text through Ollama: status, model download, single and batch analysis
 export function useAi(core: LibraryCore) {
@@ -139,7 +140,7 @@ export function useAi(core: LibraryCore) {
     if (!activePhoto || isVideo(activePhoto) || analyzingHashes.has(activePhoto.hash)) return;
     if (aiBatchProgress) {
       // Ollama handles one request at a time: a single analysis would just queue behind the batch
-      setError("Batch AI is running: wait for it to finish or stop it first.");
+      setError("AI captions are running: wait for them to finish or stop them first.");
       return;
     }
     if (ollamaStatus && !ollamaStatus.running) {
@@ -200,10 +201,10 @@ export function useAi(core: LibraryCore) {
           fresh > 0
             ? `${analyzed.length} of these ${requested.length} photos already have AI results. Analyse those again as well? Their caption, text and tags will be replaced.
 
-Choose "Only new photos" to analyse just the ${fresh} photo(s) without results.`
-            : `All ${requested.length} photo(s) already have AI results. Analyse them again? Their caption, text and tags will be replaced.`,
+Choose "Only new photos" to analyse just the ${plural(fresh, "photo")} without results.`
+            : `All ${plural(requested.length, "photo")} already have AI results. Analyse them again? Their caption, text and tags will be replaced.`,
           {
-            title: "Batch AI",
+            title: "AI captions",
             kind: "info",
             okLabel: "Analyse again",
             cancelLabel: fresh > 0 ? "Only new photos" : "Cancel",
@@ -224,7 +225,7 @@ Choose "Only new photos" to analyse just the ${fresh} photo(s) without results.`
       currentFile: targets[0]?.name,
       startedAt: Date.now(),
     });
-    addLog("AI", `Started Batch AI on ${targets.length} photo(s) using ${aiModel}`);
+    addLog("AI", `Started AI captions on ${plural(targets.length, "photo")} using ${aiModel}`);
 
     const batchPerfs: AiPerf[] = [];
     const unlisten = await subscribe<AiBatchProgressEvent>("ai-batch-progress", (event) => {
@@ -270,8 +271,8 @@ Choose "Only new photos" to analyse just the ${fresh} photo(s) without results.`
     addLog(
       "AI",
       summary.stopped
-        ? `Stopped Batch AI after ${summary.completed} of ${targets.length} photo(s): ${summary.succeeded} succeeded, ${failures.length} failed`
-        : `Finished Batch AI: ${summary.succeeded} succeeded, ${failures.length} failed`
+        ? `Stopped AI captions after ${summary.completed} of ${plural(targets.length, "photo")}: ${summary.succeeded} succeeded, ${failures.length} failed`
+        : `Finished AI captions: ${summary.succeeded} succeeded, ${failures.length} failed`
     );
 
     if (batchPerfs.length > 0) {
@@ -279,7 +280,7 @@ Choose "Only new photos" to analyse just the ${fresh} photo(s) without results.`
       const perMinute = (summary.succeeded / (wallSeconds / 60)).toFixed(1);
       addLog(
         "PERF",
-        `Batch AI (${aiModel}): ${summary.succeeded} photos in ${wallSeconds.toFixed(1)} s · ${perMinute} photos/min`,
+        `AI captions (${aiModel}): ${summary.succeeded} photos in ${wallSeconds.toFixed(1)} s · ${perMinute} photos/min`,
         summarizeAiPerf(batchPerfs)
       );
     }

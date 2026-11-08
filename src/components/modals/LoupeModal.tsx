@@ -536,7 +536,7 @@ export default function LoupeModal({
                   ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/40"
                   : "bg-zinc-800 text-zinc-300 hover:text-white"
               }`}
-              title="Toggle pinboard basket (B)"
+              title="Pin or unpin (B)"
             >
               <Pin className="w-3.5 h-3.5 text-cyan-400" />
               <span>{localBasket ? "Pinned (B)" : "Pin (B)"}</span>
@@ -552,7 +552,7 @@ export default function LoupeModal({
                   ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
                   : "bg-zinc-800 text-zinc-300 hover:text-white"
               }`}
-              title="Stage Move to Subfolder"
+              title="Move to a folder"
             >
               <Folder className="w-3.5 h-3.5 text-emerald-400" />
               <span>{activePhoto.staged_target || "Move"}</span>
@@ -586,7 +586,7 @@ export default function LoupeModal({
                 title="Run Local AI Vision Analysis (A)"
               >
                 <Sparkles className="w-3.5 h-3.5" />
-                <span>AI Tag (A)</span>
+                <span>AI caption (A)</span>
               </button>
             </>
           )}

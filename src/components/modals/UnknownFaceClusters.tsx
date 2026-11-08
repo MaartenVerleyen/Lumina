@@ -25,6 +25,16 @@ export default function UnknownFaceClusters({
   const [error, setError] = useState("");
   // The last faces ignored, for Undo
   const [lastIgnored, setLastIgnored] = useState<string[] | null>(null);
+  // Faces clicked away from their group (someone else in with them): named or ignored without them
+  const [left, setLeft] = useState<Set<string>>(new Set());
+  const kept = (c: FaceCluster) => c.face_ids.filter((id) => !left.has(id));
+  const toggleLeft = (id: string) =>
+    setLeft((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
 
   async function load() {
     setIsLoading(true);
@@ -51,7 +61,7 @@ export default function UnknownFaceClusters({
     setError("");
     try {
       const updated = await call<Record<string, FaceInstance[]>>("assign_faces_to_person_batch", {
-        faceIds: cluster.face_ids,
+        faceIds: kept(cluster),
         personName: name,
       });
       setPhotos((prev) =>
@@ -117,8 +127,8 @@ export default function UnknownFaceClusters({
         <div className="text-zinc-300">
           <span className="font-semibold text-zinc-100">Who is this?</span>
           <span className="text-zinc-500 ml-2">
-            Unnamed faces that look like the same person. Name a group to assign all of its faces at once, or
-            ignore faces you don't want to name.
+            Unnamed faces that look like the same person. Click a face that is someone else to leave it out, then
+            name the group, or ignore faces you don't want to name.
           </span>
         </div>
         <div className="flex items-center gap-2 shrink-0">
@@ -171,26 +181,31 @@ export default function UnknownFaceClusters({
           {clusters.map((cluster, index) => (
             <div key={cluster.face_ids[0]} className="p-3 rounded-xl bg-zinc-950/70 border border-zinc-800 flex flex-col gap-2.5">
               <div className="flex items-center gap-1.5 flex-wrap">
-                {cluster.samples.map((face) => (
-                  <div key={face.face_id} className="relative group">
-                    <img
-                      src={mediaUrl({ kind: "face", path: face.face_thumb })}
-                      alt=""
-                      title={face.photo_name}
-                      loading="lazy"
-                      className="w-16 h-16 rounded-lg object-cover border border-zinc-800"
-                    />
+                {cluster.samples.map((face) => {
+                  const out = left.has(face.face_id);
+                  return (
                     <button
-                      onClick={() => ignoreFaces(index, [face.face_id])}
-                      disabled={busy !== null}
-                      title="Ignore this face (not part of this group)"
-                      aria-label="Ignore this face"
-                      className="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-zinc-950/85 border border-zinc-700 text-zinc-300 hover:text-red-300 hover:border-red-500/60 items-center justify-center hidden group-hover:flex"
+                      key={face.face_id}
+                      type="button"
+                      onClick={() => toggleLeft(face.face_id)}
+                      aria-pressed={out}
+                      title={out ? `${face.photo_name}: left out, click to add it back` : `${face.photo_name}: click if this is someone else`}
+                      className="relative"
                     >
-                      <X className="w-3 h-3" />
+                      <img
+                        src={mediaUrl({ kind: "face", path: face.face_thumb })}
+                        alt=""
+                        loading="lazy"
+                        className={`w-16 h-16 rounded-lg object-cover border transition-opacity ${out ? "opacity-30 border-zinc-800" : "border-zinc-800 hover:border-zinc-600"}`}
+                      />
+                      {out && (
+                        <span className="absolute inset-0 grid place-items-center">
+                          <X className="w-6 h-6 text-zinc-300" />
+                        </span>
+                      )}
                     </button>
-                  </div>
-                ))}
+                  );
+                })}
                 {cluster.size > cluster.samples.length && (
                   <span className="text-[11px] text-zinc-500 font-mono px-2">
                     +{cluster.size - cluster.samples.length} more
@@ -204,7 +219,7 @@ export default function UnknownFaceClusters({
                 }}
                 className="flex items-center gap-2 text-xs"
               >
-                <span className="text-zinc-400 font-mono shrink-0">{cluster.size} faces</span>
+                <span className="text-zinc-400 shrink-0 tabular-nums">{kept(cluster).length} faces</span>
                 <input
                   list="known-people"
                   value={names[index] || ""}
@@ -214,15 +229,15 @@ export default function UnknownFaceClusters({
                 />
                 <button
                   type="submit"
-                  disabled={!names[index]?.trim() || busy !== null}
+                  disabled={!names[index]?.trim() || busy !== null || kept(cluster).length === 0}
                   className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-semibold flex items-center gap-1.5"
                 >
                   {busy === index ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
-                  <span>Name all {cluster.size}</span>
+                  <span>Name {kept(cluster).length === cluster.size ? `all ${cluster.size}` : kept(cluster).length}</span>
                 </button>
                 <button
                   type="button"
-                  onClick={() => ignoreFaces(index, cluster.face_ids)}
+                  onClick={() => ignoreFaces(index, kept(cluster))}
                   disabled={busy !== null}
                   title="Don't name these faces: they are no longer grouped or suggested"
                   className="px-3 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 disabled:opacity-40 border border-zinc-800 text-zinc-300 flex items-center gap-1.5"
