@@ -89,7 +89,7 @@ export default function RestoreModal({ target, busy, onClose, onRestore }: Resto
           </div>
 
           <div className="flex flex-col gap-2">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-zinc-500">Library folders</span>
+            <span className="text-xs font-medium text-zinc-500">Library folders</span>
             <p className="text-zinc-500 -mt-1">
               On a new PC, or after moving your photos, point each folder to where the photos are now. Ratings, names
               and captions follow them.

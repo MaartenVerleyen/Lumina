@@ -301,9 +301,9 @@ const PhotoCard = memo(function PhotoCard({
         justified ? "rounded-lg" : "rounded-xl"
       } ${
         isAnalyzing
-          ? "border-indigo-500 ring-2 ring-indigo-500/50 shadow-[0_0_15px_rgba(99,102,241,0.35)]"
+          ? "border-zinc-700 ring-2 ring-zinc-500"
           : isActive
-          ? "border-emerald-500 shadow-[0_0_12px_rgba(16,185,129,0.25)] ring-1 ring-emerald-500"
+          ? "border-emerald-500 ring-1 ring-emerald-500"
           : isSelected
           ? "border-emerald-500/60 bg-emerald-950/15"
           : isBurstExpanded && grp
@@ -390,9 +390,9 @@ const PhotoCard = memo(function PhotoCard({
         )}
 
         {isAnalyzing && (
-          <div className="absolute inset-0 bg-indigo-950/60 backdrop-blur-[2px] flex flex-col items-center justify-center gap-1.5 z-10">
-            <Loader2 className="w-6 h-6 text-indigo-300 animate-spin" />
-            <span className="text-[11px] font-bold text-indigo-200 tracking-wide uppercase">AI Tagging...</span>
+          <div className="absolute inset-0 bg-zinc-800/80 backdrop-blur-[2px] flex flex-col items-center justify-center gap-1.5 z-10">
+            <Loader2 className="w-6 h-6 text-zinc-400 animate-spin" />
+            <span className="text-xs font-medium text-zinc-200">AI tagging…</span>
           </div>
         )}
 
@@ -514,8 +514,8 @@ const PhotoCard = memo(function PhotoCard({
         {/* AI & Tag Pills */}
         {hasAiData && !isAnalyzing && !justified && (
           <div className={`absolute bottom-2 left-2 right-2 flex items-center gap-1 overflow-hidden pointer-events-none ${secondary}`}>
-            <span className="px-1.5 py-0.5 rounded bg-indigo-950/90 border border-indigo-500/40 text-indigo-200 text-[11px] font-semibold flex items-center gap-1 shrink-0 backdrop-blur-md">
-              <Sparkles className="w-2.5 h-2.5 text-indigo-400" />
+            <span className="px-1.5 py-0.5 rounded bg-zinc-800/80 border border-zinc-700 text-zinc-200 text-[11px] font-semibold flex items-center gap-1 shrink-0 backdrop-blur-md">
+              <Sparkles className="w-2.5 h-2.5 text-zinc-400" />
               <span>{photo.tags.length}</span>
             </span>
             {photo.tags.slice(0, 2).map((t) => (
@@ -535,7 +535,7 @@ const PhotoCard = memo(function PhotoCard({
             <span className="flex items-center gap-1 shrink-0 text-zinc-300">
               {hasAiData && (
                 <>
-                  <Sparkles className="w-2.5 h-2.5 text-indigo-300" />
+                  <Sparkles className="w-2.5 h-2.5 text-zinc-400" />
                   <span>{photo.tags.length}</span>
                 </>
               )}

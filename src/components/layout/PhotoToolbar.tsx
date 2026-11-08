@@ -77,7 +77,7 @@ function Menu({ label, icon, active, children }: { label: string; icon: React.Re
   );
 }
 
-const sectionLabel = "px-2 pt-1.5 pb-1 text-[11px] font-bold text-zinc-500 uppercase tracking-wider";
+const sectionLabel = "px-2 pt-1.5 pb-1 text-xs font-medium text-zinc-500";
 const itemClass = (selected: boolean) =>
   `w-full flex items-center justify-between px-2 py-1.5 rounded-lg text-left ${selected ? "bg-emerald-500/15 text-emerald-200" : "text-zinc-300 hover:bg-zinc-800"}`;
 
@@ -300,7 +300,7 @@ export default function PhotoToolbar({ lib }: { lib: LibraryState }) {
 
         {/* Planned moves and duplicates change photos: not for those who may only look */}
         {access.edit && (
-        <Menu label="Organize" icon={<FolderSync className="w-3.5 h-3.5 text-indigo-400" />}>
+        <Menu label="Organize" icon={<FolderSync className="w-3.5 h-3.5 text-zinc-400" />}>
           {(close) => (
             <>
               <span className={sectionLabel}>Folder rule for Auto-Stage</span>
@@ -319,7 +319,7 @@ export default function PhotoToolbar({ lib }: { lib: LibraryState }) {
                   close();
                   lib.handleAutoOrganizeByPreset();
                 }}
-                className="mt-1 w-full flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium"
+                className="mt-1 w-full flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium"
               >
                 <FolderSync className="w-3.5 h-3.5" />
                 {lib.simpleMode ? "Auto-sort visible photos" : "Auto-stage visible photos"}

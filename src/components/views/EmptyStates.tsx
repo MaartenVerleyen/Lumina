@@ -137,9 +137,9 @@ function DesktopStart({ lib, gridContainerRef }: { lib: LibraryState; gridContai
 
         {lib.recentFolders.length > 0 && (
           <div className="w-full mt-6 pt-5 border-t border-zinc-800/80 flex flex-col gap-2 text-left">
-            <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider flex items-center gap-1.5">
+            <span className="text-xs font-medium text-zinc-500 flex items-center gap-1.5">
               <Clock className="w-3 h-3 text-emerald-400" />
-              Recent Photo Libraries
+              Recent libraries
             </span>
             <div className="flex flex-col gap-1.5">
               {lib.recentFolders.map((rf) => (

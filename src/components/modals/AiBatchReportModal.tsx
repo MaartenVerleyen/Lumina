@@ -48,11 +48,11 @@ export default function AiBatchReportModal({
         <div className="p-5 flex flex-col gap-4 text-xs">
           <div className="grid grid-cols-2 gap-3">
             <div className="p-3 bg-zinc-900/60 border border-zinc-800 rounded-xl">
-              <span className="text-[11px] uppercase font-bold text-zinc-500">Completed Successfully</span>
+              <span className="text-xs font-medium text-zinc-500">Done</span>
               <div className="text-lg font-bold text-emerald-400 mt-1 font-mono">{succeededCount} photos</div>
             </div>
             <div className="p-3 bg-zinc-900/60 border border-zinc-800 rounded-xl">
-              <span className="text-[11px] uppercase font-bold text-zinc-500">Failed with Errors</span>
+              <span className="text-xs font-medium text-zinc-500">Failed</span>
               <div className="text-lg font-bold text-red-400 mt-1 font-mono">{failures.length} photos</div>
             </div>
           </div>
@@ -92,7 +92,7 @@ export default function AiBatchReportModal({
                 onRetryFailures(failures);
                 onClose();
               }}
-              className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow transition"
+              className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow transition"
             >
               <RefreshCw className="w-3.5 h-3.5" />
               <span>Retry {failures.length} Failed Photo{failures.length === 1 ? "" : "s"}</span>

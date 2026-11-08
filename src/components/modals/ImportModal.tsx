@@ -155,7 +155,7 @@ export default function ImportModal({ isOpen, initialSource, defaultDest, onClos
           {/* From */}
           <section className="flex flex-col gap-2">
             <div className="flex items-center justify-between">
-              <h3 className="text-[11px] font-bold uppercase tracking-wider text-zinc-500">From</h3>
+              <h3 className="text-xs font-medium text-zinc-500">From</h3>
               <button onClick={loadDrives} className="flex items-center gap-1 text-zinc-500 hover:text-zinc-200">
                 <RefreshCw className="w-3 h-3" /> Look for cards
               </button>
@@ -201,7 +201,7 @@ export default function ImportModal({ isOpen, initialSource, defaultDest, onClos
 
           {/* To */}
           <section className="flex flex-col gap-2">
-            <h3 className="text-[11px] font-bold uppercase tracking-wider text-zinc-500">Into</h3>
+            <h3 className="text-xs font-medium text-zinc-500">Into</h3>
             <div className="flex items-center gap-2">
               <div className="flex-1 min-w-0 px-3 py-2 rounded-lg bg-zinc-950 border border-zinc-800 font-mono text-[11.5px] text-zinc-300 truncate">
                 {dest || "Choose a folder"}
@@ -231,7 +231,7 @@ export default function ImportModal({ isOpen, initialSource, defaultDest, onClos
 
           {/* Options */}
           <section className="flex flex-col gap-2.5">
-            <h3 className="text-[11px] font-bold uppercase tracking-wider text-zinc-500">Options</h3>
+            <h3 className="text-xs font-medium text-zinc-500">Options</h3>
             <Toggle
               checked={settings.importSkipDuplicates}
               onChange={(v) => updateSettings({ importSkipDuplicates: v })}

@@ -305,8 +305,8 @@ export default function CollectionsView({
       </div>
 
       <section className="flex flex-col gap-3">
-        <h2 className="text-xs font-bold text-zinc-400 uppercase tracking-wider flex items-center gap-2">
-          <BookImage className="w-4 h-4 text-indigo-400" /> Albums ({albums.length})
+        <h2 className="text-xs font-medium text-zinc-400 flex items-center gap-2">
+          <BookImage className="w-4 h-4 text-zinc-400" /> Albums ({albums.length})
         </h2>
         {/* All photos: every library's albums, each staying in its library */}
         {openLibraryIsAll() && (
@@ -367,7 +367,7 @@ export default function CollectionsView({
           {!access.edit ? null : newAlbumName === null ? (
             <button
               onClick={() => setNewAlbumName("")}
-              className="aspect-[4/3] rounded-xl border-2 border-dashed border-zinc-800 hover:border-indigo-500/50 text-zinc-500 hover:text-indigo-200 flex flex-col items-center justify-center gap-1.5 text-xs"
+              className="aspect-[4/3] rounded-xl border-2 border-dashed border-zinc-800 hover:border-zinc-700 text-zinc-500 hover:text-zinc-100 flex flex-col items-center justify-center gap-1.5 text-xs"
             >
               <Plus className="w-6 h-6" />
               New album
@@ -379,7 +379,7 @@ export default function CollectionsView({
                 if (newAlbumName.trim()) await onCreateAlbum(newAlbumName);
                 setNewAlbumName(null);
               }}
-              className="aspect-[4/3] rounded-xl border border-indigo-500/50 bg-card p-3 flex flex-col justify-center gap-2"
+              className="aspect-[4/3] rounded-xl border border-zinc-700 bg-card p-3 flex flex-col justify-center gap-2"
             >
               <input
                 autoFocus
@@ -390,9 +390,9 @@ export default function CollectionsView({
                   if (e.key === "Escape") setNewAlbumName(null);
                 }}
                 placeholder="Album name"
-                className="bg-zinc-950 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-100 select-text focus:outline-none focus:border-indigo-500"
+                className="bg-zinc-950 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-100 select-text focus:outline-none focus:border-emerald-500/80"
               />
-              <button type="submit" className="self-end px-2.5 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-xs flex items-center gap-1">
+              <button type="submit" className="self-end px-2.5 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-xs flex items-center gap-1">
                 <Check className="w-3 h-3" /> Create
               </button>
               <span className="text-[11px] text-zinc-500">Add photos by right-clicking them → Add to album.</span>
@@ -403,7 +403,7 @@ export default function CollectionsView({
 
       {(savedSearches.length > 0 || (q === "" && access.edit)) && (
         <section className="flex flex-col gap-3">
-          <h2 className="text-xs font-bold text-zinc-400 uppercase tracking-wider flex items-center gap-2">
+          <h2 className="text-xs font-medium text-zinc-400 flex items-center gap-2">
             <Sparkles className="w-4 h-4 text-amber-300" /> Smart albums ({savedSearches.length})
           </h2>
           {savedSearches.length === 0 ? (
@@ -443,7 +443,7 @@ export default function CollectionsView({
 
       {years.length > 0 && (
         <section className="flex flex-col gap-3">
-          <h2 className="text-xs font-bold text-zinc-400 uppercase tracking-wider flex items-center gap-2">
+          <h2 className="text-xs font-medium text-zinc-400 flex items-center gap-2">
             <Trophy className="w-4 h-4 text-amber-300" /> Best of
           </h2>
           <span className="text-xs text-zinc-500 -mt-1">
@@ -466,7 +466,7 @@ export default function CollectionsView({
       )}
 
       <section className="flex flex-col gap-3">
-        <h2 className="text-xs font-bold text-zinc-400 uppercase tracking-wider flex items-center gap-2">
+        <h2 className="text-xs font-medium text-zinc-400 flex items-center gap-2">
           <Plane className="w-4 h-4 text-sky-400" /> Trips & events ({tripEntries.length})
         </h2>
         {tripEntries.length === 0 && (

@@ -318,7 +318,7 @@ export default function TimelineDrawer({
                 className="px-2.5 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-zinc-200 flex items-center gap-1 text-[11px] font-medium transition"
                 title="Zoom out one time level"
               >
-                <ZoomOut className="w-3.5 h-3.5 text-indigo-400" />
+                <ZoomOut className="w-3.5 h-3.5 text-zinc-400" />
                 <span>Zoom Out</span>
               </button>
               <button
@@ -463,7 +463,7 @@ export default function TimelineDrawer({
                   className={`text-[11px] font-mono mb-1 transition-opacity ${
                     b.count > 0
                       ? isDaySelected
-                        ? "text-indigo-300 font-bold opacity-100"
+                        ? "text-emerald-300 font-bold opacity-100"
                         : "text-zinc-400 group-hover:text-emerald-300 opacity-90"
                       : "opacity-0"
                   }`}
@@ -477,9 +477,9 @@ export default function TimelineDrawer({
                     style={{ height: `${heightPercent}%` }}
                     className={`w-full rounded-t-md transition-all duration-150 ${
                       isDragHighlighted || isDaySelected
-                        ? "bg-indigo-500 shadow-[0_0_10px_rgba(99,102,241,0.6)]"
+                        ? "bg-emerald-500"
                         : b.count > 0
-                        ? "bg-emerald-500/75 group-hover:bg-emerald-400 shadow-[0_0_8px_rgba(16,185,129,0.2)]"
+                        ? "bg-emerald-500/75 group-hover:bg-emerald-400"
                         : "bg-zinc-800/40 group-hover:bg-zinc-700/60"
                     }`}
                   />
@@ -490,7 +490,7 @@ export default function TimelineDrawer({
                   <span
                     className={`text-[11px] font-semibold whitespace-nowrap ${
                       isDaySelected
-                        ? "text-indigo-300"
+                        ? "text-emerald-300"
                         : "text-zinc-300 group-hover:text-white"
                     }`}
                   >

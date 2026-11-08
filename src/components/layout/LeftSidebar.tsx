@@ -116,7 +116,7 @@ function LeftSidebar({
         <button
           onClick={() => onToggleSection(id)}
           aria-expanded={!collapsed}
-          className="flex items-center gap-1 text-[11px] font-bold text-zinc-500 hover:text-zinc-300 tracking-wider uppercase"
+          className="flex items-center gap-1 text-xs font-medium text-zinc-500 hover:text-zinc-300"
         >
           {collapsed ? <ChevronRight className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
           {label}
@@ -242,7 +242,7 @@ function LeftSidebar({
       id: "ALL",
       label: videosCount > 0 ? "All" : "All Photos",
       count: shownCount,
-      icon: <Camera className="w-3.5 h-3.5 text-emerald-400" />,
+      icon: <Camera className="w-3.5 h-3.5" />,
       hideInSimple: false,
     },
     ...(videosCount > 0
@@ -251,14 +251,14 @@ function LeftSidebar({
             id: "PHOTOS",
             label: "Photos",
             count: stillsCount,
-            icon: <ImageIcon className="w-3.5 h-3.5 text-sky-400" />,
+            icon: <ImageIcon className="w-3.5 h-3.5" />,
             hideInSimple: false,
           },
           {
             id: "VIDEOS",
             label: "Videos",
             count: videosCount,
-            icon: <Film className="w-3.5 h-3.5 text-sky-400" />,
+            icon: <Film className="w-3.5 h-3.5" />,
             hideInSimple: false,
           },
         ]
@@ -267,56 +267,56 @@ function LeftSidebar({
       id: "PICKS",
       label: simpleMode ? "Kept Photos (P)" : "Picks (P)",
       count: picksCount,
-      icon: <Flag className="w-3.5 h-3.5 text-emerald-400" />,
+      icon: <Flag className="w-3.5 h-3.5" />,
       hideInSimple: false,
     },
     {
       id: "BASKET",
       label: simpleMode ? "Saved to Pinboard" : "Pinboard Basket (B)",
       count: basketCount,
-      icon: <Pin className="w-3.5 h-3.5 text-cyan-400" />,
+      icon: <Pin className="w-3.5 h-3.5" />,
       hideInSimple: false,
     },
     {
       id: "REJECTS",
       label: simpleMode ? "To Delete (X)" : "Rejects (X)",
       count: rejectsCount,
-      icon: <XCircle className="w-3.5 h-3.5 text-red-400" />,
+      icon: <XCircle className="w-3.5 h-3.5" />,
       hideInSimple: false,
     },
     {
       id: "FAVORITES",
       label: "Favorites (4★+)",
       count: favoritesCount,
-      icon: <Star className="w-3.5 h-3.5 text-amber-400 fill-amber-400/20" />,
+      icon: <Star className="w-3.5 h-3.5" />,
       hideInSimple: false,
     },
     {
       id: "AI_TAGGED",
       label: "AI Tagged",
       count: aiTaggedCount,
-      icon: <BrainCircuit className="w-3.5 h-3.5 text-indigo-400" />,
+      icon: <BrainCircuit className="w-3.5 h-3.5" />,
       hideInSimple: true,
     },
     {
       id: "UNTAGGED",
       label: "Untagged",
       count: untaggedCount,
-      icon: <Sparkles className="w-3.5 h-3.5 text-purple-400" />,
+      icon: <Sparkles className="w-3.5 h-3.5" />,
       hideInSimple: true,
     },
     {
       id: "SCREENSHOTS",
       label: "Screenshots",
       count: screenshotPhotosCount,
-      icon: <Smartphone className="w-3.5 h-3.5 text-zinc-400" />,
+      icon: <Smartphone className="w-3.5 h-3.5" />,
       hideInSimple: false,
     },
     {
       id: "WHATSAPP",
       label: "WhatsApp",
       count: whatsappPhotosCount,
-      icon: <MessageCircle className="w-3.5 h-3.5 text-green-400" />,
+      icon: <MessageCircle className="w-3.5 h-3.5" />,
       hideInSimple: false,
     },
     {
@@ -325,21 +325,21 @@ function LeftSidebar({
         ? `Similar Shots (${totalBurstGroups})`
         : `Burst Groups (${totalBurstGroups})`,
       count: duplicatePhotosCount,
-      icon: <Layers className="w-3.5 h-3.5 text-amber-400" />,
+      icon: <Layers className="w-3.5 h-3.5" />,
       hideInSimple: false,
     },
     {
       id: "HAS_OCR",
       label: simpleMode ? "Photos with Text" : "Has Text (OCR)",
       count: ocrCount,
-      icon: <FileText className="w-3.5 h-3.5 text-indigo-400" />,
+      icon: <FileText className="w-3.5 h-3.5" />,
       hideInSimple: false,
     },
     {
       id: "HAS_GPS",
       label: simpleMode ? "Photos on Map" : "Has GPS Location",
       count: gpsPhotosCount,
-      icon: <MapPin className="w-3.5 h-3.5 text-emerald-400" />,
+      icon: <MapPin className="w-3.5 h-3.5" />,
       hideInSimple: false,
     },
     ...(eyesClosedCount > 0
@@ -348,7 +348,7 @@ function LeftSidebar({
             id: "EYES_CLOSED",
             label: "Eyes Closed",
             count: eyesClosedCount,
-            icon: <EyeOff className="w-3.5 h-3.5 text-rose-400" />,
+            icon: <EyeOff className="w-3.5 h-3.5" />,
             hideInSimple: false,
           },
         ]
@@ -359,7 +359,7 @@ function LeftSidebar({
             id: "SOFT_FOCUS",
             label: "Out of Focus",
             count: softFocusCount,
-            icon: <Focus className="w-3.5 h-3.5 text-orange-400" />,
+            icon: <Focus className="w-3.5 h-3.5" />,
             hideInSimple: false,
           },
         ]
@@ -370,7 +370,7 @@ function LeftSidebar({
             id: "STAGED",
             label: simpleMode ? "Pending Folder Moves" : "Staged Moves",
             count: stagedPhotosCount,
-            icon: <Package className="w-3.5 h-3.5 text-emerald-400" />,
+            icon: <Package className="w-3.5 h-3.5" />,
             hideInSimple: false,
           },
         ]
@@ -383,7 +383,7 @@ function LeftSidebar({
       className="bg-panel flex flex-col p-3 gap-5 overflow-y-auto shrink-0"
     >
       <div>
-        {sectionHeader("filters", simpleMode ? "Quick Filters" : "Culling & Triage")}
+        {sectionHeader("filters", simpleMode ? "Quick filters" : "Culling & triage")}
         {!collapsedSections.includes("filters") && (
         <div className="mt-2 flex flex-col gap-0.5 text-xs">
           {filterItems.map((item) => {
@@ -419,7 +419,8 @@ function LeftSidebar({
                 }`}
               >
                 <span className="flex items-center gap-2 truncate">
-                  {item.icon}
+                  {/* Grey, and the accent only on the filter that is on */}
+                  <span className={`flex ${isSelected ? "text-emerald-400" : "text-zinc-500"}`}>{item.icon}</span>
                   <span className="truncate">{item.label}</span>
                 </span>
                 <span className="text-[11px] text-zinc-500 font-mono ml-1.5">{item.count}</span>

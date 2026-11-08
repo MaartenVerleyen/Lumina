@@ -537,8 +537,8 @@ export default function FaceMatchReviewModal({
         {/* Top Modal Header */}
         <div className="px-6 py-4 bg-raised border-b border-zinc-800 flex items-center justify-between shrink-0 gap-4 flex-wrap">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-indigo-500/15 border border-indigo-500/30 flex items-center justify-center">
-              <ScanFace className="w-5 h-5 text-indigo-400" />
+            <div className="w-9 h-9 rounded-xl bg-zinc-800/80 border border-zinc-700 flex items-center justify-center">
+              <ScanFace className="w-5 h-5 text-zinc-400" />
             </div>
             <div>
               <h2 className="text-base font-bold text-zinc-100 flex items-center gap-2">
@@ -609,7 +609,7 @@ export default function FaceMatchReviewModal({
                   onClick={() => setReviewMode("grid")}
                   className={`px-2.5 py-1.5 rounded-lg font-medium flex items-center gap-1.5 transition ${
                     reviewMode === "grid"
-                      ? "bg-indigo-600 text-white shadow"
+                      ? "bg-emerald-600 text-white shadow"
                       : "text-zinc-400 hover:text-zinc-200"
                   }`}
                 >
@@ -620,7 +620,7 @@ export default function FaceMatchReviewModal({
                   onClick={() => setReviewMode("spotlight")}
                   className={`px-2.5 py-1.5 rounded-lg font-medium flex items-center gap-1.5 transition ${
                     reviewMode === "spotlight"
-                      ? "bg-indigo-600 text-white shadow"
+                      ? "bg-emerald-600 text-white shadow"
                       : "text-zinc-400 hover:text-zinc-200"
                   }`}
                 >
@@ -659,21 +659,21 @@ export default function FaceMatchReviewModal({
               onClick={() => setView("unknown")}
               className={`w-full flex items-center gap-2.5 p-2 rounded-xl text-xs transition mb-1 ${
                 view === "unknown"
-                  ? "bg-indigo-600/20 text-indigo-200 border border-indigo-500/40 shadow-sm"
+                  ? "bg-emerald-500/15 text-emerald-200 border border-emerald-500/30 shadow-sm"
                   : "hover:bg-zinc-900 text-zinc-300 border border-zinc-800"
               }`}
               title="Groups of unnamed faces that look like the same person"
             >
               <div className="w-8 h-8 rounded-full bg-zinc-800 flex items-center justify-center shrink-0">
-                <Users className="w-4 h-4 text-indigo-300" />
+                <Users className="w-4 h-4 text-zinc-400" />
               </div>
               <div className="text-left">
                 <div className="font-semibold">Who is this?</div>
                 <div className="text-[11px] text-zinc-500">Name unknown faces in groups</div>
               </div>
             </button>
-            <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider px-2 py-1">
-              Confirmed People ({people.length})
+            <span className="text-xs font-medium text-zinc-500 px-2 py-1">
+              Confirmed people ({people.length})
             </span>
 
             {[
@@ -698,14 +698,14 @@ export default function FaceMatchReviewModal({
               return (
                 <div key={p.name} className="relative">
                   {firstHidden && (
-                    <span className="block text-[11px] font-bold text-zinc-600 uppercase tracking-wider px-2 pt-2 pb-1">
+                    <span className="block text-xs font-medium text-zinc-600 px-2 pt-2 pb-1">
                       Hidden
                     </span>
                   )}
                   <div
                     className={`flex items-center gap-1 pr-1 rounded-xl border text-xs transition ${
                       isSelected
-                        ? "bg-indigo-600/20 text-indigo-200 border-indigo-500/40 shadow-sm"
+                        ? "bg-emerald-500/15 text-emerald-200 border-emerald-500/30 shadow-sm"
                         : "hover:bg-zinc-900 text-zinc-300 border-transparent"
                     }`}
                   >
@@ -812,9 +812,9 @@ export default function FaceMatchReviewModal({
                             autoFocus
                             value={personMenuInput}
                             onChange={(e) => setPersonMenuInput(e.target.value)}
-                            className="flex-1 min-w-0 bg-zinc-950 border border-zinc-700 rounded px-2 py-1 text-zinc-200 select-text focus:outline-none focus:border-indigo-500"
+                            className="flex-1 min-w-0 bg-zinc-950 border border-zinc-700 rounded px-2 py-1 text-zinc-200 select-text focus:outline-none focus:border-emerald-500/80"
                           />
-                          <button type="submit" className="px-2 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white">
+                          <button type="submit" className="px-2 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white">
                             OK
                           </button>
                         </form>
@@ -902,7 +902,7 @@ export default function FaceMatchReviewModal({
                     await refreshPeople();
                     await loadDataForPerson(activePerson, "pending", true);
                   }}
-                    className="px-2.5 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-indigo-300 flex items-center gap-1 text-[11px] font-medium"
+                    className="px-2.5 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-400 flex items-center gap-1 text-[11px] font-medium"
                     title="Re-scan unassigned faces using your newly confirmed faces"
                   >
                     <RefreshCw className="w-3 h-3" />
@@ -1019,7 +1019,7 @@ export default function FaceMatchReviewModal({
             {/* Content Area */}
             {isLoading ? (
               <div className="flex-1 flex flex-col items-center justify-center gap-3 text-zinc-400">
-                <Loader2 className="w-8 h-8 animate-spin text-indigo-400" />
+                <Loader2 className="w-8 h-8 animate-spin text-zinc-400" />
                 <span className="text-xs font-mono">
                   Loading faces for "{activePerson}"...
                 </span>
@@ -1055,7 +1055,7 @@ export default function FaceMatchReviewModal({
                     await refreshPeople();
                     await loadDataForPerson(activePerson, "pending", true);
                   }}
-                    className="mt-2 px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold flex items-center gap-1.5 shadow"
+                    className="mt-2 px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center gap-1.5 shadow"
                   >
                     <RefreshCw className="w-3.5 h-3.5" />
                     <span>Scan for More Matches Using Newly Confirmed Faces</span>
@@ -1148,7 +1148,7 @@ export default function FaceMatchReviewModal({
                                 if (idx >= 0) setSpotlightIndex(idx);
                                 setReviewMode("spotlight");
                               }}
-                              className="absolute top-2.5 right-2.5 px-2.5 py-1 rounded-md bg-black/80 hover:bg-indigo-600 text-zinc-200 hover:text-white text-[11px] font-semibold opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 transition backdrop-blur shadow"
+                              className="absolute top-2.5 right-2.5 px-2.5 py-1 rounded-md bg-black/80 hover:bg-zinc-700 text-zinc-200 hover:text-white text-[11px] font-semibold opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 transition backdrop-blur shadow"
                               title="Inspect full photo context"
                             >
                               Full Photo
@@ -1264,7 +1264,7 @@ export default function FaceMatchReviewModal({
                           width: `${currentSpotlight.bbox_w * 100}%`,
                           height: `${currentSpotlight.bbox_h * 100}%`,
                         }}
-                        className="absolute rounded-md border-2 border-emerald-400 bg-emerald-500/20 shadow-[0_0_20px_rgba(16,185,129,0.75)] pointer-events-none"
+                        className="absolute rounded-md border-2 border-emerald-400 bg-emerald-500/20 pointer-events-none"
                       >
                         <span className="absolute -top-6 left-0 px-2 py-0.5 rounded bg-emerald-600 text-white text-[11px] font-bold whitespace-nowrap shadow">
                           {activePerson}? ({currentSpotlight.similarity}%)
@@ -1307,14 +1307,14 @@ export default function FaceMatchReviewModal({
                       <img
                         src={mediaUrl({ kind: "face", path: currentSpotlight.face_thumb })}
                         alt="Candidate face"
-                        className="w-44 h-44 rounded-2xl object-cover border-2 border-indigo-500/50 shadow-xl mt-2"
+                        className="w-44 h-44 rounded-2xl object-cover border-2 border-zinc-700 shadow-xl mt-2"
                       />
 
                       <div>
                         <div className="text-base font-bold text-zinc-100">
                           Is this <span className="text-emerald-400 capitalize">{activePerson}</span>?
                         </div>
-                        <div className="text-xs font-mono text-indigo-300 mt-0.5">
+                        <div className="text-xs font-mono text-zinc-400 mt-0.5">
                           Biometric Similarity: {currentSpotlight.similarity}%
                         </div>
                         <div

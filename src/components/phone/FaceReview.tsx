@@ -126,7 +126,7 @@ export function ReviewPerson({ lib, name, onBack }: { lib: LibraryState; name: s
                   >
                     {on && <Check className="w-4 h-4" />}
                   </span>
-                  <span className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent px-1.5 pb-1 pt-4 text-[10px] text-zinc-200 text-left truncate">
+                  <span className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent px-1.5 pb-1 pt-4 text-[11px] text-zinc-200 text-left truncate">
                     {c.current_person ? `Now ${c.current_person}` : c.similarity >= LIKELY ? "Likely" : "Maybe"}
                   </span>
                 </button>

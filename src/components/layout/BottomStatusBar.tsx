@@ -113,10 +113,10 @@ export default function BottomStatusBar({
             <button
               onClick={() => setIsJobsOpen((o) => !o)}
               aria-expanded={isJobsOpen}
-              className="flex items-center gap-1.5 px-2 py-0.5 rounded border border-indigo-500/30 bg-indigo-950/50 text-indigo-200 font-mono hover:bg-indigo-900/60 transition"
+              className="flex items-center gap-1.5 px-2 py-0.5 rounded border border-zinc-700 bg-zinc-800/80 text-zinc-200 font-mono hover:bg-zinc-700 transition"
               title="Background jobs: progress and cancel"
             >
-              <Loader2 className="w-3 h-3 animate-spin text-indigo-400" />
+              <Loader2 className="w-3 h-3 animate-spin text-zinc-400" />
               {single ? (
                 <span>
                   {single.label}
@@ -129,7 +129,7 @@ export default function BottomStatusBar({
 
             {isJobsOpen && (
               <div className="absolute left-0 bottom-full mb-2 w-96 bg-raised border border-zinc-700/80 rounded-xl shadow-2xl p-2 flex flex-col gap-1.5 z-50">
-                <span className="px-1.5 pt-0.5 text-[11px] font-bold text-zinc-500 uppercase tracking-wider">
+                <span className="px-1.5 pt-0.5 text-xs font-medium text-zinc-500">
                   Background jobs
                 </span>
                 {jobs.map((job) => {
@@ -159,9 +159,9 @@ export default function BottomStatusBar({
                       </div>
                       <div className="h-1.5 bg-zinc-950 rounded-full overflow-hidden">
                         {percent === null ? (
-                          <div className="h-full w-1/3 bg-indigo-500/70 rounded-full animate-pulse" />
+                          <div className="h-full w-1/3 bg-emerald-500/70 rounded-full animate-pulse" />
                         ) : (
-                          <div style={{ width: `${percent}%` }} className="h-full bg-indigo-500 rounded-full transition-all duration-300" />
+                          <div style={{ width: `${percent}%` }} className="h-full bg-emerald-500 rounded-full transition-all duration-300" />
                         )}
                       </div>
                       <div className="flex items-center justify-between gap-2 text-[11px] text-zinc-500 font-mono">
@@ -188,8 +188,8 @@ export default function BottomStatusBar({
           ["P", "Pick", "text-emerald-400", access.edit],
           ["X", "Reject", "text-red-400", access.edit],
           ["1-5", "Rate", "text-amber-400", access.edit],
-          ["C", "Compare", "text-indigo-400", true],
-          ["A", "AI Tag", "text-indigo-400", access.edit],
+          ["C", "Compare", "text-zinc-400", true],
+          ["A", "AI Tag", "text-zinc-400", access.edit],
         ] as [string, string, string, boolean][]).filter(([, , , shown]) => shown).map(([key, label, color]) => (
           <span key={key}>
             <kbd className={`px-1 py-0.2 bg-zinc-900 border border-zinc-800 rounded ${color}`}>{key}</kbd> {label}

@@ -185,7 +185,7 @@ function Card({
         {badge && <span className="absolute top-1.5 right-1.5 rounded-full bg-zinc-950/80 p-1">{badge}</span>}
       </div>
       <div className="pt-1.5 text-sm text-zinc-100 truncate">{title}</div>
-      <div className="text-[11px] text-zinc-500 truncate">{subtitle}</div>
+      <div className="text-xs text-zinc-500 tabular-nums truncate">{subtitle}</div>
     </button>
   );
 }

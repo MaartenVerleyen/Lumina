@@ -23,7 +23,7 @@ export function Page({ title, onBack, children }: { title: string; onBack: () =>
 export function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="mx-3 mt-4 rounded-2xl bg-raised/70 border border-zinc-800 px-4 py-3">
-      {title && <h2 className="text-[11px] uppercase tracking-wider text-zinc-500 pb-1">{title}</h2>}
+      {title && <h2 className="text-xs text-zinc-500 pb-1">{title}</h2>}
       {children}
     </section>
   );

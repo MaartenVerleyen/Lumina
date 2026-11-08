@@ -169,12 +169,12 @@ export default function BulkActionDock({
                 onKeyDown={(e) => e.stopPropagation()}
                 onChange={(e) => setBulkInput(e.target.value)}
                 placeholder="e.g. vacation, portrait..."
-                className="flex-1 bg-zinc-950 border border-zinc-800 rounded px-2.5 py-1 text-xs text-zinc-200 select-text focus:outline-none focus:border-indigo-500"
+                className="flex-1 bg-zinc-950 border border-zinc-800 rounded px-2.5 py-1 text-xs text-zinc-200 select-text focus:outline-none focus:border-emerald-500/80"
                 autoFocus
               />
               <button
                 type="submit"
-                className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded font-medium"
+                className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded font-medium"
               >
                 Add
               </button>
@@ -195,12 +195,12 @@ export default function BulkActionDock({
                 onKeyDown={(e) => e.stopPropagation()}
                 onChange={(e) => setBulkInput(e.target.value)}
                 placeholder="Person name..."
-                className="flex-1 bg-zinc-950 border border-zinc-800 rounded px-2.5 py-1 text-xs text-zinc-200 select-text focus:outline-none focus:border-indigo-500"
+                className="flex-1 bg-zinc-950 border border-zinc-800 rounded px-2.5 py-1 text-xs text-zinc-200 select-text focus:outline-none focus:border-emerald-500/80"
                 autoFocus
               />
               <button
                 type="submit"
-                className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded font-medium"
+                className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded font-medium"
               >
                 Assign
               </button>
@@ -238,10 +238,10 @@ export default function BulkActionDock({
                   onKeyDown={(e) => e.stopPropagation()}
                   onChange={(e) => setBulkInput(e.target.value)}
                   placeholder="New album name..."
-                  className="flex-1 bg-zinc-950 border border-zinc-800 rounded px-2.5 py-1 text-xs text-zinc-200 select-text focus:outline-none focus:border-indigo-500"
+                  className="flex-1 bg-zinc-950 border border-zinc-800 rounded px-2.5 py-1 text-xs text-zinc-200 select-text focus:outline-none focus:border-emerald-500/80"
                   autoFocus
                 />
-                <button type="submit" className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded font-medium">
+                <button type="submit" className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded font-medium">
                   Create
                 </button>
               </form>
@@ -453,7 +453,7 @@ export default function BulkActionDock({
           }}
           className="flex items-center gap-1 text-zinc-300 hover:text-white"
         >
-          <TagIcon className="w-3.5 h-3.5 text-indigo-400" />
+          <TagIcon className="w-3.5 h-3.5 text-zinc-400" />
           <span>Tag</span>
         </button>
 
@@ -466,7 +466,7 @@ export default function BulkActionDock({
             className="flex items-center gap-1 text-zinc-300 hover:text-white"
             title="Add the selected photos to an album"
           >
-            <BookImage className="w-3.5 h-3.5 text-indigo-400" />
+            <BookImage className="w-3.5 h-3.5 text-zinc-400" />
             <span>Album</span>
           </button>
         )}
@@ -480,7 +480,7 @@ export default function BulkActionDock({
             className="flex items-center gap-1 text-zinc-300 hover:text-white"
             title="Assign Person to selected photos"
           >
-            <User className="w-3.5 h-3.5 text-indigo-400" />
+            <User className="w-3.5 h-3.5 text-zinc-400" />
             <span>Person</span>
           </button>
         )}
@@ -593,7 +593,7 @@ export default function BulkActionDock({
             const targets = visiblePhotos.filter((p) => selectedHashes.has(p.hash));
             runBatchAiOnList(targets);
           }}
-          className="flex items-center gap-1 text-indigo-400 hover:text-indigo-300 font-medium"
+          className="flex items-center gap-1 text-zinc-400 hover:text-zinc-100 font-medium"
         >
           <Sparkles className="w-3.5 h-3.5" />
           <span>AI</span>

@@ -136,8 +136,8 @@ function HistogramCanvas({ imageSrc }: { imageSrc: string }) {
 
   return (
     <div className="flex flex-col gap-1 p-2 bg-zinc-900/90 rounded-xl border border-zinc-800">
-      <div className="flex items-center justify-between text-[11px] font-mono uppercase text-zinc-500 px-1">
-        <span>RGB + Luma Histogram</span>
+      <div className="flex items-center justify-between text-xs text-zinc-500 px-1">
+        <span>Histogram</span>
         <span className="flex items-center gap-1.5 font-bold">
           <span className="text-zinc-300">L</span>
           <span className="text-red-400">R</span>
@@ -354,7 +354,7 @@ function RightInspector({
                   }}
                   className={`absolute rounded-md border-2 transition cursor-pointer ${
                     isSelected
-                      ? "border-indigo-400 bg-indigo-500/20 shadow-[0_0_12px_rgba(99,102,241,0.6)]"
+                      ? "border-indigo-400 bg-indigo-500/20"
                       : face.person_name
                       ? "border-emerald-400/80 hover:border-emerald-300 bg-emerald-500/10"
                       : "border-amber-400/80 hover:border-amber-300 bg-amber-500/10"
@@ -411,7 +411,7 @@ function RightInspector({
               }}
               className={`absolute top-2.5 left-2.5 px-2.5 py-1 rounded-md text-[11px] font-semibold flex items-center gap-1 transition backdrop-blur shadow ${
                 isDrawingFace
-                  ? "bg-indigo-600 text-white"
+                  ? "bg-emerald-600 text-white"
                   : "bg-black/70 hover:bg-zinc-800 text-zinc-200 border border-white/10"
               }`}
             >
@@ -454,7 +454,7 @@ function RightInspector({
                 <Gauge className="w-3.5 h-3.5" />
                 <span>{activePhoto.shutter_speed || "--s"}</span>
               </div>
-              <div className="flex items-center gap-1 text-indigo-400" title="ISO Sensitivity">
+              <div className="flex items-center gap-1 text-zinc-400" title="ISO Sensitivity">
                 <Camera className="w-3.5 h-3.5" />
                 <span>{activePhoto.iso || "ISO --"}</span>
               </div>
@@ -486,15 +486,15 @@ function RightInspector({
         {/* Face Strip & Namer */}
         <div className="p-2.5 bg-zinc-900/90 border border-zinc-800 rounded-xl flex flex-col gap-2">
           <div className="flex items-center justify-between">
-            <span className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider flex items-center gap-1">
-              <ScanFace className="w-3.5 h-3.5 text-indigo-400" />
-              Faces in Photo ({activePhoto.faces.length})
+            <span className="text-xs font-medium text-zinc-400 flex items-center gap-1">
+              <ScanFace className="w-3.5 h-3.5 text-zinc-400" />
+              Faces ({activePhoto.faces.length})
             </span>
             {access.edit && (
             <button
               onClick={handleDetectFacesSingleOnnx}
               disabled={isDetectingSingleFace}
-              className="px-2 py-0.5 rounded bg-indigo-950/70 hover:bg-indigo-900 text-indigo-300 border border-indigo-500/40 text-[11px] font-semibold transition flex items-center gap-1"
+              className="px-2 py-0.5 rounded bg-zinc-800/80 hover:bg-zinc-700 text-zinc-400 border border-zinc-700 text-[11px] font-semibold transition flex items-center gap-1"
               title="Run Pure-Rust ONNX Neural Face Detector on this photo"
             >
               {isDetectingSingleFace ? (
@@ -528,7 +528,7 @@ function RightInspector({
                     }}
                     className={`relative flex items-center gap-1.5 p-1 pr-2 rounded-full border cursor-pointer transition shrink-0 ${
                       isSel
-                        ? "bg-indigo-500/25 border-indigo-400 text-indigo-200"
+                        ? "bg-emerald-500/15 border-emerald-500/50 text-emerald-200"
                         : f.person_name
                         ? "bg-emerald-950/40 border-emerald-500/40 text-emerald-200"
                         : "bg-zinc-950 border-zinc-800 text-zinc-400 hover:border-zinc-600"
@@ -615,11 +615,11 @@ function RightInspector({
                   ? "Enter person name..."
                   : "Click face or 'Draw Face Box'..."
               }
-              className="flex-1 bg-zinc-950 border border-zinc-800 rounded-lg px-2.5 py-1 text-xs text-zinc-200 select-text cursor-text focus:outline-none focus:border-indigo-500"
+              className="flex-1 bg-zinc-950 border border-zinc-800 rounded-lg px-2.5 py-1 text-xs text-zinc-200 select-text cursor-text focus:outline-none focus:border-emerald-500/80"
             />
             <button
               type="submit"
-              className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold shrink-0"
+              className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold shrink-0"
             >
               Save Name
             </button>
@@ -629,8 +629,8 @@ function RightInspector({
           {/* Assigned People Pills with 1-Click Unassign (X) */}
           {activePhoto.people.length > 0 && (
             <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-zinc-800/70">
-              <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider mr-1">
-                People:
+              <span className="text-xs font-medium text-zinc-500 mr-1">
+                People
               </span>
               {activePhoto.people.map((personName) => (
                 <span
@@ -695,9 +695,9 @@ function RightInspector({
                 onClick={() =>
                   onOpenFaceReviewModal(faceNameInput.trim() || activePhoto.people[0])
                 }
-                className="mt-1 w-full py-1.5 px-2.5 rounded-lg bg-indigo-950/60 hover:bg-indigo-900/80 border border-indigo-500/40 text-indigo-200 text-[11px] font-semibold flex items-center justify-center gap-1.5 transition shadow-sm"
+                className="mt-1 w-full py-1.5 px-2.5 rounded-lg bg-zinc-800/80 hover:bg-zinc-700 border border-zinc-700 text-zinc-200 text-[11px] font-semibold flex items-center justify-center gap-1.5 transition shadow-sm"
               >
-                <ScanFace className="w-3.5 h-3.5 text-indigo-400" />
+                <ScanFace className="w-3.5 h-3.5 text-zinc-400" />
                 <span>
                   Review Similar Faces for "{faceNameInput.trim() || activePhoto.people[0]}" ↗
                 </span>
@@ -786,8 +786,8 @@ function RightInspector({
 
         {/* Interactive 1-5 Star Rating Bar */}
         <div className="flex items-center justify-between pt-2 border-t border-zinc-800/80 text-xs">
-          <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider">
-            Star Rating (1–5)
+          <span className="text-xs font-medium text-zinc-500">
+            Rating
           </span>
           <div className="flex items-center gap-1">
             {[1, 2, 3, 4, 5].map((star) => {
@@ -880,7 +880,7 @@ function RightInspector({
             <button
               onClick={handleAiAnalyzeSingle}
               disabled={analyzingHashes.has(activePhoto.hash)}
-              className="flex items-center gap-1 px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-700 text-white rounded-lg text-xs font-medium shrink-0 shadow-sm"
+              className="flex items-center gap-1 px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 disabled:bg-zinc-700 text-white rounded-lg text-xs font-medium shrink-0 shadow-sm"
             >
               {analyzingHashes.has(activePhoto.hash) ? (
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -1049,14 +1049,14 @@ function RightInspector({
         )}
 
         {activePhoto.ai_caption && (
-          <div className="p-3 bg-indigo-950/25 border border-indigo-500/30 rounded-xl text-indigo-200 text-xs italic leading-relaxed">
+          <div className="p-3 bg-zinc-800/80 border border-zinc-700 rounded-xl text-zinc-200 text-xs italic leading-relaxed">
             "{activePhoto.ai_caption}"
           </div>
         )}
 
         {/* Tags */}
         <div className="flex flex-col gap-2 p-3 bg-zinc-900/90 rounded-xl border border-zinc-800">
-          <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider">
+          <span className="text-xs font-medium text-zinc-500">
             Tags ({activePhoto.tags.length})
           </span>
           <div className="flex flex-wrap gap-1.5">
@@ -1106,7 +1106,7 @@ function RightInspector({
               onKeyDown={(e) => e.stopPropagation()}
               onChange={(e) => setTagInput(e.target.value)}
               placeholder="Add tag..."
-              className="flex-1 bg-zinc-950 border border-zinc-800 rounded-lg px-2.5 py-1 text-xs text-zinc-200 select-text focus:outline-none focus:border-indigo-500"
+              className="flex-1 bg-zinc-950 border border-zinc-800 rounded-lg px-2.5 py-1 text-xs text-zinc-200 select-text focus:outline-none focus:border-emerald-500/80"
             />
             <button
               type="submit"
@@ -1120,9 +1120,9 @@ function RightInspector({
 
         {activePhoto.ocr_text && (
           <div className="p-3 bg-zinc-900/90 border border-zinc-800 rounded-xl flex flex-col gap-1 text-xs">
-            <span className="text-[11px] font-bold text-indigo-400 uppercase tracking-wider flex items-center gap-1.5">
+            <span className="text-xs font-medium text-zinc-400 flex items-center gap-1.5">
               <FileText className="w-3.5 h-3.5" />
-              Detected Text (OCR)
+              Text in the photo
             </span>
             <p className="font-mono text-zinc-200 text-[11px] select-text whitespace-pre-wrap">
               {activePhoto.ocr_text}

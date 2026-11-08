@@ -105,7 +105,7 @@ export default function GalleryModal({ target, onClose, onCreate }: GalleryModal
             from the folder, or upload the folder to any web host (for example Netlify Drop or GitHub Pages).
           </p>
           <label className="flex flex-col gap-1.5">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-zinc-500">Title</span>
+            <span className="text-xs font-medium text-zinc-500">Title</span>
             <input
               autoFocus
               value={s.title}
@@ -115,7 +115,7 @@ export default function GalleryModal({ target, onClose, onCreate }: GalleryModal
             />
           </label>
           <div className="flex flex-col gap-1.5">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-zinc-500">Save in</span>
+            <span className="text-xs font-medium text-zinc-500">Save in</span>
             <div className="flex items-center gap-2">
               <div className="flex-1 min-w-0 px-3 py-2 rounded-lg bg-zinc-950 border border-zinc-800 font-mono text-[11.5px] text-zinc-300 truncate">
                 {s.destDir || "Choose a folder"}
@@ -132,7 +132,7 @@ export default function GalleryModal({ target, onClose, onCreate }: GalleryModal
             </div>
           </div>
           <div className="flex flex-col gap-3">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-zinc-500">On the page</span>
+            <span className="text-xs font-medium text-zinc-500">On the page</span>
             <Option checked={s.captions} onChange={(v) => update({ captions: v })} label="Captions" hint="The AI captions, under each photo in full-screen view." />
             <Option checked={s.people} onChange={(v) => update({ people: v })} label="People's names" hint="Off by default: only share names when the people are fine with it." />
             <Option

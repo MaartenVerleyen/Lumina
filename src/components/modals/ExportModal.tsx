@@ -89,7 +89,7 @@ export default function ExportModal({ isOpen, count, defaultDir, onClose, onExpo
         </div>
 
         <div className="flex flex-col gap-1.5">
-          <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider">Size</span>
+          <span className="text-xs font-medium text-zinc-500">Size</span>
           {PRESETS.map((p) => (
             <label
               key={p.label}
@@ -143,7 +143,7 @@ export default function ExportModal({ isOpen, count, defaultDir, onClose, onExpo
         </label>
 
         <div className="flex flex-col gap-1.5">
-          <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider">Folder</span>
+          <span className="text-xs font-medium text-zinc-500">Folder</span>
           <div className="flex gap-1.5">
             <input
               value={settings.destDir}

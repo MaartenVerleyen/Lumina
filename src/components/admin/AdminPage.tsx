@@ -54,7 +54,7 @@ const LIBRARY_ROLES: Role[] = ["guest", "viewer", "uploader", "editor"];
 function Group({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="flex flex-col gap-1">
-      <h3 className="text-[11px] font-bold uppercase tracking-wider text-zinc-500 px-1 mb-1">{title}</h3>
+      <h3 className="text-xs font-medium text-zinc-500 px-1 mb-1">{title}</h3>
       <div className="rounded-xl border border-zinc-800 bg-zinc-950/40 divide-y divide-zinc-800/80">{children}</div>
     </section>
   );

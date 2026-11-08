@@ -119,7 +119,7 @@ export default function CommitModal({
               onChange={(e) => setSmartRenameOnCommit(e.target.checked)}
               className="rounded bg-zinc-800 border-zinc-700 text-emerald-500 focus:ring-0"
             />
-            <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+            <Sparkles className="w-3.5 h-3.5 text-zinc-400" />
             <span>
               <strong>Smart Chronological Rename</strong> on Commit (
               <code className="text-emerald-400">YYYY-MM-DD_HHMMSS_City_001.jpg</code>)

@@ -267,8 +267,8 @@ export function PeopleScreen({
 function GroupsButton({ title, onClick }: { title: string; onClick: () => void }) {
   return (
     <button onClick={onClick} className="w-full flex items-center gap-3 px-3 py-2.5 text-left active:bg-white/5">
-      <span className="w-10 h-10 shrink-0 rounded-full bg-amber-500/15 border border-amber-500/40 flex items-center justify-center">
-        <Users className="w-5 h-5 text-amber-300" />
+      <span className="w-10 h-10 shrink-0 rounded-full bg-zinc-800 border border-zinc-700 flex items-center justify-center">
+        <Users className="w-5 h-5 text-zinc-300" />
       </span>
       <span className="flex-1 min-w-0">
         <span className="block text-sm text-zinc-100">{title}</span>
@@ -326,7 +326,7 @@ function Face({
           )}
         </div>
         <div className="text-xs text-zinc-200 font-medium truncate max-w-full">{name}</div>
-        {count !== undefined && <div className="text-[10px] text-zinc-500 -mt-1">{count}</div>}
+        {count !== undefined && <div className="text-xs text-zinc-500 tabular-nums -mt-1">{count}</div>}
       </button>
       {pending > 0 && onPending && (
         <button

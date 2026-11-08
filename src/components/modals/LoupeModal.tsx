@@ -581,7 +581,7 @@ export default function LoupeModal({
               {/* AI Analyze in Loupe */}
               <button
                 onClick={handleAiAnalyzeSingle}
-                className="flex items-center gap-1 px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-white font-medium shadow"
+                className="flex items-center gap-1 px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 rounded-lg text-white font-medium shadow"
                 title="Run Local AI Vision Analysis (A)"
               >
                 <Sparkles className="w-3.5 h-3.5" />

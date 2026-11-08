@@ -557,7 +557,7 @@ const Thumb = memo(function Thumb({
         </Badge>
       ) : null}
       {video && !small && (
-        <span className="absolute bottom-1 right-1 flex items-center gap-0.5 rounded bg-black/60 px-1 text-[10px] font-semibold text-white">
+        <span className="absolute bottom-1 right-1 flex items-center gap-0.5 rounded bg-black/60 px-1 text-[11px] font-semibold text-white">
           <Play className="w-2.5 h-2.5 fill-white" />
           {formatDuration(photo.duration_ms)}
         </span>

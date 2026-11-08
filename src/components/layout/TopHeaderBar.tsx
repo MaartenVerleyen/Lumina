@@ -443,7 +443,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
               )}
               {onOpenRecentFolder && (localFolders ?? recentFolders).length > 0 && (
                 <div className="px-1 py-1.5 flex flex-col gap-1">
-                  <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-500 flex items-center gap-1.5 px-1">
+                  <div className="text-xs font-medium text-zinc-500 flex items-center gap-1.5 px-1">
                     <HardDrive className="w-3 h-3" /> On this PC
                   </div>
                   {(localFolders ?? recentFolders).map((path) => (
@@ -738,11 +738,11 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
         {/* Unified AI & Face Recognition Studio Split-Button */}
         {photos.length > 0 && access.edit && (
           <div ref={aiMenuRef} className="relative flex items-center">
-            <div className="flex items-center rounded-lg overflow-hidden border border-indigo-500/40 bg-indigo-950/60 shadow-sm">
+            <div className="flex items-center rounded-lg overflow-hidden border border-zinc-700 bg-zinc-800/80 shadow-sm">
               {/* Primary Action: Scan Faces or Show Progress */}
               {faceScanProgress ? (
-                <span className="flex items-center gap-1.5 px-2.5 py-1.5 text-indigo-200 text-xs font-mono">
-                  <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-400" />
+                <span className="flex items-center gap-1.5 px-2.5 py-1.5 text-zinc-200 text-xs font-mono">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-zinc-400" />
                   <span title={faceModelDownload ? `${faceModelDownload.downloaded_mb} / ${faceModelDownload.total_mb} MB (one-time download)` : undefined}>
                     {faceModelDownload
                       ? `Face models ${faceModelDownload.percent}%`
@@ -751,7 +751,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                   {access.admin && (
                   <button
                     onClick={handleCancelFaceScan}
-                    className="ml-1 p-0.5 rounded hover:bg-indigo-800/80 text-indigo-300 hover:text-white transition"
+                    className="ml-1 p-0.5 rounded hover:bg-zinc-700 text-zinc-400 hover:text-white transition"
                     title="Stop the face scan after the current batch (photos not yet scanned keep their faces)"
                     aria-label="Stop face scan"
                   >
@@ -762,10 +762,10 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
               ) : access.admin && (
                 <button
                   onClick={() => handleBatchScanFacesOnnx("all")}
-                  className="flex items-center gap-1.5 px-2.5 py-1.5 hover:bg-indigo-900/80 text-indigo-200 text-xs font-medium transition border-r border-indigo-500/30"
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 hover:bg-zinc-700 text-zinc-200 text-xs font-medium transition border-r border-zinc-700"
                   title="Find the faces in every photo and video of the library and match them with the people you named (only photos, only videos or only the visible ones: in the menu on the right)"
                 >
-                  <ScanFace className="w-3.5 h-3.5 text-indigo-400" />
+                  <ScanFace className="w-3.5 h-3.5 text-zinc-400" />
                   <span>Scan Faces</span>
                   {totalPendingFaceMatches > 0 && (
                     <span className="px-1.5 py-0.2 rounded-full bg-amber-500 text-zinc-950 font-mono text-[11px] font-bold">
@@ -806,7 +806,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
               ) : ollamaStatus?.running && !hasVisionModel ? (
                 <button
                   onClick={() => triggerModelPull(DEFAULT_AI_MODEL)}
-                  className="flex items-center gap-1.5 px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold transition"
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-white text-xs font-semibold transition"
                   title="No vision model installed yet: download one to use Batch AI"
                 >
                   <Download className="w-3.5 h-3.5" />
@@ -816,7 +816,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                 <button
                   onClick={() => runBatchAiOnList(visiblePhotos)}
                   disabled={!ollamaStatus}
-                  className="flex items-center gap-1.5 px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 text-white text-xs font-semibold transition"
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-60 text-white text-xs font-semibold transition"
                   title="Run AI captioning & tagging on the visible photos (photos that already have AI results are skipped unless you choose otherwise)"
                 >
                   <Sparkles className="w-3.5 h-3.5" />
@@ -827,13 +827,13 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
               {/* Dropdown Trigger for AI Engine / Model / VRAM / Face Review */}
               <button
                 onClick={() => setIsAiMenuOpen((p) => !p)}
-                className="px-1.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-indigo-100 border-l border-indigo-400/30 transition flex items-center gap-1"
+                className="px-1.5 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border-l border-zinc-700 transition flex items-center gap-1"
                 title="AI Model, GPU VRAM & Face Review Studio"
               >
                 <span
                   className={`w-1.5 h-1.5 rounded-full ${
                     ollamaStatus?.active_vram_model
-                      ? "bg-emerald-300 shadow-[0_0_6px_#6ee7b7]"
+                      ? "bg-emerald-300"
                       : ollamaStatus?.running
                       ? "bg-emerald-400"
                       : "bg-red-400"
@@ -851,10 +851,10 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                       setIsAiMenuOpen(false);
                       onOpenFaceReviewStudio();
                     }}
-                    className="w-full p-2.5 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/40 text-indigo-200 flex items-center justify-between transition"
+                    className="w-full p-2.5 rounded-xl bg-zinc-800/80 hover:bg-zinc-700 border border-zinc-700 text-zinc-200 flex items-center justify-between transition"
                   >
                     <span className="flex items-center gap-2 font-semibold">
-                      <ScanFace className="w-4 h-4 text-indigo-400" />
+                      <ScanFace className="w-4 h-4 text-zinc-400" />
                       <span>Open Face Match Review Studio</span>
                     </span>
                     {totalPendingFaceMatches > 0 && (
@@ -869,7 +869,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                 {access.admin && (
                 <>
                 <div className="flex flex-col gap-1">
-                  <span className="text-[11px] text-zinc-500 uppercase font-bold">Scan faces in</span>
+                  <span className="text-xs text-zinc-500 font-medium">Scan faces in</span>
                   <div className="grid grid-cols-2 gap-1">
                     {(
                       [
@@ -898,7 +898,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
 
                 <div className="flex items-center justify-between text-zinc-400 font-semibold text-[11px]">
                   <span className="flex items-center gap-1.5">
-                    <Cpu className="w-3.5 h-3.5 text-indigo-400" />
+                    <Cpu className="w-3.5 h-3.5 text-zinc-400" />
                     Ollama Vision Engine
                   </span>
                   {ollamaStatus?.running ? (
@@ -948,13 +948,13 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                   (hasVisionModel ? (
                     <>
                       <div className="flex flex-col gap-1">
-                        <label className="text-[11px] text-zinc-500 uppercase font-bold">
-                          Active Vision Model
+                        <label className="text-xs text-zinc-500 font-medium">
+                          Vision model
                         </label>
                         <select
                           value={aiModel}
                           onChange={(e) => setAiModel(e.target.value)}
-                          className="bg-zinc-950 border border-zinc-800 rounded-lg px-2 py-1.5 text-zinc-200 font-mono text-[11px] focus:outline-none focus:border-indigo-500"
+                          className="bg-zinc-950 border border-zinc-800 rounded-lg px-2 py-1.5 text-zinc-200 font-mono text-[11px] focus:outline-none focus:border-emerald-500/80"
                         >
                           {ollamaStatus.installed_models.map((m) => (
                             <option
@@ -1006,7 +1006,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                               }
                             }}
                             disabled={isLoadingVram}
-                            className="flex items-center gap-1 text-[11px] bg-indigo-950/60 border border-indigo-500/40 text-indigo-300 hover:bg-indigo-900/60 px-2.5 py-1 rounded-lg transition font-medium"
+                            className="flex items-center gap-1 text-[11px] bg-zinc-800/80 border border-zinc-700 text-zinc-400 hover:bg-zinc-700 px-2.5 py-1 rounded-lg transition font-medium"
                           >
                             <Cpu className="w-3 h-3" />
                             <span>{isLoadingVram ? "Loading..." : "Warm Up VRAM"}</span>
@@ -1020,7 +1020,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                         setIsAiMenuOpen(false);
                         triggerModelPull(DEFAULT_AI_MODEL);
                       }}
-                      className="w-full py-2 px-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-semibold flex items-center justify-center gap-1.5 shadow transition"
+                      className="w-full py-2 px-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-semibold flex items-center justify-center gap-1.5 shadow transition"
                     >
                       <Download className="w-3.5 h-3.5" />
                       <span>Download Qwen3-VL:8B</span>
@@ -1071,7 +1071,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                       }}
                       className={`px-2 py-0.5 rounded ${
                         !simpleMode
-                          ? "bg-indigo-500/20 text-indigo-300 font-bold"
+                          ? "bg-emerald-500/15 text-emerald-300 font-bold"
                           : "text-zinc-500"
                       }`}
                     >
@@ -1207,7 +1207,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                   }}
                   className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg hover:bg-zinc-800 text-zinc-200 transition text-left"
                 >
-                  <Sparkles className="w-4 h-4 text-indigo-300 shrink-0" />
+                  <Sparkles className="w-4 h-4 text-zinc-400 shrink-0" />
                   <span>Welcome Tour</span>
                 </button>
               )}

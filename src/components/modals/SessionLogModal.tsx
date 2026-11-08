@@ -123,7 +123,7 @@ export default function SessionLogModal({
                       : l.category === "DISK"
                       ? "bg-amber-500/10 text-amber-400 border border-amber-500/20"
                       : l.category === "AI"
-                      ? "bg-indigo-500/10 text-indigo-400 border border-indigo-500/20"
+                      ? "bg-zinc-800/80 text-zinc-400 border border-zinc-700"
                       : l.category === "PERF"
                       ? "bg-fuchsia-500/10 text-fuchsia-400 border border-fuchsia-500/20"
                       : l.category === "ERROR"

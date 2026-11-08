@@ -81,7 +81,7 @@ export function ServerLibraryList({ onOpen, compact = false }: { onOpen: (root: 
         const list = libraries[s.id];
         return (
           <div key={s.id} className="flex flex-col gap-1">
-            <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-500 flex items-center gap-1.5 px-1">
+            <div className="text-xs font-medium text-zinc-500 flex items-center gap-1.5 px-1">
               <Cloud className="w-3 h-3" /> On {s.label}
             </div>
             {!list && <div className="text-[12px] text-zinc-500 px-1">Listing…</div>}
@@ -148,7 +148,7 @@ export function ServersSettings() {
   return (
     <div className="flex flex-col gap-6">
       <section className="flex flex-col gap-1">
-        <h3 className="text-[11px] font-bold uppercase tracking-wider text-zinc-500 px-1 mb-1">Servers</h3>
+        <h3 className="text-xs font-medium text-zinc-500 px-1 mb-1">Servers</h3>
         <div className="rounded-xl border border-zinc-800 bg-zinc-950/40 divide-y divide-zinc-800/80">
           {servers.length === 0 && (
             <div className="px-4 py-3 text-[13px] text-zinc-400">
@@ -216,7 +216,7 @@ export function ServersSettings() {
       </section>
 
       <section className="flex flex-col gap-1">
-        <h3 className="text-[11px] font-bold uppercase tracking-wider text-zinc-500 px-1 mb-1">Thumbnail cache</h3>
+        <h3 className="text-xs font-medium text-zinc-500 px-1 mb-1">Thumbnail cache</h3>
         <div className="rounded-xl border border-zinc-800 bg-zinc-950/40 px-4 py-3 flex items-center justify-between gap-6">
           <div className="min-w-0">
             <div className="text-[13px] text-zinc-100 flex items-center gap-2">

@@ -152,7 +152,7 @@ export default function UnknownFaceClusters({
 
       {isLoading ? (
         <div className="flex-1 flex items-center justify-center gap-2 text-zinc-400 text-xs">
-          <Loader2 className="w-5 h-5 animate-spin text-indigo-400" />
+          <Loader2 className="w-5 h-5 animate-spin text-zinc-400" />
           <span>Grouping unknown faces…</span>
         </div>
       ) : clusters.length === 0 ? (
@@ -210,12 +210,12 @@ export default function UnknownFaceClusters({
                   value={names[index] || ""}
                   onChange={(e) => setNames((prev) => ({ ...prev, [index]: e.target.value }))}
                   placeholder="Who is this? (new or existing name)"
-                  className="flex-1 bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-zinc-200 focus:outline-none focus:border-indigo-500"
+                  className="flex-1 bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-zinc-200 focus:outline-none focus:border-emerald-500/80"
                 />
                 <button
                   type="submit"
                   disabled={!names[index]?.trim() || busy !== null}
-                  className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white font-semibold flex items-center gap-1.5"
+                  className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-semibold flex items-center gap-1.5"
                 >
                   {busy === index ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
                   <span>Name all {cluster.size}</span>

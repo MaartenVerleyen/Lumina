@@ -539,7 +539,7 @@ function Details({
         )}
         {shownFaces.length > 0 && (
           <div className="mt-4">
-            <div className="text-[11px] uppercase tracking-wider text-zinc-500 mb-2">People</div>
+            <div className="text-xs text-zinc-500 mb-2">People</div>
             <div className="flex gap-3 overflow-x-auto pb-1">
               {shownFaces.map((f) => (
                 <button
@@ -562,7 +562,7 @@ function Details({
         )}
         {!shownFaces.some((f) => f.person_name) && photo.people.length > 0 && (
           <div className="mt-4">
-            <div className="text-[11px] uppercase tracking-wider text-zinc-500 mb-1.5">People</div>
+            <div className="text-xs text-zinc-500 mb-1.5">People</div>
             <div className="flex flex-wrap gap-1.5">
               {photo.people.map((name) => (
                 <button
@@ -578,13 +578,13 @@ function Details({
         )}
         {photo.ai_caption && (
           <div className="mt-4">
-            <div className="text-[11px] uppercase tracking-wider text-zinc-500 mb-1">Caption</div>
+            <div className="text-xs text-zinc-500 mb-1">Caption</div>
             <p className="text-xs leading-relaxed text-zinc-300 select-text">{photo.ai_caption}</p>
           </div>
         )}
         {photo.tags.length > 0 && (
           <div className="mt-4">
-            <div className="text-[11px] uppercase tracking-wider text-zinc-500 mb-1.5">Tags</div>
+            <div className="text-xs text-zinc-500 mb-1.5">Tags</div>
             <div className="flex flex-wrap gap-1.5">
               {photo.tags.map((t) => (
                 <span key={t} className="px-2 py-0.5 rounded-full bg-zinc-800 text-[11px] text-zinc-300">

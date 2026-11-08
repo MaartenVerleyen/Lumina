@@ -133,7 +133,7 @@ export function PhotoContextMenu({
           }}
           className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-zinc-800 text-zinc-200 transition text-left"
         >
-          <Copy className="w-3.5 h-3.5 text-indigo-400" />
+          <Copy className="w-3.5 h-3.5 text-zinc-400" />
           <span>Copy Image (Full Resolution)</span>
         </button>
       )}
@@ -159,7 +159,7 @@ export function PhotoContextMenu({
             className="w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg hover:bg-zinc-800 text-zinc-200 transition text-left"
           >
             <span className="flex items-center gap-2">
-              <BookImage className="w-3.5 h-3.5 text-indigo-400" />
+              <BookImage className="w-3.5 h-3.5 text-zinc-400" />
               <span>Add to Album</span>
             </span>
             <ChevronRight className={`w-3.5 h-3.5 text-zinc-500 transition-transform ${albumsOpen ? "rotate-90" : ""}`} />
@@ -197,9 +197,9 @@ export function PhotoContextMenu({
                     else e.stopPropagation();
                   }}
                   placeholder="New album…"
-                  className="flex-1 min-w-0 bg-zinc-950 border border-zinc-700 rounded px-2 py-1 text-[11px] text-zinc-200 select-text focus:outline-none focus:border-indigo-500"
+                  className="flex-1 min-w-0 bg-zinc-950 border border-zinc-700 rounded px-2 py-1 text-[11px] text-zinc-200 select-text focus:outline-none focus:border-emerald-500/80"
                 />
-                <button type="submit" className="px-1.5 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-[11px]">
+                <button type="submit" className="px-1.5 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-[11px]">
                   Add
                 </button>
               </form>
@@ -253,9 +253,9 @@ export function PhotoContextMenu({
             onFindSimilar();
             onClose();
           }}
-          className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-indigo-950/60 text-indigo-200 transition text-left"
+          className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-zinc-700 text-zinc-200 transition text-left"
         >
-          <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+          <Sparkles className="w-3.5 h-3.5 text-zinc-400" />
           <span>Find Similar Photos</span>
         </button>
       )}
@@ -364,7 +364,7 @@ export function FolderContextMenu({
           }}
           className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-zinc-800 text-zinc-200 transition text-left"
         >
-          <FolderPlus className="w-3.5 h-3.5 text-indigo-400" />
+          <FolderPlus className="w-3.5 h-3.5 text-zinc-400" />
           <span>Create New Subfolder Here...</span>
         </button>
       )}

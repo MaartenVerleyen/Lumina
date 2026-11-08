@@ -47,7 +47,7 @@ export default function HealthXmpModal({
           <div className="p-5 flex flex-col gap-4 text-xs">
             <div className="grid grid-cols-3 gap-3">
               <div className="p-3 bg-zinc-900/80 border border-zinc-800 rounded-xl">
-                <div className="text-zinc-500 text-[11px] uppercase font-bold">Total Library</div>
+                <div className="text-zinc-500 text-xs font-medium">Library</div>
                 <div className="text-lg font-bold text-zinc-100 mt-0.5">
                   {healthStats.total_photos} photos
                 </div>
@@ -56,8 +56,8 @@ export default function HealthXmpModal({
                 </div>
               </div>
               <div className="p-3 bg-zinc-900/80 border border-zinc-800 rounded-xl">
-                <div className="text-zinc-500 text-[11px] uppercase font-bold">
-                  Burst Duplicates
+                <div className="text-zinc-500 text-xs font-medium">
+                  Burst duplicates
                 </div>
                 <div className="text-lg font-bold text-amber-300 mt-0.5">
                   {healthStats.duplicate_extras_count} extras
@@ -67,8 +67,8 @@ export default function HealthXmpModal({
                 </div>
               </div>
               <div className="p-3 bg-zinc-900/80 border border-zinc-800 rounded-xl">
-                <div className="text-zinc-500 text-[11px] uppercase font-bold">
-                  Thumb & Face Cache
+                <div className="text-zinc-500 text-xs font-medium">
+                  Thumbnail and face cache
                 </div>
                 <div className="text-lg font-bold text-zinc-100 mt-0.5">
                   {healthStats.cache_files_count} files
@@ -81,7 +81,7 @@ export default function HealthXmpModal({
 
             {healthStats.damaged_count > 0 && (
               <div className="p-3.5 bg-orange-950/40 border border-orange-500/40 rounded-xl flex flex-col gap-1.5">
-                <span className="text-[11px] font-bold text-orange-300 uppercase tracking-wider flex items-center gap-1.5">
+                <span className="text-xs font-medium text-orange-300 flex items-center gap-1.5">
                   <AlertTriangle className="w-3.5 h-3.5" />
                   {healthStats.damaged_count} damaged file(s)
                 </span>
@@ -128,8 +128,8 @@ export default function HealthXmpModal({
 
             {/* Camera Model Breakdown */}
             <div className="p-3.5 bg-zinc-900/60 border border-zinc-800 rounded-xl flex flex-col gap-2">
-              <span className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">
-                Top Cameras / Devices
+              <span className="text-xs font-medium text-zinc-400">
+                Top cameras and devices
               </span>
               <div className="flex flex-col gap-1.5">
                 {healthStats.camera_breakdown.map(([cam, cnt]) => (
