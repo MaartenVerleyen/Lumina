@@ -5,6 +5,7 @@ import { call, mediaUrl } from "../../api";
 import { useAccess } from "../auth/ServerGate";
 import { diskPathOf } from "../../utils/rawPairs";
 import { isVideo } from "../../utils/media";
+import { shutterLabel } from "../../utils/exposure";
 import LoupeVideo from "./LoupeVideo";
 import { useDialogFocus } from "../../hooks/useDialogFocus";
 import { useWheel } from "../../hooks/useWheel";
@@ -220,7 +221,7 @@ export default function LoupeModal({
           {!video && activePhoto.focal_length && (
             <span className="text-emerald-400 font-mono border-l border-zinc-800 pl-2.5">
               {activePhoto.focal_length} {activePhoto.aperture || ""}{" "}
-              {activePhoto.shutter_speed || ""} {activePhoto.iso || ""}
+              {shutterLabel(activePhoto.shutter_speed)} {activePhoto.iso || ""}
             </span>
           )}
         </div>

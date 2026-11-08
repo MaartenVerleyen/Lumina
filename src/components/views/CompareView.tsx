@@ -109,9 +109,9 @@ export default function CompareView({
       {/* Synchronized Compare Toolbar */}
       <div className="bg-panel border-b border-zinc-800 px-4 py-2 flex items-center justify-between text-xs gap-3 flex-wrap">
         <div className="flex items-center gap-3">
-          <span className="font-semibold text-emerald-300 flex items-center gap-1.5">
-            <Columns className="w-4 h-4 text-emerald-400" />
-            <span>Synchronized Compare ({comparePhotos.length} photos)</span>
+          <span className="font-medium text-zinc-200 flex items-center gap-1.5">
+            <Columns className="w-4 h-4 text-zinc-400" />
+            <span>Side by side ({comparePhotos.length} {comparePhotos.length === 1 ? "photo" : "photos"})</span>
           </span>
           {hiddenCount > 0 && (
             <span
@@ -123,9 +123,9 @@ export default function CompareView({
           )}
 
           {currentBurstIdx >= 0 && unresolvedBurstGroups.length > 0 && (
-            <div className="flex items-center gap-1.5 bg-amber-500/10 border border-amber-500/30 text-amber-300 px-2.5 py-0.5 rounded-lg font-mono text-[11px]">
+            <div className="flex items-center gap-1.5 bg-zinc-800/80 border border-zinc-700 text-zinc-300 px-2.5 py-0.5 rounded-lg text-[11px] tabular-nums">
               <span>
-                Burst #{currentGroupId} ({currentBurstIdx + 1} of {unresolvedBurstGroups.length} remaining)
+                Burst {currentGroupId} · {currentBurstIdx + 1} of {unresolvedBurstGroups.length}
               </span>
               <button
                 onClick={() => {
@@ -136,7 +136,7 @@ export default function CompareView({
                     ];
                   if (prev) jumpToBurstGroup(prev);
                 }}
-                className="p-0.5 hover:bg-amber-500/20 rounded"
+                className="p-0.5 hover:bg-zinc-700 rounded"
                 title="Previous Burst Group"
               >
                 <ChevronLeft className="w-3.5 h-3.5" />
@@ -149,7 +149,7 @@ export default function CompareView({
                     ];
                   if (next) jumpToBurstGroup(next);
                 }}
-                className="p-0.5 hover:bg-amber-500/20 rounded"
+                className="p-0.5 hover:bg-zinc-700 rounded"
                 title="Skip to Next Burst Group"
               >
                 <ChevronRight className="w-3.5 h-3.5" />
@@ -187,13 +187,13 @@ export default function CompareView({
             }}
             className="px-2.5 py-1 bg-zinc-900 hover:bg-zinc-800 rounded border border-zinc-800 text-zinc-400 hover:text-white"
           >
-            Reset 100%
+            Reset zoom
           </button>
           <button
             onClick={() => setViewMode("grid")}
             className="px-3 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded font-medium ml-2"
           >
-            Exit Compare (C)
+            Exit compare (C)
           </button>
         </div>
       </div>
@@ -323,7 +323,7 @@ export default function CompareView({
                     title="Keep this photo as Pick, stage the rest for _Trash, and auto-advance to the next burst group"
                   >
                     <Trophy className="w-3.5 h-3.5" />
-                    <span>Keep This & Trash Rest</span>
+                    <span>Keep this, trash the rest</span>
                   </button>
                   )}
                 </div>

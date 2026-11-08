@@ -7,6 +7,7 @@ import { openWith, saveToPhone, serverOf, sharePhotos } from "./share";
 import type { FaceInstance, PersonItem, PhotoItem } from "../../types/lumina";
 import { formatBytes, thumbSrc } from "../../utils/photoHelpers";
 import { isVideo } from "../../utils/media";
+import { shutterLabel } from "../../utils/exposure";
 import LoupeVideo from "../modals/LoupeVideo";
 import { useBackCloses } from "./navigation";
 
@@ -467,7 +468,7 @@ function Details({
   }
   const aperture = photo.aperture ? `f/${String(photo.aperture).replace(/^f\//, "")}` : "";
   // A phone's lens name often holds the aperture already ("5.96mm f/1.6")
-  const exposure = [aperture && !(photo.lens_model ?? "").includes(aperture) && aperture, photo.shutter_speed, photo.iso && `ISO ${String(photo.iso).replace(/^ISO\s*/i, "")}`]
+  const exposure = [aperture && !(photo.lens_model ?? "").includes(aperture) && aperture, shutterLabel(photo.shutter_speed), photo.iso && `ISO ${String(photo.iso).replace(/^ISO\s*/i, "")}`]
     .filter(Boolean)
     .join(" · ");
   return (

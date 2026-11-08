@@ -126,7 +126,7 @@ export default function PhotoToolbar({ lib }: { lib: LibraryState }) {
             {lib.selectedPeriodRange
               ? `${lib.selectedPeriodRange[0]} ➔ ${lib.selectedPeriodRange[1]}`
               : lib.simpleMode
-              ? "Filter by Date"
+              ? "Filter by date"
               : "Timeline"}
           </span>
           {lib.selectedPeriodRange && (

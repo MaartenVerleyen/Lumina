@@ -14,6 +14,14 @@ export interface ReleaseNotes {
 // Newest first. Add an entry for every release that should greet updating users with "What's new".
 export const RELEASE_NOTES: ReleaseNotes[] = [
   {
+    version: "5.4.0",
+    items: [
+      { title: "A calmer look", text: "One accent colour instead of many, grey icons, labels in plain sentence case instead of capitals, and quieter buttons and badges, so your photos stand out. The phone app gets the same treatment." },
+      { title: "Plainer words", text: "Buttons and menus say what they do: Find faces, Find more of Anna, Keep this, trash the rest, Place on the map." },
+      { title: "Shutter speeds read normally", text: "Some cameras store 1/60 s in a way Lumina showed as 0.0166666666666666s. It shows as 1/60s again, also for photos already in your library." },
+    ],
+  },
+  {
     version: "5.3.0",
     items: [
       { title: "Back works on the phone", text: "The phone's back button closes what you opened last (a photo's details, the photo, a person, an album) instead of closing the app, just like the arrow at the top left. From another tab it goes back to Photos." },

@@ -1,5 +1,6 @@
 import { thumbSrc } from "../../utils/photoHelpers";
 import { codecLabel, formatDuration, isVideo } from "../../utils/media";
+import { shutterLabel } from "../../utils/exposure";
 import { memo, useEffect, useRef } from "react";
 import { call, mediaUrl } from "../../api";
 import { PersonName } from "../people/PersonName";
@@ -452,7 +453,7 @@ function RightInspector({
               </div>
               <div className="flex items-center gap-1 text-zinc-400" title="Shutter speed">
                 <Gauge className="w-3.5 h-3.5" />
-                <span className="text-zinc-200">{activePhoto.shutter_speed || "--s"}</span>
+                <span className="text-zinc-200">{shutterLabel(activePhoto.shutter_speed) || "--s"}</span>
               </div>
               <div className="flex items-center gap-1 text-zinc-400" title="ISO">
                 <Camera className="w-3.5 h-3.5" />
@@ -938,7 +939,7 @@ function RightInspector({
               className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-zinc-900 hover:bg-zinc-800 border border-dashed border-zinc-700 text-zinc-300 hover:text-white transition"
             >
               <MapPin className="w-3 h-3 text-emerald-400" />
-              <span>+ Add Location</span>
+              <span>Add location</span>
             </button>
           )}
           {activePhoto.captured_at && (

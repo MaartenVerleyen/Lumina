@@ -18,8 +18,8 @@ export default function MapPane({ lib }: { lib: LibraryState }) {
           )}
           <span className="text-zinc-300">
             {lib.isPickingMapLocation
-              ? `Click anywhere on the map to assign GPS coordinates to ${lib.selectedHashes.size} selected photo(s)...`
-              : `Showing ${lib.gpsPhotosCount} geotagged photos on map.`}
+              ? `Click the map to place the ${lib.selectedHashes.size} selected ${lib.selectedHashes.size === 1 ? "photo" : "photos"} there`
+              : `${lib.gpsPhotosCount} photos with a location`}
           </span>
         </div>
         {access.edit && (
@@ -35,8 +35,8 @@ export default function MapPane({ lib }: { lib: LibraryState }) {
           <MapPin className="w-3.5 h-3.5" />
           <span>
             {lib.isPickingMapLocation
-              ? "Cancel Map Pick"
-              : `Click Map to Set GPS (${lib.selectedHashes.size})`}
+              ? "Cancel"
+              : "Place on the map"}
           </span>
         </button>
         )}

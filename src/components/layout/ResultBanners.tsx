@@ -39,17 +39,16 @@ export default function ResultBanners({ lib }: { lib: LibraryState }) {
 
       {(lib.smartFilter === "DUPLICATES" || lib.showAllBurstVersions) &&
         lib.duplicatePhotosCount > 0 && (
-          <div className="bg-amber-950/30 border-b border-amber-500/30 px-5 py-2 flex items-center justify-between shrink-0">
-            <span className="text-xs text-amber-200">
-              Comparing <strong>{lib.totalBurstGroups}</strong> Burst Groups (
-              {lib.duplicatePhotosCount} items):
+          <div className="bg-panel border-b border-zinc-800 px-5 py-2 flex items-center justify-between shrink-0">
+            <span className="text-xs text-zinc-300">
+              {lib.totalBurstGroups} {lib.totalBurstGroups === 1 ? "burst" : "bursts"}, {lib.duplicatePhotosCount} photos
             </span>
             {access.edit && (
             <button
               onClick={lib.handleKeepSharpestInAllGroups}
-              className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold shadow transition"
+              className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold transition"
             >
-              Keep Best & Stage Rest for _Trash
+              Keep the best, move the rest to _Trash
             </button>
             )}
           </div>
