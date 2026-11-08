@@ -41,7 +41,7 @@ export default function ShortcutsModal({ lib }: { lib: LibraryState }) {
                 ["1 – 5 / 0", "Set Star Rating / Clear Rating"],
                 ["6 / 7 / 8 / 9", "Red / Yellow / Green / Blue Label"],
                 ["[ / ]", "Rotate Left / Right 90°"],
-                ["B", "Toggle Pinboard Basket"],
+                ["B", "Toggle pinboard basket"],
                 ["A", "Run AI Vision on Active Photo"],
                 ["C / G / M", "Compare / Grid / Map View"],
                 ["Ctrl + 1 – 4", "Photos / Map / People / Collections"],

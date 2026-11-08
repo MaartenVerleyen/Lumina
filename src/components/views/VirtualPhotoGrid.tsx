@@ -314,7 +314,7 @@ const PhotoCard = memo(function PhotoCard({
       }`}
     >
       {grp && !isBurstExpanded && burstCount > 1 && (
-        <div className="absolute inset-x-2 -top-1 h-2 bg-amber-500/20 border-t border-amber-400/40 rounded-t-xl pointer-events-none z-20" />
+        <div className="absolute inset-x-2 -top-1 h-2 bg-white/5 border-t border-white/15 rounded-t-xl pointer-events-none z-20" />
       )}
 
       {/* Color Label Corner Ribbon */}
@@ -483,20 +483,20 @@ const PhotoCard = memo(function PhotoCard({
           {grp && burstCount > 1 && (
             <button
               onClick={(e) => toggleBurstGroupExpand(grp, e)}
-              className={`px-2 py-0.5 rounded-md backdrop-blur-md text-[11px] font-semibold border flex items-center gap-1 transition shadow ${
+              className={`px-2 py-0.5 rounded-md backdrop-blur-md text-[11px] font-semibold border flex items-center gap-1 transition-colors ${
                 isBurstExpanded
                   ? isSharpestPick
                     ? "bg-emerald-950/90 text-emerald-300 border-emerald-400/50 hover:bg-emerald-900"
-                    : "bg-amber-950/90 text-amber-300 border-amber-500/50 hover:bg-amber-900"
-                  : "bg-amber-500/90 text-zinc-950 border-amber-300 hover:bg-amber-400"
+                    : "bg-black/70 text-zinc-200 border-white/10 hover:bg-zinc-800"
+                  : "bg-black/70 text-zinc-100 border-white/10 hover:bg-zinc-800"
               }`}
             >
               {isBurstExpanded && isSharpestPick ? <Trophy className="w-3 h-3" /> : <Layers className="w-3 h-3" />}
               {isBurstExpanded ? (
-                <span>{isSharpestPick ? `Best (#${grp}) ▾` : `Burst #${grp} ▾`}</span>
+                <span>{isSharpestPick ? `Best of burst ${grp}` : `Burst ${grp}`}</span>
               ) : (
                 <span>
-                  {burstCount} {simpleMode ? "Similar" : "Burst"} ▸
+                  {burstCount} {simpleMode ? "similar" : "in burst"}
                 </span>
               )}
             </button>

@@ -331,7 +331,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
         <button
           onClick={() => setIsLeftCollapsed((p) => !p)}
           className="p-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 border border-zinc-800 transition"
-          title={isLeftCollapsed ? "Expand Left Sidebar" : "Collapse Left Sidebar"}
+          title={isLeftCollapsed ? "Expand left sidebar" : "Collapse left sidebar"}
         >
           {isLeftCollapsed ? (
             <PanelLeftOpen className="w-4 h-4" />
@@ -356,7 +356,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
               title={folder || "Open a photo library folder"}
             >
               <FolderOpen className="w-3.5 h-3.5 text-emerald-400" />
-              <span>{folder ? libraryName(folder) : "Open Library"}</span>
+              <span>{folder ? libraryName(folder) : "Open library"}</span>
               {folder && serverLabel && <span className="text-[11px] text-zinc-500">on {serverLabel}</span>}
             </button>
             {folder && (
@@ -405,7 +405,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
               >
                 <FolderOpen className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
                 <div>
-                  <div className="font-medium text-zinc-200">{serverLabel || folder === ALL_PHOTOS ? "Open a Folder on This PC..." : "Switch Library Folder..."}</div>
+                  <div className="font-medium text-zinc-200">{serverLabel || folder === ALL_PHOTOS ? "Open a Folder on This PC…" : "Switch library folder…"}</div>
                   <div className="text-[11px] text-zinc-500 truncate max-w-[180px]">
                     {serverLabel || folder === ALL_PHOTOS ? "Choose a folder" : folder}
                   </div>
@@ -421,7 +421,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                 >
                   <FolderInput className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
                   <div>
-                    <div className="font-medium text-zinc-200">Import Photos...</div>
+                    <div className="font-medium text-zinc-200">Import photos…</div>
                     <div className="text-[11px] text-zinc-500">From a memory card, drive or folder</div>
                   </div>
                 </button>
@@ -436,7 +436,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                 >
                   <Upload className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
                   <div>
-                    <div className="font-medium text-zinc-200">Upload Photos...</div>
+                    <div className="font-medium text-zinc-200">Upload photos…</div>
                     <div className="text-[11px] text-zinc-500">To {serverLabel}; or drop files and folders on the window</div>
                   </div>
                 </button>
@@ -495,7 +495,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
               >
                 <RefreshCw className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
                 <div>
-                  <div className="font-medium text-zinc-200">{platform.localFiles ? "Quick Rescan" : "Reload Library"}</div>
+                  <div className="font-medium text-zinc-200">{platform.localFiles ? "Quick rescan" : "Reload library"}</div>
                   <div className="text-[11px] text-zinc-500">
                     {platform.localFiles ? "Detect added/removed files & refresh EXIF" : "Get the latest from the server"}
                   </div>
@@ -511,7 +511,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
               >
                 <Zap className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
                 <div>
-                  <div className="font-medium text-zinc-200">Deep Reprocess Thumbnails</div>
+                  <div className="font-medium text-zinc-200">Deep reprocess thumbnails</div>
                   <div className="text-[11px] text-zinc-500">
                     Rebuild 360px thumbs, dHash & focus scores
                   </div>
@@ -565,7 +565,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
               onClick={handleUndo}
               disabled={!canUndo}
               className="p-1.5 rounded-md text-zinc-400 hover:text-white disabled:opacity-30 disabled:pointer-events-none transition"
-              title="Undo Last Action (Ctrl+Z)"
+              title="Undo last action (Ctrl+Z)"
             >
               <Undo2 className="w-3.5 h-3.5" />
             </button>
@@ -573,7 +573,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
               onClick={handleRedo}
               disabled={!canRedo}
               className="p-1.5 rounded-md text-zinc-400 hover:text-white disabled:opacity-30 disabled:pointer-events-none transition"
-              title="Redo Action (Ctrl+Y)"
+              title="Redo action (Ctrl+Y)"
             >
               <Redo2 className="w-3.5 h-3.5" />
             </button>
@@ -766,7 +766,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                   title="Find the faces in every photo and video of the library and match them with the people you named (only photos, only videos or only the visible ones: in the menu on the right)"
                 >
                   <ScanFace className="w-3.5 h-3.5 text-zinc-400" />
-                  <span>Scan Faces</span>
+                  <span>Scan faces</span>
                   {totalPendingFaceMatches > 0 && (
                     <span className="px-1.5 py-0.2 rounded-full bg-amber-500 text-zinc-950 font-mono text-[11px] font-bold">
                       +{totalPendingFaceMatches}
@@ -855,7 +855,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                   >
                     <span className="flex items-center gap-2 font-semibold">
                       <ScanFace className="w-4 h-4 text-zinc-400" />
-                      <span>Open Face Match Review Studio</span>
+                      <span>Review face matches</span>
                     </span>
                     {totalPendingFaceMatches > 0 && (
                       <span className="px-2 py-0.5 rounded-full bg-amber-500 text-zinc-950 font-mono text-[11px] font-bold">
@@ -972,7 +972,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                         <span className="text-[11px] text-zinc-400">
                           {ollamaStatus.active_vram_model
                             ? "Loaded in GPU VRAM"
-                            : "In Disk Cache"}
+                            : "In disk cache"}
                         </span>
                         {ollamaStatus.active_vram_model ? (
                           <button
@@ -1009,7 +1009,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                             className="flex items-center gap-1 text-[11px] bg-zinc-800/80 border border-zinc-700 text-zinc-400 hover:bg-zinc-700 px-2.5 py-1 rounded-lg transition font-medium"
                           >
                             <Cpu className="w-3 h-3" />
-                            <span>{isLoadingVram ? "Loading..." : "Warm Up VRAM"}</span>
+                            <span>{isLoadingVram ? "Loading…" : "Warm Up VRAM"}</span>
                           </button>
                         )}
                       </div>
@@ -1153,7 +1153,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                 >
                   <span className="flex items-center gap-2.5">
                     <FileText className="w-4 h-4 text-cyan-400 shrink-0" />
-                    <span>Session Activity Log</span>
+                    <span>Session activity log</span>
                   </span>
                   {sessionLogsCount > 0 && (
                     <span className="px-1.5 py-0.2 rounded-full bg-emerald-500/15 text-emerald-300 font-mono text-[11px]">
@@ -1173,7 +1173,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                 >
                   <span className="flex items-center gap-2.5">
                     <HelpCircle className="w-4 h-4 text-amber-400 shrink-0" />
-                    <span>Keyboard Shortcuts</span>
+                    <span>Keyboard shortcuts</span>
                   </span>
                   <kbd className="px-1.5 py-0.2 bg-zinc-950 border border-zinc-700 rounded text-[11px] font-mono text-zinc-400">
                     ?
@@ -1208,7 +1208,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                   className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg hover:bg-zinc-800 text-zinc-200 transition text-left"
                 >
                   <Sparkles className="w-4 h-4 text-zinc-400 shrink-0" />
-                  <span>Welcome Tour</span>
+                  <span>Welcome tour</span>
                 </button>
               )}
             </div>
@@ -1221,7 +1221,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
         <button
           onClick={() => setIsRightCollapsed((p) => !p)}
           className="p-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 border border-zinc-800 transition"
-          title={isRightCollapsed ? "Expand Right Inspector" : "Collapse Right Inspector"}
+          title={isRightCollapsed ? "Expand right inspector" : "Collapse right inspector"}
         >
           {isRightCollapsed ? (
             <PanelRightOpen className="w-4 h-4" />

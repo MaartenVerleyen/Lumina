@@ -535,7 +535,7 @@ export default function LoupeModal({
                   ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/40"
                   : "bg-zinc-800 text-zinc-300 hover:text-white"
               }`}
-              title="Toggle Pinboard Basket (B)"
+              title="Toggle pinboard basket (B)"
             >
               <Pin className="w-3.5 h-3.5 text-cyan-400" />
               <span>{localBasket ? "Pinned (B)" : "Pin (B)"}</span>

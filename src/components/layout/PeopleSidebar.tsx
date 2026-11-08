@@ -476,7 +476,7 @@ export default function PeopleSidebar({
         {visible.map(row)}
         {visible.length === 0 && (
           <p className="px-2 py-2 text-[11px] text-zinc-500">
-            {people.length === 0 ? "No one named yet: use “Who is this?” or Scan Faces." : "No one matches."}
+            {people.length === 0 ? "No one named yet: use “Who is this?” or Scan faces." : "No one matches."}
           </p>
         )}
 

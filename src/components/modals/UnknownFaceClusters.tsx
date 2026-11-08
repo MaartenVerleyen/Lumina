@@ -159,7 +159,7 @@ export default function UnknownFaceClusters({
         <div className="flex-1 flex flex-col items-center justify-center gap-2 text-center p-8 text-xs text-zinc-400">
           <Users className="w-8 h-8 text-zinc-600" />
           <span className="text-sm font-bold text-zinc-200">No groups of unknown faces</span>
-          <span>Every recurring face is either named or already suggested for someone. Run Scan Faces to find more.</span>
+          <span>Every recurring face is either named or already suggested for someone. Run Scan faces to find more.</span>
         </div>
       ) : (
         <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-3">

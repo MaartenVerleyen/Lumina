@@ -404,7 +404,7 @@ export default function CollectionsView({
       {(savedSearches.length > 0 || (q === "" && access.edit)) && (
         <section className="flex flex-col gap-3">
           <h2 className="text-xs font-medium text-zinc-400 flex items-center gap-2">
-            <Sparkles className="w-4 h-4 text-amber-300" /> Smart albums ({savedSearches.length})
+            <Sparkles className="w-4 h-4 text-zinc-400" /> Smart albums ({savedSearches.length})
           </h2>
           {savedSearches.length === 0 ? (
             <span className="text-xs text-zinc-500">
@@ -444,7 +444,7 @@ export default function CollectionsView({
       {years.length > 0 && (
         <section className="flex flex-col gap-3">
           <h2 className="text-xs font-medium text-zinc-400 flex items-center gap-2">
-            <Trophy className="w-4 h-4 text-amber-300" /> Best of
+            <Trophy className="w-4 h-4 text-zinc-400" /> Best of
           </h2>
           <span className="text-xs text-zinc-500 -mt-1">
             {bestOfFocus.starred.size > 0
@@ -467,7 +467,7 @@ export default function CollectionsView({
 
       <section className="flex flex-col gap-3">
         <h2 className="text-xs font-medium text-zinc-400 flex items-center gap-2">
-          <Plane className="w-4 h-4 text-sky-400" /> Trips & events ({tripEntries.length})
+          <Plane className="w-4 h-4 text-zinc-400" /> Trips & events ({tripEntries.length})
         </h2>
         {tripEntries.length === 0 && (
           <span className="text-xs text-zinc-500">Trips and events appear automatically from capture dates and GPS.</span>

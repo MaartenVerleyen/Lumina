@@ -203,7 +203,7 @@ export default function BottomStatusBar({
           <button
             onClick={onOpenSessionLog}
             className="flex items-center gap-1 text-[11px] text-zinc-400 hover:text-emerald-300 font-mono transition"
-            title="Open Session Activity Log (Ctrl+L)"
+            title="Open session activity log (Ctrl+L)"
           >
             <FileText className="w-3 h-3 text-emerald-400" />
             <span>Session Log ({sessionLogsCount})</span>

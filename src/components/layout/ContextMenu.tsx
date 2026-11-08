@@ -134,7 +134,7 @@ export function PhotoContextMenu({
           className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-zinc-800 text-zinc-200 transition text-left"
         >
           <Copy className="w-3.5 h-3.5 text-zinc-400" />
-          <span>Copy Image (Full Resolution)</span>
+          <span>Copy image (Full resolution)</span>
         </button>
       )}
 
@@ -147,7 +147,7 @@ export function PhotoContextMenu({
           className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-zinc-800 text-zinc-300 transition text-left"
         >
           <FileText className="w-3.5 h-3.5 text-zinc-400" />
-          <span>Copy File Path</span>
+          <span>Copy file path</span>
         </button>
       )}
 
@@ -256,7 +256,7 @@ export function PhotoContextMenu({
           className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-zinc-700 text-zinc-200 transition text-left"
         >
           <Sparkles className="w-3.5 h-3.5 text-zinc-400" />
-          <span>Find Similar Photos</span>
+          <span>Find similar photos</span>
         </button>
       )}
 
@@ -365,7 +365,7 @@ export function FolderContextMenu({
           className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-zinc-800 text-zinc-200 transition text-left"
         >
           <FolderPlus className="w-3.5 h-3.5 text-zinc-400" />
-          <span>Create New Subfolder Here...</span>
+          <span>New subfolder here…</span>
         </button>
       )}
     </div>

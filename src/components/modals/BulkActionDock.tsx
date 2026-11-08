@@ -142,9 +142,9 @@ export default function BulkActionDock({
             <span>
               {activeBulkPopover === "tag" && "Add Tag to Selection"}
               {activeBulkPopover === "person" && "Assign Person to Selection"}
-              {activeBulkPopover === "move" && "Stage Move Selection"}
-              {activeBulkPopover === "location" && "Set Manual Location (City/GPS)"}
-              {activeBulkPopover === "time" && "Shift Capture Timestamps (± Hours / Min)"}
+              {activeBulkPopover === "move" && "Stage move selection"}
+              {activeBulkPopover === "location" && "Set manual location (City/GPS)"}
+              {activeBulkPopover === "time" && "Shift capture times"}
               {activeBulkPopover === "album" && "Add Selection to an Album"}
             </span>
             <button
@@ -168,7 +168,7 @@ export default function BulkActionDock({
                 value={bulkInput}
                 onKeyDown={(e) => e.stopPropagation()}
                 onChange={(e) => setBulkInput(e.target.value)}
-                placeholder="e.g. vacation, portrait..."
+                placeholder="e.g. vacation, portrait…"
                 className="flex-1 bg-zinc-950 border border-zinc-800 rounded px-2.5 py-1 text-xs text-zinc-200 select-text focus:outline-none focus:border-emerald-500/80"
                 autoFocus
               />
@@ -194,7 +194,7 @@ export default function BulkActionDock({
                 value={bulkInput}
                 onKeyDown={(e) => e.stopPropagation()}
                 onChange={(e) => setBulkInput(e.target.value)}
-                placeholder="Person name..."
+                placeholder="Person name…"
                 className="flex-1 bg-zinc-950 border border-zinc-800 rounded px-2.5 py-1 text-xs text-zinc-200 select-text focus:outline-none focus:border-emerald-500/80"
                 autoFocus
               />
@@ -237,7 +237,7 @@ export default function BulkActionDock({
                   value={bulkInput}
                   onKeyDown={(e) => e.stopPropagation()}
                   onChange={(e) => setBulkInput(e.target.value)}
-                  placeholder="New album name..."
+                  placeholder="New album name…"
                   className="flex-1 bg-zinc-950 border border-zinc-800 rounded px-2.5 py-1 text-xs text-zinc-200 select-text focus:outline-none focus:border-emerald-500/80"
                   autoFocus
                 />
@@ -281,7 +281,7 @@ export default function BulkActionDock({
                 value={cityQuery}
                 onChange={(e) => handleSearchCities(e.target.value)}
                 onKeyDown={(e) => e.stopPropagation()}
-                placeholder="Search city (e.g. Meise, Paris, Brussels)..."
+                placeholder="Search city (e.g. Meise, Paris, Brussels)…"
                 className="bg-zinc-950 border border-zinc-800 rounded px-2.5 py-1 text-xs text-zinc-200 focus:outline-none focus:border-emerald-500"
                 autoFocus
               />
@@ -432,14 +432,14 @@ export default function BulkActionDock({
           <button
             onClick={() => handleRotateSelection(-90)}
             className="p-1 hover:bg-zinc-800 rounded text-zinc-400 hover:text-white"
-            title="Rotate Left ([)"
+            title="Rotate left ([)"
           >
             <RotateLeft className="w-3.5 h-3.5" />
           </button>
           <button
             onClick={() => handleRotateSelection(90)}
             className="p-1 hover:bg-zinc-800 rounded text-zinc-400 hover:text-white"
-            title="Rotate Right (])"
+            title="Rotate right (])"
           >
             <RotateCw className="w-3.5 h-3.5" />
           </button>
@@ -553,7 +553,7 @@ export default function BulkActionDock({
         <button
           onClick={() => handleToggleBasketSelection()}
           className="flex items-center gap-1 text-zinc-300 hover:text-white"
-          title="Toggle Pinboard Basket (B)"
+          title="Toggle pinboard basket (B)"
         >
           <Pin className="w-3.5 h-3.5 text-cyan-400" />
           <span>Pin</span>

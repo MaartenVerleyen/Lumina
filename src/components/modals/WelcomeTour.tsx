@@ -97,7 +97,7 @@ const TOUR: TourStep[] = [
     accent: "emerald",
     eyebrow: "People",
     title: "Name a face once",
-    text: "Scan Faces finds the people in your photos. Name someone once and Lumina suggests them in all your other photos. Review the matches in the People tab.",
+    text: "Scan faces finds the people in your photos. Name someone once and Lumina suggests them in all your other photos. Review the matches in the People tab.",
     examples: ["(emma or lucas) and noah", "anna and not bob"],
     image: peopleShot,
     alt: "The People tab filtered to photos of several people",

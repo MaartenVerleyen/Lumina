@@ -240,7 +240,7 @@ function LeftSidebar({
   const filterItems = [
     {
       id: "ALL",
-      label: videosCount > 0 ? "All" : "All Photos",
+      label: videosCount > 0 ? "All" : "All photos",
       count: shownCount,
       icon: <Camera className="w-3.5 h-3.5" />,
       hideInSimple: false,
@@ -265,21 +265,21 @@ function LeftSidebar({
       : []),
     {
       id: "PICKS",
-      label: simpleMode ? "Kept Photos (P)" : "Picks (P)",
+      label: simpleMode ? "Kept photos (P)" : "Picks (P)",
       count: picksCount,
       icon: <Flag className="w-3.5 h-3.5" />,
       hideInSimple: false,
     },
     {
       id: "BASKET",
-      label: simpleMode ? "Saved to Pinboard" : "Pinboard Basket (B)",
+      label: simpleMode ? "Saved to pinboard" : "Pinboard basket (B)",
       count: basketCount,
       icon: <Pin className="w-3.5 h-3.5" />,
       hideInSimple: false,
     },
     {
       id: "REJECTS",
-      label: simpleMode ? "To Delete (X)" : "Rejects (X)",
+      label: simpleMode ? "To delete (X)" : "Rejects (X)",
       count: rejectsCount,
       icon: <XCircle className="w-3.5 h-3.5" />,
       hideInSimple: false,
@@ -293,7 +293,7 @@ function LeftSidebar({
     },
     {
       id: "AI_TAGGED",
-      label: "AI Tagged",
+      label: "AI tagged",
       count: aiTaggedCount,
       icon: <BrainCircuit className="w-3.5 h-3.5" />,
       hideInSimple: true,
@@ -322,22 +322,22 @@ function LeftSidebar({
     {
       id: "DUPLICATES",
       label: simpleMode
-        ? `Similar Shots (${totalBurstGroups})`
-        : `Burst Groups (${totalBurstGroups})`,
+        ? `Similar shots (${totalBurstGroups})`
+        : `Burst groups (${totalBurstGroups})`,
       count: duplicatePhotosCount,
       icon: <Layers className="w-3.5 h-3.5" />,
       hideInSimple: false,
     },
     {
       id: "HAS_OCR",
-      label: simpleMode ? "Photos with Text" : "Has Text (OCR)",
+      label: simpleMode ? "Photos with text" : "Has text",
       count: ocrCount,
       icon: <FileText className="w-3.5 h-3.5" />,
       hideInSimple: false,
     },
     {
       id: "HAS_GPS",
-      label: simpleMode ? "Photos on Map" : "Has GPS Location",
+      label: simpleMode ? "Photos on the map" : "Has a location",
       count: gpsPhotosCount,
       icon: <MapPin className="w-3.5 h-3.5" />,
       hideInSimple: false,
@@ -346,7 +346,7 @@ function LeftSidebar({
       ? [
           {
             id: "EYES_CLOSED",
-            label: "Eyes Closed",
+            label: "Eyes closed",
             count: eyesClosedCount,
             icon: <EyeOff className="w-3.5 h-3.5" />,
             hideInSimple: false,
@@ -357,7 +357,7 @@ function LeftSidebar({
       ? [
           {
             id: "SOFT_FOCUS",
-            label: "Out of Focus",
+            label: "Out of focus",
             count: softFocusCount,
             icon: <Focus className="w-3.5 h-3.5" />,
             hideInSimple: false,
@@ -368,7 +368,7 @@ function LeftSidebar({
       ? [
           {
             id: "STAGED",
-            label: simpleMode ? "Pending Folder Moves" : "Staged Moves",
+            label: simpleMode ? "Pending folder moves" : "Staged moves",
             count: stagedPhotosCount,
             icon: <Package className="w-3.5 h-3.5" />,
             hideInSimple: false,
@@ -421,7 +421,7 @@ function LeftSidebar({
                 <span className="flex items-center gap-2 truncate">
                   {/* Grey, and the accent only on the filter that is on */}
                   <span className={`flex ${isSelected ? "text-emerald-400" : "text-zinc-500"}`}>{item.icon}</span>
-                  <span className="truncate">{item.label}</span>
+                  <FilterLabel label={item.label} />
                 </span>
                 <span className="text-[11px] text-zinc-500 font-mono ml-1.5">{item.count}</span>
               </button>
@@ -504,3 +504,15 @@ function LeftSidebar({
 }
 
 export default memo(LeftSidebar);
+
+// "Picks (P)": the name, and its shortcut as a small keycap
+function FilterLabel({ label }: { label: string }) {
+  const m = label.match(/^(.*) \(([A-Z])\)$/);
+  if (!m) return <span className="truncate">{label}</span>;
+  return (
+    <span className="flex items-center gap-1.5 min-w-0">
+      <span className="truncate">{m[1]}</span>
+      <kbd className="px-1 rounded border border-zinc-700 text-[11px] leading-[14px] font-mono text-zinc-500">{m[2]}</kbd>
+    </span>
+  );
+}

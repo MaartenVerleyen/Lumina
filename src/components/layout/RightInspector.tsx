@@ -416,7 +416,7 @@ function RightInspector({
               }`}
             >
               <Crosshair className="w-3 h-3" />
-              <span>{isDrawingFace ? "Drag over a face..." : "Draw Face Box"}</span>
+              <span>{isDrawingFace ? "Drag over a face…" : "Draw face box"}</span>
             </button>
           )}
 
@@ -440,23 +440,23 @@ function RightInspector({
           activePhoto.shutter_speed ||
           activePhoto.iso ||
           activePhoto.lens_model) && (
-          <div className="flex flex-col gap-1.5 p-2.5 bg-zinc-950 border border-zinc-800 rounded-xl text-xs font-mono">
+          <div className="flex flex-col gap-1.5 p-2.5 bg-zinc-950 border border-zinc-800 rounded-xl text-xs font-mono tabular-nums">
             <div className="flex items-center justify-between text-zinc-200">
-              <div className="flex items-center gap-1 text-emerald-400" title="Focal Length">
+              <div className="flex items-center gap-1 text-zinc-400" title="Focal length">
                 <Compass className="w-3.5 h-3.5" />
-                <span>{activePhoto.focal_length || "--mm"}</span>
+                <span className="text-zinc-200">{activePhoto.focal_length || "--mm"}</span>
               </div>
-              <div className="flex items-center gap-1 text-amber-400" title="Aperture">
+              <div className="flex items-center gap-1 text-zinc-400" title="Aperture">
                 <Aperture className="w-3.5 h-3.5" />
-                <span>{activePhoto.aperture || "f/--"}</span>
+                <span className="text-zinc-200">{activePhoto.aperture || "f/--"}</span>
               </div>
-              <div className="flex items-center gap-1 text-cyan-400" title="Shutter Speed">
+              <div className="flex items-center gap-1 text-zinc-400" title="Shutter speed">
                 <Gauge className="w-3.5 h-3.5" />
-                <span>{activePhoto.shutter_speed || "--s"}</span>
+                <span className="text-zinc-200">{activePhoto.shutter_speed || "--s"}</span>
               </div>
-              <div className="flex items-center gap-1 text-zinc-400" title="ISO Sensitivity">
+              <div className="flex items-center gap-1 text-zinc-400" title="ISO">
                 <Camera className="w-3.5 h-3.5" />
-                <span>{activePhoto.iso || "ISO --"}</span>
+                <span className="text-zinc-200">{activePhoto.iso || "ISO --"}</span>
               </div>
             </div>
             {activePhoto.lens_model && (
@@ -494,8 +494,8 @@ function RightInspector({
             <button
               onClick={handleDetectFacesSingleOnnx}
               disabled={isDetectingSingleFace}
-              className="px-2 py-0.5 rounded bg-zinc-800/80 hover:bg-zinc-700 text-zinc-400 border border-zinc-700 text-[11px] font-semibold transition flex items-center gap-1"
-              title="Run Pure-Rust ONNX Neural Face Detector on this photo"
+              className="px-2 py-0.5 rounded bg-zinc-800/80 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 text-[11px] font-semibold transition flex items-center gap-1"
+              title="Find the faces in this photo"
             >
               {isDetectingSingleFace ? (
                 <Loader2 className="w-3 h-3 animate-spin" />
@@ -504,10 +504,8 @@ function RightInspector({
               )}
               <span>
                 {isDetectingSingleFace
-                  ? "Scanning..."
-                  : simpleMode
-                  ? "Find Faces"
-                  : "Detect Faces (ONNX)"}
+                  ? "Scanning…"
+                  : "Find faces"}
               </span>
             </button>
             )}
@@ -612,8 +610,8 @@ function RightInspector({
               onChange={(e) => setFaceNameInput(e.target.value)}
               placeholder={
                 selectedFaceId || drawnBox
-                  ? "Enter person name..."
-                  : "Click face or 'Draw Face Box'..."
+                  ? "Enter person name…"
+                  : "Click face or “Draw face box”…"
               }
               className="flex-1 bg-zinc-950 border border-zinc-800 rounded-lg px-2.5 py-1 text-xs text-zinc-200 select-text cursor-text focus:outline-none focus:border-emerald-500/80"
             />
@@ -621,7 +619,7 @@ function RightInspector({
               type="submit"
               className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold shrink-0"
             >
-              Save Name
+              Save name
             </button>
           </form>
           )}
@@ -699,7 +697,7 @@ function RightInspector({
               >
                 <ScanFace className="w-3.5 h-3.5 text-zinc-400" />
                 <span>
-                  Review Similar Faces for "{faceNameInput.trim() || activePhoto.people[0]}" ↗
+                  Find more of {faceNameInput.trim() || activePhoto.people[0]}
                 </span>
               </button>
             )}
@@ -720,7 +718,7 @@ function RightInspector({
                   ? "bg-emerald-600 text-white shadow-sm"
                   : "bg-zinc-800 text-zinc-400 hover:text-emerald-300"
               }`}
-              title="Set Pick Flag (P)"
+              title="Set pick flag (P)"
             >
               <Flag className="w-3.5 h-3.5" />
               <span>Pick</span>
@@ -732,7 +730,7 @@ function RightInspector({
                   ? "bg-red-600 text-white shadow-sm"
                   : "bg-zinc-800 text-zinc-400 hover:text-red-300"
               }`}
-              title="Set Reject Flag (X)"
+              title="Set reject flag (X)"
             >
               <XCircle className="w-3.5 h-3.5" />
               <span>Reject</span>
@@ -744,14 +742,14 @@ function RightInspector({
             <button
               onClick={() => handleRotateSelection(-90)}
               className="p-1.5 bg-zinc-800 hover:bg-zinc-700 rounded text-zinc-400 hover:text-white"
-              title="Rotate Left ([)"
+              title="Rotate left ([)"
             >
               <RotateLeft className="w-3.5 h-3.5" />
             </button>
             <button
               onClick={() => handleRotateSelection(90)}
               className="p-1.5 bg-zinc-800 hover:bg-zinc-700 rounded text-zinc-400 hover:text-white"
-              title="Rotate Right (])"
+              title="Rotate right (])"
             >
               <RotateCw className="w-3.5 h-3.5" />
             </button>
@@ -887,7 +885,7 @@ function RightInspector({
               ) : (
                 <Sparkles className="w-3.5 h-3.5" />
               )}
-              <span>{analyzingHashes.has(activePhoto.hash) ? "Tagging..." : "AI (A)"}</span>
+              <span>{analyzingHashes.has(activePhoto.hash) ? "Tagging…" : "AI (A)"}</span>
             </button>
           )}
         </div>
@@ -1001,7 +999,7 @@ function RightInspector({
                   setInspectorLocationQuery(e.target.value);
                   handleSearchCities(e.target.value);
                 }}
-                placeholder="City or place (e.g. Meise, Paris)..."
+                placeholder="City or place (e.g. Meise, Paris)…"
                 className="flex-1 bg-zinc-950 border border-zinc-800 rounded-lg px-2.5 py-1 text-xs text-zinc-200 select-text focus:outline-none focus:border-emerald-500"
                 autoFocus
               />
@@ -1105,7 +1103,7 @@ function RightInspector({
               value={tagInput}
               onKeyDown={(e) => e.stopPropagation()}
               onChange={(e) => setTagInput(e.target.value)}
-              placeholder="Add tag..."
+              placeholder="Add tag…"
               className="flex-1 bg-zinc-950 border border-zinc-800 rounded-lg px-2.5 py-1 text-xs text-zinc-200 select-text focus:outline-none focus:border-emerald-500/80"
             />
             <button

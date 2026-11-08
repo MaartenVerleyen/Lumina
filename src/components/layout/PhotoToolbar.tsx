@@ -192,7 +192,7 @@ export default function PhotoToolbar({ lib }: { lib: LibraryState }) {
             title="Expand or collapse all burst / duplicate stacks"
           >
             <Layers className="w-3.5 h-3.5 text-amber-400" />
-            <span>{lib.showAllBurstVersions ? "Collapse Bursts" : lib.simpleMode ? "Show Similar Shots" : "Show All Bursts"}</span>
+            <span>{lib.showAllBurstVersions ? "Collapse bursts" : lib.simpleMode ? "Show similar shots" : "Show all bursts"}</span>
           </button>
         )}
 
@@ -210,7 +210,7 @@ export default function PhotoToolbar({ lib }: { lib: LibraryState }) {
           title="Compare the selected photos side by side (C)"
         >
           <Columns className="w-3.5 h-3.5" />
-          <span>{lib.viewMode === "compare" ? "Exit Compare" : "Compare"}</span>
+          <span>{lib.viewMode === "compare" ? "Exit compare" : "Compare"}</span>
         </button>
 
         <button
