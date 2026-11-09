@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useLayoutEffect, useCallback, useRef } from "react";
 import UnknownFaceClusters from "./UnknownFaceClusters";
+import SpotlightPhoto from "./SpotlightPhoto";
 import { call, mediaUrl } from "../../api";
 import { confirmDialog, isConfirmOpen } from "../../confirm";
 import { useDialogFocus } from "../../hooks/useDialogFocus";
@@ -448,8 +449,9 @@ export default function FaceMatchReviewModal({
   useEffect(() => {
     if (!isOpen) return;
     function onKeyDown(e: KeyboardEvent) {
-      // Listens in the capture phase, so it must stand aside for a confirmation on top of it
-      if (isConfirmOpen()) return;
+      // Listens in the capture phase, so it must stand aside for a confirmation or a view of its own on top of it
+      // (Who is this?'s larger view closes itself)
+      if (isConfirmOpen() || document.querySelector("[data-own-escape]")) return;
       const target = e.target as HTMLElement | null;
       if (view === "unknown" && e.key !== "Escape") return;
       if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA") && e.key !== "Escape") return;
@@ -506,6 +508,19 @@ export default function FaceMatchReviewModal({
     onClose,
   ]);
 
+  // The grid keeps its place while One by one is open for the same person and list, and starts at the top for
+  // another person or list (the grid is not on screen during One by one, so its position is kept here)
+  const gridRef = useRef<HTMLDivElement | null>(null);
+  const gridTop = useRef<{ key: string; top: number } | null>(null);
+  // The list shown, not the person just clicked: a new person's faces arrive a moment later
+  const gridKey = `${listPerson}|${statusTab}`;
+  useLayoutEffect(() => {
+    const el = gridRef.current;
+    if (!el) return;
+    const saved = gridTop.current;
+    el.scrollTop = saved && saved.key === gridKey ? saved.top : 0;
+  }, [reviewMode, gridKey, view, isOpen]);
+
   if (!isOpen) return null;
 
   const activeList =
@@ -516,7 +531,7 @@ export default function FaceMatchReviewModal({
       : deniedFaces;
 
   const currentSpotlight = candidates[spotlightIndex] || null;
-  const nextSpotlight = reviewMode === "spotlight" ? candidates[spotlightIndex + 1] : undefined;
+
   const activePersonObj = people.find(
     (p) => p.name.toLowerCase() === activePerson.toLowerCase()
   );
@@ -880,20 +895,17 @@ export default function FaceMatchReviewModal({
                 <span className="text-zinc-400">
                   {statusTab === "pending" && (
                     <>
-                      — <strong>{candidates.length}</strong> pending suggestion
-                      {candidates.length === 1 ? "" : "s"}
+                      · {plural(candidates.length, "face")} to check
                     </>
                   )}
                   {statusTab === "confirmed" && (
                     <>
-                      — <strong>{confirmedFaces.length}</strong> confirmed face box
-                      {confirmedFaces.length === 1 ? "" : "es"}
+                      · {plural(confirmedFaces.length, "face")} confirmed
                     </>
                   )}
                   {statusTab === "denied" && (
                     <>
-                      — <strong>{deniedFaces.length}</strong> denied / ignored face box
-                      {deniedFaces.length === 1 ? "" : "es"}
+                      · {plural(deniedFaces.length, "face")} that aren't this person
                     </>
                   )}
                 </span>
@@ -908,7 +920,7 @@ export default function FaceMatchReviewModal({
                     title="Re-scan unassigned faces using your newly confirmed faces"
                   >
                     <RefreshCw className="w-3 h-3" />
-                    <span>Refresh Suggestions</span>
+                    <span>Look for suggestions again</span>
                   </button>
                 )}
               </div>
@@ -940,7 +952,7 @@ export default function FaceMatchReviewModal({
                         className="px-3 py-1.5 rounded-lg bg-red-950/60 hover:bg-red-900/80 disabled:opacity-40 border border-red-800/50 text-red-200 font-semibold flex items-center gap-1.5 transition"
                       >
                         <X className="w-3.5 h-3.5" />
-                        <span>Deny Selected ({selectedIds.size})</span>
+                        <span>No, not them ({selectedIds.size})</span>
                       </button>
                       <button
                         onClick={async () => {
@@ -962,7 +974,7 @@ export default function FaceMatchReviewModal({
                         className="px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-semibold flex items-center gap-1.5 shadow transition"
                       >
                         <CheckCheck className="w-4 h-4" />
-                        <span>Accept Selected ({selectedIds.size})</span>
+                        <span>Yes ({selectedIds.size})</span>
                       </button>
                     </>
                   )}
@@ -994,7 +1006,7 @@ export default function FaceMatchReviewModal({
                         className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-semibold flex items-center gap-1.5 shadow transition"
                       >
                         <Check className="w-3.5 h-3.5" />
-                        <span>Accept as "{activePerson}" ({selectedIds.size})</span>
+                        <span>Yes, this is {activePerson} ({selectedIds.size})</span>
                       </button>
                     </>
                   )}
@@ -1067,6 +1079,8 @@ export default function FaceMatchReviewModal({
             ) : reviewMode === "grid" || statusTab !== "pending" ? (
               /* 3-COLUMN FIXED 250PX CARD GRID MODE */
               <div
+                ref={gridRef}
+                onScroll={(e) => (gridTop.current = { key: gridKey, top: e.currentTarget.scrollTop })}
                 style={{ flex: 1, minHeight: 0, overflowY: "auto" }}
                 className="p-6"
               >
@@ -1181,7 +1195,7 @@ export default function FaceMatchReviewModal({
                                 title="Confirm this is the person"
                               >
                                 <Check className="w-3.5 h-3.5" />
-                                <span>Accept</span>
+                                <span>Yes</span>
                               </button>
                               <button
                                 onClick={(e) => {
@@ -1232,7 +1246,7 @@ export default function FaceMatchReviewModal({
                                 title="Directly confirm as this person"
                               >
                                 <Check className="w-3.5 h-3.5" />
-                                <span>Accept</span>
+                                <span>Yes</span>
                               </button>
                             </div>
                           )}
@@ -1248,31 +1262,11 @@ export default function FaceMatchReviewModal({
                 <div className="flex-1 flex overflow-hidden p-6 gap-6">
                   {/* Left: Full Photo Context with Highlighted Face Box */}
                   <div className="flex-1 bg-zinc-950 border border-zinc-800 rounded-2xl flex items-center justify-center p-4 relative overflow-hidden">
-                    <div className="relative inline-block max-w-full max-h-full">
-                      {nextSpotlight && (
-                        // Loads the next candidate's photo in the background so Y/N feels instant
-                        <img src={mediaUrl({ kind: "original", hash: nextSpotlight.hash, path: nextSpotlight.photo_path })} alt="" aria-hidden className="hidden" />
-                      )}
-                      <img
-                        src={mediaUrl({ kind: "original", hash: currentSpotlight.hash, path: currentSpotlight.photo_path })}
-                        alt={currentSpotlight.photo_name}
-                        decoding="async"
-                        className="block max-w-full max-h-[62vh] w-auto h-auto object-contain rounded-lg select-none"
-                      />
-                      <div
-                        style={{
-                          left: `${currentSpotlight.bbox_x * 100}%`,
-                          top: `${currentSpotlight.bbox_y * 100}%`,
-                          width: `${currentSpotlight.bbox_w * 100}%`,
-                          height: `${currentSpotlight.bbox_h * 100}%`,
-                        }}
-                        className="absolute rounded-md border-2 border-emerald-400 bg-emerald-500/20 pointer-events-none"
-                      >
-                        <span className="absolute -top-6 left-0 px-2 py-0.5 rounded bg-emerald-600 text-white text-[11px] font-semibold whitespace-nowrap shadow">
-                          {activePerson}? ({currentSpotlight.similarity}%)
-                        </span>
-                      </div>
-                    </div>
+                    <SpotlightPhoto
+                      cand={currentSpotlight}
+                      upcoming={candidates.slice(spotlightIndex + 1, spotlightIndex + 4)}
+                      label={`${activePerson}? (${currentSpotlight.similarity}%)`}
+                    />
                   </div>
 
                   {/* Right: Close-up Face Crop & Keyboard Decision Controls */}
@@ -1280,7 +1274,7 @@ export default function FaceMatchReviewModal({
                     <div className="flex flex-col items-center text-center gap-3">
                       <div className="flex items-center justify-between w-full text-xs text-zinc-400 font-mono">
                         <span>
-                          Candidate {spotlightIndex + 1} of {candidates.length}
+                          {spotlightIndex + 1} of {candidates.length}
                         </span>
                         <div className="flex items-center gap-1">
                           <button
@@ -1317,7 +1311,7 @@ export default function FaceMatchReviewModal({
                           Is this <span className="text-emerald-400 capitalize">{activePerson}</span>?
                         </div>
                         <div className="text-xs font-mono text-zinc-400 mt-0.5">
-                          Biometric Similarity: {currentSpotlight.similarity}%
+                          Similarity: {currentSpotlight.similarity}%
                         </div>
                         <div
                           className="text-[11px] text-zinc-500 mt-1 truncate max-w-[240px]"
@@ -1334,14 +1328,14 @@ export default function FaceMatchReviewModal({
                         className="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-sm flex items-center justify-center gap-2 shadow-lg transition"
                       >
                         <Check className="w-4 h-4" />
-                        <span>Accept Match (Y / Enter)</span>
+                        <span>Yes, this is {activePerson} (Y)</span>
                       </button>
                       <button
                         onClick={() => handleDenyBatch([currentSpotlight.face_id])}
                         className="w-full py-2.5 rounded-xl bg-red-950/70 hover:bg-red-900 border border-red-800/60 text-red-200 font-semibold text-xs flex items-center justify-center gap-2 transition"
                       >
                         <X className="w-4 h-4" />
-                        <span>Deny & Ignore (N / Backspace)</span>
+                        <span>No (N)</span>
                       </button>
                     </div>
                   </div>

@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
+import SpotlightPhoto from "./SpotlightPhoto";
+import { plural } from "../../utils/plural";
 import { call, mediaUrl } from "../../api";
 import { FaceCluster, FaceInstance, PhotoItem } from "../../types/lumina";
-import { Check, EyeOff, Loader2, RefreshCw, Undo2, Users, X } from "lucide-react";
+import { Check, EyeOff, Loader2, Maximize2, RefreshCw, Undo2, Users, X } from "lucide-react";
 
 interface UnknownFaceClustersProps {
   folder: string;
@@ -28,6 +30,11 @@ export default function UnknownFaceClusters({
   // Faces clicked away from their group (someone else in with them): named or ignored without them
   const [left, setLeft] = useState<Set<string>>(new Set());
   const kept = (c: FaceCluster) => c.face_ids.filter((id) => !left.has(id));
+  // Naming gives the name only to the faces shown (and not left out): the rest of a big group comes back as
+  // suggestions for that person, to check one by one in the review
+  const shown = (c: FaceCluster) => c.samples.map((f) => f.face_id).filter((id) => !left.has(id));
+  // A group opened in the larger view, and the face whose photo it shows
+  const [large, setLarge] = useState<{ index: number; face: string } | null>(null);
   const toggleLeft = (id: string) =>
     setLeft((prev) => {
       const next = new Set(prev);
@@ -61,7 +68,7 @@ export default function UnknownFaceClusters({
     setError("");
     try {
       const updated = await call<Record<string, FaceInstance[]>>("assign_faces_to_person_batch", {
-        faceIds: kept(cluster),
+        faceIds: shown(cluster),
         personName: name,
       });
       setPhotos((prev) =>
@@ -120,6 +127,21 @@ export default function UnknownFaceClusters({
       setError(`Could not undo: ${String(err)}`);
     }
   }
+
+  // Escape closes the larger view first, not the whole review behind it
+  useEffect(() => {
+    if (!large) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.stopPropagation();
+      setLarge(null);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [large]);
+
+  const largeGroup = large ? clusters[large.index] : undefined;
+  const largeFace = largeGroup ? largeGroup.samples.find((f) => f.face_id === large?.face) ?? largeGroup.samples[0] : undefined;
 
   return (
     <div className="flex-1 flex flex-col min-h-0">
@@ -206,9 +228,18 @@ export default function UnknownFaceClusters({
                     </button>
                   );
                 })}
+                <button
+                  type="button"
+                  onClick={() => setLarge({ index, face: cluster.samples.find((f) => !left.has(f.face_id))?.face_id ?? cluster.samples[0].face_id })}
+                  className="ml-1 px-2.5 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 text-xs flex items-center gap-1.5"
+                  title="See these faces bigger, and the photos they are in"
+                >
+                  <Maximize2 className="w-3.5 h-3.5" />
+                  <span>Larger</span>
+                </button>
                 {cluster.size > cluster.samples.length && (
-                  <span className="text-[11px] text-zinc-500 font-mono px-2">
-                    +{cluster.size - cluster.samples.length} more
+                  <span className="text-[11px] text-zinc-500 px-2">
+                    Naming names the {shown(cluster).length} shown; the other {(cluster.size - cluster.samples.length).toLocaleString()} come back as suggestions to check
                   </span>
                 )}
               </div>
@@ -219,7 +250,7 @@ export default function UnknownFaceClusters({
                 }}
                 className="flex items-center gap-2 text-xs"
               >
-                <span className="text-zinc-400 shrink-0 tabular-nums">{kept(cluster).length} faces</span>
+                <span className="text-zinc-400 shrink-0 tabular-nums">{plural(cluster.size, "face")}</span>
                 <input
                   list="known-people"
                   value={names[index] || ""}
@@ -229,11 +260,11 @@ export default function UnknownFaceClusters({
                 />
                 <button
                   type="submit"
-                  disabled={!names[index]?.trim() || busy !== null || kept(cluster).length === 0}
+                  disabled={!names[index]?.trim() || busy !== null || shown(cluster).length === 0}
                   className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-semibold flex items-center gap-1.5"
                 >
                   {busy === index ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
-                  <span>Name {kept(cluster).length === cluster.size ? `all ${cluster.size}` : kept(cluster).length}</span>
+                  <span>Name {shown(cluster).length === cluster.size ? `all ${cluster.size}` : shown(cluster).length}</span>
                 </button>
                 <button
                   type="button"
@@ -248,6 +279,59 @@ export default function UnknownFaceClusters({
               </form>
             </div>
           ))}
+        </div>
+      )}
+      {large && largeGroup && largeFace && (
+        <div className="fixed inset-0 z-[60] bg-black/80 flex items-center justify-center p-6" onClick={() => setLarge(null)}>
+          <div
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-label="Faces in this group"
+            data-own-escape
+            className="bg-card border border-zinc-800 rounded-2xl w-full max-w-6xl h-[86vh] flex flex-col overflow-hidden shadow-2xl"
+          >
+            <div className="px-5 py-3 border-b border-zinc-800 flex items-center justify-between gap-4">
+              <div className="text-sm text-zinc-100 font-medium">
+                {plural(largeGroup.size, "face")} in this group
+                <span className="ml-3 text-xs font-normal text-zinc-500">Click a face to see its photo. Leave out the faces that are someone else.</span>
+              </div>
+              <button onClick={() => setLarge(null)} aria-label="Close" className="p-2 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-400 hover:text-white">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="flex-1 min-h-0 flex">
+              <div className="w-[360px] shrink-0 overflow-y-auto p-4 grid grid-cols-2 gap-3 content-start border-r border-zinc-800">
+                {largeGroup.samples.map((f) => {
+                  const out = left.has(f.face_id);
+                  const on = f.face_id === largeFace.face_id;
+                  return (
+                    <div key={f.face_id} className="flex flex-col gap-1">
+                      <button
+                        onClick={() => setLarge({ index: large.index, face: f.face_id })}
+                        title={f.photo_name}
+                        className={`rounded-xl overflow-hidden border-2 ${on ? "border-emerald-400" : "border-transparent hover:border-zinc-600"}`}
+                      >
+                        <img src={mediaUrl({ kind: "face", path: f.face_thumb })} alt="" className={`w-full aspect-square object-cover ${out ? "opacity-30" : ""}`} />
+                      </button>
+                      <button
+                        onClick={() => toggleLeft(f.face_id)}
+                        aria-pressed={out}
+                        className={`text-[11px] py-0.5 rounded-md border ${out ? "border-zinc-600 text-zinc-200" : "border-zinc-800 text-zinc-500 hover:text-zinc-200"}`}
+                      >
+                        {out ? "Left out · add back" : "Leave out"}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="flex-1 min-w-0 p-4 bg-zinc-950 flex flex-col gap-2">
+                <div className="flex-1 min-h-0">
+                  <SpotlightPhoto cand={largeFace} upcoming={[]} label="This face" />
+                </div>
+                <div className="text-xs text-zinc-500 truncate">{largeFace.photo_name}</div>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>

@@ -14,6 +14,14 @@ export interface ReleaseNotes {
 // Newest first. Add an entry for every release that should greet updating users with "What's new".
 export const RELEASE_NOTES: ReleaseNotes[] = [
   {
+    version: "5.5.1",
+    items: [
+      { title: "Who is this? names what you see", text: "Naming a group gives the name to the faces shown; the rest of a big group comes back as faces to check for that person. Larger opens a group with big faces and shows the photo each one is in." },
+      { title: "Face review keeps its place", text: "Back from One by one, the grid is where you left it; another person starts at the top." },
+      { title: "One by one shows every face", text: "Photos show straight away and sharpen as they load, the next ones load ahead, and a face from a video shows as a large face instead of a broken image." },
+    ],
+  },
+  {
     version: "5.5.0",
     items: [
       { title: "A tidier header", text: "One AI button for finding faces and writing captions (it shows how far a job is), and a gear for Settings, the Simple or Advanced view, shortcuts and the tour. Click the library's name for the Library menu. Layout and photo details are under View." },

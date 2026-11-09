@@ -6,6 +6,8 @@ import type { FaceCluster, FaceInstance, SimilarFaceCandidate } from "../../type
 import { FaceSheet } from "./PhoneViewer";
 import { Page } from "./PhoneParts";
 import { withFaces } from "./faces";
+import { useBackCloses } from "./navigation";
+import SpotlightPhoto from "../modals/SpotlightPhoto";
 
 // The phone app's face review (the People tab): the faces the server thinks are someone already named, to
 // confirm or turn down, and the groups of faces of someone without a name, to name at once. The server works
@@ -168,6 +170,10 @@ export function UnnamedGroups({ lib, onBack }: { lib: LibraryState; onBack: () =
   const [left, setLeft] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const kept = (g: FaceCluster) => g.face_ids.filter((id) => !left.has(id));
+  // Naming names only the faces shown (and not left out): the rest of a big group comes back as suggestions
+  const shown = (g: FaceCluster) => g.samples.map((f) => f.face_id).filter((id) => !left.has(id));
+  // A group opened bigger, with the photo of one of its faces
+  const [large, setLarge] = useState<FaceCluster | null>(null);
   const toggleLeft = (id: string) =>
     setLeft((prev) => {
       const next = new Set(prev);
@@ -207,7 +213,7 @@ export function UnnamedGroups({ lib, onBack }: { lib: LibraryState; onBack: () =
           ? "Grouping the faces without a name…"
           : groups.length === 0
             ? "Every face that comes back often has a name."
-            : "Faces that look like the same person. Name a group and all its faces get that name; tap a face that is someone else to leave it out."}
+            : "Faces that look like the same person. Name a group and the faces shown get that name; tap a face that is someone else to leave it out."}
       </p>
       {groups === null && !error && (
         <div className="flex justify-center py-10">
@@ -230,25 +236,31 @@ export function UnnamedGroups({ lib, onBack }: { lib: LibraryState; onBack: () =
             ))}
           </div>
           <div className="flex items-center gap-2 pt-3">
-            <span className="flex-1 text-xs text-zinc-400">
-              {kept(g).length} {kept(g).length === 1 ? "face" : "faces"}
-            </span>
+            <button onClick={() => setLarge(g)} className="flex-1 text-left text-xs text-zinc-400 active:text-zinc-200">
+              {g.size.toLocaleString()} {g.size === 1 ? "face" : "faces"} · <span className="text-emerald-400">Larger</span>
+            </button>
             <button onClick={() => void ignore(g)} className="px-3 py-1.5 rounded-full border border-zinc-700 text-xs text-zinc-300 active:bg-white/5">
               Not someone I know
             </button>
-            <button disabled={kept(g).length === 0} onClick={() => setNaming(g)} className="disabled:opacity-40 px-3 py-1.5 rounded-full bg-emerald-600 text-xs font-medium text-white active:bg-emerald-700">
+            <button disabled={shown(g).length === 0} onClick={() => setNaming(g)} className="disabled:opacity-40 px-3 py-1.5 rounded-full bg-emerald-600 text-xs font-medium text-white active:bg-emerald-700">
               Name…
             </button>
           </div>
         </section>
       ))}
       {error && <p className="px-4 pt-4 text-xs text-red-300">{error}</p>}
+      {groups && groups.some((g) => g.size > g.samples.length) && (
+        <p className="px-4 pt-4 text-xs text-zinc-500">
+          In a big group, naming names the faces shown; the others come back as suggestions to check for that person.
+        </p>
+      )}
+      {large && <LargeGroup group={large} left={left} onToggle={toggleLeft} onBack={() => setLarge(null)} />}
       {naming && (
         <FaceSheet
-          faceIds={kept(naming)}
+          faceIds={shown(naming)}
           thumb={naming.samples.find((s) => !left.has(s.face_id))?.face_thumb ?? ""}
           current=""
-          title={`Who are these ${kept(naming).length} faces?`}
+          title={`Who are these ${shown(naming).length} faces?`}
           people={lib.people}
           onClose={() => setNaming(null)}
           onDone={(changed) => {
@@ -258,6 +270,45 @@ export function UnnamedGroups({ lib, onBack }: { lib: LibraryState; onBack: () =
           }}
         />
       )}
+    </Page>
+  );
+}
+
+// A group of faces bigger, two to a row: tap one to see the photo it is in, and leave out the ones that are
+// someone else. The phone's back closes it.
+function LargeGroup({
+  group,
+  left,
+  onToggle,
+  onBack,
+}: {
+  group: FaceCluster;
+  left: Set<string>;
+  onToggle: (id: string) => void;
+  onBack: () => void;
+}) {
+  useBackCloses(onBack);
+  const [face, setFace] = useState(group.samples[0]);
+  return (
+    <Page title={`${group.size.toLocaleString()} faces in this group`} onBack={onBack}>
+      <div className="h-[42vh] mx-3 mt-3 rounded-2xl bg-zinc-950 border border-zinc-800 p-2">
+        <SpotlightPhoto cand={face} upcoming={[]} label="This face" />
+      </div>
+      <div className="grid grid-cols-2 gap-3 p-3">
+        {group.samples.map((f) => {
+          const out = left.has(f.face_id);
+          return (
+            <div key={f.face_id} className="flex flex-col gap-1.5">
+              <button onClick={() => setFace(f)} className={`rounded-2xl overflow-hidden border-2 ${f.face_id === face.face_id ? "border-emerald-400" : "border-transparent"}`}>
+                <img src={mediaUrl({ kind: "face", path: f.face_thumb })} alt="" loading="lazy" className={`w-full aspect-square object-cover bg-zinc-800 ${out ? "opacity-30" : ""}`} />
+              </button>
+              <button onClick={() => onToggle(f.face_id)} aria-pressed={out} className="py-1.5 rounded-full border border-zinc-700 text-xs text-zinc-300 active:bg-white/5">
+                {out ? "Left out · add back" : "Leave out"}
+              </button>
+            </div>
+          );
+        })}
+      </div>
     </Page>
   );
 }
