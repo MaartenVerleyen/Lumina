@@ -1,6 +1,6 @@
 [package]
 name = "lumina-setup"
-version = "5.5.0"
+version = "5.5.1"
 description = "Guided installer for Lumina: the app, Ollama and the AI models"
 authors = ["Maarten"]
 edition = "2024"
