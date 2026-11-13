@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { ArrowUpDown, Calendar, Check, ChevronDown, CloudUpload, Columns, Copy, FilterX, Folder, FolderSync, Layers, SlidersHorizontal, Trophy, X } from "lucide-react";
 import type { LibraryState } from "../../hooks/useLibraryState";
 import { useAccess } from "../auth/ServerGate";
@@ -36,23 +37,40 @@ const RULES: { value: AutoStagePreset; simple: string; pro: string }[] = [
   { value: "FAVORITES_YEAR", simple: "Favorites by year", pro: "Favorites/{Year}" },
 ];
 
-// Small dropdown that closes on an outside click or Escape
+const MENU_WIDTH = 256;
+
+// Small dropdown that closes on an outside click or Escape. It is drawn in document.body: the photo column
+// clips what overflows it, so with both side panels open a menu inside it was cut off under a panel.
 function Menu({ label, icon, active, children }: { label: string; icon: React.ReactNode; active?: boolean; children: (close: () => void) => React.ReactNode }) {
   const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ top: number; left: number; maxHeight: number } | null>(null);
   const ref = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
+    // Under the button, right edges aligned, kept inside the window
+    const place = () => {
+      const r = ref.current?.getBoundingClientRect();
+      if (!r) return;
+      const left = Math.max(8, Math.min(r.right - MENU_WIDTH, window.innerWidth - MENU_WIDTH - 8));
+      const top = r.bottom + 6;
+      setPos({ top, left, maxHeight: Math.max(120, window.innerHeight - top - 8) });
+    };
+    place();
     const onDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      const t = e.target as Node;
+      if (!ref.current?.contains(t) && !menuRef.current?.contains(t)) setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setOpen(false);
     };
     window.addEventListener("mousedown", onDown);
     window.addEventListener("keydown", onKey);
+    window.addEventListener("resize", place);
     return () => {
       window.removeEventListener("mousedown", onDown);
       window.removeEventListener("keydown", onKey);
+      window.removeEventListener("resize", place);
     };
   }, [open]);
   return (
@@ -68,11 +86,18 @@ function Menu({ label, icon, active, children }: { label: string; icon: React.Re
         <span>{label}</span>
         <ChevronDown className="w-3 h-3" />
       </button>
-      {open && (
-        <div className="absolute right-0 top-full mt-1.5 w-64 bg-raised border border-zinc-700/80 rounded-xl shadow-2xl p-1.5 z-50 text-xs flex flex-col gap-0.5">
-          {children(() => setOpen(false))}
-        </div>
-      )}
+      {open &&
+        pos &&
+        createPortal(
+          <div
+            ref={menuRef}
+            style={{ top: pos.top, left: pos.left, width: MENU_WIDTH, maxHeight: pos.maxHeight }}
+            className="fixed bg-raised border border-zinc-700/80 rounded-xl shadow-2xl p-1.5 z-[100] text-xs flex flex-col gap-0.5 overflow-y-auto"
+          >
+            {children(() => setOpen(false))}
+          </div>,
+          document.body
+        )}
     </div>
   );
 }
@@ -340,7 +365,7 @@ export default function PhotoToolbar({ lib }: { lib: LibraryState }) {
                 className="mt-1 w-full flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200"
               >
                 <FolderSync className="w-3.5 h-3.5" />
-                "Auto-sort visible photos"
+                Auto-sort visible photos
               </button>
               <button
                 onClick={() => {
