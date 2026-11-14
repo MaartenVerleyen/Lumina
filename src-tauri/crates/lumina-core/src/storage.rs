@@ -72,7 +72,52 @@ pub fn drive_has_seek_penalty(path: &Path) -> Option<bool> {
     Some(descriptor.IncursSeekPenalty)
 }
 
-#[cfg(not(windows))]
+// Linux says per block device whether it spins (/sys/block/<disk>/queue/rotational, also behind a USB
+// bridge). The folder's device number leads to it; a partition's own entry has no queue, its disk's has.
+// Btrfs gives each subvolume a device number of its own (0:54) with no such entry: then the device the
+// folder's mount comes from (/proc/self/mountinfo). Network shares and containers without /sys: unknown.
+#[cfg(target_os = "linux")]
+pub fn drive_has_seek_penalty(path: &Path) -> Option<bool> {
+    use std::os::unix::fs::MetadataExt;
+    let dev = fs::metadata(path).ok()?.dev();
+    let major = ((dev >> 8) & 0xfff) | ((dev >> 32) & !0xfff);
+    let minor = (dev & 0xff) | ((dev >> 12) & !0xff);
+    let device = fs::canonicalize(format!("/sys/dev/block/{major}:{minor}"))
+        .ok()
+        .filter(|d| d.starts_with("/sys/devices"))
+        .or_else(|| mounted_from(path))?;
+    rotational_in(&device).or_else(|| device.parent().and_then(rotational_in))
+}
+
+// The block device (its /sys entry) of the mount a folder is on: the longest mount point it sits under
+#[cfg(target_os = "linux")]
+fn mounted_from(path: &Path) -> Option<PathBuf> {
+    let path = fs::canonicalize(path).ok()?;
+    let mounts = fs::read_to_string("/proc/self/mountinfo").ok()?;
+    let mut best: Option<(usize, String)> = None;
+    for line in mounts.lines() {
+        // "36 35 0:54 /@home /home rw,... shared:1 - btrfs /dev/nvme0n1p2 rw,..."
+        let Some((left, right)) = line.split_once(" - ") else { continue };
+        let (Some(point), Some(source)) = (left.split(' ').nth(4), right.split(' ').nth(1)) else { continue };
+        let point = point.replace("\\040", " ");
+        if source.starts_with("/dev/") && path.starts_with(&point) && best.as_ref().is_none_or(|(len, _)| point.len() > *len) {
+            best = Some((point.len(), source.to_string()));
+        }
+    }
+    let source = fs::canonicalize(best?.1).ok()?;
+    fs::canonicalize(Path::new("/sys/class/block").join(source.file_name()?)).ok()
+}
+
+#[cfg(target_os = "linux")]
+fn rotational_in(dir: &Path) -> Option<bool> {
+    match fs::read_to_string(dir.join("queue").join("rotational")).ok()?.trim() {
+        "1" => Some(true),
+        "0" => Some(false),
+        _ => None,
+    }
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn drive_has_seek_penalty(_path: &Path) -> Option<bool> {
     None
 }

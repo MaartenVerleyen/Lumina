@@ -2738,3 +2738,81 @@ fn a_large_folder_gets_its_thumbnails_part_by_part() {
     drop(events);
     let _ = fs::remove_dir_all(&base);
 }
+
+// A photo whose EXIF date is its file time (Google Takeout and camera copies keep it) and whose name says
+// another time looks like an old creation-time guess. It is read once more when an older version dated it,
+// and then never again: such photos were read at every check (10,663 on one drive)
+#[test]
+fn a_photo_dated_by_its_file_time_is_not_read_at_every_check() {
+    use little_exif::exif_tag::ExifTag;
+    use little_exif::filetype::FileExtension;
+    use little_exif::metadata::Metadata;
+    let _turn = SCAN_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+    let base = std::env::temp_dir().join(format!("lumina_dated_test_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&base);
+    let (library, data) = (base.join("Library"), base.join("Data"));
+    fs::create_dir_all(&library).unwrap();
+
+    // Taken (and last written) 15 June 2020; the name says 28 August 2017, 10:31:35
+    let taken = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_592_222_400);
+    let local = exif_meta::system_time_local_iso(taken);
+    let mut jpeg = Vec::new();
+    image::RgbImage::from_fn(32, 24, |x, y| image::Rgb([(x * 8) as u8, (y * 10) as u8, 90]))
+        .write_to(&mut std::io::Cursor::new(&mut jpeg), image::ImageFormat::Jpeg)
+        .unwrap();
+    let mut md = Metadata::new();
+    md.set_tag(ExifTag::DateTimeOriginal(local.replace('-', ":")));
+    md.write_to_vec(&mut jpeg, FileExtension::JPEG).unwrap();
+    let path = library.join("IMG_20170828_103135.jpg");
+    fs::write(&path, &jpeg).unwrap();
+    fs::File::options().write(true).open(&path).unwrap().set_modified(taken).unwrap();
+
+    let recorder = Arc::new(RecordingHost(data.clone(), Default::default()));
+    let host: SharedHost = recorder.clone();
+    db::migrate(&open_global_db(&*host).unwrap()).unwrap();
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    let root = library.to_string_lossy().to_string();
+    // How many files the last scan read and saved again ("N new/changed" in its timing)
+    let scan_rewrote = || -> usize {
+        recorder.1.lock().unwrap().clear();
+        let photos = rt.block_on(scan::scan_folder(host.clone(), root.clone(), None)).unwrap();
+        assert_eq!(photos.len(), 1);
+        while thumbs::thumbnail_passes_running() {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let events = recorder.1.lock().unwrap();
+        let details = events
+            .iter()
+            .find(|(e, p)| e == "perf-log" && p["label"] == "Folder index")
+            .map(|(_, p)| p["details"].as_str().unwrap_or("").to_string())
+            .unwrap();
+        details.split(" new/changed").next().unwrap().trim().parse().unwrap()
+    };
+    let checked = || -> (i32, String) {
+        open_global_db(&*host).unwrap().query_row("SELECT exif_checked, captured_at FROM photos", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap()
+    };
+
+    assert_eq!(scan_rewrote(), 1, "new");
+    assert_eq!(checked(), (scan::DATED, local.clone()), "dated by its EXIF, which is its file time");
+    assert_eq!(scan_rewrote(), 0, "not read again");
+
+    // As an older version left it: read once more, and then left alone
+    open_global_db(&*host).unwrap().execute("UPDATE photos SET exif_checked = 1", []).unwrap();
+    assert_eq!(scan_rewrote(), 1, "an older version's date is checked once");
+    assert_eq!(checked().0, scan::DATED);
+    assert_eq!(scan_rewrote(), 0);
+    let _ = fs::remove_dir_all(&base);
+}
+
+// Diagnostic: what Lumina takes the drive of each folder in LUMINA_DRIVE_PATHS (";"-separated) to be, and how
+// many readers it uses on it.
+//   LUMINA_DRIVE_PATHS="/mnt/my-passport;/srv/lumina" cargo test -p lumina-core drive_kinds -- --ignored --nocapture
+#[test]
+#[ignore]
+fn drive_kinds() {
+    let paths = std::env::var("LUMINA_DRIVE_PATHS").unwrap_or_else(|_| ".".to_string());
+    for p in paths.split(';').filter(|p| !p.is_empty()) {
+        let (readers, kind) = index_io_threads(Path::new(p));
+        println!("{p}: {kind}, {readers} readers");
+    }
+}

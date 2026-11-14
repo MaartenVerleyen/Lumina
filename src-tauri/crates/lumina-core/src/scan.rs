@@ -350,6 +350,13 @@ type IndexedFile = (PhotoItem, String, u64, u64, bool);
 // Files indexed between two saves to the library
 const INDEX_CHUNK: usize = 1000;
 
+// photos.exif_checked: 0 not read yet, 1 read by an older version, DATED read with today's date rules. A row
+// from an older version whose date equals its file time is read once more (it may be a creation-time guess
+// from before the fallback rules); after that it is never asked again, also when its date truly is the file
+// time (Google Takeout and camera copies keep it) and its name or folder says otherwise. Without this, ~10,000
+// such photos on one drive were read again at every check. A change to the date rules raises the number.
+pub const DATED: i32 = 2;
+
 // Gives copies their own hash, then writes new and changed rows in one transaction.
 // Returns how many rows were written.
 fn save_indexed(
@@ -392,7 +399,7 @@ fn save_indexed(
             }
             let _ = tx.execute(
                 "INSERT INTO photos (hash, current_path, subfolder, file_size, modified_time, width, height, rating, flag, color_label, rotation, ai_caption, ocr_text, captured_at, camera_model, location, latitude, longitude, dhash, sharpness, staged_target, exif_checked, focal_length, aperture, shutter_speed, iso, lens_model, media_type, duration_ms, video_codec)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, 1, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, 2, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29)
                  ON CONFLICT(hash) DO UPDATE SET
                     current_path = excluded.current_path,
                     subfolder = excluded.subfolder,
@@ -414,7 +421,7 @@ fn save_indexed(
                     media_type = excluded.media_type,
                     duration_ms = COALESCE(excluded.duration_ms, photos.duration_ms),
                     video_codec = COALESCE(excluded.video_codec, photos.video_codec),
-                    exif_checked = 1",
+                    exif_checked = 2",
                 params![
                     p.hash, orig_disk_path, p.subfolder, size_bytes, mtime, p.width, p.height, p.rating,
                     p.flag, p.color_label, p.rotation,
@@ -985,12 +992,13 @@ pub async fn scan_library(app: SharedHost, folder_path: String, force_reprocess:
                 (duration_ms, video_codec),
             ) = if let Some(c) = cache_map.get(&orig_path_str) {
                 if !force
-                    && c.exif_checked == 1
+                    && c.exif_checked >= 1
                     && !c.captured_at.is_empty()
                     && c.size == size_bytes
                     && c.mtime == modified_time
-                    // A video's recording date can equal its file time (both set by the camera): not a fallback
-                    && (is_video || !is_old_creation_time_date(&file_path, &c.captured_at, &metadata))
+                    // A video's recording date can equal its file time (both set by the camera): not a fallback.
+                    // A row dated with today's rules isn't asked again (DATED).
+                    && (is_video || c.exif_checked >= DATED || !is_old_creation_time_date(&file_path, &c.captured_at, &metadata))
                 {
                     needs_db_upsert = false;
                     // A RAW indexed before Lumina read its sensor size shows its thumbnail's (a NEF's 160 x 120, a
@@ -1448,7 +1456,7 @@ pub async fn rescan_exif_batch(app: SharedHost, hashes: Vec<String>) -> Result<V
                             shutter_speed = COALESCE(?8, shutter_speed),
                             iso = COALESCE(?9, iso),
                             lens_model = COALESCE(?10, lens_model),
-                            exif_checked = 1
+                            exif_checked = 2
                          WHERE hash = ?11",
                         params![
                             final_date, final_cam, final_loc, final_lat, final_lon,

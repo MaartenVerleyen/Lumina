@@ -12,9 +12,13 @@
 # by itself. Restarting the service asks for your sudo password, unless a sudoers rule allows it (see
 # server/README.md, "Upgrading").
 #
+# A tray installed for this user (~/.local/bin/lumina-tray) is built and replaced too, and started again with
+# the same options if it runs.
+#
 # Settings: LUMINA_SRC (the git checkout, default ~/Projects/Lumina), LUMINA_HOME (default /srv/lumina),
 # LUMINA_SERVICE (default lumina-server), LUMINA_RESTART (a command of its own to restart the server, for
-# instance "systemctl --user restart lumina-server" for a user service).
+# instance "systemctl --user restart lumina-server" for a user service), LUMINA_TRAY (the installed tray,
+# default ~/.local/bin/lumina-tray).
 set -euo pipefail
 
 # Run from a copy: checking out the new version may change this very file while bash is still reading it
@@ -31,6 +35,7 @@ SERVICE=${LUMINA_SERVICE:-lumina-server}
 CONFIG=$DEST/lumina-server.toml
 BACKUPS=$DEST/backups
 KEEP_BACKUPS=3
+TRAY=${LUMINA_TRAY:-$HOME/.local/bin/lumina-tray}
 
 say() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 fail() { printf '\n\033[31m%s\033[0m\n' "$*" >&2; exit 1; }
@@ -121,7 +126,9 @@ npm ci --silent
 npm run build --silent
 
 say "Building the server (the running one carries on meanwhile)"
-(cd src-tauri && cargo build --release -p lumina-server)
+packages=(-p lumina-server)
+[[ -x $TRAY ]] && packages+=(-p lumina-tray)
+(cd src-tauri && cargo build --release "${packages[@]}")
 NEW_VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' src-tauri/crates/lumina-server/Cargo.toml | head -1)
 
 say "Copying the database (SQLite backup, safe while the server runs)"
@@ -141,8 +148,31 @@ rm -rf "$DEST/web.prev"
 mv "$DEST/web" "$DEST/web.prev"
 mv "$DEST/web.new" "$DEST/web"
 
+# The tray: the new program in place, and a running one started again with its own options, in its own
+# desktop session (the variables it was started with)
+update_tray() {
+  [[ -x $TRAY ]] || return 0
+  say "Updating the tray"
+  install -m 755 src-tauri/target/release/lumina-tray "$TRAY.new"
+  mv -f "$TRAY.new" "$TRAY"
+  local pid
+  pid=$(pgrep -u "$(id -u)" -x lumina-tray | head -1) || true
+  if [[ -z $pid ]]; then
+    echo "Installed; it starts with the next login."
+    return 0
+  fi
+  local args envs
+  mapfile -d '' args < "/proc/$pid/cmdline"
+  mapfile -d '' envs < "/proc/$pid/environ"
+  kill "$pid"
+  for _ in $(seq 1 10); do kill -0 "$pid" 2>/dev/null || break; sleep 0.5; done
+  (cd ~ && env -i "${envs[@]}" setsid "$TRAY" "${args[@]:1}" > "$HOME/.cache/lumina-tray.log" 2>&1 < /dev/null &)
+  echo "Started again."
+}
+
 restart
 if wait_until_up; then
+  update_tray
   say "Done: $before → $NEW_VERSION"
   echo "Going back, if need be: bash $SCRIPT --rollback"
 else
