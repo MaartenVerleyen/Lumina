@@ -7,6 +7,7 @@ import {
   allPhotosShownIn,
   allPhotosSources,
   call,
+  callLocal,
   isOpenLibraryRoot,
   libraryRefFromString,
   libraryRefToString,
@@ -23,6 +24,7 @@ import {
   onAndroid,
   type Role,
 } from "../../api";
+import type { ServerInfo } from "../../api/desktopRemote";
 import { useAccount } from "../../components/auth/ServerGate";
 import { open, platform } from "../../api/platform";
 import { PhotoItem, ThumbBatchProgress, ThumbBatchItem, ExifRefreshResult, PerfLogEvent, TrashResult, TrashSummary, ScanProgressEvent } from "../../types/lumina";
@@ -88,10 +90,22 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
   const [scanProgress, setScanProgress] = useState<ScanProgressEvent | null>(null);
   const [isScanningFolder, setIsScanningFolder] = useState<boolean>(false);
   // Title of the progress dialog when it isn't a folder scan (e.g. emptying _Trash)
-  const [progressTitle, setProgressTitle] = useState<string | null>(null);
+  const [progressTitle, setProgressTitleState] = useState<string | null>(null);
+  const setProgressTitle = (title: string | null) => {
+    progressTitleRef.current = title;
+    setProgressTitleState(title);
+  };
   const [progress, setProgress] = useState<{ completed: number; total: number } | null>(null);
   // A quiet rescan (files changed outside Lumina, or after an import) shows no progress dialog
   const silentScanRef = useRef(false);
+  // A library opened from its database is checked on disk afterwards: that scan's progress goes to the jobs
+  // panel, not the dialog, and the window stays usable
+  const backgroundScanRef = useRef(false);
+  const [backgroundScanProgress, setBackgroundScanProgress] = useState<ScanProgressEvent | null>(null);
+  // Servers indexing their libraries, by server ("" in the web client: its own server)
+  const [serverScans, setServerScans] = useState<Record<string, ScanProgressEvent>>({});
+  const [serverLabels, setServerLabels] = useState<Record<string, string>>({});
+  const progressTitleRef = useRef<string | null>(null);
   // Changes Lumina makes itself (an import) don't need the watcher's rescan: it waits until this time
   const watchQuietUntilRef = useRef(0);
   const { watchLibrary } = useSettings();
@@ -116,21 +130,132 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
   // latest is shown, once per frame (setting state for each one made React report an update loop)
   useEffect(() => {
     let latest: ScanProgressEvent | null = null;
+    let latestLocal = false;
+    const latestServer = new Map<string, ScanProgressEvent | null>();
     let frame = 0;
+    const schedule = () => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        if (latestLocal) {
+          latestLocal = false;
+          // A finished scan ends its job in handleLoadFolderPath, not here: its last event can come first
+          if (backgroundScanRef.current) {
+            if (latest) setBackgroundScanProgress(latest);
+          } else setScanProgress(latest);
+        }
+        if (latestServer.size > 0) {
+          const updates = new Map(latestServer);
+          latestServer.clear();
+          setServerScans((prev) => {
+            const next = { ...prev };
+            for (const [server, prog] of updates) {
+              if (prog) next[server] = prog;
+              else delete next[server];
+            }
+            return next;
+          });
+        }
+      });
+    };
     const unlisten = subscribe<ScanProgressEvent>("scan-progress", (event) => {
       const prog = event.payload;
+      // A server lists its libraries from its database when asked, so a scan it reports is its own work (new
+      // photos in a library, an admin's rescan): a job in the status bar, never the dialog that blocks the window.
+      // Only an operation this window waits for (emptying _Trash on the server) keeps its dialog.
+      const fromServer = event.server !== undefined || !inDesktopApp;
+      if (fromServer && !progressTitleRef.current) {
+        latestServer.set(event.server ?? "", prog.done ? null : prog);
+        schedule();
+        return;
+      }
       if (silentScanRef.current) return;
       latest = prog.done ? null : prog;
-      if (!frame) {
-        frame = requestAnimationFrame(() => {
-          frame = 0;
-          setScanProgress(latest);
-        });
-      }
+      latestLocal = true;
+      schedule();
     });
     return () => {
       cancelAnimationFrame(frame);
       unlisten.then((f) => f());
+    };
+  }, []);
+
+  // A server that stopped or lost its connection mid-scan sends no "done": its job goes after five quiet minutes
+  // (walking a large folder on a hard drive can be quiet for a while)
+  const serverScanSeenRef = useRef(new Map<string, number>());
+  useEffect(() => {
+    const now = Date.now();
+    for (const server of Object.keys(serverScans)) serverScanSeenRef.current.set(server, now);
+    if (Object.keys(serverScans).length === 0) return;
+    const timer = window.setTimeout(() => {
+      const cutoff = Date.now() - 5 * 60_000;
+      setServerScans((prev) => {
+        const stale = Object.keys(prev).filter((s) => (serverScanSeenRef.current.get(s) ?? 0) < cutoff);
+        if (stale.length === 0) return prev;
+        const next = { ...prev };
+        for (const s of stale) delete next[s];
+        return next;
+      });
+    }, 5 * 60_000 + 1000);
+    return () => window.clearTimeout(timer);
+  }, [serverScans]);
+
+  // Names of the servers whose indexing is shown as a job ("cachy"), fetched when one first reports
+  useEffect(() => {
+    const unknown = Object.keys(serverScans).filter((s) => s && !(s in serverLabels));
+    if (unknown.length === 0 || !inDesktopApp) return;
+    callLocal<ServerInfo[]>("server_list")
+      .then((list) => setServerLabels((prev) => ({ ...prev, ...Object.fromEntries(list.map((s) => [s.id, s.label])) })))
+      .catch(() => {});
+  }, [serverScans]);
+
+  // A scan saved another part of a library (every 1,000 files): the open window lists it again from the
+  // database, so new photos appear while the rest is still being indexed. At most every ten seconds: a
+  // listing of a large library isn't free.
+  const relistTimerRef = useRef<number | null>(null);
+  const lastRelistRef = useRef(0);
+  useEffect(() => {
+    const relistSoon = () => {
+      if (relistTimerRef.current !== null) return;
+      const wait = Math.max(1500, lastRelistRef.current + 10000 - Date.now());
+      relistTimerRef.current = window.setTimeout(async () => {
+        relistTimerRef.current = null;
+        lastRelistRef.current = Date.now();
+        const target = folderRef.current;
+        if (!target) return;
+        const res = await listFromDatabaseRef.current(target).catch(() => null);
+        if (res && isSameFolder(target, folderRef.current)) setPhotos(withEarlyThumbsRef.current(res));
+      }, wait);
+    };
+    // All photos takes in every library of a server, also one it doesn't list yet (just added on the server)
+    const ofAllPhotos = (event: { server?: string }) => openLibraryIsAll() && (event.server !== undefined || !inDesktopApp);
+    const offs = [
+      subscribe<string>("library-indexed", (event) => {
+        if (isOpenLibraryRoot(event.payload, event) || ofAllPhotos(event)) relistSoon();
+      }),
+      // An admin added a library to a server or took one off
+      subscribe<{ root: string }>("libraries-changed", (event) => {
+        if (ofAllPhotos(event)) {
+          relistSoon();
+          return;
+        }
+        const open = folderRef.current;
+        if (!open || !isOpenLibraryRoot(event.payload.root, event)) return;
+        // The open library was taken off: back to the list of what there is
+        call<{ root: string }[]>("list_libraries")
+          .then((list) => {
+            if (!list.some((l) => isSameFolder(l.root, open)) && isSameFolder(open, folderRef.current)) {
+              setFolder("");
+              setPhotos([]);
+            }
+          })
+          .catch(() => {});
+      }),
+    ];
+    return () => {
+      if (relistTimerRef.current !== null) window.clearTimeout(relistTimerRef.current);
+      relistTimerRef.current = null;
+      for (const off of offs) off.then((f) => f());
     };
   }, []);
 
@@ -221,6 +346,8 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
     });
     return openLibraryIsAll() ? allPhotosRegroup(next) : next;
   };
+  const withEarlyThumbsRef = useRef(withEarlyThumbs);
+  withEarlyThumbsRef.current = withEarlyThumbs;
 
   // Only the most recent folder load may apply its result (a slower earlier scan must not win)
   const folderLoadRequestRef = useRef(0);
@@ -241,6 +368,24 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
       setExpandedFolders(new Set());
       setExpandedBurstGroups(new Set());
       setSelectedPeriodRange(null);
+      backgroundScanRef.current = false;
+      setBackgroundScanProgress(null);
+
+      // A library on this computer that was opened before, or All photos, shows straight from the databases;
+      // the check of this computer's folders for new, changed and removed files runs after that, in the
+      // background
+      if (!server && (targetPath === ALL_PHOTOS || platform.fullApp)) {
+        const known = await listFromDatabase(targetPath).catch(() => [] as PhotoItem[]);
+        if (isSuperseded()) return;
+        if (known.length > 0) {
+          saveRecentFolder(targetPath, server);
+          showOpened(targetPath === ALL_PHOTOS ? withEarlyThumbs(known) : known);
+          addLog("LIBRARY", `Opened library folder (${known.length} items); checking it for changes`, targetPath);
+          await checkInBackground(targetPath, known.length, isSuperseded);
+          return;
+        }
+      }
+
       setIsScanningFolder(true);
       setScanProgress({
         stage: "Scanning directory & EXIF headers...",
@@ -257,15 +402,8 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
       if (isSuperseded()) return;
       // Remember the folder only once it actually opened, so a bad path is never restored on next launch
       saveRecentFolder(targetPath, server);
-      setPhotos(res);
-      setIsScanningFolder(false);
-      setScanProgress(null);
+      showOpened(res);
       addLog("LIBRARY", `Opened library folder (${res.length} items)`, targetPath);
-      if (res.length > 0) {
-        setActiveHash(res[0].hash);
-        setSelectedHashes(new Set([res[0].hash]));
-        selectionAnchorHashRef.current = res[0].hash;
-      }
     } catch (err) {
       if (isSuperseded()) return;
       // Keep showing the previous folder's photos under the previous folder's name
@@ -275,6 +413,60 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
       setScanProgress(null);
       if (String(err).includes(SCAN_CANCELLED)) setAutoMatchNotice("Opening the folder was cancelled.");
       else setError(String(err));
+    }
+  }
+
+  // The open library as the databases have it, without reading the folders: a folder on this computer from
+  // this computer's database, a server's library (which a server always answers from its database), All
+  // photos from all of them
+  function listFromDatabase(target: string): Promise<PhotoItem[]> {
+    if (target === ALL_PHOTOS) return call<PhotoItem[]>("scan_folder", { folderPath: target, forceReprocess: false, check: [] });
+    if (openLibraryServer() || !platform.fullApp) return call<PhotoItem[]>("scan_folder", { folderPath: target, forceReprocess: false });
+    return callLocal<PhotoItem[]>("list_local_library", { root: target });
+  }
+  const listFromDatabaseRef = useRef(listFromDatabase);
+  listFromDatabaseRef.current = listFromDatabase;
+
+  function showOpened(list: PhotoItem[]) {
+    setPhotos(list);
+    setIsScanningFolder(false);
+    setScanProgress(null);
+    if (list.length > 0) {
+      setActiveHash(list[0].hash);
+      setSelectedHashes(new Set([list[0].hash]));
+      selectionAnchorHashRef.current = list[0].hash;
+    }
+  }
+
+  // Scans a library already shown from its database, then lists it from the database again: the scan's own
+  // list holds the values it read when it started, and ratings or tags changed meanwhile must not go back.
+  // The selection is kept, as it is when the watcher picks up changes.
+  async function checkInBackground(root: string, shownCount: number, isSuperseded: () => boolean) {
+    backgroundScanRef.current = true;
+    setBackgroundScanProgress({ stage: "Checking for new and changed photos", current_file: root, completed: 0, total: 0, percent: 0, done: false });
+    try {
+      // All photos checks every folder on this computer, one after the other
+      await call<PhotoItem[]>("scan_folder", { folderPath: root, forceReprocess: false });
+      if (isSuperseded()) return;
+      const fresh = await listFromDatabase(root);
+      if (isSuperseded()) return;
+      setPhotos(root === ALL_PHOTOS ? withEarlyThumbs(fresh) : fresh);
+      const diff = fresh.length - shownCount;
+      addLog(
+        "LIBRARY",
+        diff === 0 ? "Checked the library: no photos added or removed" : `Checked the library: ${diff > 0 ? `${diff} added` : `${-diff} gone`}`,
+        root
+      );
+    } catch (err) {
+      if (isSuperseded()) return;
+      // Stopped from the jobs panel, or by another scan of this library (that one shows what it finds)
+      if (String(err).includes(SCAN_CANCELLED)) addLog("LIBRARY", "Stopped checking the library for changes", root);
+      else setError(`Couldn't check the library for changes: ${err}`);
+    } finally {
+      if (!isSuperseded()) {
+        backgroundScanRef.current = false;
+        setBackgroundScanProgress(null);
+      }
     }
   }
 
@@ -667,6 +859,9 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
     watchQuietUntilRef,
     recentFolders,
     scanProgress,
+    backgroundScanProgress,
+    serverScans,
+    serverLabels,
     progressTitle,
     setProgressTitle,
     isScanningFolder,

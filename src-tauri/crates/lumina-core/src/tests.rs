@@ -2678,3 +2678,63 @@ fn a_new_file_is_indexed_alone_and_found_by_content() {
     }
     let _ = fs::remove_dir_all(&base);
 }
+
+// A host that keeps the events it is sent
+struct RecordingHost(PathBuf, std::sync::Mutex<Vec<(String, JsonValue)>>);
+impl Host for RecordingHost {
+    fn data_dir(&self) -> PathBuf {
+        self.0.clone()
+    }
+    fn emit_value(&self, event: &str, payload: JsonValue) {
+        self.1.lock().unwrap().push((event.to_string(), payload));
+    }
+}
+
+// A large folder gets its thumbnails part by part (one feed of the parts the scan saves): every photo ends up
+// with its thumbnail and dHash, the progress never says "done" before the last one, and the duplicate groups
+// go out once, at the end
+#[test]
+fn a_large_folder_gets_its_thumbnails_part_by_part() {
+    let _turn = SCAN_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+    let base = std::env::temp_dir().join(format!("lumina_feed_test_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&base);
+    let (library, data) = (base.join("Library"), base.join("Data"));
+    fs::create_dir_all(&library).unwrap();
+    let count = 1250u32;
+    for i in 0..count {
+        let img = image::RgbImage::from_fn(24, 16, |x, y| image::Rgb([(i % 251) as u8, ((i / 251) * 40 + x) as u8, (y * 9 + x) as u8]));
+        img.save(library.join(format!("p{i:04}.png"))).unwrap();
+    }
+    let recorder = Arc::new(RecordingHost(data.clone(), Default::default()));
+    let host: SharedHost = recorder.clone();
+    db::migrate(&open_global_db(&*host).unwrap()).unwrap();
+
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    let scanned = rt.block_on(scan::scan_folder(host.clone(), library.to_string_lossy().to_string(), None)).unwrap();
+    assert_eq!(scanned.len(), count as usize);
+    while thumbs::thumbnail_passes_running() {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+
+    let listed = scan::list_library_photos(&*host, &library.to_string_lossy()).unwrap();
+    assert_eq!(listed.len(), count as usize);
+    assert!(listed.iter().all(|p| p.thumb_ready && !p.dhash.is_empty()), "every photo has its thumbnail and dHash");
+
+    let events = recorder.1.lock().unwrap();
+    let indexed = events.iter().filter(|(e, _)| e == "library-indexed").count();
+    assert_eq!(indexed, 2, "one per saved part");
+    let batches: Vec<&JsonValue> = events.iter().filter(|(e, _)| e == "thumb-batch-ready").map(|(_, p)| p).collect();
+    let (last, before) = batches.split_last().unwrap();
+    assert_eq!((last["completed"].as_u64(), last["total"].as_u64()), (Some(count as u64), Some(count as u64)));
+    assert!(last["duplicate_groups"].is_object());
+    let mut previous = 0;
+    for b in before {
+        let (done, total) = (b["completed"].as_u64().unwrap(), b["total"].as_u64().unwrap());
+        assert!(done < total, "not done before the last part: {done} of {total}");
+        assert!(done >= previous, "counts go up across the parts");
+        assert_eq!(b["duplicate_groups"].as_object().map(|o| o.len()), Some(0), "groups only at the end");
+        previous = done;
+    }
+    drop(events);
+    let _ = fs::remove_dir_all(&base);
+}

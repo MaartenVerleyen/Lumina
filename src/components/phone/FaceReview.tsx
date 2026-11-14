@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, Loader2, UserRound, X } from "lucide-react";
+import { Check, Loader2, UserPen, UserRound, X } from "lucide-react";
 import { call, mediaUrl } from "../../api";
 import type { LibraryState } from "../../hooks/useLibraryState";
 import type { FaceCluster, FaceInstance, SimilarFaceCandidate } from "../../types/lumina";
@@ -28,6 +28,8 @@ export function ReviewPerson({ lib, name, onBack }: { lib: LibraryState; name: s
   const [ticked, setTicked] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // "Someone else": the ticked faces, waiting for their right name
+  const [naming, setNaming] = useState<string[] | null>(null);
   const person = lib.people.find((p) => p.name === name);
 
   useEffect(() => {
@@ -72,6 +74,21 @@ export function ReviewPerson({ lib, name, onBack }: { lib: LibraryState; name: s
       setError(String(e));
     } finally {
       setBusy(false);
+    }
+  };
+
+  // Named as someone else: they're also turned down for this person, so they aren't suggested for them again
+  const namedSomeoneElse = async (ids: string[], changed: Record<string, FaceInstance[]>) => {
+    lib.setPhotos((prev) => withFaces(prev, changed));
+    const named = new Set(ids);
+    setCandidates((prev) => (prev ?? []).filter((c) => !named.has(c.face_id)));
+    setTicked((prev) => new Set([...prev].filter((id) => !named.has(id))));
+    setNaming(null);
+    lib.reducePendingCount(name, ids.length);
+    try {
+      await call("reject_face_candidates_batch", { faceIds: ids, personName: name });
+    } catch (e) {
+      setError(String(e));
     }
   };
 
@@ -149,6 +166,14 @@ export function ReviewPerson({ lib, name, onBack }: { lib: LibraryState; name: s
             </button>
             <button
               disabled={busy || ticked.size === 0}
+              onClick={() => setNaming([...ticked])}
+              className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl border border-zinc-700 text-zinc-200 disabled:opacity-40 active:bg-white/5"
+            >
+              <UserPen className="w-4 h-4" />
+              Someone else
+            </button>
+            <button
+              disabled={busy || ticked.size === 0}
               onClick={() => void answer(true)}
               className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-emerald-600 text-white font-medium disabled:opacity-40 active:bg-emerald-700"
             >
@@ -159,6 +184,17 @@ export function ReviewPerson({ lib, name, onBack }: { lib: LibraryState; name: s
         </>
       )}
       {error && <p className="px-4 pt-4 text-xs text-red-300">{error}</p>}
+      {naming && (
+        <FaceSheet
+          faceIds={naming}
+          thumb={candidates?.find((c) => c.face_id === naming[0])?.face_thumb ?? ""}
+          current={name}
+          title={naming.length === 1 ? `Not ${name}: who is it?` : `Not ${name}: who are these ${naming.length} faces?`}
+          people={lib.people}
+          onClose={() => setNaming(null)}
+          onDone={(changed) => void namedSomeoneElse(naming, changed)}
+        />
+      )}
     </Page>
   );
 }

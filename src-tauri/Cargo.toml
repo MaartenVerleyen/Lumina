@@ -18,11 +18,11 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [workspace]
-members = ["crates/lumina-core", "crates/lumina-server"]
+members = ["crates/lumina-core", "crates/lumina-server", "crates/lumina-tray"]
 
 [dependencies]
 lumina-core = { path = "crates/lumina-core", features = ["tauri"] }
-tauri = { version = "2", features = ["protocol-asset"] }
+tauri = { version = "2", features = ["protocol-asset", "tray-icon"] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-updater = "2"
@@ -41,6 +41,8 @@ walkdir = "2.5"
 reqwest = { version = "0.12", features = ["json", "stream"] }
 tokio-tungstenite = { version = "0.29", features = ["native-tls"] }
 keyring = { version = "3", features = ["windows-native", "apple-native", "sync-secret-service"] }
+# Starting Lumina again brings the running window back (also out of the tray) instead of a second copy
+tauri-plugin-single-instance = "2"
 
 [target.'cfg(target_os = "android")'.dependencies]
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }

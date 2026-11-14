@@ -25,6 +25,7 @@ import {
   Star,
   User,
   UserMinus,
+  UserPen,
   Users,
   X,
 } from "lucide-react";
@@ -100,6 +101,18 @@ export default function FaceMatchReviewModal({
   // Person menu in the sidebar: which person, and whether it shows the rename / merge field
   const [personMenu, setPersonMenu] = useState<{ name: string; mode: "menu" | "rename" | "merge" } | null>(null);
   const [personMenuInput, setPersonMenuInput] = useState("");
+  // "Someone else": the faces that are another person than the one under review, waiting for their name
+  const [nameAfterNo, setNameAfterNo] = useState<{ faces: SimilarFaceCandidate[]; from: string; tab: StatusTab } | null>(null);
+  const [nameAfterNoInput, setNameAfterNoInput] = useState("");
+  const [nameAfterNoFocused, setNameAfterNoFocused] = useState(false);
+  const askSomeoneElse = (faceIds: string[]) => {
+    const list = statusTab === "pending" ? candidates : confirmedFaces;
+    const ids = new Set(faceIds);
+    const faces = list.filter((c) => ids.has(c.face_id));
+    if (faces.length === 0 || !listPerson) return;
+    setNameAfterNo({ faces, from: listPerson, tab: statusTab });
+    setNameAfterNoInput("");
+  };
 
   const syncUpdatedFacesToPhotos = useCallback(
     (updatedMap: Record<string, FaceInstance[]>) => {
@@ -148,6 +161,7 @@ export default function FaceMatchReviewModal({
       setActivePerson(clean);
       setIsLoading(true);
       setActionError("");
+      setNameAfterNo(null);
       setLoadFailed(false);
       try {
         if (tab === "pending") {
@@ -408,6 +422,48 @@ export default function FaceMatchReviewModal({
     [listPerson, isLoading, confirmedFaces, syncUpdatedFacesToPhotos, refreshPeople]
   );
 
+  // Names the "someone else" faces. A suggestion is also turned down for the person under review, so it
+  // isn't suggested for them again; a confirmed face simply moves to its right name.
+  const handleNameAfterNo = async () => {
+    if (!nameAfterNo) return;
+    const name = nameAfterNoInput.trim();
+    if (!name) return;
+    const { faces, from, tab } = nameAfterNo;
+    if (name.toLowerCase() === from.toLowerCase()) {
+      setActionError(`"${name}" is the person you're reviewing: use Yes for them.`);
+      return;
+    }
+    // A name already in use keeps its spelling
+    const known = people.find((p) => p.name.toLowerCase() === name.toLowerCase())?.name ?? name;
+    const faceIds = faces.map((f) => f.face_id);
+    const ids = new Set(faceIds);
+    setNameAfterNo(null);
+    setSelectedIds((prev) => new Set([...prev].filter((id) => !ids.has(id))));
+    if (tab === "pending") {
+      setCandidates((prev) => {
+        const next = prev.filter((c) => !ids.has(c.face_id));
+        setSpotlightIndex((idx) => Math.min(idx, Math.max(0, next.length - 1)));
+        return next;
+      });
+    } else {
+      setConfirmedFaces((prev) => prev.filter((c) => !ids.has(c.face_id)));
+    }
+    try {
+      if (tab === "pending") await call<number>("reject_face_candidates_batch", { faceIds, personName: from });
+      const updatedMap = await call<Record<string, FaceInstance[]>>("assign_faces_to_person_batch", {
+        faceIds,
+        personName: known,
+      });
+      syncUpdatedFacesToPhotos(updatedMap);
+      if (tab === "pending") reducePendingCount(from, faces.length);
+      await refreshPeople(undefined, true);
+    } catch (err) {
+      if (tab === "pending") restoreCandidates(faces);
+      else setConfirmedFaces((prev) => [...faces, ...prev]);
+      setActionError(`Could not name ${plural(faces.length, "face")} "${known}": ${String(err)}`);
+    }
+  };
+
   // Restore a face from the "Denied / Ignored" tab (if you accidentally denied someone)
   const handleRestoreDenied = useCallback(
     async (faceIds: string[], alsoAccept = false) => {
@@ -482,6 +538,10 @@ export default function FaceMatchReviewModal({
           e.preventDefault();
           e.stopPropagation();
           handleDenyBatch([cur.face_id]);
+        } else if (e.key.toLowerCase() === "o") {
+          e.preventDefault();
+          e.stopPropagation();
+          askSomeoneElse([cur.face_id]);
         } else if (e.key === "ArrowRight") {
           e.preventDefault();
           e.stopPropagation();
@@ -955,6 +1015,15 @@ export default function FaceMatchReviewModal({
                         <span>No, not them ({selectedIds.size})</span>
                       </button>
                       <button
+                        onClick={() => askSomeoneElse(Array.from(selectedIds))}
+                        disabled={selectedIds.size === 0}
+                        className="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 border border-zinc-700 text-zinc-100 font-semibold flex items-center gap-1.5 transition"
+                        title="These faces are another person: give them their name"
+                      >
+                        <UserPen className="w-3.5 h-3.5" />
+                        <span>Someone else ({selectedIds.size})</span>
+                      </button>
+                      <button
                         onClick={async () => {
                           const ids = Array.from(selectedIds);
                           if (
@@ -987,6 +1056,17 @@ export default function FaceMatchReviewModal({
                     >
                       <UserMinus className="w-3.5 h-3.5" />
                       <span>Not {activePerson} ({selectedIds.size})</span>
+                    </button>
+                  )}
+                  {statusTab === "confirmed" && (
+                    <button
+                      onClick={() => askSomeoneElse(Array.from(selectedIds))}
+                      disabled={selectedIds.size === 0}
+                      className="px-3.5 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 disabled:opacity-40 text-zinc-100 font-semibold flex items-center gap-1.5 transition"
+                      title="These faces are another person: give them their name"
+                    >
+                      <UserPen className="w-3.5 h-3.5" />
+                      <span>Someone else ({selectedIds.size})</span>
                     </button>
                   )}
 
@@ -1028,6 +1108,68 @@ export default function FaceMatchReviewModal({
                   <X className="w-3.5 h-3.5" />
                 </button>
               </div>
+            )}
+
+            {nameAfterNo && (
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  handleNameAfterNo();
+                }}
+                // While typing, Escape and the review's letter keys belong to the field
+                {...(nameAfterNoFocused ? { "data-own-escape": "" } : {})}
+                className="mx-6 mt-3 px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-700 text-xs flex items-center gap-2 flex-wrap"
+              >
+                {nameAfterNo.faces.length === 1 && (
+                  <img
+                    src={mediaUrl({ kind: "face", path: nameAfterNo.faces[0].face_thumb })}
+                    alt=""
+                    className="w-8 h-8 rounded-md object-cover border border-zinc-700"
+                  />
+                )}
+                <span className="text-zinc-300">
+                  {nameAfterNo.faces.length === 1 ? "Not" : `${nameAfterNo.faces.length} faces, not`} {nameAfterNo.from}. Who is it?
+                </span>
+                <input
+                  autoFocus
+                  value={nameAfterNoInput}
+                  onChange={(e) => setNameAfterNoInput(e.target.value)}
+                  onFocus={() => setNameAfterNoFocused(true)}
+                  onBlur={() => setNameAfterNoFocused(false)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") {
+                      e.preventDefault();
+                      setNameAfterNo(null);
+                      setNameAfterNoFocused(false);
+                    }
+                  }}
+                  list="face-review-people"
+                  placeholder="Name"
+                  aria-label="Who these faces are"
+                  className="flex-1 min-w-[140px] bg-zinc-950 border border-zinc-700 rounded-md px-2 py-1 text-zinc-100 focus:outline-none focus:border-emerald-500/60"
+                />
+                <datalist id="face-review-people">
+                  {people
+                    .filter((p) => p.name.toLowerCase() !== nameAfterNo.from.toLowerCase())
+                    .map((p) => (
+                      <option key={p.name} value={p.name} />
+                    ))}
+                </datalist>
+                <button
+                  type="submit"
+                  disabled={!nameAfterNoInput.trim()}
+                  className="px-3 py-1 rounded-md bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-semibold"
+                >
+                  Name
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setNameAfterNo(null)}
+                  className="px-2 py-1 rounded-md text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800"
+                >
+                  Cancel
+                </button>
+              </form>
             )}
 
             {/* Content Area */}
@@ -1207,6 +1349,17 @@ export default function FaceMatchReviewModal({
                               >
                                 <X className="w-3.5 h-3.5" />
                               </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  askSomeoneElse([cand.face_id]);
+                                }}
+                                className="py-1.5 px-2.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-100 text-xs font-semibold flex items-center justify-center transition"
+                                title="Someone else: give this face its name"
+                                aria-label="Someone else"
+                              >
+                                <UserPen className="w-3.5 h-3.5" />
+                              </button>
                             </div>
                           )}
 
@@ -1336,6 +1489,13 @@ export default function FaceMatchReviewModal({
                       >
                         <X className="w-4 h-4" />
                         <span>No (N)</span>
+                      </button>
+                      <button
+                        onClick={() => askSomeoneElse([currentSpotlight.face_id])}
+                        className="w-full py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-200 font-semibold text-xs flex items-center justify-center gap-2 transition"
+                      >
+                        <UserPen className="w-4 h-4" />
+                        <span>Someone else (O)</span>
                       </button>
                     </div>
                   </div>

@@ -1,0 +1,16 @@
+# Lumina server as a systemd user service (see "Without Docker" in server/README.md):
+#   cp server/lumina-server.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now lumina-server
+#   loginctl enable-linger "$USER"     # keeps it running when you're logged out, and starts it at boot
+[Unit]
+Description=Lumina server
+After=network-online.target
+
+[Service]
+ExecStart=%h/.local/bin/lumina-server --config %h/.config/lumina/lumina-server.toml serve
+WorkingDirectory=%h/.local/share/lumina
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

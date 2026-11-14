@@ -48,6 +48,7 @@ import { usePaneLayout } from "./app/usePaneLayout";
 import { useWindowFileDrop } from "./app/useWindowFileDrop";
 import { useClientMode } from "./app/useClientMode";
 import { useAppKeys } from "./app/useAppKeys";
+import { useCloseBehaviour } from "./app/useCloseBehaviour";
 import { backgroundJobsOf } from "./app/backgroundJobs";
 import { useSearchSuggestions } from "./app/useSearchSuggestions";
 import { buildPaletteActions } from "./app/paletteActions";
@@ -130,6 +131,11 @@ export default function App() {
   const [isAdminOpen, setIsAdminOpen] = useState(false);
   useEffect(() => {
     const open = () => setIsAdminOpen(true);
+    // The tray on the server's computer opens the web client at #admin (after signing in, if need be)
+    if (!inDesktopApp && window.location.hash === "#admin") {
+      setIsAdminOpen(true);
+      history.replaceState(null, "", window.location.pathname + window.location.search);
+    }
     window.addEventListener(OPEN_ADMIN_EVENT, open);
     return () => window.removeEventListener(OPEN_ADMIN_EVENT, open);
   }, []);
@@ -472,6 +478,7 @@ export default function App() {
   const dragPhoto = drag ? lib.visiblePhotos.find((p) => p.hash === drag.thumbHash) : undefined;
 
   const jobs = [...backgroundJobsOf(lib), ...client.jobs];
+  useCloseBehaviour(jobs, lib.setError);
 
   const getSearchSuggestions = useSearchSuggestions(lib);
 

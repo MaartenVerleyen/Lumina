@@ -58,9 +58,10 @@ export default function PhoneApp() {
     openedAll.current = true;
     // The folder may already say All photos (remembered from the last run) without its photos loaded. It opens
     // from the lists kept last time (at once, and without a connection), then loads them again for real.
+    // (Opening shows what the lists have and then loads them again in the background, itself.)
     if (lib.folder !== ALL_PHOTOS || lib.photos.length === 0) {
       startAllPhotosFromKept();
-      void lib.handleLoadFolderPath(ALL_PHOTOS).then(() => lib.handleLoadFolderPath(ALL_PHOTOS));
+      void lib.handleLoadFolderPath(ALL_PHOTOS);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signedIn]);
@@ -72,6 +73,8 @@ export default function PhoneApp() {
     window.addEventListener(ALL_PHOTOS_LOADED, update);
     return () => window.removeEventListener(ALL_PHOTOS_LOADED, update);
   }, []);
+  // Loading, checking in the background, or a server indexing new photos (they appear as it goes)
+  const updating = lib.isScanningFolder || lib.backgroundScanProgress !== null || Object.keys(lib.serverScans).length > 0;
   const offlineLabels = offline.map((id) => servers.find((s) => s.id === id)?.label ?? id).join(", ");
 
   // Newest first, like a phone's own gallery
@@ -225,7 +228,7 @@ export default function PhoneApp() {
               {showsGrid && (
                 <div className="text-[11px] text-zinc-500">
                   {photos.length.toLocaleString()} {photos.length === 1 ? "item" : "items"}
-                  {lib.isScanningFolder && photos.length > 0 ? " · updating" : offline.length > 0 ? ` · offline: ${offlineLabels} as last seen` : ""}
+                  {updating && photos.length > 0 ? " · updating" : offline.length > 0 ? ` · offline: ${offlineLabels} as last seen` : ""}
                 </div>
               )}
             </div>
@@ -275,7 +278,7 @@ export default function PhoneApp() {
         {showsGrid &&
           (photos.length === 0 ? (
             <Empty
-              busy={lib.progress !== null || lib.isScanningFolder || !serversKnown}
+              busy={lib.progress !== null || updating || !serversKnown}
               filtered={!!scope || lib.mediaFilter !== "ALL"}
               onClear={scope ? back : () => lib.setMediaFilter("ALL")}
             />

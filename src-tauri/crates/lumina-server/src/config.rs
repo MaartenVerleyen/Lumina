@@ -26,6 +26,9 @@ pub struct Config {
     pub listen: Option<String>,
     pub web_dir: Option<PathBuf>,
     pub upload_library: Option<String>,
+    // The settings an environment variable set ("libraries", "caption_model", ...): the admin page can't change them
+    #[serde(skip)]
+    pub from_env: Vec<String>,
 }
 
 impl Config {
@@ -48,12 +51,15 @@ impl Config {
         }
         let var = |name: &str| std::env::var(name).ok().map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
         if let Some(list) = var("LUMINA_LIBRARIES") {
+            self.from_env.push("libraries".into());
             self.libraries = list.split(';').map(|r| r.trim().to_string()).filter(|r| !r.is_empty()).collect();
         }
         if let Some(url) = var("LUMINA_OLLAMA_URL") {
+            self.from_env.push("ollama_url".into());
             self.ollama_url = Some(url);
         }
         if let Some(model) = var("LUMINA_CAPTION_MODEL") {
+            self.from_env.push("caption_model".into());
             self.caption_model = Some(model);
         }
         if let Some(listen) = var("LUMINA_LISTEN") {
@@ -63,6 +69,7 @@ impl Config {
             self.web_dir = Some(PathBuf::from(dir));
         }
         if let Some(root) = var("LUMINA_UPLOAD_LIBRARY") {
+            self.from_env.push("upload_library".into());
             self.upload_library = Some(root);
         }
         self

@@ -36,7 +36,7 @@ fn server(name: &str) -> TestServer {
     for (name, role) in [("vera", Role::Viewer), ("ed", Role::Editor), ("ada", Role::Admin)] {
         accounts::create_user(&conn, name, role, "long enough").unwrap();
     }
-    let state = Arc::new(AppState { host: host.clone(), web_dir: Some(web), throttle: Default::default(), upload_library: None });
+    let state = Arc::new(AppState { host: host.clone(), web_dir: Some(web), throttle: Default::default() });
     let app = router(state).layer(MockConnectInfo(SocketAddr::from(([127, 0, 0, 1], 50000))));
     TestServer { app, dir, host }
 }
@@ -1289,4 +1289,71 @@ async fn answers_name_cache_files_without_the_data_folder() {
     assert_eq!(b2["thumb_path"], json!(format!("thumbnails{}b2.jpg", std::path::MAIN_SEPARATOR)));
     assert_eq!(b2["faces"][0]["face_thumb"], json!(format!("faces{}b2_1_1.jpg", std::path::MAIN_SEPARATOR)));
     assert_eq!(b2["path"], json!(std::path::Path::new(&bob).join("b2.jpg").to_string_lossy()));
+}
+
+// The admin page's Libraries and Settings: adding a folder, taking one off (hidden from everyone, its values
+// kept), the last one stays, settings apply and are saved; the tray's status needs the key. One test: the
+// settings in force are the process's own.
+#[tokio::test]
+async fn admin_adds_and_takes_off_libraries_and_saves_settings() {
+    let s = server("settings");
+    let (a, b) = (s.dir.join("lib_a"), s.dir.join("lib_b"));
+    std::fs::create_dir_all(&a).unwrap();
+    std::fs::create_dir_all(&b).unwrap();
+    let (a, b) = (lumina_core::libraries::normalize_root(&a.to_string_lossy()), lumina_core::libraries::normalize_root(&b.to_string_lossy()));
+    lumina_core::libraries::open(&db::open_global_db(&*s.host).unwrap(), &a).unwrap();
+    let mut config = crate::config::Config { data_dir: Some(s.dir.clone()), libraries: vec![a.clone()], ..Default::default() };
+    crate::settings::apply(&mut config);
+    let (admin, viewer) = (login(&s.app, "ada").await, login(&s.app, "vera").await);
+    let roots = |v: &Value| v.as_array().unwrap().iter().map(|l| l["root"].as_str().unwrap().to_string()).collect::<Vec<_>>();
+
+    let (status, _, _) = send(&s.app, post("/api/rpc/admin_add_library", json!({"folder": b}), Some(&viewer))).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "admin work");
+    let (status, _, body) = send(&s.app, post("/api/rpc/admin_add_library", json!({"folder": b}), Some(&admin))).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(roots(&body["libraries"]), vec![a.clone(), b.clone()]);
+    assert_eq!(s.host.jobs.board.lock().unwrap().queued, vec![format!("Rescan of {b}")], "indexed by the pipeline");
+    let (status, _, _) = send(&s.app, post("/api/rpc/admin_add_library", json!({"folder": b}), Some(&admin))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "a library already");
+    let (status, _, _) = send(&s.app, post("/api/rpc/admin_add_library", json!({"folder": s.dir.join("nowhere")}), Some(&admin))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    let (status, _, body) = send(&s.app, post("/api/rpc/admin_remove_library", json!({"rootFolder": a}), Some(&admin))).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(roots(&body["libraries"]), vec![b.clone()]);
+    assert_eq!(roots(&body["removed"]), vec![a.clone()]);
+    let (_, _, libs) = send(&s.app, post("/api/rpc/list_libraries", json!({}), Some(&viewer))).await;
+    assert_eq!(roots(&libs), vec![b.clone()], "no longer shown");
+    let (status, _, _) = send(&s.app, post("/api/rpc/admin_remove_library", json!({"rootFolder": b}), Some(&admin))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "the last library stays");
+    let saved = crate::settings::load_saved(&s.dir);
+    assert_eq!((saved.libraries, saved.removed_libraries), (Some(vec![b.clone()]), vec![a.clone()]));
+
+    // Back again: shown, and no longer on the removed list
+    let (_, _, body) = send(&s.app, post("/api/rpc/admin_add_library", json!({"folder": a}), Some(&admin))).await;
+    assert_eq!(roots(&body["removed"]), Vec::<String>::new());
+    let (_, _, libs) = send(&s.app, post("/api/rpc/list_libraries", json!({}), Some(&viewer))).await;
+    assert_eq!(roots(&libs).len(), 2);
+
+    // (The upload library is the process's own setting, which the upload tests running beside this one use: only
+    // a refused one here)
+    let (status, _, body) = send(&s.app, post("/api/rpc/admin_save_settings", json!({"captionModel": "qwen3-vl:8b-instruct"}), Some(&admin))).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(*s.host.jobs.caption_model.lock().unwrap(), Some("qwen3-vl:8b-instruct".to_string()), "applies at once");
+    let nowhere = s.dir.join("nowhere").to_string_lossy().to_string();
+    let (status, _, _) = send(&s.app, post("/api/rpc/admin_save_settings", json!({"uploadLibrary": nowhere}), Some(&admin))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "uploads go to one of the libraries");
+    let (status, _, _) = send(&s.app, post("/api/rpc/admin_save_settings", json!({"ollamaUrl": "localhost:11434"}), Some(&admin))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "an address starts with http://");
+    assert_eq!(crate::settings::load_saved(&s.dir).caption_model.as_deref(), Some("qwen3-vl:8b-instruct"));
+
+    // The tray: the key from the data folder, nothing without it
+    local::create_key(&s.dir).unwrap();
+    let key = std::fs::read_to_string(s.dir.join(local::KEY_FILE)).unwrap();
+    let (status, _, _) = send(&s.app, get("/local/status", None)).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let req = HttpRequest::get("/local/status").header("x-lumina-local-key", key).body(Body::empty()).unwrap();
+    let (status, _, body) = send(&s.app, req).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body["progress"].is_array() && body["jobs"]["queued"].is_array());
 }

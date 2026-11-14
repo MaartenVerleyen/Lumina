@@ -1,5 +1,5 @@
 import { useEffect, useState, ReactNode } from "react";
-import { ALL_PHOTOS, allPhotosCandidates, call, excludedSources, inDesktopApp, setExcludedSources, type Source } from "../../api";
+import { ALL_PHOTOS, allPhotosCandidates, call, excludedSources, inDesktopApp, onAndroid, setExcludedSources, type Source } from "../../api";
 import { sourceKey } from "../../api/allPhotos";
 import { libraryName } from "../../utils/photoHelpers";
 import { ServersSettings } from "../servers/Servers";
@@ -408,6 +408,23 @@ export default function SettingsModal({
                     />
                   </Row>
                 </Group>
+                {inDesktopApp && !onAndroid && (
+                  <Group title="Closing the window">
+                    <Row
+                      label="Keep running in the tray"
+                      hint="Closing the window hides Lumina next to the clock, where scans, thumbnails, uploads and backups carry on. Click its icon to open it again; Quit Lumina is in its menu."
+                    >
+                      <Switch checked={settings.closeToTray} onChange={(v) => updateSettings({ closeToTray: v })} label="Keep running in the tray" />
+                    </Row>
+                    <Row label="Ask before closing" hint="Asks first when closing the window quits Lumina, and says what would stop.">
+                      <Switch
+                        checked={settings.askBeforeClosing}
+                        onChange={(v) => updateSettings({ askBeforeClosing: v })}
+                        label="Ask before closing"
+                      />
+                    </Row>
+                  </Group>
+                )}
                 <Group title="Culling">
                   <Row label="Move to the next photo after a choice" hint="After P, X or a star rating the next photo is selected.">
                     <Switch checked={lib.autoAdvance} onChange={lib.setAutoAdvance} label="Auto-advance" />

@@ -91,7 +91,7 @@ pub struct Scope {
 impl Scope {
     pub fn load(conn: &Connection, user: &User) -> Result<Scope, String> {
         let own = if user.role == Role::Admin { HashMap::new() } else { library_roles_of(conn, user.id)? };
-        let libraries = libraries::list(conn)?
+        let libraries = crate::settings::served(libraries::list(conn)?)
             .into_iter()
             .map(|l| {
                 let role = if user.role == Role::Admin { Role::Admin } else { own.get(&l.id).copied().unwrap_or(user.role) };

@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Activity, HardDrive, Loader2, RotateCcw, Server, Upload, Users, X } from "lucide-react";
+import { Activity, ArrowUp, Folder, FolderPlus, HardDrive, Library, Loader2, RotateCcw, Server, SlidersHorizontal, Upload, Users, X } from "lucide-react";
 import { call, serverAuth, subscribe, uploadBackup, type Role } from "../../api";
 import { useDialogFocus } from "../../hooks/useDialogFocus";
 import { confirmDialog } from "../../confirm";
 import { formatBytes } from "../../utils/photoHelpers";
 import { useAccount } from "../auth/ServerGate";
 
-// The server's admin page (web client, admins only): what the server is doing and has still to do, the
-// accounts with their roles per library, and restoring a backup.
+// The server's admin page (web client, admins only): what the server is doing and has still to do, its
+// libraries and settings, the accounts with their roles per library, and restoring a backup.
 
 interface LibraryStatus {
   root: string;
@@ -26,9 +26,35 @@ interface ServerStatus {
   disk: { free: number; total: number } | null;
   device: string | null;
   caption_model: string | null;
-  ollama: { running: boolean; models?: { name: string }[] } | null;
+  ollama: { running: boolean; installed_models?: { name: string }[] } | null;
   jobs: { current: string | null; queued: string[]; thumbnails: boolean; smart_search: boolean; captions: boolean };
   libraries: LibraryStatus[];
+  // What runs now, with its counts
+  progress?: Progress[];
+}
+
+interface Progress {
+  label: string;
+  stage: string;
+  completed: number;
+  total: number;
+  seconds: number;
+}
+
+interface ServerSettings {
+  libraries: { root: string; photos: number }[];
+  removed: { root: string; photos: number }[];
+  upload_library: string | null;
+  caption_model: string | null;
+  ollama_url: string;
+  // Set by an environment variable where the server starts
+  fixed: string[];
+}
+
+interface FolderList {
+  path: string | null;
+  parent: string | null;
+  folders: { name: string; path: string }[];
 }
 
 interface Account {
@@ -47,7 +73,7 @@ interface Manifest {
   roots: { path: string; photos: number }[];
 }
 
-type Section = "server" | "people" | "restore";
+type Section = "server" | "libraries" | "settings" | "people" | "restore";
 const ROLES: Role[] = ["guest", "viewer", "uploader", "editor", "admin"];
 const LIBRARY_ROLES: Role[] = ["guest", "viewer", "uploader", "editor"];
 
@@ -87,6 +113,8 @@ export default function AdminPage({ isOpen, onClose }: { isOpen: boolean; onClos
   if (!isOpen) return null;
   const sections: { id: Section; label: string; icon: typeof Server }[] = [
     { id: "server", label: "Server", icon: Activity },
+    { id: "libraries", label: "Libraries", icon: Library },
+    { id: "settings", label: "Settings", icon: SlidersHorizontal },
     { id: "people", label: "People", icon: Users },
     { id: "restore", label: "Restore", icon: RotateCcw },
   ];
@@ -130,6 +158,8 @@ export default function AdminPage({ isOpen, onClose }: { isOpen: boolean; onClos
           </div>
           <div className="flex-1 overflow-y-auto px-6 pb-6 flex flex-col gap-5 text-[13px] text-zinc-300">
             {section === "server" && <ServerSection />}
+            {section === "libraries" && <LibrariesSection />}
+            {section === "settings" && <SettingsSection />}
             {section === "people" && <PeopleSection />}
             {section === "restore" && <RestoreSection />}
           </div>
@@ -208,6 +238,9 @@ function ServerSection() {
             </span>
           )}
         </Fact>
+        {(status.progress ?? []).map((p) => (
+          <ProgressRow key={p.label} progress={p} />
+        ))}
         {jobs.queued.length > 0 && <Fact label="Waiting">{jobs.queued.join(" · ")}</Fact>}
       </Group>
       {status.libraries.map((l) => (
@@ -229,6 +262,35 @@ function ServerSection() {
         </Group>
       ))}
     </>
+  );
+}
+
+// "about 20 min left", from the rate so far (nothing until there is one)
+function timeLeft(p: Progress): string | null {
+  if (p.total <= 0 || p.completed <= 0 || p.seconds < 5 || p.completed >= p.total) return null;
+  const seconds = ((p.total - p.completed) / p.completed) * p.seconds;
+  if (seconds < 60) return "less than a minute left";
+  if (seconds < 3600) return `about ${Math.round(seconds / 60)} min left`;
+  return `about ${(seconds / 3600).toFixed(1)} hours left`;
+}
+
+function ProgressRow({ progress: p }: { progress: Progress }) {
+  const left = timeLeft(p);
+  return (
+    <div className="px-4 py-2.5 flex flex-col gap-1.5">
+      <div className="flex items-center justify-between gap-6">
+        <span className="text-zinc-200">{p.label}</span>
+        <span className="text-zinc-400 text-[12px]">
+          {p.total > 0 ? `${p.completed.toLocaleString()} of ${p.total.toLocaleString()}` : p.stage || "Starting"}
+          {left ? ` · ${left}` : ""}
+        </span>
+      </div>
+      {p.total > 0 && (
+        <div className="h-1.5 rounded-full bg-zinc-800 overflow-hidden">
+          <div className="h-full bg-emerald-500" style={{ width: `${Math.min(100, (p.completed / p.total) * 100)}%` }} />
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -556,6 +618,302 @@ function RestoreSection() {
           </div>
         </>
       )}
+    </>
+  );
+}
+
+function LibrariesSection() {
+  const [settings, setSettings] = useState<ServerSettings | null>(null);
+  const [folder, setFolder] = useState("");
+  const [browsing, setBrowsing] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  useEffect(() => {
+    call<ServerSettings>("admin_get_settings")
+      .then(setSettings)
+      .catch((e) => setError(String(e)));
+  }, []);
+
+  async function run(what: () => Promise<ServerSettings>, done: string): Promise<boolean> {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      setSettings(await what());
+      setNotice(done);
+      return true;
+    } catch (e) {
+      setError(String(e));
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function add(path: string) {
+    const ok = await run(
+      () => call<ServerSettings>("admin_add_library", { folder: path }),
+      `Added ${path}. The server is indexing it now: its photos appear in the apps as they are indexed, and the progress shows under Server.`
+    );
+    if (ok) setFolder("");
+  }
+
+  async function takeOff(root: string, photos: number) {
+    const ok = await confirmDialog(
+      `Take ${root} off the server?\n\nIts ${photos.toLocaleString()} photos are no longer scanned or shown in the apps. The files stay where they are, and their ratings, faces and albums stay in the server's database: add the folder again to get them back.`,
+      { title: "Take a library off", kind: "warning", okLabel: "Take off", cancelLabel: "Cancel" }
+    );
+    if (ok) await run(() => call<ServerSettings>("admin_remove_library", { rootFolder: root }), `Took ${root} off the server.`);
+  }
+
+  if (!settings) return error ? <p className="text-red-400">{error}</p> : <Loader2 className="w-4 h-4 animate-spin text-emerald-400" />;
+  const fixed = settings.fixed.includes("libraries");
+  return (
+    <>
+      <p className="text-[12px] text-zinc-500 leading-relaxed">
+        The folders on this server that it keeps indexed, with thumbnails, faces and smart search. A folder inside a library is part of
+        that library; a folder around libraries takes them in.
+      </p>
+      {fixed && (
+        <p className="text-amber-300 text-[12px]">The libraries are set by LUMINA_LIBRARIES where the server starts, so they can only be changed there.</p>
+      )}
+      {error && <p className="text-red-400">{error}</p>}
+      {notice && <p className="text-emerald-300">{notice}</p>}
+      <Group title="Libraries">
+        {settings.libraries.length === 0 && <p className="px-4 py-2.5 text-zinc-500">No libraries yet: add a folder below.</p>}
+        {settings.libraries.map((l) => (
+          <div key={l.root} className="flex items-center justify-between gap-6 px-4 py-2.5">
+            <div className="min-w-0">
+              <div className="font-mono text-[12px] text-zinc-100 break-all">{l.root}</div>
+              <div className="text-[12px] text-zinc-500">{l.photos.toLocaleString()} photos and videos</div>
+            </div>
+            <Button onClick={() => takeOff(l.root, l.photos)} disabled={busy || fixed || settings.libraries.length <= 1} danger>
+              Take off
+            </Button>
+          </div>
+        ))}
+      </Group>
+      {!fixed && (
+        <Group title="Add a folder">
+          <div className="px-4 py-3 flex flex-col gap-2.5">
+            <div className="flex gap-2">
+              <input
+                className={`${input} flex-1 font-mono`}
+                value={folder}
+                onChange={(e) => setFolder(e.target.value)}
+                placeholder="/mnt/photos"
+                aria-label="Folder on the server"
+              />
+              <Button onClick={() => setBrowsing((b) => !b)}>
+                <span className="flex items-center gap-1.5">
+                  <Folder className="w-3.5 h-3.5" />
+                  Browse
+                </span>
+              </Button>
+              <Button primary onClick={() => add(folder.trim())} disabled={busy || !folder.trim()}>
+                <span className="flex items-center gap-1.5">
+                  <FolderPlus className="w-3.5 h-3.5" />
+                  Add
+                </span>
+              </Button>
+            </div>
+            {browsing && (
+              <FolderBrowser
+                start={folder.trim() || null}
+                onPick={(path) => {
+                  setFolder(path);
+                  setBrowsing(false);
+                }}
+              />
+            )}
+          </div>
+        </Group>
+      )}
+      {settings.removed.length > 0 && (
+        <Group title="Taken off">
+          {settings.removed.map((l) => (
+            <div key={l.root} className="flex items-center justify-between gap-6 px-4 py-2.5">
+              <div className="min-w-0">
+                <div className="font-mono text-[12px] text-zinc-400 break-all">{l.root}</div>
+                <div className="text-[12px] text-zinc-500">{l.photos.toLocaleString()} photos kept in the database</div>
+              </div>
+              <Button onClick={() => add(l.root)} disabled={busy || fixed}>
+                Add back
+              </Button>
+            </div>
+          ))}
+        </Group>
+      )}
+    </>
+  );
+}
+
+// The folders on the server, one level at a time (a typed folder that isn't there starts at the top)
+function FolderBrowser({ start, onPick }: { start: string | null; onPick: (path: string) => void }) {
+  const [list, setList] = useState<FolderList | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  async function open(path: string | null) {
+    try {
+      setList(await call<FolderList>("admin_list_folders", { path }));
+      setError(null);
+    } catch (e) {
+      if (path === start && start !== null) return open(null);
+      setError(String(e));
+    }
+  }
+  useEffect(() => {
+    open(start);
+  }, []);
+  return (
+    <div className="rounded-lg border border-zinc-800 bg-zinc-950/60">
+      <div className="flex items-center gap-2 px-3 py-2 border-b border-zinc-800">
+        <button
+          onClick={() => open(list?.parent ?? null)}
+          disabled={!list?.path}
+          className="p-1 rounded text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 disabled:opacity-30"
+          aria-label="Up one folder"
+          title="Up one folder"
+        >
+          <ArrowUp className="w-3.5 h-3.5" />
+        </button>
+        <span className="flex-1 min-w-0 font-mono text-[12px] text-zinc-300 truncate">{list?.path ?? "This server"}</span>
+        {list?.path && (
+          <Button primary onClick={() => onPick(list.path!)}>
+            Use this folder
+          </Button>
+        )}
+      </div>
+      {error && <p className="px-3 py-2 text-red-400 text-[12px]">{error}</p>}
+      <div className="max-h-56 overflow-y-auto py-1">
+        {list?.folders.length === 0 && <p className="px-3 py-2 text-zinc-500 text-[12px]">No folders in here</p>}
+        {list?.folders.map((f) => (
+          <button
+            key={f.path}
+            onClick={() => open(f.path)}
+            className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-[12px] text-zinc-200 hover:bg-zinc-800/70"
+          >
+            <Folder className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
+            <span className="truncate">{f.name}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SettingsSection() {
+  const [settings, setSettings] = useState<ServerSettings | null>(null);
+  const [models, setModels] = useState<string[]>([]);
+  const [form, setForm] = useState({ upload_library: "", caption_model: "", ollama_url: "" });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const show = (s: ServerSettings) => {
+    setSettings(s);
+    setForm({ upload_library: s.upload_library ?? "", caption_model: s.caption_model ?? "", ollama_url: s.ollama_url ?? "" });
+  };
+  useEffect(() => {
+    call<ServerSettings>("admin_get_settings")
+      .then(show)
+      .catch((e) => setError(String(e)));
+    call<ServerStatus>("server_status")
+      .then((s) => setModels((s.ollama?.installed_models ?? []).map((m) => m.name)))
+      .catch(() => {});
+  }, []);
+
+  async function save() {
+    if (!settings) return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    const fixed = (name: string) => settings.fixed.includes(name);
+    try {
+      show(
+        await call<ServerSettings>("admin_save_settings", {
+          uploadLibrary: fixed("upload_library") ? null : form.upload_library,
+          captionModel: fixed("caption_model") ? null : form.caption_model,
+          ollamaUrl: fixed("ollama_url") ? null : form.ollama_url,
+        })
+      );
+      setNotice("Saved. The server uses the new settings from now on.");
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!settings) return error ? <p className="text-red-400">{error}</p> : <Loader2 className="w-4 h-4 animate-spin text-emerald-400" />;
+  const fixedNote = (name: string, variable: string) =>
+    settings.fixed.includes(name) ? <div className="text-[12px] text-amber-300">Set by {variable} where the server starts</div> : null;
+  return (
+    <>
+      {error && <p className="text-red-400">{error}</p>}
+      {notice && <p className="text-emerald-300">{notice}</p>}
+      <Group title="Uploads">
+        <div className="flex items-center justify-between gap-6 px-4 py-2.5">
+          <div>
+            <div className="text-zinc-200">Uploads go to</div>
+            <div className="text-[12px] text-zinc-500">Into uploads/&lt;name&gt; in that library</div>
+            {fixedNote("upload_library", "LUMINA_UPLOAD_LIBRARY")}
+          </div>
+          <select
+            className={select}
+            value={form.upload_library}
+            disabled={settings.fixed.includes("upload_library")}
+            onChange={(e) => setForm({ ...form, upload_library: e.target.value })}
+          >
+            <option value="">The first library</option>
+            {settings.libraries.map((l) => (
+              <option key={l.root} value={l.root}>
+                {l.root}
+              </option>
+            ))}
+          </select>
+        </div>
+      </Group>
+      <Group title="Captions (Ollama)">
+        <div className="flex items-center justify-between gap-6 px-4 py-2.5">
+          <div>
+            <div className="text-zinc-200">Caption model</div>
+            <div className="text-[12px] text-zinc-500">New photos get a caption with it; empty: no captions</div>
+            {fixedNote("caption_model", "LUMINA_CAPTION_MODEL")}
+          </div>
+          <input
+            className={`${input} w-64`}
+            value={form.caption_model}
+            list="admin-ollama-models"
+            placeholder="qwen3-vl:8b-instruct"
+            disabled={settings.fixed.includes("caption_model")}
+            onChange={(e) => setForm({ ...form, caption_model: e.target.value })}
+          />
+          <datalist id="admin-ollama-models">
+            {models.map((m) => (
+              <option key={m} value={m} />
+            ))}
+          </datalist>
+        </div>
+        <div className="flex items-center justify-between gap-6 px-4 py-2.5">
+          <div>
+            <div className="text-zinc-200">Ollama's address</div>
+            {fixedNote("ollama_url", "LUMINA_OLLAMA_URL")}
+          </div>
+          <input
+            className={`${input} w-64 font-mono`}
+            value={form.ollama_url}
+            placeholder="http://127.0.0.1:11434"
+            disabled={settings.fixed.includes("ollama_url")}
+            onChange={(e) => setForm({ ...form, ollama_url: e.target.value })}
+          />
+        </div>
+      </Group>
+      <div className="flex items-center justify-between gap-4">
+        <p className="text-[12px] text-zinc-500">The address the server listens on and its data folder are set in lumina-server.toml.</p>
+        <Button primary onClick={save} disabled={busy}>
+          Save
+        </Button>
+      </div>
     </>
   );
 }

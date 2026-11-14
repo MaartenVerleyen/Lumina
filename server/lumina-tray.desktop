@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Lumina server
+Comment=Shows whether the Lumina server is running and what it is doing
+# Copy to ~/.config/autostart/ to start the tray when you log in
+Exec=sh -c 'exec "$HOME/.local/bin/lumina-tray" --config "$HOME/.config/lumina/lumina-server.toml"'
+Icon=image-x-generic
+Terminal=false
+X-GNOME-Autostart-enabled=true

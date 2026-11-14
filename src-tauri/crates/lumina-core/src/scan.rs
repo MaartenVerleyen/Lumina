@@ -1223,12 +1223,37 @@ pub async fn scan_library(app: SharedHost, folder_path: String, force_reprocess:
         let mut indexed_results: Vec<IndexedFile> = Vec::with_capacity(total_candidates);
         let mut upsert_count = 0;
         let mut save_ms = 0;
+        // A video has no dHash: it needs its frames instead
+        let frames_dir = video_frames::frames_dir(&app_dir);
+        if video_frames::refresh_outdated_frames(&frames_dir, &conn) {
+            clip::forget_frame_vectors();
+            eprintln!("[scan] video frames from an older version removed; they are made again");
+        }
+        let incomplete = |p: &PhotoItem| {
+            !p.thumb_ready
+                || if p.media_type == "video" { !video_frames::frame_path(&frames_dir, &p.hash, 0).exists() } else { p.dhash.is_empty() }
+        };
+        // A large folder gets its thumbnails part by part, as each is saved, rather than after the whole index
+        let multi_part = candidate_paths.len() > INDEX_CHUNK;
+        let feed = (multi_part && !force).then(|| spawn_thumbnail_feed(app.clone(), root_path.clone(), turn.clone()));
+        let mut fed: HashSet<String> = HashSet::new();
         for chunk in candidate_paths.chunks(INDEX_CHUNK) {
             let mut done: Vec<IndexedFile> =
                 index_pool.install(|| chunk.par_iter().cloned().filter_map(&index_one).collect());
             let save_started = Instant::now();
-            upsert_count += save_indexed(&mut conn, &mut done, &thumbs_dir, &previews_dir, force);
+            let saved = save_indexed(&mut conn, &mut done, &thumbs_dir, &previews_dir, force);
+            upsert_count += saved;
             save_ms += elapsed_ms(save_started);
+            // Windows showing this library list it again from the database, so new photos appear while the
+            // rest is indexed (a first index of a large folder takes a while)
+            if saved > 0 && multi_part {
+                let _ = emit_to(&app, "library-indexed", root_path.to_string_lossy().to_string());
+            }
+            if let Some(feed) = &feed {
+                let part: Vec<PhotoItem> = done.iter().map(|(p, ..)| p).filter(|p| incomplete(p)).cloned().collect();
+                fed.extend(part.iter().map(|p| p.hash.clone()));
+                feed.send(part, HashSet::new());
+            }
             indexed_results.append(&mut done);
             if is_cancelled() {
                 return Err(SCAN_CANCELLED.to_string());
@@ -1361,27 +1386,20 @@ pub async fn scan_library(app: SharedHost, folder_path: String, force_reprocess:
                 .map(|p| p.hash.clone())
                 .collect()
         };
-        // A video has no dHash: it needs its frames instead
-        let frames_dir = video_frames::frames_dir(&app_dir);
-        if video_frames::refresh_outdated_frames(&frames_dir, &conn) {
-            clip::forget_frame_vectors();
-            eprintln!("[scan] video frames from an older version removed; they are made again");
-        }
         let needs_processing: Vec<PhotoItem> = photos
             .iter()
-            .filter(|p| {
-                let incomplete = if p.media_type == "video" {
-                    !video_frames::frame_path(&frames_dir, &p.hash, 0).exists()
-                } else {
-                    p.dhash.is_empty()
-                };
-                force || !p.thumb_ready || incomplete || upgrade.contains(&p.hash)
-            })
+            .filter(|p| !fed.contains(&p.hash) && (force || incomplete(p) || upgrade.contains(&p.hash)))
             .cloned()
             .collect();
 
-        if !needs_processing.is_empty() {
-            spawn_thumbnail_pass(app.clone(), needs_processing, root_path.clone(), turn, force, upgrade);
+        match feed {
+            // The rest (thumbnails to upgrade, rows renamed after an edit in place) as the feed's last part;
+            // dropping the feed lets it finish
+            Some(feed) => feed.send(needs_processing, upgrade),
+            None if !needs_processing.is_empty() => {
+                spawn_thumbnail_pass(app.clone(), needs_processing, root_path.clone(), turn, force, upgrade)
+            }
+            None => {}
         }
 
         Ok(photos)

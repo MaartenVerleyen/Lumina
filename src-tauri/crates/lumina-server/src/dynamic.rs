@@ -166,7 +166,7 @@ pub async fn refresh(host: &Arc<ServerHost>) -> Result<bool, String> {
             };
             let scope = Scope::load(&conn, user)?;
             let mut photos = Vec::new();
-            for library in lumina_core::libraries::list(&conn)? {
+            for library in crate::settings::served(lumina_core::libraries::list(&conn)?) {
                 if scope.role_on(library.id) >= Role::Editor {
                     photos.extend(scan::list_library_photos(&*h, &library.root)?.iter().map(SearchPhoto::from));
                 }

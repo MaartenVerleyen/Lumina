@@ -2,6 +2,8 @@
 // POST /api/rpc/{command}. It listens on 127.0.0.1 only; `tailscale serve` puts HTTPS in front of it.
 mod access;
 mod admin;
+mod admin_settings;
+pub mod local;
 mod auth;
 mod events;
 mod lookup;
@@ -32,8 +34,6 @@ pub struct AppState {
     pub host: Arc<ServerHost>,
     pub web_dir: Option<PathBuf>,
     pub throttle: LoginThrottle,
-    // Where uploads go (None: the first library)
-    pub upload_library: Option<String>,
 }
 
 pub type Shared = Arc<AppState>;
@@ -102,7 +102,9 @@ pub fn router(state: Shared) -> Router {
         .route("/download/{hash}", get(media::download))
         .fallback(|| async { ApiError::new(StatusCode::NOT_FOUND, "No such media") })
         .layer(middleware::from_fn_with_state(state.clone(), require_session));
-    let app = web::attach(Router::new().nest("/api", api).nest("/media", media), state.web_dir.as_deref())
+    // The tray on the server's computer: a key from the data folder instead of a session
+    let local = Router::new().route("/status", get(local::status));
+    let app = web::attach(Router::new().nest("/api", api).nest("/media", media).nest("/local", local), state.web_dir.as_deref())
         .layer(middleware::from_fn(log_request))
         .with_state(state);
     web::with_security_headers(app)

@@ -36,6 +36,29 @@ export function backgroundJobsOf(lib: LibraryState): BackgroundJob[] {
       onCancel: lib.handleCancelOperation,
     });
   }
+  if (lib.backgroundScanProgress) {
+    const p = lib.backgroundScanProgress;
+    jobs.push({
+      id: "library-check",
+      label: "Checking for new and changed photos",
+      detail: p.total > 0 ? p.current_file : undefined,
+      completed: p.completed,
+      total: p.total,
+      onCancel: lib.handleCancelOperation,
+      cancelLabel: "Stop",
+    });
+  }
+  for (const [server, p] of Object.entries(lib.serverScans)) {
+    const name = lib.serverLabels[server];
+    jobs.push({
+      id: `server-scan:${server}`,
+      label: name ? `Indexing new photos on ${name}` : "Indexing new photos on the server",
+      // The server shows its photos as it saves them; the rest follow (no Stop: it's the server's work)
+      detail: p.total > 0 ? p.current_file : undefined,
+      completed: p.completed,
+      total: p.total,
+    });
+  }
   if (lib.progress) {
     jobs.push({
       id: "thumbnails",

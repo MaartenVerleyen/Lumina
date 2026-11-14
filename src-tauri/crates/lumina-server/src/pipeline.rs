@@ -13,7 +13,6 @@ use tokio::sync::broadcast::{error::RecvError, Receiver};
 
 pub struct Pipeline {
     pub host: Arc<ServerHost>,
-    pub caption_model: Option<String>,
 }
 
 // Waits for `event` with a payload that `finished` accepts (events from before the subscription are missed,
@@ -119,6 +118,11 @@ impl Pipeline {
         self.host.clone()
     }
 
+    // Read each time: the admin page can change it while the server runs
+    fn caption_model(&self) -> Option<String> {
+        self.host.jobs.caption_model.lock().unwrap().clone()
+    }
+
     // Runs one job from the admin page
     pub async fn run(&self, job: Job) -> Result<(), String> {
         let jobs = &self.host.jobs;
@@ -146,7 +150,7 @@ impl Pipeline {
     // One GPU for both: the caption model (6+ GB) and the face and smart search models (1-3 GB) take turns
     // rather than squeezing each other, which left Ollama with half its layers on the CPU
     async fn make_room_for_onnx(&self) {
-        if self.caption_model.is_none() {
+        if self.caption_model().is_none() {
             return;
         }
         match ai::unload_loaded_models().await {
@@ -180,7 +184,7 @@ impl Pipeline {
         self.faces(root, &photos).await?;
         self.backed_up_names().await?;
         self.smart_search(root).await?;
-        if self.caption_model.is_some() {
+        if self.caption_model().is_some() {
             self.captions(root, &photos).await?;
         }
         Ok(())
@@ -242,7 +246,7 @@ impl Pipeline {
 
     // Captions for photos without one, when a caption model is configured
     async fn captions(&self, root: &str, photos: &[PhotoItem]) -> Result<(), String> {
-        let Some(model) = &self.caption_model else {
+        let Some(model) = &self.caption_model() else {
             return Err("No caption model is configured (caption_model, or LUMINA_CAPTION_MODEL)".into());
         };
         let uncaptioned: Vec<String> = photos

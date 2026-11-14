@@ -40,7 +40,7 @@ pub async fn events(
 }
 
 // The events that only say "look again" and name no photo
-const REFRESH_EVENTS: &[&str] = &["people-changed", "albums-changed", "shares-changed", "roles-changed", "library-files-changed"];
+const REFRESH_EVENTS: &[&str] = &["people-changed", "albums-changed", "shares-changed", "roles-changed", "library-files-changed", "library-indexed", "libraries-changed"];
 // The ones after which what a user may see can differ: the session and scope are looked at again first
 const SCOPE_EVENTS: &[&str] = &["albums-changed", "shares-changed", "roles-changed"];
 const SESSION_RECHECK: Duration = Duration::from_secs(1);

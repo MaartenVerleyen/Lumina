@@ -14,6 +14,7 @@ use super::access::{self, Target};
 use crate::scope::{self, Scope};
 use crate::dynamic;
 use super::admin;
+use super::admin_settings;
 use crate::pipeline::Job;
 use crate::restore;
 use crate::{accounts, changes};
@@ -209,7 +210,7 @@ fn visible_only<T: serde::Serialize>(host: &ServerHost, scope: &Scope, result: R
 fn libraries_for(host: &ServerHost, scope: &Scope) -> Result<JsonValue, ApiError> {
     let conn = db::open_global_db(host)?;
     let mut out = Vec::new();
-    for l in libraries::list(&conn)? {
+    for l in crate::settings::served(libraries::list(&conn)?) {
         let role = scope.role_on(l.id);
         let present = libraries::present_photos(&conn, l.id)?;
         let photos = if role >= Role::Viewer {
@@ -643,6 +644,13 @@ commands! {
         host.jobs.queue(job).map_err(ApiError::from)
     };
     Admin blocking admin_list_users() |host, scope| admin::accounts(&host);
+    // Libraries and settings (the server saves them in server-settings.json in its data folder)
+    Admin blocking admin_get_settings() |host, scope| admin_settings::settings_view(&host);
+    Admin blocking admin_add_library(folder: String) |host, scope| admin_settings::add_library(&host, &folder);
+    Admin blocking admin_remove_library(root_folder: String) |host, scope| admin_settings::remove_library(&host, &root_folder);
+    Admin blocking admin_save_settings(upload_library: Option<String>, caption_model: Option<String>, ollama_url: Option<String>) |host, scope|
+        admin_settings::save_settings(&host, upload_library, caption_model, ollama_url);
+    Admin blocking admin_list_folders(path: Option<String>) |host, scope| { let _ = host; admin_settings::list_folders(path) };
     Admin blocking admin_create_user(name: String, role: String, password: String) |host, scope| {
         let conn = db::open_global_db(&*host)?;
         let role = Role::parse(&role)?;

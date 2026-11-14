@@ -24,6 +24,7 @@ mod phone_backup;
 mod offline;
 mod phone_update;
 mod follows;
+mod window_close;
 
 use db::*;
 use storage::*;
@@ -43,6 +44,15 @@ pub fn run() {
     }
 
     let builder = tauri::Builder::default();
+    // Starting Lumina again (the Start menu, a second click on its icon) brings this window back, also out of the
+    // tray, instead of opening a second copy on the same library. It must be the first plugin. A run on other
+    // data (LUMINA_DATA_DIR: the test library, a second profile) is an app of its own, beside the usual one.
+    #[cfg(desktop)]
+    let builder = if std::env::var_os("LUMINA_DATA_DIR").is_some_and(|d| !d.is_empty()) {
+        builder
+    } else {
+        builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| window_close::show_main(app)))
+    };
     // The phone app's Kotlin side (android.rs), and the phone's own photos and videos (phone.rs)
     #[cfg(target_os = "android")]
     let builder = builder.plugin(android::init()).register_asynchronous_uri_scheme_protocol("lumina-phone", |ctx, request, responder| {
@@ -59,6 +69,12 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 responder.respond(remote::serve_media(app, request).await);
             });
+        })
+        // Closing the main window may ask first or keep Lumina in the tray (window_close.rs)
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                window_close::on_close_requested(window, api);
+            }
         })
         .setup(|app| {
             // A restore chosen in Settings is moved in before anything opens the database
@@ -250,7 +266,9 @@ pub fn run() {
             client_db::list_local_library,
             client_db::local_copy_ids,
             client_db::forget_local_library,
-            system::close_splashscreen
+            system::close_splashscreen,
+            window_close::set_close_behaviour,
+            window_close::quit_app
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

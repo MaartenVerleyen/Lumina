@@ -37,7 +37,7 @@ pub async fn status(host: &ServerHost) -> Result<JsonValue, ApiError> {
     let conn = db::open_global_db(host)?;
     let thumbs_dir = db::get_app_storage_dir(host).join("thumbnails");
     let mut libs = Vec::new();
-    for l in libraries::list(&conn)? {
+    for l in crate::settings::served(libraries::list(&conn)?) {
         let hashes: Vec<String> = {
             let mut stmt = conn.prepare("SELECT hash FROM photos WHERE library_id = ?1").map_err(|e| ApiError::from(e.to_string()))?;
             let rows = stmt.query_map([l.id], |r| r.get::<_, String>(0)).map_err(|e| ApiError::from(e.to_string()))?;
@@ -91,6 +91,8 @@ pub async fn status(host: &ServerHost) -> Result<JsonValue, ApiError> {
             "captions": ai::batch_running(),
         },
         "libraries": libs,
+        // What runs now, with its counts (the tray shows it too)
+        "progress": host.progress(),
     }))
 }
 

@@ -76,10 +76,10 @@ fn bad(message: impl Into<String>) -> ApiError {
     ApiError::new(StatusCode::BAD_REQUEST, message)
 }
 
-// The library uploads go to: the configured one, or the first
-fn upload_root(state: &Shared, conn: &Connection) -> Result<(i64, String), ApiError> {
-    let libs = libraries::list(conn)?;
-    let wanted = state.upload_library.as_deref().map(libraries::normalize_root);
+// The library uploads go to: the configured one (the admin page can change it), or the first
+fn upload_root(_state: &Shared, conn: &Connection) -> Result<(i64, String), ApiError> {
+    let libs = crate::settings::served(libraries::list(conn)?);
+    let wanted = crate::settings::live().upload_library.as_deref().map(libraries::normalize_root);
     libs.into_iter()
         .find(|l| wanted.as_deref().is_none_or(|w| libraries::normalize_root(&l.root) == w))
         .map(|l| (l.id, l.root))

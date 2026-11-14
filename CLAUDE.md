@@ -55,7 +55,10 @@ src-tauri/                Cargo workspace root, and the desktop app crate ("Lumi
                           backup, photo_meta (a photo's values taken along when it is backed up to a server),
                           import, watch, ...; tests.rs holds the engine tests
   crates/lumina-server/   headless server binary (serve / scan / libraries / restore-backup / users):
-                          accounts.rs (users, sessions), http/ (axum: login, RPC table with roles, web client)
+                          accounts.rs (users, sessions), http/ (axum: login, RPC table with roles, web client),
+                          settings.rs (libraries and settings changed on the admin page: server-settings.json)
+  crates/lumina-tray/     tray icon for the server's own computer: status from /local/status with the key in
+                          the data folder (local-access.key), admin page, start/stop (systemd, compose, child)
 server/                   Dockerfile and docker-compose.yml (CUDA + ffmpeg + Ollama)
 installer/                "Lumina Setup" (Windows)
 scripts/                  release.ps1, set-version.ps1 (Windows); test-library/; linux/setup-cachyos.sh
@@ -106,7 +109,9 @@ Server configuration: `lumina-server.toml` (`data_dir`, `libraries`, `ollama_url
 `LUMINA_OLLAMA_URL`, `LUMINA_CAPTION_MODEL`, `LUMINA_LISTEN` (default `127.0.0.1:8080`), `LUMINA_WEB_DIR` (the
 built `dist`), `LUMINA_UPLOAD_LIBRARY` (default the first library). Uploads (`http/upload.rs`) are resumable and
 land in `<library>/uploads/<user>/`; `/media/download/{hash}` sends originals with their BLAKE3.
-`LUMINA_FFMPEG` names another ffmpeg. Accounts: `lumina-server create-user NAME --role admin` (see
+`LUMINA_FFMPEG` names another ffmpeg. The admin page's Libraries and Settings change libraries, the upload library,
+the caption model and Ollama's address while the server runs (`settings.rs`, saved in `<data_dir>/server-settings.json`
+over the file; variables win). A library taken off is hidden (`settings::served`), its rows kept. Accounts: `lumina-server create-user NAME --role admin` (see
 `server/README.md`); HTTPS comes from `tailscale serve` in front of `127.0.0.1:8080`.
 
 On the server every RPC command has a lowest role and names what it touches (`http/rpc.rs`, `http/access.rs`);

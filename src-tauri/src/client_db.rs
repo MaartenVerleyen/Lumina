@@ -185,7 +185,13 @@ pub async fn forget_local_library(app: AppHandle, root: String) -> Result<usize,
 // library this way (a scan of one folder would stop another's scan and thumbnail pass)
 #[tauri::command]
 pub async fn list_local_library(app: AppHandle, root: String) -> Result<Vec<PhotoItem>, String> {
-    tauri::async_runtime::spawn_blocking(move || scan::list_library_photos(&app, &root)).await.map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        // A library shown before its scan has run: the webview may load its photos right away, as a scan allows
+        lumina_core::host::Host::allow_media_dir(&app, std::path::Path::new(&lumina_core::libraries::normalize_root(&root)));
+        scan::list_library_photos(&app, &root)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 // Files on this PC that are a copy of a server's photo under another id: a second copy of a file on this PC

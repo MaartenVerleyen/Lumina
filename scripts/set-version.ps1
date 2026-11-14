@@ -1,4 +1,4 @@
-# Sets Lumina's version everywhere it is written down (app, Rust crate, setup app, npm package, splash screen).
+# Sets Lumina's version everywhere it is written down (app, Rust crates, setup app, npm package, splash screen).
 #   powershell -ExecutionPolicy Bypass -File scripts\set-version.ps1 3.7.0
 # Then add a release-notes entry for it in src\utils\welcome.ts and commit.
 param([Parameter(Mandatory = $true)][string]$Version)
@@ -25,6 +25,10 @@ Set-JsonVersion "$root\src-tauri\tauri.conf.json"
 Set-JsonVersion "$root\installer\src-tauri\tauri.conf.json"
 Set-CargoVersion "$root\src-tauri\Cargo.toml"
 Set-CargoVersion "$root\installer\src-tauri\Cargo.toml"
+# The engine, the server (its admin page and the tray show this number) and the server's tray
+Set-CargoVersion "$root\src-tauri\crates\lumina-core\Cargo.toml"
+Set-CargoVersion "$root\src-tauri\crates\lumina-server\Cargo.toml"
+Set-CargoVersion "$root\src-tauri\crates\lumina-tray\Cargo.toml"
 
 # The splash screen is static HTML shown before the app loads: its badge carries the version too
 $splash = "$root\public\splashscreen.html"

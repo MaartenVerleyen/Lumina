@@ -32,6 +32,9 @@ export interface Settings {
   autoBackup: AutoBackup;
   backupDir: string;
   lastBackupAt: number;
+  // Desktop app: ask before closing the window, and whether closing keeps Lumina running in the tray
+  askBeforeClosing: boolean;
+  closeToTray: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -51,6 +54,8 @@ export const DEFAULT_SETTINGS: Settings = {
   autoBackup: "off",
   backupDir: "",
   lastBackupAt: 0,
+  askBeforeClosing: true,
+  closeToTray: false,
 };
 
 const SETTINGS_KEY = "lumina_settings";
@@ -82,6 +87,8 @@ const VALIDATORS: { [K in keyof Settings]: (v: unknown) => v is Settings[K] } = 
   autoBackup: oneOf("off", "daily", "weekly"),
   backupDir: isString,
   lastBackupAt: isTime,
+  askBeforeClosing: isBool,
+  closeToTray: isBool,
 };
 
 // Saved settings over the defaults, field by field: an unknown or invalid value falls back to its default.

@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { AlertTriangle, HelpCircle, Trash2 } from "lucide-react";
 import { useDialogFocus } from "../../hooks/useDialogFocus";
 import { answerConfirm, useConfirmRequest, type ConfirmKind, type ConfirmRequest } from "../../confirm";
@@ -32,7 +33,8 @@ function ConfirmPanel({ request }: { request: ConfirmRequest }) {
   const dialogRef = useDialogFocus<HTMLDivElement>(true);
   const look = LOOK[request.kind];
   const Icon = look.icon;
-  const answer = (ok: boolean) => answerConfirm(request.id, ok);
+  const [checked, setChecked] = useState(false);
+  const answer = (ok: boolean) => answerConfirm(request.id, ok, checked);
   const paragraphs = request.message.split(/\n{2,}/);
 
   return (
@@ -73,6 +75,12 @@ function ConfirmPanel({ request }: { request: ConfirmRequest }) {
                 </p>
               ))}
             </div>
+            {request.checkLabel && (
+              <label className="mt-3 flex items-center gap-2 text-[12px] text-zinc-300 cursor-pointer">
+                <input type="checkbox" checked={checked} onChange={(e) => setChecked(e.target.checked)} className="accent-emerald-500" />
+                {request.checkLabel}
+              </label>
+            )}
           </div>
         </div>
         <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-zinc-800">

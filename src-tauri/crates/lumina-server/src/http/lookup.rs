@@ -10,7 +10,7 @@ use rusqlite::{Connection, OptionalExtension};
 pub fn library_root(host: &dyn Host, root: &str) -> Result<String, ApiError> {
     let conn = db::open_global_db(host)?;
     let wanted = libraries::normalize_root(root);
-    libraries::list(&conn)?
+    crate::settings::served(libraries::list(&conn)?)
         .into_iter()
         .map(|l| l.root)
         .find(|r| libraries::normalize_root(r) == wanted)

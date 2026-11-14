@@ -1,20 +1,23 @@
 use crate::*;
 
-// Where Ollama listens: this PC unless the server's configuration (or LUMINA_OLLAMA_URL) names another
-static OLLAMA_URL: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+// Where Ollama listens: this PC unless the server's configuration (or LUMINA_OLLAMA_URL) names another. The
+// server's admin page can change it while the server runs.
+static OLLAMA_URL: std::sync::RwLock<Option<String>> = std::sync::RwLock::new(None);
 
 pub fn set_ollama_url(url: &str) {
-    let _ = OLLAMA_URL.set(url.trim().trim_end_matches('/').to_string());
+    let url = url.trim().trim_end_matches('/');
+    *OLLAMA_URL.write().unwrap() = (!url.is_empty()).then(|| url.to_string());
 }
 
-pub fn ollama_url() -> &'static str {
-    OLLAMA_URL.get_or_init(|| {
-        std::env::var("LUMINA_OLLAMA_URL")
-            .ok()
-            .map(|u| u.trim().trim_end_matches('/').to_string())
-            .filter(|u| !u.is_empty())
-            .unwrap_or_else(|| "http://127.0.0.1:11434".to_string())
-    })
+pub fn ollama_url() -> String {
+    if let Some(url) = OLLAMA_URL.read().unwrap().clone() {
+        return url;
+    }
+    std::env::var("LUMINA_OLLAMA_URL")
+        .ok()
+        .map(|u| u.trim().trim_end_matches('/').to_string())
+        .filter(|u| !u.is_empty())
+        .unwrap_or_else(|| "http://127.0.0.1:11434".to_string())
 }
 
 // ----------------- OLLAMA LIFECYCLE -----------------

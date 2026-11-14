@@ -11,6 +11,7 @@ mod person_names;
 mod pipeline;
 mod restore;
 mod scope;
+mod settings;
 mod throttle;
 
 use config::Config;
@@ -71,7 +72,9 @@ async fn main() {
         println!("{USAGE}");
         return;
     }
-    let config = Config::load(config_path.as_deref()).unwrap_or_else(|e| fail(&e));
+    let mut config = Config::load(config_path.as_deref()).unwrap_or_else(|e| fail(&e));
+    // What the admin page saved goes on top of the file (environment variables still win)
+    settings::apply(&mut config);
     if let Some(url) = &config.ollama_url {
         ai::set_ollama_url(url);
     }
@@ -102,7 +105,8 @@ fn fail(message: &str) -> ! {
 }
 
 fn pipeline(config: &Config, host: Arc<ServerHost>) -> Pipeline {
-    Pipeline { host, caption_model: config.caption_model.clone() }
+    host.jobs.set_caption_model(config.caption_model.clone());
+    Pipeline { host }
 }
 
 async fn scan(config: &Config, host: Arc<ServerHost>, folders: &[String]) -> Result<(), String> {
@@ -119,7 +123,7 @@ async fn scan(config: &Config, host: Arc<ServerHost>, folders: &[String]) -> Res
 async fn serve(config: &Config, host: Arc<ServerHost>) -> Result<(), String> {
     let roots: Vec<String> = config.libraries.iter().map(|r| libraries::normalize_root(r)).collect();
     if roots.is_empty() {
-        return Err("No libraries to serve: list them as `libraries` in the configuration file".to_string());
+        println!("No libraries yet: add one on the admin page (Libraries), or list them as `libraries` in the configuration file");
     }
     // A restore staged from the admin page goes in before anything opens the database
     match restore::apply_staged(&host, &roots) {
@@ -127,7 +131,6 @@ async fn serve(config: &Config, host: Arc<ServerHost>) -> Result<(), String> {
         Ok(false) => {}
         Err(e) => eprintln!("[restore] {e}"),
     }
-    host.jobs.set_caption_model(config.caption_model.clone());
     // The web server first, so people can log in while a long first scan runs
     start_web_server(config, host.clone()).await?;
     // Shared dynamic albums follow the library as it changes
@@ -231,6 +234,9 @@ async fn start_web_server(config: &Config, host: Arc<ServerHost>) -> Result<(), 
     };
     let listen = config.listen();
     let web_dir = config.web_dir();
+    if let Err(e) = http::local::create_key(&host.data_dir()) {
+        eprintln!("[tray] {e}");
+    }
     let listener = tokio::net::TcpListener::bind(&listen).await.map_err(|e| format!("Can't listen on {listen}: {e}"))?;
     match &web_dir {
         Some(dir) => println!("Web: http://{listen} (web client from {})", dir.display()),
@@ -239,7 +245,7 @@ async fn start_web_server(config: &Config, host: Arc<ServerHost>) -> Result<(), 
     if users == 0 {
         println!("No users yet: `lumina-server create-user NAME --role admin` adds the first one");
     }
-    let state = Arc::new(http::AppState { host, web_dir, throttle: Default::default(), upload_library: config.upload_library.clone() });
+    let state = Arc::new(http::AppState { host, web_dir, throttle: Default::default() });
     let app = http::router(state).into_make_service_with_connect_info::<std::net::SocketAddr>();
     tokio::spawn(async move {
         if let Err(e) = axum::serve(listener, app).await {

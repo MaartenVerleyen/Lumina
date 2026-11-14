@@ -56,9 +56,65 @@ pub fn spawn_thumbnail_pass(
 ) {
     THUMB_PASSES.fetch_add(1, Ordering::AcqRel);
     std::thread::spawn(move || {
-        run_thumbnail_pass(&app, &items, &root, &turn, force, &upgrade);
+        run_thumbnail_pass(&app, &items, &root, &turn, force, &upgrade, Counts::alone());
         THUMB_PASSES.fetch_sub(1, Ordering::AcqRel);
     });
+}
+
+// How a pass counts in its progress events: on its own, or as one part of a feed whose total grows while it
+// runs (the batches a large scan hands over as it saves them)
+struct Counts {
+    before: usize,
+    total: Option<Arc<AtomicUsize>>,
+    // The last part sends the duplicate groups, which need every dHash
+    last: bool,
+}
+
+impl Counts {
+    fn alone() -> Counts {
+        Counts { before: 0, total: None, last: true }
+    }
+}
+
+// Thumbnails for a scan still under way: each part of the library it saves (every 1,000 files) is handed over
+// and done in turn, by one thread, so photos get their thumbnails while the rest is indexed, and a hard drive
+// has one thumbnail reader besides the scan, not one per part. Dropping the feed ends it after the last part.
+pub struct ThumbnailFeed {
+    sender: std::sync::mpsc::Sender<(Vec<PhotoItem>, HashSet<String>)>,
+    queued: Arc<AtomicUsize>,
+}
+
+impl ThumbnailFeed {
+    pub fn send(&self, items: Vec<PhotoItem>, upgrade: HashSet<String>) {
+        if items.is_empty() {
+            return;
+        }
+        self.queued.fetch_add(items.len(), Ordering::AcqRel);
+        let _ = self.sender.send((items, upgrade));
+    }
+}
+
+pub fn spawn_thumbnail_feed(app: SharedHost, root: PathBuf, turn: ScanTurn) -> ThumbnailFeed {
+    let (sender, receiver) = channel::<(Vec<PhotoItem>, HashSet<String>)>();
+    let queued = Arc::new(AtomicUsize::new(0));
+    let total = queued.clone();
+    THUMB_PASSES.fetch_add(1, Ordering::AcqRel);
+    std::thread::spawn(move || {
+        let mut done = 0;
+        while let Ok((items, upgrade)) = receiver.recv() {
+            if turn.superseded() {
+                break;
+            }
+            run_thumbnail_pass(&*app, &items, &root, &turn, false, &upgrade, Counts { before: done, total: Some(total.clone()), last: false });
+            done += items.len();
+        }
+        // The feed is closed: every part is done
+        if done > 0 && !turn.superseded() {
+            send_duplicate_groups(&*app, &root.to_string_lossy(), done);
+        }
+        THUMB_PASSES.fetch_sub(1, Ordering::AcqRel);
+    });
+    ThumbnailFeed { sender, queued }
 }
 
 // Thumbnail passes running now (a headless server waits for them before scanning faces)
@@ -75,6 +131,7 @@ fn run_thumbnail_pass(
     turn: &ScanTurn,
     force: bool,
     upgrade: &HashSet<String>,
+    counts: Counts,
 ) {
     let started = Instant::now();
     let is_superseded = || turn.superseded();
@@ -120,7 +177,12 @@ fn run_thumbnail_pass(
         let due = batch.len() >= UI_BATCH_SIZE || (!batch.is_empty() && last_flush.elapsed() >= UI_BATCH_MAX_WAIT);
         if (due || finished) && !batch.is_empty() && !is_superseded() {
             completed += batch.len();
-            flush_batch(app, conn.as_mut(), std::mem::take(&mut batch), &folder, completed, total, &mut stats);
+            // Part of a feed: counted with the parts before it, out of all handed over so far
+            let all = counts.total.as_ref().map(|t| t.load(Ordering::Acquire)).unwrap_or(total);
+            let done = counts.before + completed;
+            // The last event of a pass says it is done (completed = total); a feed's parts mustn't, as more follow
+            let shown_total = if counts.last { all } else { all.max(done + 1) };
+            flush_batch(app, conn.as_mut(), std::mem::take(&mut batch), &folder, done, shown_total, &mut stats);
             last_flush = Instant::now();
         }
     };
@@ -141,19 +203,8 @@ fn run_thumbnail_pass(
         return;
     }
 
-    // Duplicate groups need every dHash, so they go out once, after the last batch
-    if let Ok(conn) = open_global_db(app) {
-        let dup_groups = compute_db_duplicate_groups(&conn, Some(&folder));
-        let _ = emit_to(&app, 
-            "thumb-batch-ready",
-            ThumbBatchProgress {
-                items: Vec::new(),
-                duplicate_groups: dup_groups,
-                completed: total,
-                total,
-                folder: folder.clone(),
-            },
-        );
+    if counts.last {
+        send_duplicate_groups(app, &folder, total);
     }
 
     let total_ms = elapsed_ms(started);
@@ -180,6 +231,19 @@ fn run_thumbnail_pass(
             stats.damaged
         ),
     );
+}
+
+// Duplicate groups need every dHash, so they go out once, after the last batch; this event also says the
+// thumbnails are done (completed = total)
+fn send_duplicate_groups(app: &dyn Host, folder: &str, total: usize) {
+    if let Ok(conn) = open_global_db(app) {
+        let dup_groups = compute_db_duplicate_groups(&conn, Some(folder));
+        let _ = emit_to(
+            &app,
+            "thumb-batch-ready",
+            ThumbBatchProgress { items: Vec::new(), duplicate_groups: dup_groups, completed: total, total, folder: folder.to_string() },
+        );
+    }
 }
 
 pub enum PipelineEvent {

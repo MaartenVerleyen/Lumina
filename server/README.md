@@ -78,3 +78,92 @@ LUMINA_DATA_DIR=~/LuminaData LUMINA_LIBRARIES=~/Pictures LUMINA_WEB_DIR=../dist 
 
 Settings can also go in `lumina-server.toml` (`data_dir`, `libraries`, `ollama_url`, `caption_model`,
 `listen`, `web_dir`); the `LUMINA_*` variables override it. `lumina-server help` lists every command.
+
+Running it natively is the easier way to pick folders on the server's disks: any folder can become a library
+from the admin page, where in Docker it has to be mounted into the container first.
+
+### As a service, with the tray (Linux)
+
+```bash
+# CachyOS / Arch: the tray needs GTK and an app indicator library
+sudo pacman -S gtk3 libayatana-appindicator
+cd src-tauri && cargo build --release -p lumina-server -p lumina-tray
+install -Dm755 target/release/lumina-server target/release/lumina-tray -t ~/.local/bin/
+mkdir -p ~/.config/lumina ~/.local/share/lumina
+cat > ~/.config/lumina/lumina-server.toml <<'EOF'
+data_dir = "/mnt/ssd/lumina-data"      # the database and caches: on the SSD
+libraries = ["/mnt/hdd/photos"]        # the photos: on the HDD
+web_dir = "/home/you/lumina/dist"      # the built web client
+EOF
+cp ../server/lumina-server.service ~/.config/systemd/user/
+systemctl --user daemon-reload && systemctl --user enable --now lumina-server
+loginctl enable-linger "$USER"         # keeps running when you're logged out, and starts at boot
+cp ../server/lumina-tray.desktop ~/.config/autostart/   # the tray at login
+```
+
+Use absolute paths in the configuration file: the service starts in `~/.local/share/lumina`.
+
+The tray's icon is green when the server is idle, blue while it works and grey when it doesn't answer.
+Clicking it shows what the server is doing ("Indexing: 12,000 of 50,000 · about 20 min left"), Open admin
+page, and Start, Stop and Restart (through `systemctl --user`). It reads the key the server writes in its
+data folder at each start (`local-access.key`), so it needs no account. `lumina-tray --help` lists its
+options: `--service NAME --system` for a system service, `--compose FILE` for Docker, or
+`--start CMD --stop CMD`. With Docker the tray reads the key inside the container (`docker compose exec`),
+so your account must be allowed to run `docker`; the compose file stays as it is:
+
+```bash
+lumina-tray --compose ~/lumina/server/docker-compose.yml
+```
+
+For a server installed as a system service, as on cachy, the tray reads the same configuration file:
+
+```bash
+lumina-tray --config /srv/lumina/lumina-server.toml --service lumina-server --system
+```
+
+Start and Stop then go through `sudo` without a password when the sudoers rule under Upgrading is in
+place, and otherwise ask for it in a window.
+
+The tray shows no tooltip on Linux (the tray library has none there); its menu has the same lines. KDE Plasma
+shows tray icons as they are; GNOME needs the AppIndicator extension.
+
+On Windows, put `lumina-tray.exe` next to `lumina-server.exe` and the configuration file; the tray starts
+and stops the server itself.
+
+### Libraries and settings on the admin page
+
+Admin page → Libraries adds a folder (typed, or picked with Browse) and takes one off; Settings sets where
+uploads go, the caption model and Ollama's address. They apply at once, without a restart, and are saved in
+`server-settings.json` in the data folder, on top of `lumina-server.toml`. A setting given by a `LUMINA_*`
+variable stays as the variable says, and the admin page shows it as fixed. A library taken off is no longer
+scanned or shown, but its photos' ratings, faces and albums stay in the database: adding the folder again
+brings them back.
+
+### Upgrading
+
+`scripts/linux/upgrade-server.sh` upgrades a server installed as a system service (on cachy: `/srv/lumina`,
+`lumina-server.service`, built from `~/Projects/Lumina`). From Windows, in one go:
+
+```bash
+ssh -t cachy 'bash ~/Projects/Lumina/scripts/linux/upgrade-server.sh'          # the latest main
+ssh -t cachy 'bash ~/Projects/Lumina/scripts/linux/upgrade-server.sh v5.6.0'   # a release tag or branch
+ssh -t cachy 'bash ~/Projects/Lumina/scripts/linux/upgrade-server.sh --rollback'
+```
+
+It fetches the branch or tag and builds the web client and the server while the old one keeps running.
+It then copies the database with SQLite's backup API into `/srv/lumina/backups/` (the last three kept),
+keeps the running program and web client as `.prev`, puts the new ones in place and restarts the service.
+If the new version doesn't answer within two minutes, it shows the log and puts the previous version
+back. The server is down only for the restart; a first start after a big upgrade may take a little longer
+while it brings the database up to date.
+
+The restart asks for your sudo password. To let the script (and the tray) restart the server without it,
+allow just that once:
+
+```bash
+echo "$USER ALL=(root) NOPASSWD: /usr/bin/systemctl start lumina-server, /usr/bin/systemctl stop lumina-server, /usr/bin/systemctl restart lumina-server" |
+  sudo tee /etc/sudoers.d/lumina-server && sudo chmod 440 /etc/sudoers.d/lumina-server && sudo visudo -c
+```
+
+`LUMINA_SRC`, `LUMINA_HOME`, `LUMINA_SERVICE` and `LUMINA_RESTART` point it at another checkout, install,
+service or restart command (for instance `systemctl --user restart lumina-server` for a user service).

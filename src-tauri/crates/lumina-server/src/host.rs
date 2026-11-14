@@ -14,7 +14,33 @@ pub struct ServerHost {
     data_dir: PathBuf,
     events: broadcast::Sender<(String, JsonValue)>,
     last_logged: Mutex<HashMap<String, Instant>>,
+    // The latest progress of each kind of work running now, for the admin page and the tray
+    progress: Mutex<HashMap<String, Progress>>,
 }
+
+#[derive(Clone, serde::Serialize)]
+pub struct Progress {
+    pub label: String,
+    pub stage: String,
+    pub completed: u64,
+    pub total: u64,
+    // Seconds since the work started, so a reader can work out the time left
+    pub seconds: f64,
+    #[serde(skip)]
+    started: Option<Instant>,
+}
+
+// The work worth a line on the admin page and in the tray, by its progress event
+const PROGRESS: &[(&str, &str)] = &[
+    ("scan-progress", "Indexing"),
+    ("thumb-batch-ready", "Thumbnails"),
+    ("face-scan-progress", "Face scan"),
+    ("face-quality-progress", "Eyes and focus"),
+    ("semantic-progress", "Smart search index"),
+    ("ai-batch-progress", "Captions"),
+    // Counted in MB
+    ("face-model-download", "Downloading face models (once)"),
+];
 
 // Progress events worth a line in the log; the rest (per-photo grid updates) are only for waiters
 const LOGGED: &[&str] = &[
@@ -30,7 +56,13 @@ const LOGGED: &[&str] = &[
 impl ServerHost {
     pub fn new(data_dir: PathBuf) -> ServerHost {
         let _ = std::fs::create_dir_all(&data_dir);
-        ServerHost { jobs: Default::default(), data_dir, events: broadcast::channel(1024).0, last_logged: Mutex::new(HashMap::new()) }
+        ServerHost {
+            jobs: Default::default(),
+            data_dir,
+            events: broadcast::channel(1024).0,
+            last_logged: Mutex::new(HashMap::new()),
+            progress: Mutex::new(HashMap::new()),
+        }
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<(String, JsonValue)> {
@@ -45,6 +77,48 @@ impl ServerHost {
         if !dir.is_empty() {
             strip_prefix_in(value, dir);
         }
+    }
+
+    // What is running now, longest-running first
+    pub fn progress(&self) -> Vec<Progress> {
+        let mut list: Vec<Progress> = self
+            .progress
+            .lock()
+            .unwrap()
+            .values()
+            .map(|p| Progress { seconds: p.started.map(|s| s.elapsed().as_secs_f64()).unwrap_or(0.0), ..p.clone() })
+            .collect();
+        list.sort_by(|a, b| b.seconds.total_cmp(&a.seconds));
+        list
+    }
+
+    fn note_progress(&self, event: &str, p: &JsonValue) {
+        let Some((_, label)) = PROGRESS.iter().find(|(e, _)| *e == event) else { return };
+        let number = |key: &str| p[key].as_u64().or_else(|| p[key].as_f64().map(|f| f as u64));
+        let completed = number("completed").or(number("current")).or(number("downloaded_mb")).unwrap_or(0);
+        let total = number("total").or(number("total_mb")).unwrap_or(0);
+        let mut all = self.progress.lock().unwrap();
+        // A thumbnail pass says it is done by reaching its total
+        let done = p["done"].as_bool() == Some(true) || (event == "thumb-batch-ready" && total > 0 && completed >= total);
+        if done {
+            all.remove(event);
+            return;
+        }
+        let entry = all.entry(event.to_string()).or_insert_with(|| Progress {
+            label: label.to_string(),
+            stage: String::new(),
+            completed: 0,
+            total: 0,
+            seconds: 0.0,
+            started: Some(Instant::now()),
+        });
+        // A new run (its count went back) starts its clock again
+        if completed < entry.completed || total != entry.total {
+            entry.started = Some(Instant::now());
+        }
+        entry.stage = p["stage"].as_str().unwrap_or("").to_string();
+        entry.completed = completed;
+        entry.total = total;
     }
 
     fn log(&self, event: &str, payload: &JsonValue) {
@@ -113,6 +187,7 @@ impl Host for ServerHost {
 
     fn emit_value(&self, event: &str, payload: JsonValue) {
         self.log(event, &payload);
+        self.note_progress(event, &payload);
         let finished = finished_photos(event, &payload);
         let _ = self.events.send((event.to_string(), payload));
         if !finished.is_empty() {
