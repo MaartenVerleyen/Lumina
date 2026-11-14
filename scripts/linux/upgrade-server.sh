@@ -57,8 +57,14 @@ LISTEN=${LISTEN/0.0.0.0/127.0.0.1}
 running_version() {
   local key
   key=$(cat "$DATA/local-access.key" 2>/dev/null) || return 1
-  curl -fsS --max-time 3 -H "x-lumina-local-key: $key" "http://$LISTEN/local/status" 2>/dev/null |
+  curl -fsS --max-time 10 -H "x-lumina-local-key: $key" "http://$LISTEN/local/status" 2>/dev/null |
     python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])' 2>/dev/null
+}
+
+# The version this script installed last (<home>/VERSION), else the running one: a busy server may not answer in
+# time, and the nightly timer must not install the same version again then
+installed_version() {
+  cat "$DEST/VERSION" 2>/dev/null || running_version || true
 }
 
 restart() {
@@ -128,7 +134,7 @@ for a in r.get("assets", []):
     fail "That release has no server bundle (yet): the Server build runs for about 15 minutes after a release is published"
   fi
   NEW_VERSION=$(sed -n 's/.*lumina-server-\(.*\)-linux-x86_64\.tar\.gz$/\1/p' <<< "$bundle")
-  if [[ -n $only_newer && $NEW_VERSION == "$(running_version || true)" ]]; then
+  if [[ -n $only_newer && $NEW_VERSION == "$(installed_version)" ]]; then
     echo "Already on $NEW_VERSION."
     exit 0
   fi
@@ -231,6 +237,7 @@ for lib in "$b"/bin/libonnxruntime*.so*; do
   [[ -e $lib ]] && cp -f "$lib" "$DEST/bin/"
 done
 [[ -f $b/bin/upgrade-server.sh ]] && install -m 755 "$b/bin/upgrade-server.sh" "$DEST/bin/upgrade-server.sh"
+echo "$NEW_VERSION" > "$DEST/VERSION"
 rm -rf "$DEST/web.prev"
 mv "$DEST/web" "$DEST/web.prev"
 mv "$DEST/web.new" "$DEST/web"
