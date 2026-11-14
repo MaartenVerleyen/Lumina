@@ -144,6 +144,11 @@ rm -rf "$DEST/web.new"
 cp -r dist "$DEST/web.new"
 cp -f "$DEST/bin/lumina-server" "$DEST/bin/lumina-server.prev"
 mv -f "$DEST/bin/lumina-server.new" "$DEST/bin/lumina-server"
+# ONNX Runtime's GPU part sits next to the program (as in the Docker image): without these files faces and
+# smart search run on the CPU, several times slower. The build has them as links into ort's download cache.
+for lib in src-tauri/target/release/libonnxruntime*.so*; do
+  [[ -e $lib ]] && cp -fL "$lib" "$DEST/bin/$(basename "$lib")"
+done
 rm -rf "$DEST/web.prev"
 mv "$DEST/web" "$DEST/web.prev"
 mv "$DEST/web.new" "$DEST/web"
