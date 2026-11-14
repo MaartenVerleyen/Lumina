@@ -1,0 +1,12 @@
+# Installs a newer Lumina server release, if there is one (upgrade-server.sh --if-newer), as the user the server
+# runs as. Started by lumina-upgrade.timer; see server/README.md, "Upgrading":
+#   cp server/lumina-upgrade.service server/lumina-upgrade.timer ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now lumina-upgrade.timer
+#   loginctl enable-linger "$USER"     # so it also runs when you're not logged in
+[Unit]
+Description=Lumina server: install a newer release
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/bash /srv/lumina/bin/upgrade-server.sh --if-newer

@@ -1,6 +1,7 @@
 # Releasing Lumina
 
-A release is a GitHub release with four files. Installed copies of Lumina find new releases by themselves
+A release is a GitHub release with four files from this PC; GitHub's workflows add the Linux, Mac, Android
+and server builds to it. Installed copies of Lumina find new releases by themselves
 through `latest.json`.
 
 | File | What it is for |
@@ -47,6 +48,15 @@ and adds `linux-x86_64` and `darwin-aarch64` to `latest.json` once the release s
   release are brought up to date. latest.json gets each platform that built, also when another failed.
 - The Mac app needs macOS 13.4 or later (`bundle.macOS.minimumSystemVersion`), the version ONNX Runtime's
   prebuilt library is made for.
+
+## The server
+
+Publishing the release also starts `.github/workflows/server.yml`. On Ubuntu 24.04 it builds the server, its
+tray and the web client, and adds `lumina-server-<version>-linux-x86_64.tar.gz` and its `.sha256` to the
+release (about 15 minutes). That bundle holds `bin/` (lumina-server, ONNX Runtime's CUDA libraries, lumina-tray,
+upgrade-server.sh) and `web/`. A server set up as a system service installs it with
+`bash /srv/lumina/bin/upgrade-server.sh`, or by itself at night with the timer (server/README.md, "Upgrading").
+To try the build without a release: Actions → Server build → Run workflow (the bundle is kept as an artifact).
 
 ## Android
 

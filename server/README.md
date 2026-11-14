@@ -141,21 +141,36 @@ brings them back.
 
 ### Upgrading
 
-`scripts/linux/upgrade-server.sh` upgrades a server installed as a system service (on cachy: `/srv/lumina`,
-`lumina-server.service`, built from `~/Projects/Lumina`). From Windows, in one go:
+Every release carries a ready server bundle, built on GitHub (`.github/workflows/server.yml`, about 15
+minutes after the release is published): `lumina-server-<version>-linux-x86_64.tar.gz` with the server, ONNX
+Runtime's GPU libraries, the tray and the web client. `upgrade-server.sh` installs it on a server set up as
+a system service (on cachy: `/srv/lumina`, `lumina-server.service`), and comes along in the bundle as
+`/srv/lumina/bin/upgrade-server.sh`. From Windows, in one go:
 
 ```bash
-ssh -t cachy 'bash ~/Projects/Lumina/scripts/linux/upgrade-server.sh'          # the latest main
-ssh -t cachy 'bash ~/Projects/Lumina/scripts/linux/upgrade-server.sh v5.6.0'   # a release tag or branch
-ssh -t cachy 'bash ~/Projects/Lumina/scripts/linux/upgrade-server.sh --rollback'
+ssh -t cachy 'bash /srv/lumina/bin/upgrade-server.sh'                  # the latest release
+ssh -t cachy 'bash /srv/lumina/bin/upgrade-server.sh v6.0.0'           # that release
+ssh -t cachy 'bash /srv/lumina/bin/upgrade-server.sh --from-source'    # built from ~/Projects/Lumina (main)
+ssh -t cachy 'bash /srv/lumina/bin/upgrade-server.sh --rollback'
 ```
 
-It fetches the branch or tag and builds the web client and the server while the old one keeps running.
-It then copies the database with SQLite's backup API into `/srv/lumina/backups/` (the last three kept),
-keeps the running program and web client as `.prev`, puts the new ones in place and restarts the service.
-If the new version doesn't answer within two minutes, it shows the log and puts the previous version
-back. The server is down only for the restart; a first start after a big upgrade may take a little longer
-while it brings the database up to date.
+(Before the first release with a bundle, the script is at `~/Projects/Lumina/scripts/linux/upgrade-server.sh`.)
+
+It downloads the bundle and checks its SHA-256 (or builds it from the checkout while the old server keeps
+running). It then copies the database with SQLite's backup API into `/srv/lumina/backups/` (the last three
+kept), keeps the running program and web client as `.prev`, puts the new ones in place and restarts the
+service. If the new version doesn't answer within two minutes, it shows the log and puts the previous version
+back. An installed tray is replaced and started again. The server is down only for the restart; a first start
+after a big upgrade may take a little longer while it brings the database up to date.
+
+To install new releases by themselves, every night at 04:30 when there is one (`--if-newer`):
+
+```bash
+cp server/lumina-upgrade.service server/lumina-upgrade.timer ~/.config/systemd/user/
+systemctl --user daemon-reload && systemctl --user enable --now lumina-upgrade.timer
+loginctl enable-linger "$USER"     # so it also runs when you're not logged in
+journalctl --user -u lumina-upgrade -n 40    # what the last run did
+```
 
 The restart asks for your sudo password. To let the script (and the tray) restart the server without it,
 allow just that once:
@@ -165,5 +180,6 @@ echo "$USER ALL=(root) NOPASSWD: /usr/bin/systemctl start lumina-server, /usr/bi
   sudo tee /etc/sudoers.d/lumina-server && sudo chmod 440 /etc/sudoers.d/lumina-server && sudo visudo -c
 ```
 
-`LUMINA_SRC`, `LUMINA_HOME`, `LUMINA_SERVICE` and `LUMINA_RESTART` point it at another checkout, install,
-service or restart command (for instance `systemctl --user restart lumina-server` for a user service).
+`LUMINA_HOME`, `LUMINA_SERVICE`, `LUMINA_REPO`, `LUMINA_SRC` and `LUMINA_RESTART` point it at another install,
+service, GitHub repository, checkout or restart command (for instance `systemctl --user restart lumina-server`
+for a user service).

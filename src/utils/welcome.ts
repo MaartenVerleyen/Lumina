@@ -14,6 +14,16 @@ export interface ReleaseNotes {
 // Newest first. Add an entry for every release that should greet updating users with "What's new".
 export const RELEASE_NOTES: ReleaseNotes[] = [
   {
+    version: "6.0.0",
+    items: [
+      { title: "Opens straight away", text: "Your library and All photos show at once, as you left them. Lumina checks for new and changed photos in the background, with its progress in the status bar, and you can keep working meanwhile." },
+      { title: "New photos appear as they come in", text: "When a large folder is added, here or on a server, its photos appear every thousand or so, with their thumbnails, instead of all at the end. A server's indexing shows in the status bar with the time left." },
+      { title: "Someone else", text: "In face review, Someone else names a face that isn't the person you're checking, right there. No just says it isn't them. On the phone too." },
+      { title: "Closing the window", text: "Lumina asks before it closes, and says what would stop (tick Don't ask again to skip it). Or let it keep running in the tray, so scans and uploads carry on: Settings → General. Starting Lumina again brings the open window back." },
+      { title: "For server owners", text: "The admin page adds and removes libraries and changes the caption model without a restart. A tray icon on the server's computer shows what it's doing. Each release has a ready server bundle, and upgrade-server.sh installs it in seconds." },
+    ],
+  },
+  {
     version: "5.5.1",
     items: [
       { title: "Who is this? names what you see", text: "Naming a group gives the name to the faces shown; the rest of a big group comes back as faces to check for that person. Larger opens a group with big faces and shows the photo each one is in." },

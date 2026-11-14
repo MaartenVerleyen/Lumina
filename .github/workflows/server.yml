@@ -1,0 +1,101 @@
+# The Lumina server for Linux, built on GitHub for each release: one bundle with the server, ONNX Runtime's
+# GPU libraries (CUDA), the server's tray and the web client, ready to be put in place by
+# scripts/linux/upgrade-server.sh (no Rust or Node on the server needed).
+#
+#   lumina-server-<version>-linux-x86_64.tar.gz          bin/ (lumina-server, libonnxruntime*.so, lumina-tray,
+#                                                        upgrade-server.sh), web/
+#   lumina-server-<version>-linux-x86_64.tar.gz.sha256   its SHA-256, checked before anything is installed
+#
+# Built on Ubuntu 24.04 like the Docker image: the CUDA build of ONNX Runtime needs its glibc or newer (Arch and
+# CachyOS have newer). Run it by hand (Actions → Server build → Run workflow) to try a build: the bundle is kept
+# as the run's artifact; give it a release tag as well to add it to that release.
+name: Server build
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch or tag to build
+        default: main
+        required: true
+      release_tag:
+        description: Add the bundle to this release (vX.Y.Z); empty for an artifact only
+        default: ""
+        required: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: server-${{ github.event.release.tag_name || inputs.ref }}
+  cancel-in-progress: false
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    env:
+      REF: ${{ github.event.release.tag_name || inputs.ref }}
+      RELEASE: ${{ github.event.release.tag_name || inputs.release_tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.REF }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: server
+
+      # The tray's icon goes through GTK and the app indicator library
+      - name: Build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libayatana-appindicator3-dev libssl-dev pkg-config
+
+      - name: Web client
+        run: |
+          npm ci
+          npm run build
+
+      - name: Server and tray
+        working-directory: src-tauri
+        run: cargo build --release -p lumina-server -p lumina-tray
+
+      - name: Bundle
+        shell: bash
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' src-tauri/crates/lumina-server/Cargo.toml | head -1)
+          name="lumina-server-${version}-linux-x86_64"
+          dir="$RUNNER_TEMP/$name"
+          mkdir -p "$dir/bin"
+          cp src-tauri/target/release/lumina-server src-tauri/target/release/lumina-tray "$dir/bin/"
+          # The build has ONNX Runtime's libraries as links into ort's download cache: the files themselves
+          for lib in src-tauri/target/release/libonnxruntime*.so*; do cp -L "$lib" "$dir/bin/"; done
+          cp scripts/linux/upgrade-server.sh "$dir/bin/"
+          cp -r dist "$dir/web"
+          echo "$version" > "$dir/VERSION"
+          out="$RUNNER_TEMP/out"; mkdir -p "$out"
+          tar -C "$RUNNER_TEMP" -czf "$out/$name.tar.gz" "$name"
+          (cd "$out" && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
+          ls -la "$out" "$dir/bin"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lumina-server-linux-x86_64
+          path: ${{ runner.temp }}/out/*
+          retention-days: 14
+
+      - name: Add to the release
+        if: env.RELEASE != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$RELEASE" "$RUNNER_TEMP"/out/* --clobber --repo "$GITHUB_REPOSITORY"

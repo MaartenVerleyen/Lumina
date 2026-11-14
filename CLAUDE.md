@@ -59,7 +59,10 @@ src-tauri/                Cargo workspace root, and the desktop app crate ("Lumi
                           settings.rs (libraries and settings changed on the admin page: server-settings.json)
   crates/lumina-tray/     tray icon for the server's own computer: status from /local/status with the key in
                           the data folder (local-access.key), admin page, start/stop (systemd, compose, child)
-server/                   Dockerfile and docker-compose.yml (CUDA + ffmpeg + Ollama)
+server/                   Dockerfile and docker-compose.yml (CUDA + ffmpeg + Ollama); systemd units for a native
+                          install and the nightly upgrade timer. cachy runs natively: /srv/lumina, lumina-server.service,
+                          upgraded with scripts/linux/upgrade-server.sh from each release's server bundle
+                          (.github/workflows/server.yml); the ONNX Runtime .so files must sit next to the binary
 installer/                "Lumina Setup" (Windows)
 scripts/                  release.ps1, set-version.ps1 (Windows); test-library/; linux/setup-cachyos.sh
 ```
