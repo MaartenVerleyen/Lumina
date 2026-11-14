@@ -652,6 +652,9 @@ function loadAll(check?: string[], reuseServers = false): Promise<PhotoItem[]> {
   return loading;
 }
 
+// Each engine's faces-to-check counts as it last gave them (All photos)
+const lastPendingCounts = new Map<string, Record<string, number>>();
+
 // Each server library's list as the last load fetched it. A server answers from its database, so a load that
 // only checks this computer's folders (the background check after opening) reuses these: a large library's
 // list is tens of megabytes.
@@ -1027,9 +1030,14 @@ async function callAll<T>(command: string, args: Record<string, unknown>): Promi
         engines()
           .filter(engineEditable)
           .map(async (engine) => {
+            // A server that doesn't answer this time keeps its last counts, so its badges don't go away
             const part = await engineTransport(engine)
               .call<Record<string, number>>(command, { rootFolder: null })
-              .catch(() => ({}) as Record<string, number>);
+              .then((fresh) => {
+                lastPendingCounts.set(engine, fresh);
+                return fresh;
+              })
+              .catch(() => lastPendingCounts.get(engine) ?? ({} as Record<string, number>));
             const show = showOn(engine);
             for (const [name, n] of Object.entries(part)) counts[show(name)] = (counts[show(name)] ?? 0) + n;
           })

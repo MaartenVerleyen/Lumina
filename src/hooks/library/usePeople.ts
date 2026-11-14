@@ -73,6 +73,7 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
     };
   }, [addLog]);
 
+  const pendingAskRef = useRef(0);
   async function refreshPeople(currentFolder = folder, skipPendingScan = false) {
     try {
       // 1. Immediately load & render the Top People Carousel (<2ms) without waiting on biometric matching!
@@ -84,11 +85,13 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
       // 2. Asynchronously compute & cache pending face match counts in the background (suggestions are for
       // those who may accept them)
       if (!skipPendingScan && access.edit) {
+        // Only the latest ask may set the badges: an older one can answer later, from before changes made since
+        const asked = ++pendingAskRef.current;
         call<Record<string, number>>("get_pending_face_match_counts", {
           rootFolder: currentFolder || null,
         })
           .then((pending) => {
-            setPendingFaceCounts(pending || {});
+            if (asked === pendingAskRef.current) setPendingFaceCounts(pending || {});
           })
           .catch(() => {});
       }

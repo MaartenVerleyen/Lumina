@@ -1,3 +1,4 @@
+use std::sync::Mutex;
 use crate::*;
 
 // Naming faces and reviewing suggestions: assign a face box, match suggestions, accept / reject, "Who is this?" clusters
@@ -276,12 +277,28 @@ pub fn compute_face_suggestions(
 }
 
 // Recomputes the folder's suggestions and stores them in the pending cache (keyed per person + folder)
+// One computation at a time: a window asks again whenever its list changes, and on a large library each ask is
+// seconds of every core. Who asks while one runs waits for it and takes a result that started after they asked
+// (so it holds every change made before), instead of starting their own.
+static SUGGESTIONS_TURN: Mutex<()> = Mutex::new(());
+type Suggestions = HashMap<String, Vec<SimilarFaceCandidate>>;
+static LAST_SUGGESTIONS: Mutex<Option<(Option<String>, std::time::Instant, Suggestions)>> = Mutex::new(None);
+
 fn refresh_suggestion_cache(
     app: &dyn Host,
     conn: &Connection,
     root_folder: Option<&str>,
 ) -> Result<HashMap<String, Vec<SimilarFaceCandidate>>, String> {
+    let asked = std::time::Instant::now();
+    let _turn = SUGGESTIONS_TURN.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((root, started, list)) = LAST_SUGGESTIONS.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+        if *started >= asked && root.as_deref() == root_folder {
+            return Ok(list.clone());
+        }
+    }
+    let started = std::time::Instant::now();
     let suggestions = compute_face_suggestions(app, conn, root_folder)?;
+    *LAST_SUGGESTIONS.lock().unwrap_or_else(|e| e.into_inner()) = Some((root_folder.map(str::to_string), started, suggestions.clone()));
     let keyed: HashMap<String, Vec<SimilarFaceCandidate>> = suggestions
         .iter()
         .map(|(name, list)| (pending_cache_key(name, root_folder), list.clone()))

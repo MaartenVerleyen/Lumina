@@ -14,6 +14,13 @@ export interface ReleaseNotes {
 // Newest first. Add an entry for every release that should greet updating users with "What's new".
 export const RELEASE_NOTES: ReleaseNotes[] = [
   {
+    version: "6.0.2",
+    items: [
+      { title: "Faces to check, in seconds", text: "Working out which faces might be someone you named is three times faster, and when several windows ask at once the server works it out once for all of them. On a large library this took minutes when the server was busy." },
+      { title: "Badges stay put", text: "The number of faces to check on People no longer disappears when the server takes a while to answer." },
+    ],
+  },
+  {
     version: "6.0.1",
     items: [
       { title: "Server libraries open fast again", text: "A server sends its photo lists compressed, and Lumina fetches each one once instead of three times. All photos with large server libraries loads in seconds instead of a minute." },
