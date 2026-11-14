@@ -389,25 +389,37 @@ pub async fn server_me(app: AppHandle, server: String) -> Result<Value, String> 
     Ok(me)
 }
 
-// One of the engine's commands, run by the server: the same names and arguments as the local engine's
+// One of the engine's commands, run by the server: the same names and arguments as the local engine's.
+// The window gets the server's JSON as it came: a large library's list is tens of megabytes, and reading it
+// into a Value here only to write it out again for the window cost seconds and memory.
 #[tauri::command]
-pub async fn server_call(app: AppHandle, server: String, command: String, args: Option<Value>, client: Option<String>) -> Result<Value, String> {
-    if !plain(&command) {
+pub async fn server_call(app: AppHandle, server: String, command: String, args: Option<Value>, client: Option<String>) -> Result<tauri::ipc::Response, String> {
+    let text = rpc_text(&app, &server, &command, args, client).await?;
+    Ok(tauri::ipc::Response::new(if text.is_empty() { "null".to_string() } else { text }))
+}
+
+// The same for the app's own Rust code, which needs the answer as a value
+pub async fn server_call_value(app: AppHandle, server: String, command: String, args: Option<Value>, client: Option<String>) -> Result<Value, String> {
+    let text = rpc_text(&app, &server, &command, args, client).await?;
+    if text.is_empty() {
+        return Ok(Value::Null);
+    }
+    serde_json::from_str(&text).map_err(|e| format!("The server's answer wasn't understood: {e}"))
+}
+
+async fn rpc_text(app: &AppHandle, server: &str, command: &str, args: Option<Value>, client: Option<String>) -> Result<String, String> {
+    if !plain(command) {
         return Err(format!("Not a command: {command}"));
     }
-    let r = remote(&app);
-    let mut req = r.request(&server, reqwest::Method::POST, &format!("/api/rpc/{command}"))?;
+    let r = remote(app);
+    let mut req = r.request(server, reqwest::Method::POST, &format!("/api/rpc/{command}"))?;
     // The window that made a change names itself, so it can skip the server's echo of it
     if let Some(c) = client {
         req = req.header("X-Lumina-Client", c);
     }
     // Listing a large library or a long job can take a while; nothing waits forever
     let resp = req.timeout(Duration::from_secs(600)).json(&args.unwrap_or_else(|| json!({}))).send().await.map_err(unreachable)?;
-    let text = check(&app, &server, resp).await?.text().await.map_err(|e| e.to_string())?;
-    if text.is_empty() {
-        return Ok(Value::Null);
-    }
-    serde_json::from_str(&text).map_err(|e| format!("The server's answer wasn't understood: {e}"))
+    check(app, server, resp).await?.text().await.map_err(|e| e.to_string())
 }
 
 // Events: one WebSocket per signed-in server, again after a pause (1 s, 2 s, ... 30 s) when it closes.

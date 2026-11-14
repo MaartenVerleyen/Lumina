@@ -14,6 +14,14 @@ export interface ReleaseNotes {
 // Newest first. Add an entry for every release that should greet updating users with "What's new".
 export const RELEASE_NOTES: ReleaseNotes[] = [
   {
+    version: "6.0.1",
+    items: [
+      { title: "Server libraries open fast again", text: "A server sends its photo lists compressed, and Lumina fetches each one once instead of three times. All photos with large server libraries loads in seconds instead of a minute." },
+      { title: "No more waiting in front of a dialog", text: "A server's library opens straight away and loads in the status bar while you keep working. Going back to one you opened before shows it at once." },
+      { title: "Starting up", text: "While your library loads, Lumina says so instead of showing the welcome screen." },
+    ],
+  },
+  {
     version: "6.0.0",
     items: [
       { title: "Opens straight away", text: "Your library and All photos show at once, as you left them. Lumina checks for new and changed photos in the background, with its progress in the status bar, and you can keep working meanwhile." },

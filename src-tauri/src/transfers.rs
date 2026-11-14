@@ -509,7 +509,7 @@ async fn send_values(app: &AppHandle, q: &Arc<Queue>, client: &str) -> Pass {
                 })
                 .collect();
             let args = serde_json::json!({ "items": items });
-            match remote::server_call(app.clone(), server.clone(), "apply_backup_values".into(), Some(args), Some(client.to_string())).await {
+            match remote::server_call_value(app.clone(), server.clone(), "apply_backup_values".into(), Some(args), Some(client.to_string())).await {
                 Ok(answer) => {
                     let report: photo_meta::ApplyReport = serde_json::from_value(answer).unwrap_or_default();
                     {

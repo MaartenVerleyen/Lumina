@@ -646,13 +646,29 @@ function watchAllPhotosFolders(): Promise<void> {
 // The load running now: lists of albums, people and trips wait for it (they ask its sources)
 let allLoading: Promise<unknown> = Promise.resolve();
 
-function loadAll(check?: string[]): Promise<PhotoItem[]> {
-  const loading = loadAllNow(check);
+function loadAll(check?: string[], reuseServers = false): Promise<PhotoItem[]> {
+  const loading = loadAllNow(check, reuseServers);
   allLoading = loading.catch(() => {});
   return loading;
 }
 
-async function loadAllNow(check?: string[]): Promise<PhotoItem[]> {
+// Each server library's list as the last load fetched it. A server answers from its database, so a load that
+// only checks this computer's folders (the background check after opening) reuses these: a large library's
+// list is tens of megabytes.
+const serverLists = new Map<string, PhotoItem[]>();
+
+// A server library changed (it indexed new photos): the next load that reuses lists fetches this one again. The
+// web client's events name no server: its own.
+export function forgetServerList(eventServer: string | undefined, root: string) {
+  const server = eventServer ?? (serverTransport ? WEB_SERVER : undefined);
+  if (server === undefined) return;
+  for (const key of [...serverLists.keys()]) {
+    const [s, r] = [key.slice(0, key.indexOf("|")), key.slice(key.indexOf("|") + 1)];
+    if (s === server && sameRoot(r, root)) serverLists.delete(key);
+  }
+}
+
+async function loadAllNow(check?: string[], reuseServers = false): Promise<PhotoItem[]> {
   const useKept = fromKept;
   fromKept = false;
   offlineServers = [];
@@ -668,14 +684,20 @@ async function loadAllNow(check?: string[]): Promise<PhotoItem[]> {
       try {
         const checked = !check || check.some((root) => sameRoot(root, source.root));
         const server = source.server;
+        const listKey = `${server}|${source.root}`;
         const photos =
           server !== null
-            ? await keptOr(
-                `photos:${server}|${source.root}`,
-                server,
-                () => engineTransport(server).call<PhotoItem[]>("scan_folder", { folderPath: source.root, forceReprocess: false }),
-                useKept
-              )
+            ? reuseServers && serverLists.has(listKey)
+              ? serverLists.get(listKey)!
+              : await keptOr(
+                  `photos:${server}|${source.root}`,
+                  server,
+                  () => engineTransport(server).call<PhotoItem[]>("scan_folder", { folderPath: source.root, forceReprocess: false }),
+                  useKept
+                ).then((list) => {
+                  serverLists.set(listKey, list);
+                  return list;
+                })
             : source.root === PHONE_ROOT
               ? await phonePhotos()
               : checked
@@ -927,7 +949,7 @@ async function callAll<T>(command: string, args: Record<string, unknown>): Promi
   if (command !== "scan_folder") await allLoading;
   switch (command) {
     case "scan_folder":
-      return (await loadAll(args.check as string[] | undefined)) as T;
+      return (await loadAll(args.check as string[] | undefined, args.reuseServers === true)) as T;
     case "get_photos": {
       const byEngine = new Map<string, string[]>();
       for (const h of (args.hashes as string[]) ?? []) {

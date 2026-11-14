@@ -5,9 +5,11 @@ import {
   allPhotosKnows,
   allPhotosRegroup,
   allPhotosShownIn,
+  allPhotosHasLocal,
   allPhotosSources,
   call,
   callLocal,
+  forgetServerList,
   isOpenLibraryRoot,
   libraryRefFromString,
   libraryRefToString,
@@ -102,6 +104,20 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
   // panel, not the dialog, and the window stays usable
   const backgroundScanRef = useRef(false);
   const [backgroundScanProgress, setBackgroundScanProgress] = useState<ScanProgressEvent | null>(null);
+  // The name of the library whose list is on its way (a server's large library takes seconds): the window
+  // stays usable and the jobs panel says so
+  const [libraryLoading, setLibraryLoading] = useState<string | null>(null);
+  // The last lists of the server libraries opened in this session (the last few), so going back to one shows it
+  // at once while it is fetched again
+  const serverListsRef = useRef(new Map<string, PhotoItem[]>());
+  function rememberServerList(server: string, root: string, list: PhotoItem[]) {
+    const lists = serverListsRef.current;
+    const key = `${server}|${root}`;
+    lists.delete(key);
+    if (list.length === 0) return;
+    lists.set(key, list);
+    while (lists.size > 3) lists.delete(lists.keys().next().value!);
+  }
   // Servers indexing their libraries, by server ("" in the web client: its own server)
   const [serverScans, setServerScans] = useState<Record<string, ScanProgressEvent>>({});
   const [serverLabels, setServerLabels] = useState<Record<string, string>>({});
@@ -215,15 +231,21 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
   const relistTimerRef = useRef<number | null>(null);
   const lastRelistRef = useRef(0);
   useEffect(() => {
-    const relistSoon = () => {
+    // All photos fetches again only the server libraries that changed (forgetServerList), unless the libraries
+    // themselves changed
+    let refetchAll = false;
+    const relistSoon = (everything = false) => {
+      refetchAll ||= everything;
       if (relistTimerRef.current !== null) return;
       const wait = Math.max(1500, lastRelistRef.current + 10000 - Date.now());
       relistTimerRef.current = window.setTimeout(async () => {
         relistTimerRef.current = null;
         lastRelistRef.current = Date.now();
+        const reuse = !refetchAll;
+        refetchAll = false;
         const target = folderRef.current;
         if (!target) return;
-        const res = await listFromDatabaseRef.current(target).catch(() => null);
+        const res = await listFromDatabaseRef.current(target, reuse).catch(() => null);
         if (res && isSameFolder(target, folderRef.current)) setPhotos(withEarlyThumbsRef.current(res));
       }, wait);
     };
@@ -231,12 +253,14 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
     const ofAllPhotos = (event: { server?: string }) => openLibraryIsAll() && (event.server !== undefined || !inDesktopApp);
     const offs = [
       subscribe<string>("library-indexed", (event) => {
-        if (isOpenLibraryRoot(event.payload, event) || ofAllPhotos(event)) relistSoon();
+        if (!isOpenLibraryRoot(event.payload, event) && !ofAllPhotos(event)) return;
+        forgetServerList(event.server, event.payload);
+        relistSoon();
       }),
       // An admin added a library to a server or took one off
       subscribe<{ root: string }>("libraries-changed", (event) => {
         if (ofAllPhotos(event)) {
-          relistSoon();
+          relistSoon(true);
           return;
         }
         const open = folderRef.current;
@@ -359,6 +383,9 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
     const isSuperseded = () => requestId !== folderLoadRequestRef.current;
     const previousFolder = folder;
     const previousServer = openLibraryServer();
+    // The server library being left is kept as it is now (edits included) for going back to it
+    if (previousServer && previousFolder) rememberServerList(previousServer, previousFolder, photos);
+    const name = targetPath === ALL_PHOTOS ? "All photos" : targetPath.split(/[\\/]/).filter(Boolean).pop() || targetPath;
     try {
       // Calls from here on go to the library's own engine
       setOpenLibrary(targetPath, server);
@@ -370,13 +397,40 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
       setSelectedPeriodRange(null);
       backgroundScanRef.current = false;
       setBackgroundScanProgress(null);
+      setLibraryLoading(null);
+
+      // A server's library: shown as it was last seen in this session (else empty) while the server lists it,
+      // which for a large library on a hard disk takes a while; the window stays usable meanwhile
+      if (server && targetPath !== ALL_PHOTOS) {
+        const seen = serverListsRef.current.get(`${server}|${targetPath}`);
+        showOpened(seen ?? []);
+        setLibraryLoading(name);
+        try {
+          const res = await listFromDatabase(targetPath);
+          if (isSuperseded()) return;
+          rememberServerList(server, targetPath, res);
+          saveRecentFolder(targetPath, server);
+          // Shown already: the selection stays, as when the library changes while open
+          if (seen) setPhotos(res);
+          else showOpened(res);
+          addLog("LIBRARY", `Opened library folder (${res.length} items)`, targetPath);
+        } catch (err) {
+          if (isSuperseded()) return;
+          setError(`Couldn't load ${name} from the server: ${err}`);
+        } finally {
+          if (!isSuperseded()) setLibraryLoading(null);
+        }
+        return;
+      }
 
       // A library on this computer that was opened before, or All photos, shows straight from the databases;
       // the check of this computer's folders for new, changed and removed files runs after that, in the
       // background
       if (!server && (targetPath === ALL_PHOTOS || platform.fullApp)) {
+        setLibraryLoading(name);
         const known = await listFromDatabase(targetPath).catch(() => [] as PhotoItem[]);
         if (isSuperseded()) return;
+        setLibraryLoading(null);
         if (known.length > 0) {
           saveRecentFolder(targetPath, server);
           showOpened(targetPath === ALL_PHOTOS ? withEarlyThumbs(known) : known);
@@ -419,8 +473,9 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
   // The open library as the databases have it, without reading the folders: a folder on this computer from
   // this computer's database, a server's library (which a server always answers from its database), All
   // photos from all of them
-  function listFromDatabase(target: string): Promise<PhotoItem[]> {
-    if (target === ALL_PHOTOS) return call<PhotoItem[]>("scan_folder", { folderPath: target, forceReprocess: false, check: [] });
+  // `reuseServers`: All photos keeps the server lists it fetched last (only this computer's folders changed)
+  function listFromDatabase(target: string, reuseServers = false): Promise<PhotoItem[]> {
+    if (target === ALL_PHOTOS) return call<PhotoItem[]>("scan_folder", { folderPath: target, forceReprocess: false, check: [], reuseServers });
     if (openLibraryServer() || !platform.fullApp) return call<PhotoItem[]>("scan_folder", { folderPath: target, forceReprocess: false });
     return callLocal<PhotoItem[]>("list_local_library", { root: target });
   }
@@ -442,13 +497,17 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
   // list holds the values it read when it started, and ratings or tags changed meanwhile must not go back.
   // The selection is kept, as it is when the watcher picks up changes.
   async function checkInBackground(root: string, shownCount: number, isSuperseded: () => boolean) {
+    // All photos only checks this computer's folders: a server keeps its own libraries up to date, and its lists
+    // were just fetched
+    const all = root === ALL_PHOTOS;
+    if (all && !allPhotosHasLocal()) return;
     backgroundScanRef.current = true;
     setBackgroundScanProgress({ stage: "Checking for new and changed photos", current_file: root, completed: 0, total: 0, percent: 0, done: false });
     try {
       // All photos checks every folder on this computer, one after the other
-      await call<PhotoItem[]>("scan_folder", { folderPath: root, forceReprocess: false });
+      await call<PhotoItem[]>("scan_folder", all ? { folderPath: root, forceReprocess: false, reuseServers: true } : { folderPath: root, forceReprocess: false });
       if (isSuperseded()) return;
-      const fresh = await listFromDatabase(root);
+      const fresh = await listFromDatabase(root, all);
       if (isSuperseded()) return;
       setPhotos(root === ALL_PHOTOS ? withEarlyThumbs(fresh) : fresh);
       const diff = fresh.length - shownCount;
@@ -860,6 +919,7 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
     recentFolders,
     scanProgress,
     backgroundScanProgress,
+    libraryLoading,
     serverScans,
     serverLabels,
     progressTitle,

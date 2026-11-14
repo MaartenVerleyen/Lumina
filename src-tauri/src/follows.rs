@@ -172,7 +172,7 @@ pub fn sync_follows(app: AppHandle) {
 }
 
 async fn call(app: &AppHandle, server: &str, command: &str, args: Value) -> Result<Value, String> {
-    remote::server_call(app.clone(), server.to_string(), command.to_string(), Some(args), None).await
+    remote::server_call_value(app.clone(), server.to_string(), command.to_string(), Some(args), None).await
 }
 
 async fn sync(app: &AppHandle) -> Result<(), String> {
