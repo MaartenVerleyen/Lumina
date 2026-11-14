@@ -103,7 +103,7 @@ pub struct RemovedCopies {
 #[tauri::command]
 pub async fn remove_local_copies(app: AppHandle, server: String, hashes: Vec<String>) -> Result<RemovedCopies, String> {
     let on_server: Vec<String> = serde_json::from_value(
-        remote::server_call(app.clone(), server.clone(), "content_hashes".into(), Some(serde_json::json!({ "hashes": hashes })), None).await?,
+        remote::server_call_value(app.clone(), server.clone(), "content_hashes".into(), Some(serde_json::json!({ "hashes": hashes })), None).await?,
     )
     .map_err(|e| e.to_string())?;
     tauri::async_runtime::spawn_blocking(move || {

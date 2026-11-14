@@ -1,5 +1,5 @@
 import { useEffect, useState, type RefObject } from "react";
-import { Clock, FolderInput, FolderOpen, Images, Search, Server } from "lucide-react";
+import { Clock, FolderInput, FolderOpen, Images, Loader2, Search, Server } from "lucide-react";
 import type { LibraryState } from "../../hooks/useLibraryState";
 import { call, inDesktopApp, onAndroid, rememberLibraryRoles, subscribe, type Role } from "../../api";
 import { useAccount } from "../auth/ServerGate";
@@ -82,6 +82,17 @@ function ServerLibraries({ lib, gridContainerRef }: { lib: LibraryState; gridCon
 
 // No library open yet: open a folder (or drop one on the window), or pick a recent one
 export function NoLibrary({ lib, gridContainerRef }: { lib: LibraryState; gridContainerRef: GridRef }) {
+  // A library's list is on its way: not the start screen, which would look as if nothing opened
+  if (lib.libraryLoading) {
+    return (
+      <div ref={gridContainerRef} className="flex-1 flex items-center justify-center p-6">
+        <div className="flex items-center gap-3 text-sm text-zinc-400">
+          <Loader2 className="w-5 h-5 animate-spin text-emerald-400" />
+          Loading {lib.libraryLoading}…
+        </div>
+      </div>
+    );
+  }
   // The web client lists its server's libraries; the desktop app (also with a server's library open) offers
   // folders on this PC and the libraries of every server it is connected to
   if (!inDesktopApp) return <ServerLibraries lib={lib} gridContainerRef={gridContainerRef} />;

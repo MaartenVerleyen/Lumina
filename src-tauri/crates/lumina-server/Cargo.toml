@@ -1,6 +1,6 @@
 [package]
 name = "lumina-server"
-version = "6.0.0"
+version = "6.0.1"
 description = "Lumina without a window: keeps libraries scanned, with thumbnails, faces and smart search, for clients"
 authors = ["Maarten"]
 edition = "2024"
@@ -15,7 +15,7 @@ toml = "0.8"
 rusqlite = { version = "0.32", features = ["bundled"] }
 axum = { version = "0.8", features = ["ws"] }
 axum-extra = { version = "0.12", features = ["cookie"] }
-tower-http = { version = "0.6", features = ["fs", "set-header"] }
+tower-http = { version = "0.6", features = ["fs", "set-header", "compression-gzip"] }
 argon2 = "0.5"
 rand = "0.9"
 sha2 = "0.10"

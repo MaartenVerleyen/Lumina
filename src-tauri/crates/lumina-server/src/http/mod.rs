@@ -77,7 +77,9 @@ pub fn router(state: Shared) -> Router {
         .route("/auth/login", post(auth::login))
         .route("/auth/logout", post(auth::logout))
         .route("/auth/me", get(auth::me))
-        .route("/rpc/{command}", post(rpc::call))
+        // Answers can be large (a library's photo list is tens of megabytes of JSON, a tenth of that gzipped);
+        // only here: the event socket, uploads and media stay as they are
+        .route("/rpc/{command}", post(rpc::call).layer(tower_http::compression::CompressionLayer::new()))
         .route("/upload/check", post(upload::check))
         .route("/upload", post(upload::start))
         // Chunks are the only large bodies besides a backup: up to 8 MB each

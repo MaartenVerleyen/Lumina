@@ -1357,3 +1357,22 @@ async fn admin_adds_and_takes_off_libraries_and_saves_settings() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(body["progress"].is_array() && body["jobs"]["queued"].is_array());
 }
+
+// Large answers (a library's photo list) go gzipped to a client that asks for it, and plain to one that doesn't
+#[tokio::test]
+async fn rpc_answers_are_gzipped_when_asked() {
+    let s = server("gzip");
+    let admin = login(&s.app, "ada").await;
+    let mut req = post("/api/rpc/admin_list_users", json!({}), Some(&admin));
+    req.headers_mut().insert(header::ACCEPT_ENCODING, "gzip".parse().unwrap());
+    let resp = s.app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(resp.headers().get(header::CONTENT_ENCODING).map(|v| v.to_str().unwrap()), Some("gzip"));
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(&bytes[..2], &[0x1f, 0x8b], "a gzip stream");
+
+    let (status, headers, body) = send(&s.app, post("/api/rpc/admin_list_users", json!({}), Some(&admin))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(headers.get(header::CONTENT_ENCODING).is_none());
+    assert_eq!(body.as_array().unwrap().len(), 3);
+}

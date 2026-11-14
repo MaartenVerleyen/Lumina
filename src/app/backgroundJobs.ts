@@ -36,6 +36,9 @@ export function backgroundJobsOf(lib: LibraryState): BackgroundJob[] {
       onCancel: lib.handleCancelOperation,
     });
   }
+  if (lib.libraryLoading) {
+    jobs.push({ id: "library-load", label: `Loading ${lib.libraryLoading}`, completed: 0, total: 0 });
+  }
   if (lib.backgroundScanProgress) {
     const p = lib.backgroundScanProgress;
     jobs.push({
