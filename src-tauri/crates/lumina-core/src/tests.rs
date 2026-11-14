@@ -2816,3 +2816,32 @@ fn drive_kinds() {
         println!("{p}: {kind}, {readers} readers");
     }
 }
+
+// How long the faces-to-check suggestions take on a copy of a real library (LUMINA_FACE_DB_DIR: a folder
+// holding a library.db copy). Run with --release.
+#[test]
+#[ignore]
+fn face_suggestions_timing() {
+    let dir = PathBuf::from(std::env::var("LUMINA_FACE_DB_DIR").expect("LUMINA_FACE_DB_DIR"));
+    let host = DirHost(dir);
+    let conn = crate::db::open_global_db(&host).unwrap();
+    let t = std::time::Instant::now();
+    crate::face_engine::ensure_embedding_cache_loaded(&conn);
+    eprintln!("embeddings loaded: {:?}", t.elapsed());
+    for _ in 0..2 {
+        let t = std::time::Instant::now();
+        let s = crate::face_review::compute_face_suggestions(&host, &conn, None).unwrap();
+        eprintln!("suggestions: {:?}, {} people, {} faces", t.elapsed(), s.len(), s.values().map(|l| l.len()).sum::<usize>());
+    }
+}
+
+// The vectorisable dot product gives the plain sum's answer, also for lengths that aren't a multiple of 8
+#[test]
+fn dot_matches_the_plain_sum() {
+    for n in [0usize, 1, 7, 8, 9, 512, 515] {
+        let a: Vec<f32> = (0..n).map(|i| ((i * 37 % 101) as f32 - 50.0) / 50.0).collect();
+        let b: Vec<f32> = (0..n).map(|i| ((i * 53 % 97) as f32 - 48.0) / 48.0).collect();
+        let plain: f32 = a.iter().zip(&b).map(|(x, y)| x * y).sum();
+        assert!((crate::face_match::dot(&a, &b) - plain).abs() < 1e-4, "n = {n}");
+    }
+}

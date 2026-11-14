@@ -36,8 +36,21 @@ pub struct PersonProfile {
     pub negatives: Vec<Vec<f32>>,
 }
 
+// Eight running sums instead of one: the compiler may then use the processor's vector instructions (a single
+// sum must be added in order, which it can't vectorise). Matching a large library makes billions of these.
 pub fn dot(a: &[f32], b: &[f32]) -> f32 {
-    a.iter().zip(b).map(|(x, y)| x * y).sum()
+    let n = a.len().min(b.len());
+    let (a, b) = (&a[..n], &b[..n]);
+    let mut acc = [0.0f32; 8];
+    let mut ca = a.chunks_exact(8);
+    let mut cb = b.chunks_exact(8);
+    for (x, y) in (&mut ca).zip(&mut cb) {
+        for k in 0..8 {
+            acc[k] += x[k] * y[k];
+        }
+    }
+    let tail: f32 = ca.remainder().iter().zip(cb.remainder()).map(|(x, y)| x * y).sum();
+    acc.iter().sum::<f32>() + tail
 }
 
 // Keeps up to `max` references that cover the person's variety (k-center / farthest-point selection),
