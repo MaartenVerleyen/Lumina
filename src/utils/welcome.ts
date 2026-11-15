@@ -16,6 +16,11 @@ export const RELEASE_NOTES: ReleaseNotes[] = [
   {
     version: "6.2.0",
     items: [
+      { title: "A renamed folder keeps everything", text: "Rename or move a library folder outside Lumina and open it at its new place: Lumina recognises it and keeps every rating, tag, name and album. A folder it can't find shows in the Library menu with Locate…, to point to where it is now." },
+      { title: "All photos does it all", text: "Reject (X), dragging photos onto a folder, Move, Trash, Auto-sort, Keep the best and Find duplicates now work in All photos, each photo in its own library. Apply changes moves this PC's photos; a server's admin applies its own." },
+      { title: "Export, share and download from anywhere", text: "Export, the web gallery and Download work from All photos and server libraries too; a server's originals are fetched first. Viewers can download and pin." },
+      { title: "Ctrl+A and the folder menu", text: "Ctrl+A selects every photo shown. Right-click a folder on this PC (also in All photos) to show it in Explorer or add a folder; empty folders left behind by Apply changes are tidied up." },
+      { title: "Clearer when something is wrong", text: "A server All photos can't reach says so, and photos shared with you that can't be changed say why, instead of quietly doing nothing." },
       { title: "Rename and move folders in Lumina", text: "Right-click a folder on this PC to rename it, move it (type a path such as 2024/Italy) or remove it when it's empty. Its photos keep their stars, tags and people. New, empty folders show in the folder list right away." },
       { title: "Drop photos on a person", text: "Drag photos onto a person in the People list to add them, or onto Top level to move them to the top of the library. The message after a drop now says what actually changed." },
       { title: "Reject means the same everywhere", text: "Reject in the side panel, the selection bar and the full-screen view marks the photo and plans its move to _Trash, as X does. Taking the reject back cancels that move too." },
@@ -29,16 +34,6 @@ export const RELEASE_NOTES: ReleaseNotes[] = [
       { title: "A server out of reach stays in All photos", text: "When Lumina can't reach a server, All photos shows its photos as they were last time, and the toolbar says which server is out of reach. Thumbnails Lumina has seen before still show." },
       { title: "Downloaded photos count as on this PC", text: "In All photos, server photos you downloaded show under On this PC in the Where filter and lose the 'server only' mark." },
       { title: "Keys", text: "Esc clears the selection when nothing else is open. Ctrl+Z works on Collections, and Ctrl+, and Ctrl+1–4 work from the search box. The shortcuts list (?) now shows every key, including those for checking faces." },
-    ],
-  },
-  {
-    version: "6.1.0",
-    items: [
-      { title: "A renamed folder keeps everything", text: "Rename or move a library folder outside Lumina and open it at its new place: Lumina recognises it and keeps every rating, tag, name and album. A folder it can't find shows in the Library menu with Locate…, to point to where it is now." },
-      { title: "All photos does it all", text: "Reject (X), dragging photos onto a folder, Move, Trash, Auto-sort, Keep the best and Find duplicates now work in All photos, each photo in its own library. Apply changes moves this PC's photos; a server's admin applies its own." },
-      { title: "Export, share and download from anywhere", text: "Export, the web gallery and Download work from All photos and server libraries too; a server's originals are fetched first. Viewers can download and pin." },
-      { title: "Ctrl+A and the folder menu", text: "Ctrl+A selects every photo shown. Right-click a folder on this PC (also in All photos) to show it in Explorer or add a folder; empty folders left behind by Apply changes are tidied up." },
-      { title: "Clearer when something is wrong", text: "A server All photos can't reach says so, and photos shared with you that can't be changed say why, instead of quietly doing nothing." },
     ],
   },
   {
