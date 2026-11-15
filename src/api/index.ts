@@ -671,6 +671,18 @@ export function serversHolding(hashes: string[]): Map<string, string[]> {
   return out;
 }
 
+// Who changed a server photo and when (newest first); null for a photo no server has (a library on this PC keeps
+// no history: it has no accounts)
+export async function photoHistory(hash: string): Promise<{ at: number; user: string; what: string }[] | null> {
+  if (serverTransport && openLibrary !== ALL_PHOTOS) return serverTransport.call("get_photo_history", { hash });
+  const server = [...serversHolding([hash]).keys()][0];
+  return server ? engineTransport(server).call("get_photo_history", { hash }) : null;
+}
+
+export function hasPhotoHistory(hash: string): boolean {
+  return (!!serverTransport && openLibrary !== ALL_PHOTOS) || serversHolding([hash]).size > 0;
+}
+
 // A folder of the folder tree ("Root", "Trip / Day 1", in All photos "D:\Photos / Trip") as a folder on this
 // computer: its library's root and the path inside it ('/'-separated, "" for the top). Null for a server's folder.
 export function folderOnThisPc(treePath: string): { root: string; rel: string } | null {

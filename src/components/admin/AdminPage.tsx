@@ -1,13 +1,21 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Activity, ArrowUp, Folder, FolderPlus, HardDrive, Library, Loader2, RotateCcw, Server, SlidersHorizontal, Upload, Users, X } from "lucide-react";
-import { call, serverAuth, subscribe, uploadBackup, type Role } from "../../api";
+import { call, callServer, serverAuth, subscribe, uploadBackup, type Role } from "../../api";
 import { useDialogFocus } from "../../hooks/useDialogFocus";
 import { confirmDialog } from "../../confirm";
 import { formatBytes } from "../../utils/photoHelpers";
 import { useAccount } from "../auth/ServerGate";
 
-// The server's admin page (web client, admins only): what the server is doing and has still to do, its
-// libraries and settings, the accounts with their roles per library, and restoring a backup.
+// The server's admin page (admins only): what the server is doing and has still to do, its libraries and
+// settings, the accounts with their roles per library, and restoring a backup. The web client shows it for its
+// own server; the desktop app for a server it is signed in to (Settings → Servers), through that server's RPC.
+
+// The server the open admin page is for in the desktop app (null: the web client's own). One admin page is open
+// at a time, and it sets this before its sections render.
+let adminServer: string | null = null;
+function adminCall<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  return adminServer ? callServer<T>(adminServer, command, args) : call<T>(command, args);
+}
 
 interface LibraryStatus {
   root: string;
@@ -107,10 +115,11 @@ function Button({ children, onClick, disabled, primary, danger }: { children: Re
 const select = "bg-zinc-950 border border-zinc-700 rounded-lg px-2 py-1 text-[12px] text-zinc-200 focus:outline-none focus:border-emerald-500";
 const input = "bg-zinc-950 border border-zinc-700 rounded-lg px-2.5 py-1.5 text-[12px] text-zinc-200 select-text focus:outline-none focus:border-emerald-500";
 
-export default function AdminPage({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
+export default function AdminPage({ isOpen, onClose, server = null }: { isOpen: boolean; onClose: () => void; server?: string | null }) {
   const dialogRef = useDialogFocus<HTMLDivElement>(isOpen);
   const [section, setSection] = useState<Section>("server");
   if (!isOpen) return null;
+  adminServer = server;
   const sections: { id: Section; label: string; icon: typeof Server }[] = [
     { id: "server", label: "Server", icon: Activity },
     { id: "libraries", label: "Libraries", icon: Library },
@@ -132,8 +141,8 @@ export default function AdminPage({ isOpen, onClose }: { isOpen: boolean; onClos
       >
         <nav className="w-48 shrink-0 bg-panel border-r border-zinc-800 p-3 flex flex-col gap-0.5">
           <div className="flex items-center gap-2 px-2.5 pt-1 pb-4 text-sm font-semibold text-zinc-100">
-            <Server className="w-4 h-4 text-emerald-400" />
-            Server admin
+            <Server className="w-4 h-4 text-emerald-400 shrink-0" />
+            <span className="truncate" title={server ?? undefined}>{server ? `Admin: ${server}` : "Server admin"}</span>
           </div>
           {sections.map(({ id, label, icon: Icon }) => (
             <button
@@ -173,7 +182,7 @@ function ServerSection() {
   const [status, setStatus] = useState<ServerStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const load = () =>
-    call<ServerStatus>("server_status")
+    adminCall<ServerStatus>("server_status")
       .then((s) => {
         setStatus(s);
         setError(null);
@@ -185,7 +194,7 @@ function ServerSection() {
     const timer = setInterval(load, 5000);
     const offs = ["scan-progress", "face-scan-progress", "semantic-progress", "ai-batch-progress"].map((name) =>
       subscribe<{ done?: boolean }>(name, (e) => {
-        if (e.payload?.done) load();
+        if (e.payload?.done && (!adminServer || e.server === adminServer)) load();
       })
     );
     return () => {
@@ -196,7 +205,7 @@ function ServerSection() {
 
   async function start(root: string, job: string) {
     try {
-      await call("start_library_job", { rootFolder: root, job });
+      await adminCall("start_library_job", { rootFolder: root, job });
       load();
     } catch (e) {
       setError(String(e));
@@ -330,7 +339,7 @@ function PeopleSection() {
   const [passwordFor, setPasswordFor] = useState<{ name: string; password: string } | null>(null);
 
   const load = () =>
-    Promise.all([call<Account[]>("admin_list_users"), call<{ root: string }[]>("list_libraries")])
+    Promise.all([adminCall<Account[]>("admin_list_users"), adminCall<{ root: string }[]>("list_libraries")])
       .then(([a, libs]) => {
         setAccounts(a);
         setRoots(libs.map((l) => l.root));
@@ -371,7 +380,7 @@ function PeopleSection() {
                 className={select}
                 value={a.role}
                 disabled={isMe}
-                onChange={(e) => run(call("admin_set_role", { name: a.name, role: e.target.value }), `${a.name} is now ${e.target.value}`)}
+                onChange={(e) => run(adminCall("admin_set_role", { name: a.name, role: e.target.value }), `${a.name} is now ${e.target.value}`)}
               >
                 {ROLES.map((r) => (
                   <option key={r} value={r}>
@@ -392,7 +401,7 @@ function PeopleSection() {
                       value={own ?? ""}
                       onChange={(e) =>
                         run(
-                          call("admin_set_library_role", { name: a.name, rootFolder: root, role: e.target.value || null }),
+                          adminCall("admin_set_library_role", { name: a.name, rootFolder: root, role: e.target.value || null }),
                           `${a.name}'s role on ${root} changed`
                         )
                       }
@@ -413,7 +422,7 @@ function PeopleSection() {
                   className="flex items-center gap-2 mr-auto"
                   onSubmit={(e) => {
                     e.preventDefault();
-                    run(call("admin_set_password", { name: a.name, password: passwordFor.password }), `New password for ${a.name}; they're logged out everywhere`).then(() =>
+                    run(adminCall("admin_set_password", { name: a.name, password: passwordFor.password }), `New password for ${a.name}; they're logged out everywhere`).then(() =>
                       setPasswordFor(null)
                     );
                   }}
@@ -442,7 +451,7 @@ function PeopleSection() {
                       kind: "danger",
                       okLabel: "Remove",
                     });
-                    if (ok) run(call("admin_remove_user", { name: a.name }), `Removed ${a.name}`);
+                    if (ok) run(adminCall("admin_remove_user", { name: a.name }), `Removed ${a.name}`);
                   }}
                 >
                   Remove
@@ -457,7 +466,7 @@ function PeopleSection() {
           className="flex flex-wrap items-center gap-2 px-4 py-3"
           onSubmit={(e) => {
             e.preventDefault();
-            run(call("admin_create_user", newUser), `Added ${newUser.name.trim()} (${newUser.role})`).then(() =>
+            run(adminCall("admin_create_user", newUser), `Added ${newUser.name.trim()} (${newUser.role})`).then(() =>
               setNewUser({ name: "", role: "viewer", password: "" })
             );
           }}
@@ -498,7 +507,7 @@ function RestoreSection() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    call<{ root: string }[]>("list_libraries").then((l) => setRoots(l.map((x) => x.root))).catch(() => {});
+    adminCall<{ root: string }[]>("list_libraries").then((l) => setRoots(l.map((x) => x.root))).catch(() => {});
   }, []);
 
   async function upload(file: File) {
@@ -508,7 +517,7 @@ function RestoreSection() {
     try {
       const { file: name } = await uploadBackup(file, (sent, total) => setProgress(total ? Math.round((sent / total) * 100) : 0));
       setUploaded(name);
-      const m = await call<Manifest>("inspect_backup", { path: name });
+      const m = await adminCall<Manifest>("inspect_backup", { path: name });
       setManifest(m);
       // Each library of the backup goes to the server's library of the same name, or the first one
       const lastPart = (p: string) => p.split(/[\\/]/).filter(Boolean).pop()?.toLowerCase();
@@ -530,7 +539,7 @@ function RestoreSection() {
     setState("restoring");
     setError(null);
     try {
-      await call("restore_library", { path: uploaded, remaps: Object.entries(remaps).map(([from, to]) => ({ from, to })) });
+      await adminCall("restore_library", { path: uploaded, remaps: Object.entries(remaps).map(([from, to]) => ({ from, to })) });
       setState("restarting");
       // Back once the server answers again
       const started = Date.now();
@@ -550,6 +559,16 @@ function RestoreSection() {
       setState("idle");
       setError(String(e));
     }
+  }
+
+  // The backup goes up as a browser upload with the web page's sign-in, which the desktop app doesn't have
+  if (adminServer) {
+    return (
+      <p className="text-[12px] text-zinc-500 leading-relaxed">
+        Restoring a backup (.luminabackup) uploads the file from a browser: open {adminServer}'s web page, sign in, and choose
+        Server admin → Restore there.
+      </p>
+    );
   }
 
   return (
@@ -630,7 +649,7 @@ function LibrariesSection() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   useEffect(() => {
-    call<ServerSettings>("admin_get_settings")
+    adminCall<ServerSettings>("admin_get_settings")
       .then(setSettings)
       .catch((e) => setError(String(e)));
   }, []);
@@ -653,7 +672,7 @@ function LibrariesSection() {
 
   async function add(path: string) {
     const ok = await run(
-      () => call<ServerSettings>("admin_add_library", { folder: path }),
+      () => adminCall<ServerSettings>("admin_add_library", { folder: path }),
       `Added ${path}. The server is indexing it now: its photos appear in the apps as they are indexed, and the progress shows under Server.`
     );
     if (ok) setFolder("");
@@ -664,7 +683,7 @@ function LibrariesSection() {
       `Take ${root} off the server?\n\nIts ${photos.toLocaleString()} photos are no longer scanned or shown in the apps. The files stay where they are, and their ratings, faces and albums stay in the server's database: add the folder again to get them back.`,
       { title: "Take a library off", kind: "warning", okLabel: "Take off", cancelLabel: "Cancel" }
     );
-    if (ok) await run(() => call<ServerSettings>("admin_remove_library", { rootFolder: root }), `Took ${root} off the server.`);
+    if (ok) await run(() => adminCall<ServerSettings>("admin_remove_library", { rootFolder: root }), `Took ${root} off the server.`);
   }
 
   if (!settings) return error ? <p className="text-red-400">{error}</p> : <Loader2 className="w-4 h-4 animate-spin text-emerald-400" />;
@@ -755,7 +774,7 @@ function FolderBrowser({ start, onPick }: { start: string | null; onPick: (path:
   const [error, setError] = useState<string | null>(null);
   async function open(path: string | null) {
     try {
-      setList(await call<FolderList>("admin_list_folders", { path }));
+      setList(await adminCall<FolderList>("admin_list_folders", { path }));
       setError(null);
     } catch (e) {
       if (path === start && start !== null) return open(null);
@@ -814,10 +833,10 @@ function SettingsSection() {
     setForm({ upload_library: s.upload_library ?? "", caption_model: s.caption_model ?? "", ollama_url: s.ollama_url ?? "" });
   };
   useEffect(() => {
-    call<ServerSettings>("admin_get_settings")
+    adminCall<ServerSettings>("admin_get_settings")
       .then(show)
       .catch((e) => setError(String(e)));
-    call<ServerStatus>("server_status")
+    adminCall<ServerStatus>("server_status")
       .then((s) => setModels((s.ollama?.installed_models ?? []).map((m) => m.name)))
       .catch(() => {});
   }, []);
@@ -830,7 +849,7 @@ function SettingsSection() {
     const fixed = (name: string) => settings.fixed.includes(name);
     try {
       show(
-        await call<ServerSettings>("admin_save_settings", {
+        await adminCall<ServerSettings>("admin_save_settings", {
           uploadLibrary: fixed("upload_library") ? null : form.upload_library,
           captionModel: fixed("caption_model") ? null : form.caption_model,
           ollamaUrl: fixed("ollama_url") ? null : form.ollama_url,

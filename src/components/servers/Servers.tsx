@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Cloud, HardDrive, Loader2, LogIn, LogOut, Server, Trash2 } from "lucide-react";
-import { callLocal, openLibraryServer, type ServerInfo } from "../../api";
+import { Cloud, HardDrive, Loader2, LogIn, LogOut, Server, Trash2, Wrench } from "lucide-react";
+import { callLocal, OPEN_ADMIN_EVENT, openLibraryServer, type ServerInfo } from "../../api";
 import { connectServer, refreshServers, removeServer, signOutServer, useServers, type ServerLibrary } from "../../hooks/useServers";
 import { confirmDialog } from "../../confirm";
 import { formatBytes } from "../../utils/photoHelpers";
@@ -169,6 +169,15 @@ export function ServersSettings() {
                   </div>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
+                  {s.signed_in && s.role === "admin" && (
+                    <button
+                      onClick={() => window.dispatchEvent(new CustomEvent(OPEN_ADMIN_EVENT, { detail: s.id }))}
+                      className="px-2.5 py-1.5 rounded-lg text-[12px] bg-zinc-900 border border-zinc-700 text-zinc-300 hover:text-white flex items-center gap-1.5"
+                      title="What the server is doing, its libraries and settings, and its accounts"
+                    >
+                      <Wrench className="w-3.5 h-3.5" /> Server admin…
+                    </button>
+                  )}
                   {s.signed_in ? (
                     <button
                       onClick={() => act(() => signOutServer(s.id))}

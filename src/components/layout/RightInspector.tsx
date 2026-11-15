@@ -1,8 +1,9 @@
 import { thumbSrc } from "../../utils/photoHelpers";
 import { codecLabel, formatDuration, isVideo } from "../../utils/media";
 import { shutterLabel } from "../../utils/exposure";
-import { memo, useEffect, useRef } from "react";
-import { call, mediaUrl } from "../../api";
+import { memo, useEffect, useRef, useState } from "react";
+import { call, hasPhotoHistory, mediaUrl, photoHistory } from "../../api";
+import { collapseChanges, describeChange, type PhotoChange } from "../../utils/photoHistory";
 import { PersonName } from "../people/PersonName";
 import { useAccess } from "../auth/ServerGate";
 import {
@@ -14,12 +15,14 @@ import {
   Aperture,
   Calendar,
   Camera,
+  ChevronDown,
   Compass,
   Crosshair,
   FileText,
   Flag,
   Folder,
   Gauge,
+  History,
   Layers,
   Loader2,
   MapPin,
@@ -1111,8 +1114,62 @@ function RightInspector({
             </p>
           </div>
         )}
+        {hasPhotoHistory(activePhoto.hash) && <PhotoHistory hash={activePhoto.hash} />}
       </div>
     </aside>
+  );
+}
+
+// A server photo's history: who changed it and when. Asked only while open, again for each photo shown.
+function PhotoHistory({ hash }: { hash: string }) {
+  const [open, setOpen] = useState(false);
+  const [rows, setRows] = useState<PhotoChange[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    let stale = false;
+    setRows(null);
+    setError(null);
+    photoHistory(hash)
+      .then((list) => !stale && setRows(list ?? []))
+      .catch((e) => !stale && setError(String(e)));
+    return () => {
+      stale = true;
+    };
+  }, [open, hash]);
+  const shown = rows ? collapseChanges(rows) : [];
+  return (
+    <div className="p-3 bg-zinc-900/90 border border-zinc-800 rounded-xl flex flex-col gap-2 text-xs">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className="text-xs font-medium text-zinc-400 hover:text-zinc-200 flex items-center gap-1.5 text-left"
+      >
+        <History className="w-3.5 h-3.5" />
+        History
+        <ChevronDown className={`w-3.5 h-3.5 ml-auto transition ${open ? "rotate-180" : ""}`} />
+      </button>
+      {open &&
+        (error ? (
+          <span className="text-red-300">{error}</span>
+        ) : rows === null ? (
+          <span className="text-zinc-500">Loading…</span>
+        ) : shown.length === 0 ? (
+          <span className="text-zinc-500">Nobody has changed this photo on the server yet.</span>
+        ) : (
+          <ul className="flex flex-col gap-1.5">
+            {shown.map((c, i) => (
+              <li key={i} className="flex flex-col">
+                <span className="text-zinc-200">
+                  {describeChange(c)}
+                  {c.times > 1 ? ` (${c.times}×)` : ""}
+                </span>
+                <span className="text-[11px] text-zinc-500">{new Date(c.at * 1000).toLocaleString()}</span>
+              </li>
+            ))}
+          </ul>
+        ))}
+    </div>
   );
 }
 // Pick or reject, colour label and stars as they are, for users who may only look

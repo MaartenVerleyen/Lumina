@@ -149,10 +149,16 @@ export default function App() {
   // The album whose sharing dialog is open (web client)
   const [shareAlbum, setShareAlbum] = useState<{ id: number; name: string; kind?: "album" | "search" } | null>(null);
   const [followAlbum, setFollowAlbum] = useState<FollowTarget | null>(null);
-  // The server's admin page (web client, admins; opened from the account menu)
+  // The server's admin page: the web client's own server (the account menu), or in the desktop app a server it is
+  // signed in to as an admin (Settings → Servers; the event names it)
   const [isAdminOpen, setIsAdminOpen] = useState(false);
+  const [adminServer, setAdminServer] = useState<string | null>(null);
   useEffect(() => {
-    const open = () => setIsAdminOpen(true);
+    const open = (e: Event) => {
+      setAdminServer((e as CustomEvent<string | undefined>).detail ?? null);
+      setIsSettingsOpen(false);
+      setIsAdminOpen(true);
+    };
     // The tray on the server's computer opens the web client at #admin (after signing in, if need be)
     if (!inDesktopApp && window.location.hash === "#admin") {
       setIsAdminOpen(true);
@@ -1255,7 +1261,7 @@ export default function App() {
           void lib.silentRescan();
         }}
       />
-      <AdminPage isOpen={isAdminOpen} onClose={() => setIsAdminOpen(false)} />
+      <AdminPage isOpen={isAdminOpen} server={adminServer} onClose={() => setIsAdminOpen(false)} />
 
       <RestoreModal
         target={lib.restoreTarget}
