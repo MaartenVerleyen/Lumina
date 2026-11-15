@@ -104,7 +104,7 @@ export default function FilterBar({
                 <button
                   onClick={() => setSaveSearchName("")}
                   className="px-2 py-0.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-amber-200 flex items-center gap-1"
-                  title="Save this search: it shows in Albums and updates by itself"
+                  title="Save this search: it shows in Collections and updates by itself"
                 >
                   <Sparkles className="w-3 h-3" />
                   Save as smart album

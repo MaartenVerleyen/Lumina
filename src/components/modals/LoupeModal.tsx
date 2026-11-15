@@ -324,7 +324,7 @@ export default function LoupeModal({
       ref={dialogRef}
       role="dialog"
       aria-modal="true"
-      aria-label={`Loupe: ${activePhoto.name}`}
+      aria-label={`Full screen: ${activePhoto.name}`}
       tabIndex={-1}
       onClick={() => {
         if (didPanRef.current) {
@@ -484,7 +484,7 @@ export default function LoupeModal({
             onClick={onClose}
             className="p-2 rounded-full bg-zinc-900/90 hover:bg-zinc-800 text-zinc-300 border border-zinc-700/60"
             title="Close (Space or Esc)"
-            aria-label="Close Loupe"
+            aria-label="Close full screen"
           >
             <X className="w-5 h-5" />
           </button>
@@ -767,8 +767,10 @@ export default function LoupeModal({
           <div className="flex items-center gap-1">
             <button
               onClick={() => {
-                handleSetFlag(activePhoto.flag === "pick" ? null : "pick");
-                if (autoAdvance) navigateByOffset(1, false);
+                // A second click takes the pick off, as in the side panel (and stays on the photo)
+                const clearing = activePhoto.flag === "pick";
+                handleSetFlag(clearing ? null : "pick");
+                if (autoAdvance && !clearing) navigateByOffset(1, false);
               }}
               className={`px-2.5 py-1 rounded-lg font-medium flex items-center gap-1.5 transition ${
                 activePhoto.flag === "pick"
@@ -782,6 +784,11 @@ export default function LoupeModal({
             </button>
             <button
               onClick={() => {
+                // A second click takes the reject back, which also cancels the move to _Trash
+                if (activePhoto.flag === "reject") {
+                  handleSetFlag(null);
+                  return;
+                }
                 if (handleRejectToTrash) void handleRejectToTrash();
                 else {
                   handleSetFlag("reject");
@@ -794,7 +801,7 @@ export default function LoupeModal({
                   ? "bg-red-600 text-white shadow"
                   : "bg-zinc-800 hover:bg-red-950/60 text-red-400"
               }`}
-              title="Reject & Stage for _Trash (X)"
+              title="Reject: moves to _Trash when you apply changes (X)"
             >
               <XCircle className="w-3.5 h-3.5" />
               <span>Reject (X)</span>

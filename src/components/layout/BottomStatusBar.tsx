@@ -183,11 +183,11 @@ export default function BottomStatusBar({
         )}
       </div>
 
-      {/* Center: keyboard hints */}
-      <div className="hidden lg:flex items-center gap-3 text-[11px] text-zinc-500 font-mono">
+      {/* Center: keyboard hints (photo keys do nothing on Collections) */}
+      <div className={`hidden ${viewMode === "collections" ? "" : "lg:flex"} items-center gap-3 text-[11px] text-zinc-500 font-mono`}>
         {([
           ["Ctrl+P", "Commands", "text-emerald-300", true],
-          ["Space", "Loupe", "text-zinc-400", true],
+          ["Space", "Full screen", "text-zinc-400", true],
           ["P", "Pick", "text-emerald-400", access.edit],
           ["X", "Reject", "text-red-400", access.edit],
           ["1-5", "Rate", "text-amber-400", access.edit],

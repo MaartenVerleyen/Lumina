@@ -340,6 +340,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
     <header className="flex items-center justify-between px-4 py-2 bg-card/95 backdrop-blur-md border-b border-zinc-800/70 z-30 gap-3 shrink-0">
       {/* ZONE 1: Left Navigation, Unified Library Split-Pill, View Switcher & Undo/Redo */}
       <div className="flex items-center gap-2.5 shrink-0">
+        {viewMode !== "collections" && (
         <button
           onClick={() => setIsLeftCollapsed((p) => !p)}
           className="p-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 border border-zinc-800 transition"
@@ -351,6 +352,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
             <PanelLeftClose className="w-4 h-4" />
           )}
         </button>
+        )}
 
         <div className="flex items-center gap-2 mr-0.5">
           <img src={luminaMark} alt="Lumina" className="w-6 h-6 object-contain" />
@@ -1090,6 +1092,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
         {!platform.fileDialogs && <WebUploadButton className="!rounded-lg !p-1.5 [&_svg]:!w-4 [&_svg]:!h-4" />}
         <AccountMenu />
 
+        {viewMode !== "collections" && (
         <button
           onClick={() => setIsRightCollapsed((p) => !p)}
           className="p-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 border border-zinc-800 transition"
@@ -1101,6 +1104,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
             <PanelRightClose className="w-4 h-4" />
           )}
         </button>
+        )}
       </div>
     </header>
   );

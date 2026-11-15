@@ -136,7 +136,9 @@ export default function BulkActionDock({
 }: BulkActionDockProps) {
   const [showMore, setShowMore] = useState(false);
   const access = useAccess();
-  if (selectedHashes.size <= 1) return null;
+  // One photo has the side panel; the dock still comes up for it when an action (the palette's "New album
+  // from selection") opened one of its popovers
+  if (selectedHashes.size === 0 || (selectedHashes.size === 1 && !activeBulkPopover)) return null;
 
   return (
     <div className="absolute bottom-5 left-1/2 -translate-x-1/2 w-max max-w-[calc(100%-2rem)] flex flex-col items-center gap-2 z-50 animate-in fade-in slide-in-from-bottom-2">
