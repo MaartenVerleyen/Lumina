@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { call, subscribe } from "../../api";
-import { platform } from "../../api/platform";
+import { call, callLocal, localJobRoots, subscribe } from "../../api";
 import { confirmDialog } from "../../confirm";
 import { PhotoItem, SemanticStatus, SemanticProgress, SemanticHit } from "../../types/lumina";
 import { SEMANTIC_CANCELLED } from "./shared";
@@ -46,6 +45,8 @@ export function useSmartSearch(core: LibraryCore, filters: FilterState, thumbnai
       if (prog.done) {
         setSemanticProgress(null);
         refreshSemanticStatus(folderRef.current);
+        // The next of this PC's libraries waiting to be indexed (All photos), unless a server's pass ended
+        if (!event.server) void indexNext();
         if (prog.stage === "index" && prog.completed > 0) {
           addLog("AI", `Smart search: indexed ${prog.completed} of ${plural(prog.total, "photo")}${prog.cancelled ? " (stopped)" : ""}`);
         }
@@ -58,23 +59,45 @@ export function useSmartSearch(core: LibraryCore, filters: FilterState, thumbnai
     };
   }, [addLog, refreshSemanticStatus]);
 
-  async function startSemanticIndex(currentFolder = folder) {
-    if (!currentFolder) return;
-    try {
-      await call<number>("start_semantic_index", { rootFolder: currentFolder });
-    } catch (err) {
-      setSemanticProgress(null);
-      if (!String(err).includes(SEMANTIC_CANCELLED)) setError(`Smart search: ${String(err)}`);
+  // This PC's engine indexes one library at a time: the open one, or All photos' folders on this PC one after
+  // the other (each pass ends with a semantic-progress `done`, which starts the next)
+  const indexQueueRef = useRef<string[]>([]);
+  // The models may be downloaded (the user turned smart search on); the automatic pass never downloads them
+  const mayDownloadRef = useRef(false);
+  async function indexNext() {
+    for (let root = indexQueueRef.current[0]; root; root = indexQueueRef.current[0]) {
+      try {
+        const status = await callLocal<SemanticStatus>("semantic_status", { rootFolder: root });
+        // Another pass is running: this library waits for its end
+        if (status.running) return;
+        indexQueueRef.current.shift();
+        if (status.models_ready ? status.indexed >= status.total : !mayDownloadRef.current) continue;
+        await callLocal<number>("start_semantic_index", { rootFolder: root });
+        return;
+      } catch (err) {
+        indexQueueRef.current.shift();
+        setSemanticProgress(null);
+        if (!String(err).includes(SEMANTIC_CANCELLED)) setError(`Smart search: ${String(err)}`);
+        return;
+      }
     }
+  }
+
+  async function startSemanticIndex(currentFolder = folder, mayDownload = true) {
+    if (!currentFolder) return;
+    mayDownloadRef.current = mayDownload;
+    const waiting = new Set(indexQueueRef.current);
+    indexQueueRef.current.push(...localJobRoots().filter((r) => !waiting.has(r)));
+    await indexNext();
   }
 
   // Once the models are installed, new photos are indexed automatically after their thumbnails are made
   useEffect(() => {
-    if (!platform.libraryJobs || !folder || !hasPhotos || thumbnailsBusy) return;
+    if (localJobRoots().length === 0 || !folder || !hasPhotos || thumbnailsBusy) return;
     const timer = setTimeout(async () => {
       const status = await refreshSemanticStatus(folder);
       if (status?.models_ready && !status.running && status.indexed < status.total) {
-        startSemanticIndex(folder);
+        startSemanticIndex(folder, false);
       }
     }, 2000);
     return () => clearTimeout(timer);
@@ -88,8 +111,8 @@ export function useSmartSearch(core: LibraryCore, filters: FilterState, thumbnai
       return;
     }
     const status = await refreshSemanticStatus(folder);
-    // A server indexes its libraries itself; its users only search
-    if (!platform.libraryJobs) {
+    // A server indexes its libraries itself; its users only search (All photos indexes its folders on this PC)
+    if (localJobRoots().length === 0) {
       if (status && !status.models_ready) {
         setAutoMatchNotice("Smart search isn't set up on this server yet.");
         return;

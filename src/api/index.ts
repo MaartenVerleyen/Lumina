@@ -709,6 +709,14 @@ export function allPhotosSources(): Map<string, Source> {
 
 // Whether All photos holds a folder on this PC (the web client's never does): only then do "on the server"
 // marks and the Where filter say anything
+// The libraries on this PC whose background work (faces, eyes and focus, the smart search index) this window
+// runs: the open one, or in All photos each folder on this PC in the view. A server runs its own.
+export function localJobRoots(): string[] {
+  if (openLibraryIsLocal()) return openLibrary ? [openLibrary] : [];
+  if (openLibrary !== ALL_PHOTOS || !inDesktopApp) return [];
+  return [...all.sources.values()].filter((s) => s.server === null && s.root !== PHONE_ROOT).map((s) => s.root);
+}
+
 export function allPhotosHasLocal(): boolean {
   return [...all.sources.values()].some((s) => s.server === null);
 }
