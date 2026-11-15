@@ -73,8 +73,10 @@ export default function PhoneApp() {
     window.addEventListener(ALL_PHOTOS_LOADED, update);
     return () => window.removeEventListener(ALL_PHOTOS_LOADED, update);
   }, []);
-  // Loading, checking in the background, or a server indexing new photos (they appear as it goes)
-  const updating = lib.isScanningFolder || lib.backgroundScanProgress !== null || Object.keys(lib.serverScans).length > 0;
+  // Loading (a server library's list on its way: the window isn't blocked, so this is the only sign of it),
+  // checking in the background, or a server indexing new photos (they appear as it goes)
+  const updating =
+    lib.libraryLoading !== null || lib.isScanningFolder || lib.backgroundScanProgress !== null || Object.keys(lib.serverScans).length > 0;
   const offlineLabels = offline.map((id) => servers.find((s) => s.id === id)?.label ?? id).join(", ");
 
   // Newest first, like a phone's own gallery
@@ -227,7 +229,7 @@ export default function PhoneApp() {
               <div className="text-[15px] font-semibold text-zinc-100 truncate">{title}</div>
               {showsGrid && (
                 <div className="text-[11px] text-zinc-500">
-                  {photos.length.toLocaleString()} {photos.length === 1 ? "item" : "items"}
+                  {photos.length === 0 && updating ? "Loading…" : `${photos.length.toLocaleString()} ${photos.length === 1 ? "item" : "items"}`}
                   {updating && photos.length > 0 ? " · updating" : offline.length > 0 ? ` · offline: ${offlineLabels} as last seen` : ""}
                 </div>
               )}

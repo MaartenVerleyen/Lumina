@@ -177,6 +177,8 @@ export function callLocal<T>(command: string, args?: Record<string, unknown>): P
 }
 
 export function subscribeLocal<T>(event: string, handler: (event: EngineEvent<T>) => void): Promise<() => void> {
+  // A browser has no engine of its own to hear (Tauri's event API isn't there: subscribing threw)
+  if (!inDesktopApp) return Promise.resolve(() => {});
   return localTransport.subscribe<T>(event, handler);
 }
 
