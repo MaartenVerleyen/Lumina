@@ -82,12 +82,39 @@ export function useClientMode(lib: LibraryState, access: Access) {
     }
   }
 
-  // Files or folders dropped on the window: uploaded when a server's library is open, opened otherwise
-  function onDropPaths(paths: string[]) {
-    if (server) upload(paths);
-    else if (!platform.fullApp) lib.setAutoMatchNotice("Open a library on a server first, then drop photos on the window to upload them.");
-    else if (paths[0]) lib.handleLoadFolderPath(paths[0]);
+  // Files or folders dropped on the window: uploaded when a server's library is open, opened otherwise. A file
+  // (it has an extension) can't be opened as a library: its folder can.
+  async function onDropPaths(paths: string[]) {
+    if (server) {
+      if (access.upload) upload(paths);
+      else lib.setAutoMatchNotice(`Your account can't add photos to ${label}.`);
+      return;
+    }
+    if (!platform.fullApp) {
+      lib.setAutoMatchNotice("Open a library on a server first, then drop photos on the window to upload them.");
+      return;
+    }
+    const first = paths[0];
+    if (!first) return;
+    const name = first.split(/[\\/]/).pop() ?? "";
+    if (/\.[A-Za-z0-9]{1,5}$/.test(name)) {
+      const parent = first.slice(0, first.length - name.length).replace(/[\\/]+$/, "");
+      if (parent && (await confirmDialog(`Open the folder ${name} is in as a library?\n\n${parent}`, { title: "Open its folder?", okLabel: "Open folder" }))) {
+        lib.handleLoadFolderPath(parent);
+      }
+      return;
+    }
+    lib.handleLoadFolderPath(first);
   }
+
+  // What dropping files on the window does here, for the overlay shown while they are dragged
+  const dropHint = server
+    ? access.upload
+      ? `Drop photos or folders to upload them to ${label}`
+      : `Your account can't add photos to ${label}`
+    : platform.fullApp
+      ? "Drop a folder to open it"
+      : "Open a library on a server to upload photos";
 
   async function pickAndUpload() {
     const picked = await open({ multiple: true, directory: false, title: `Upload photos to ${label}` });
@@ -176,6 +203,7 @@ export function useClientMode(lib: LibraryState, access: Access) {
     server,
     serverLabel: label,
     onDropPaths,
+    dropHint,
     pickAndUpload: server && access.upload ? pickAndUpload : undefined,
     downloadSelection: server || (openLibraryIsAll() && [...allPhotosSources().values()].some((s) => s.server !== null)) ? downloadSelection : undefined,
     removeLocalSelection: server || (openLibraryIsAll() && [...allPhotosSources().values()].some((s) => s.server !== null)) ? removeLocalSelection : undefined,

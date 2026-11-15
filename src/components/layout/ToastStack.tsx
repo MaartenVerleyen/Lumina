@@ -30,7 +30,7 @@ export default function ToastStack({ toasts, onDismiss, onOpenSessionLog }: Toas
                   onClick={onOpenSessionLog}
                   className="block mt-1 text-[11px] text-red-300 underline underline-offset-2 hover:text-white"
                 >
-                  Open Session Log
+                  Open the activity log
                 </button>
               </div>
             </div>

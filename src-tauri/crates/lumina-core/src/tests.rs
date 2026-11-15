@@ -3077,3 +3077,48 @@ fn applying_moves_tidies_emptied_folders_and_stays_inside_the_library() {
     assert!(library.exists());
     let _ = fs::remove_dir_all(&base);
 }
+
+#[test]
+fn renaming_a_folder_keeps_its_photos_values_and_empty_folders_are_listed() {
+    let base = std::env::temp_dir().join(format!("lumina_folder_ops_test_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&base);
+    let (library, data) = (base.join("Library"), base.join("Data"));
+    fs::create_dir_all(library.join("Trip").join("Day 1")).unwrap();
+    fs::create_dir_all(library.join("Empty").join("Inner")).unwrap();
+    fs::create_dir_all(library.join("Full")).unwrap();
+    fs::write(library.join("Trip").join("Day 1").join("a.jpg"), "a").unwrap();
+    fs::write(library.join("Full").join("b.jpg"), "b").unwrap();
+    let host: SharedHost = Arc::new(DirHost(data.clone()));
+    let conn = open_global_db(&*host).unwrap();
+    db::migrate(&conn).unwrap();
+    libraries::open(&conn, &library.to_string_lossy()).unwrap();
+    conn.execute(
+        "INSERT INTO photos (hash, current_path, rating, staged_target) VALUES ('a', ?1, 4, NULL), ('b', ?2, 0, 'Trip/Day 1')",
+        params![library.join("Trip").join("Day 1").join("a.jpg").to_string_lossy(), library.join("Full").join("b.jpg").to_string_lossy()],
+    )
+    .unwrap();
+    drop(conn);
+    let root = library.to_string_lossy().to_string();
+
+    let listed = folders::list_library_folders(&root).unwrap();
+    assert_eq!(listed, vec!["Empty", "Empty/Inner", "Full", "Trip", "Trip/Day 1"]);
+
+    assert!(folders::rename_library_folder(&*host, &root, "Trip", "../Out").is_err());
+    assert!(folders::rename_library_folder(&*host, &root, "Trip", "Trip/Inside").is_err());
+    assert!(folders::rename_library_folder(&*host, &root, "Trip", "Full").is_err(), "a folder that exists is in the way");
+    assert_eq!(folders::rename_library_folder(&*host, &root, "Trip", "2024/Italy").unwrap(), 1);
+    let moved = library.join("2024").join("Italy").join("Day 1").join("a.jpg");
+    assert!(moved.exists() && !library.join("Trip").exists());
+    let conn = open_global_db(&*host).unwrap();
+    let (path, rating, rel): (String, i64, String) = conn
+        .query_row("SELECT current_path, rating, rel_path FROM photos WHERE hash = 'a'", [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+        .unwrap();
+    assert_eq!((path, rating, rel.as_str()), (moved.to_string_lossy().to_string(), 4, "2024/Italy/Day 1/a.jpg"));
+    let staged: String = conn.query_row("SELECT staged_target FROM photos WHERE hash = 'b'", [], |r| r.get(0)).unwrap();
+    assert_eq!(staged, "2024/Italy/Day 1", "a move staged into the folder follows it");
+
+    assert!(folders::delete_empty_library_folder(&root, "Full").is_err(), "a folder with a photo stays");
+    folders::delete_empty_library_folder(&root, "Empty").unwrap();
+    assert!(!library.join("Empty").exists() && library.join("Full").join("b.jpg").exists());
+    let _ = fs::remove_dir_all(&base);
+}

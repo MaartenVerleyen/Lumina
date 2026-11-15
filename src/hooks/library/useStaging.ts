@@ -38,9 +38,10 @@ export function useStaging(
   const [smartRenameOnCommit, setSmartRenameOnCommit] = useState<boolean>(false);
   const [autoStagePreset, setAutoStagePreset] = useState<AutoStagePreset>("YEAR_MONTH_CITY");
 
-  async function handleBatchStageMove(targetSub: string | null, targetHashes?: string[]) {
+  // Returns how many photos were staged (0 when none could be)
+  async function handleBatchStageMove(targetSub: string | null, targetHashes?: string[]): Promise<number> {
     const hashes = resolveTargets(targetHashes);
-    if (hashes.length === 0) return;
+    if (hashes.length === 0) return 0;
     try {
       const ops = hashes.map((hash) => ({
         hash,
@@ -50,7 +51,7 @@ export function useStaging(
       const res = await call<{ skipped?: string[] } | null>("stage_photos_move", { ops });
       const skipped = new Set(res?.skipped ?? []);
       const hashSet = new Set(hashes.filter((h) => !skipped.has(h)));
-      if (hashSet.size === 0) return;
+      if (hashSet.size === 0) return 0;
       const before = captureSnapshots(photos, hashSet);
       const after = before.map((s: PhotoActionSnapshot) => ({ ...s, staged_target: targetSub }));
       undo.pushUndoEntry({
@@ -66,8 +67,10 @@ export function useStaging(
       addLog("DISK", `Staged ${plural(hashSet.size, "photo")} for move`, targetSub || "Cleared");
       setBulkInput("");
       setActiveBulkPopover(null);
+      return hashSet.size;
     } catch (err) {
       setError(String(err));
+      return 0;
     }
   }
 
@@ -159,7 +162,7 @@ export function useStaging(
       }
       if (result.failures.length > 0) {
         setError(
-          `${plural(result.failures.length, "file")} could not be moved (they stay staged). See the Session Log for details.`
+          `${plural(result.failures.length, "file")} could not be moved (they stay staged). See the activity log.`
         );
       }
     } catch (err) {

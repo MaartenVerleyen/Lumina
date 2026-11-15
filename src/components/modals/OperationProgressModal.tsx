@@ -105,7 +105,7 @@ export default function OperationProgressModal({
             )}
           </div>
           <div className="flex justify-between items-center text-[11px] text-zinc-500 font-mono">
-            <span className="truncate">{currentFile || "Processing..."}</span>
+            <span className="truncate">{currentFile || "Working…"}</span>
             {known && (
               <span className="shrink-0 ml-2">
                 {completed.toLocaleString()} / {total.toLocaleString()} ({percent}%)

@@ -60,7 +60,7 @@ export default function CommitModal({
             </p>
             {trashCount > 0 && (
               <p className="text-xs text-zinc-500 mt-1">
-                _Trash is a folder in your library: nothing is deleted for good until you empty it to the Recycle Bin.
+                _Trash is a folder in your library: nothing is deleted until you empty it.
               </p>
             )}
           </div>

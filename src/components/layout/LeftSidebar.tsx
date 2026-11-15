@@ -23,7 +23,8 @@ import {
   Trash2,
   XCircle,
 } from "lucide-react";
-import { folderOnThisPc } from "../../api";
+import { folderOnThisPc, openLibraryIsAll } from "../../api";
+import { recycleBin } from "../../api/platform";
 import { plural } from "../../utils/plural";
 
 interface LeftSidebarProps {
@@ -171,7 +172,7 @@ function LeftSidebar({
                 ? "bg-emerald-500/15 text-emerald-300 font-medium border border-emerald-500/30"
                 : "text-zinc-400 hover:bg-zinc-900/70 hover:text-zinc-200 border border-transparent"
             }`}
-            title={folderOnThisPc(node.fullPath) ? "Click to show this folder • Right-click to open it or add a folder" : "Click to show this folder"}
+            title={folderOnThisPc(node.fullPath) ? "Click to show this folder • Drop photos to move them here • Right-click to show, rename or add a folder" : "Click to show this folder"}
           >
             <div className="flex items-center gap-1.5 truncate">
               {hasChildren ? (
@@ -268,21 +269,21 @@ function LeftSidebar({
       : []),
     {
       id: "PICKS",
-      label: simpleMode ? "Kept photos (P)" : "Picks (P)",
+      label: simpleMode ? "Kept photos" : "Picks",
       count: picksCount,
       icon: <Flag className="w-3.5 h-3.5" />,
       hideInSimple: false,
     },
     {
       id: "BASKET",
-      label: simpleMode ? "Pinned" : "Pinned (B)",
+      label: "Pinned",
       count: basketCount,
       icon: <Pin className="w-3.5 h-3.5" />,
       hideInSimple: false,
     },
     {
       id: "REJECTS",
-      label: simpleMode ? "To delete (X)" : "Rejects (X)",
+      label: simpleMode ? "To delete" : "Rejects",
       count: rejectsCount,
       icon: <XCircle className="w-3.5 h-3.5" />,
       hideInSimple: false,
@@ -438,7 +439,7 @@ function LeftSidebar({
           <button
             onClick={handleEmptyTrashToRecycleBin}
             className="mt-2.5 w-full px-2.5 py-1.5 bg-red-950/40 hover:bg-red-900/60 border border-red-800/50 text-red-300 rounded-lg text-xs font-medium flex items-center justify-center gap-1.5 transition"
-            title={`Moves the ${plural(trashFolderCount, "photo")} in the _Trash folder to the Recycle Bin`}
+            title={recycleBin ? `Moves the ${plural(trashFolderCount, "photo")} in the _Trash folder to the ${recycleBin}` : `Deletes the ${plural(trashFolderCount, "photo")} in the _Trash folder for good`}
           >
             <Trash2 className="w-3.5 h-3.5 text-red-400" />
             <span>Empty _Trash ({trashFolderCount})</span>
@@ -464,9 +465,13 @@ function LeftSidebar({
 
           {!collapsedSections.includes("folders") && (
           <div className="mt-2 flex flex-col gap-0.5">
-            {folderTree.rootCount > 0 && (
+            {(folderTree.rootCount > 0 || (!openLibraryIsAll() && folderOnThisPc("Root"))) && (
               <div
                 data-folder-path="Root"
+                // Photos dropped here move to the top of the library
+                data-drop-kind="folder"
+                data-drop-value="Root"
+                data-drop-label="Move to the top level"
                 onClick={() =>
                   setActiveSubfolder(activeSubfolder === "Root" ? "ALL" : "Root")
                 }
@@ -482,7 +487,7 @@ function LeftSidebar({
                     ? "bg-emerald-500/15 text-emerald-300 font-medium border-emerald-500/30"
                     : "text-zinc-400 hover:bg-zinc-900/70 hover:text-zinc-200 border-transparent"
                 }`}
-                title={folderOnThisPc("Root") ? "Click to show this folder • Right-click to open it or add a folder" : "Click to show this folder"}
+                title={folderOnThisPc("Root") ? "Click to show this folder • Drop photos to move them here • Right-click to show, rename or add a folder" : "Click to show this folder"}
               >
                 <div className="flex items-center gap-1.5 truncate">
                   <span className="w-4" />
@@ -491,7 +496,7 @@ function LeftSidebar({
                       activeSubfolder === "Root" ? "text-emerald-400" : "text-zinc-500"
                     }`}
                   />
-                  <span>Root (Top Level)</span>
+                  <span>Top level</span>
                 </div>
                 <span className="text-[11px] text-zinc-500 font-mono">{folderTree.rootCount}</span>
               </div>

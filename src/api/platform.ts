@@ -16,6 +16,12 @@ export type { Update } from "@tauri-apps/plugin-updater";
 // A Mac runs the desktop app as a client of a Lumina server for now: its own decoding (HEIC, video frames
 // through ffmpeg) isn't checked yet, so it doesn't open folders on the Mac itself
 const onMac = typeof navigator !== "undefined" && /Macintosh|Mac OS X/.test(navigator.userAgent);
+const onWindows = typeof navigator !== "undefined" && /Windows/.test(navigator.userAgent);
+
+// What the computer's file manager is called, for "Show in Explorer" and the like
+export const fileManager = onWindows ? "Explorer" : onMac ? "Finder" : "Files";
+// Where deleted files go: Windows' Recycle Bin, the Mac's Bin; Linux has none Lumina uses
+export const recycleBin: string | null = onWindows ? "Recycle Bin" : onMac ? "Bin" : null;
 
 export const platform = {
   // The full app: libraries in folders on this computer (everywhere but a Mac or a phone, for now)

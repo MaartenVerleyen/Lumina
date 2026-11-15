@@ -409,21 +409,24 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                   </div>
                 </button>
               )}
-              <button
-                onClick={() => {
-                  setIsLibraryMenuOpen(false);
-                  handleOpenFolder();
-                }}
-                className="w-full flex items-start gap-2.5 p-2 rounded-lg hover:bg-zinc-800/80 text-left transition"
-              >
-                <FolderOpen className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                <div>
-                  <div className="font-medium text-zinc-200">{serverLabel || folder === ALL_PHOTOS ? "Open a folder on this PC…" : "Open another folder…"}</div>
-                  <div className="text-[11px] text-zinc-500 truncate max-w-[180px]">
-                    Choose a folder on this PC
+              {/* Folders on this computer: the full app only (a Mac, a phone and the web client work with servers) */}
+              {platform.fullApp && (
+                <button
+                  onClick={() => {
+                    setIsLibraryMenuOpen(false);
+                    handleOpenFolder();
+                  }}
+                  className="w-full flex items-start gap-2.5 p-2 rounded-lg hover:bg-zinc-800/80 text-left transition"
+                >
+                  <FolderOpen className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                  <div>
+                    <div className="font-medium text-zinc-200">{serverLabel || folder === ALL_PHOTOS ? "Open a folder on this PC…" : "Open another folder…"}</div>
+                    <div className="text-[11px] text-zinc-500 truncate max-w-[180px]">
+                      Choose a folder on this PC
+                    </div>
                   </div>
-                </div>
-              </button>
+                </button>
+              )}
               {onOpenImport && (
                 <button
                   onClick={() => {
@@ -606,8 +609,9 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
             onFocus={() => setIsSearchFocused(true)}
             onBlur={() => setIsSearchFocused(false)}
             onKeyDown={(e) => {
-              // Ctrl+P (command palette) still reaches the app; other keys stay in the box
-              if (!((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "p")) e.stopPropagation();
+              // Ctrl+P (palette), Ctrl+, (settings) and Ctrl+1…4 (tabs) still reach the app; other keys stay in the box
+              const appKey = (e.ctrlKey || e.metaKey) && !e.altKey && ["p", ",", "1", "2", "3", "4"].includes(e.key.toLowerCase());
+              if (!appKey) e.stopPropagation();
               if (suggestions.length > 0 && typing) {
                 if (e.key === "ArrowDown" || e.key === "ArrowUp") {
                   e.preventDefault();
@@ -1074,7 +1078,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                 >
                   <span className="flex items-center gap-2.5">
                     <FileText className="w-4 h-4 text-zinc-400 shrink-0" />
-                    <span>What Lumina did</span>
+                    <span>Activity log</span>
                   </span>
                   {sessionLogsCount > 0 && <span className="text-[11px] text-zinc-500 tabular-nums">{sessionLogsCount}</span>}
                 </button>

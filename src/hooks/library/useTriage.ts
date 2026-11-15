@@ -33,14 +33,23 @@ export function useTriage(core: LibraryCore, view: LibraryView) {
   const [shiftHoursInput, setShiftHoursInput] = useState<number>(0);
   const [shiftMinutesInput, setShiftMinutesInput] = useState<number>(0);
 
-  async function handleSetFlag(flag: "pick" | "reject" | null, targetHashes?: string[]) {
+  // Returns whether the flag was set
+  async function handleSetFlag(flag: "pick" | "reject" | null, targetHashes?: string[]): Promise<boolean> {
     const hashes = resolveTargets(targetHashes);
-    if (hashes.length === 0) return;
+    if (hashes.length === 0) return false;
     try {
       const hashSet = new Set(hashes);
+      // Reject also plans the move to _Trash (see handleRejectToTrash): taking the reject back, or picking the
+      // photo instead, cancels that move in the same step
+      const unTrash = new Set(
+        flag === "reject" ? [] : photos.filter((p) => hashSet.has(p.hash) && p.flag === "reject" && p.staged_target === "_Trash").map((p) => p.hash)
+      );
       const before = captureSnapshots(photos, hashSet);
-      const after = before.map((s: PhotoActionSnapshot) => ({ ...s, flag }));
+      const after = before.map((s: PhotoActionSnapshot) => (unTrash.has(s.hash) ? { ...s, flag, staged_target: null } : { ...s, flag }));
       await call("set_photo_flag", { hashes, flag });
+      if (unTrash.size > 0) {
+        await call("stage_photos_move", { ops: [...unTrash].map((hash) => ({ hash, target_subfolder: null })) });
+      }
       undo.pushUndoEntry({
         description: `Flag (${flag || "unflag"}) on ${plural(hashes.length, "photo")}`,
         previousActiveHash: activeHash,
@@ -48,17 +57,21 @@ export function useTriage(core: LibraryCore, view: LibraryView) {
         before,
         after,
       });
-      setPhotos((prev) => prev.map((p) => (hashSet.has(p.hash) ? { ...p, flag } : p)));
+      setPhotos((prev) =>
+        prev.map((p) => (hashSet.has(p.hash) ? { ...p, flag, ...(unTrash.has(p.hash) ? { staged_target: null } : {}) } : p))
+      );
       addLog("TRIAGE", `Set flag "${flag || "unflagged"}" on ${plural(hashes.length, "photo")}`);
+      return true;
     } catch (err) {
       setError(String(err));
+      return false;
     }
   }
 
   // X key / "Reject & Trash": one action, one undo step (flag reject + stage to _Trash)
-  async function handleRejectToTrash(targetHashes?: string[]) {
+  async function handleRejectToTrash(targetHashes?: string[]): Promise<number> {
     const hashes = resolveTargets(targetHashes);
-    if (hashes.length === 0) return;
+    if (hashes.length === 0) return 0;
     try {
       await call("set_photo_flag", { hashes, flag: "reject" });
       // All photos answers the photos it couldn't change (shared with you alone): those stay as they were
@@ -67,7 +80,7 @@ export function useTriage(core: LibraryCore, view: LibraryView) {
       });
       const skipped = new Set(res?.skipped ?? []);
       const hashSet = new Set(hashes.filter((h) => !skipped.has(h)));
-      if (hashSet.size === 0) return;
+      if (hashSet.size === 0) return 0;
       const before = captureSnapshots(photos, hashSet);
       const after = before.map((s: PhotoActionSnapshot) => ({
         ...s,
@@ -87,8 +100,10 @@ export function useTriage(core: LibraryCore, view: LibraryView) {
         )
       );
       addLog("TRIAGE", `Rejected & staged ${plural(hashSet.size, "photo")} to _Trash`);
+      return hashSet.size;
     } catch (err) {
       setError(String(err));
+      return 0;
     }
   }
 
@@ -257,9 +272,10 @@ export function useTriage(core: LibraryCore, view: LibraryView) {
   }
 
   // B toggles the basket for the selection; dropping photos on the Basket pins them (`pin` = true)
-  async function handleToggleBasketSelection(targetHashes?: string[], pin?: boolean) {
+  // Returns whether the photos were pinned or unpinned
+  async function handleToggleBasketSelection(targetHashes?: string[], pin?: boolean): Promise<boolean> {
     const hashes = resolveTargets(targetHashes);
-    if (hashes.length === 0) return;
+    if (hashes.length === 0) return false;
     try {
       const hashSet = new Set(hashes);
       const anyNotInBasket = pin ?? photos.some((p) => hashSet.has(p.hash) && !p.in_basket);
@@ -281,8 +297,10 @@ export function useTriage(core: LibraryCore, view: LibraryView) {
           anyNotInBasket ? "to" : "from"
         } Basket`
       );
+      return true;
     } catch (err) {
       setError(String(err));
+      return false;
     }
   }
 

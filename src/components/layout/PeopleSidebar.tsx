@@ -197,6 +197,8 @@ export default function PeopleSidebar({
     return (
       <div
         key={p.name}
+        // Photos dropped here are marked as showing this person
+        {...(access.edit ? { "data-drop-kind": "person", "data-drop-value": p.name, "data-drop-label": `Add ${p.name}` } : {})}
         onContextMenu={(e) => {
           e.preventDefault();
           if (canName) openMenu(p.name, e.clientX, e.clientY);

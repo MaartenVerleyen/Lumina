@@ -7,7 +7,6 @@ import { PersonName } from "../people/PersonName";
 import { useAccess } from "../auth/ServerGate";
 import {
   CitySearchResult,
-  FaceInstance,
   PhotoItem,
   ViewMode,
 } from "../../types/lumina";
@@ -191,7 +190,11 @@ interface RightInspectorProps {
   setIsPickingMapLocation: React.Dispatch<React.SetStateAction<boolean>>;
   handleDetectFacesSingleOnnx: () => Promise<void>;
   handleSaveFaceAndAutomatch: (e: React.FormEvent) => Promise<void>;
-  handleSetFlag: (flag: "pick" | "reject" | null) => Promise<void>;
+  // Takes a face's name off, or removes a box that isn't a face
+  handleClearFace: (faceId: string) => Promise<void>;
+  handleSetFlag: (flag: "pick" | "reject" | null) => Promise<unknown>;
+  // Reject: flag and plan the move to _Trash, as X does
+  handleRejectToTrash: () => Promise<unknown>;
   handleBatchRate: (rating: number) => Promise<void>;
   handleRotateSelection: (deltaDegrees: number) => Promise<void>;
   handleSetColorLabel: (color: "red" | "yellow" | "green" | "blue" | null) => Promise<void>;
@@ -237,7 +240,9 @@ function RightInspector({
   setIsPickingMapLocation,
   handleDetectFacesSingleOnnx,
   handleSaveFaceAndAutomatch,
+  handleClearFace,
   handleSetFlag,
+  handleRejectToTrash,
   handleBatchRate,
   handleRotateSelection,
   handleSetColorLabel,
@@ -552,47 +557,9 @@ function RightInspector({
                     </span>
                     {access.edit && (
                     <button
-                      onClick={async (e) => {
+                      onClick={(e) => {
                         e.stopPropagation();
-                        const removedPerson = f.person_name;
-                        // A named face loses its name and stays a face; an unnamed one isn't a face: its box goes
-                        const rem = removedPerson
-                          ? (
-                              await call<Record<string, FaceInstance[]>>("unassign_faces_batch", {
-                                faceIds: [f.face_id],
-                                personName: removedPerson,
-                              })
-                            )[activePhoto.hash] ?? activePhoto.faces.map((x) => (x.face_id === f.face_id ? { ...x, person_name: null } : x))
-                          : await call<FaceInstance[]>("remove_face_box", {
-                              faceId: f.face_id,
-                              hash: activePhoto.hash,
-                            });
-                        const remainingNames = new Set(
-                          rem
-                            .map((x) => x.person_name?.trim().toLowerCase())
-                            .filter(Boolean)
-                        );
-                        setPhotos((prev) =>
-                          prev.map((p) => {
-                            if (p.hash !== activePhoto.hash) return p;
-                            const nextPeople = removedPerson
-                              ? p.people.filter(
-                                  (pe) =>
-                                    pe.toLowerCase() !== removedPerson.toLowerCase() ||
-                                    remainingNames.has(pe.toLowerCase())
-                                )
-                              : p.people;
-                            return { ...p, faces: rem, people: nextPeople };
-                          })
-                        );
-                        if (selectedFaceId === f.face_id) {
-                          // An unnamed face stays chosen, ready for another name
-                          setSelectedFaceId(removedPerson ? f.face_id : rem[0]?.face_id ?? null);
-                          setFaceNameInput(removedPerson ? "" : rem[0]?.person_name || "");
-                        }
-                        if (refreshPeople) {
-                          await refreshPeople();
-                        }
+                        void handleClearFace(f.face_id);
                       }}
                       className="text-zinc-500 hover:text-red-400 ml-0.5 text-xs"
                       title={f.person_name ? `Remove the name "${f.person_name}" from this face` : "Not a face: remove this box"}
@@ -741,13 +708,13 @@ function RightInspector({
               <span>Pick</span>
             </button>
             <button
-              onClick={() => handleSetFlag(activePhoto.flag === "reject" ? null : "reject")}
+              onClick={() => (activePhoto.flag === "reject" ? handleSetFlag(null) : handleRejectToTrash())}
               className={`px-2 py-1 rounded text-xs font-medium flex items-center gap-1.5 transition ${
                 activePhoto.flag === "reject"
                   ? "bg-red-600 text-white shadow-sm"
                   : "bg-zinc-800 text-zinc-400 hover:text-red-300"
               }`}
-              title="Set reject flag (X)"
+              title="Reject: moves to _Trash when you apply changes (X)"
             >
               <XCircle className="w-3.5 h-3.5" />
               <span>Reject</span>

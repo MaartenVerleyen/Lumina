@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
-import { call } from "../../api";
+import { call, foldersOnThisPc } from "../../api";
 import { PhotoItem, TimelineBucket } from "../../types/lumina";
 import { buildFolderTree, foldersOf } from "../../utils/photoHelpers";
 import { diskPathOf, RAW_OR_HEIC_NAME } from "../../utils/rawPairs";
@@ -76,7 +76,20 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
     );
   }, [photos]);
 
-  const folderTree = useMemo(() => buildFolderTree(photos), [photos]);
+  // Folders on disk without photos (just made, or emptied) show in the tree too. Asked again when the library or
+  // its number of photos changes, and after a folder is renamed or removed (folderListVersion).
+  const [diskFolders, setDiskFolders] = useState<string[]>([]);
+  const [folderListVersion, setFolderListVersion] = useState(0);
+  useEffect(() => {
+    let stale = false;
+    foldersOnThisPc().then((list) => {
+      if (!stale) setDiskFolders(list);
+    });
+    return () => {
+      stale = true;
+    };
+  }, [core.folder, photos.length, folderListVersion]);
+  const folderTree = useMemo(() => buildFolderTree(photos, diskFolders), [photos, diskFolders]);
   useEffect(() => {
     if (folderTree.nodes.length > 0 && expandedFolders.size === 0) {
       setExpandedFolders(new Set(folderTree.nodes.map((n) => n.fullPath)));
@@ -483,6 +496,7 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
     setComparePan,
     timelineBuckets,
     folderTree,
+    refreshFolderList: () => setFolderListVersion((v) => v + 1),
     allLibraryTags,
     stagedPhotos,
     gpsPhotosCount,

@@ -14,6 +14,17 @@ export interface ReleaseNotes {
 // Newest first. Add an entry for every release that should greet updating users with "What's new".
 export const RELEASE_NOTES: ReleaseNotes[] = [
   {
+    version: "6.2.0",
+    items: [
+      { title: "Rename and move folders in Lumina", text: "Right-click a folder on this PC to rename it, move it (type a path such as 2024/Italy) or remove it when it's empty. Its photos keep their stars, tags and people. New, empty folders show in the folder list right away." },
+      { title: "Drop photos on a person", text: "Drag photos onto a person in the People list to add them, or onto Top level to move them to the top of the library. The message after a drop now says what actually changed." },
+      { title: "Reject means the same everywhere", text: "Reject in the side panel, the selection bar and the full-screen view marks the photo and plans its move to _Trash, as X does. Taking the reject back cancels that move too." },
+      { title: "Faces in the full-screen view", text: "Click Faces (or press F) in the full-screen view to show who is where. Click a box to name that face, take a name off, or remove a box that isn't a face. Draw a face draws a box around a face the scan missed." },
+      { title: "The full-screen view changes one photo", text: "Stars, flags, labels and rotation in the full-screen view apply to the photo shown, not to everything selected behind it." },
+      { title: "Keys", text: "Esc clears the selection when nothing else is open. Ctrl+Z works on Collections, and Ctrl+, and Ctrl+1–4 work from the search box. The shortcuts list (?) now shows every key, including those for checking faces." },
+    ],
+  },
+  {
     version: "6.1.0",
     items: [
       { title: "A renamed folder keeps everything", text: "Rename or move a library folder outside Lumina and open it at its new place: Lumina recognises it and keeps every rating, tag, name and album. A folder it can't find shows in the Library menu with Locate…, to point to where it is now." },

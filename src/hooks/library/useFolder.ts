@@ -625,7 +625,7 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
           `The Recycle Bin on ${bin.drive} couldn't take more files, so Lumina stopped instead of letting Windows delete them permanently. ${plural(left, "photo")} are still in _Trash.`
         );
       } else if (result.failures.length > 0) {
-        setError(`${plural(result.failures.length, "file")} could not be removed and were left in place. See the Session Log.`);
+        setError(`${plural(result.failures.length, "file")} could not be removed and were left in place. See the activity log.`);
       }
       const verb = permanent ? "Deleted" : "Moved";
       const where = permanent ? "permanently" : "to the Recycle Bin";
@@ -812,6 +812,33 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
     }
   }
 
+  // Renames or moves a folder on this PC inside its library; its photos keep their values (the engine moves
+  // their rows with it). Throws on refusal, so the dialog stays open with the message.
+  async function handleRenameFolder(root: string, rel: string, newRel: string) {
+    const target = newRel.trim().replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+    if (!target || target === rel) return;
+    try {
+      const moved = await callLocal<number>("rename_library_folder", { rootFolder: root, relPath: rel, newRelPath: target });
+      addLog("DISK", `Renamed folder ${rel} to ${target}`, `${moved} photo${moved === 1 ? "" : "s"} moved with it`);
+      setAutoMatchNotice(`Renamed ${rel} to ${target}`);
+      await silentRescan(folder === ALL_PHOTOS ? [root] : []);
+    } catch (err) {
+      setError(String(err));
+      throw err;
+    }
+  }
+
+  // Removes a folder on this PC that holds no files
+  async function handleDeleteEmptyFolder(root: string, rel: string) {
+    try {
+      await callLocal("delete_empty_library_folder", { rootFolder: root, relPath: rel });
+      addLog("DISK", `Removed empty folder ${rel}`, root);
+      setAutoMatchNotice(`Removed ${rel}`);
+    } catch (err) {
+      setError(String(err));
+    }
+  }
+
   const rescanAgainRef = useRef<string[] | null>(null);
   // A rescan asked for meanwhile wants every server's list again
   const rescanEverythingRef = useRef(false);
@@ -980,5 +1007,7 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
     handleOpenInDefaultViewer,
     handleRevealInFileManager,
     handleCreateSubfolder,
+    handleRenameFolder,
+    handleDeleteEmptyFolder,
   };
 }

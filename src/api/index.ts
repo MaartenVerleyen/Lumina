@@ -683,6 +683,25 @@ export function folderOnThisPc(treePath: string): { root: string; rel: string } 
   return { root: here.root, rel: treePath === here.label ? "" : inside(treePath.slice(here.label.length + 3)) };
 }
 
+// The folders on this PC in the open view, as folder-tree paths, empty ones too (a new folder shows before a
+// photo is in it). A server's folders come from its photos only.
+export async function foldersOnThisPc(): Promise<string[]> {
+  if (!inDesktopApp) return [];
+  const roots: { root: string; label: string | null }[] = openLibraryIsLocal() && openLibrary
+    ? [{ root: openLibrary, label: null }]
+    : openLibrary === ALL_PHOTOS
+      ? [...all.sources.values()].filter((s) => s.server === null && s.root !== PHONE_ROOT).map((s) => ({ root: s.root, label: s.label }))
+      : [];
+  const lists = await Promise.all(
+    roots.map(({ root, label }) =>
+      callLocal<string[]>("list_library_folders", { rootFolder: root })
+        .then((rels) => rels.map((rel) => (label ? `${label} / ` : "") + rel.split("/").join(" / ")))
+        .catch(() => [] as string[])
+    )
+  );
+  return lists.flat();
+}
+
 // The libraries the view came from, by key (the grid's marks and the Where filter read them)
 export function allPhotosSources(): Map<string, Source> {
   return all.sources;

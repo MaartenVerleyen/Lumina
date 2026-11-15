@@ -209,7 +209,7 @@ export default function BottomStatusBar({
             title="Open session activity log (Ctrl+L)"
           >
             <FileText className="w-3 h-3 text-emerald-400" />
-            <span>Session Log ({sessionLogsCount})</span>
+            <span>Activity log ({sessionLogsCount})</span>
           </button>
         )}
 

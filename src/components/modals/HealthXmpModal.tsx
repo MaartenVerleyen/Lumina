@@ -161,14 +161,14 @@ export default function HealthXmpModal({
               >
                 <FileCode className="w-3.5 h-3.5" />
                 <span>
-                  {isExportingXmp ? "Exporting XMP..." : "Export All XMP Sidecars"}
+                  {isExportingXmp ? "Exporting XMP…" : "Export All XMP Sidecars"}
                 </span>
               </button>
             </div>
           </div>
         ) : (
           <div className="p-8 text-center text-xs text-zinc-500">
-            Calculating library metrics...
+            Counting…
           </div>
         )}
       </div>

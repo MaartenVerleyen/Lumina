@@ -457,10 +457,49 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
     }
   }
 
-  async function handleBatchAssignPerson(personName: string, targetHashes?: string[]) {
+  // A named face on the shown photo loses its name and stays a face; an unnamed one isn't a face: its box goes.
+  // Used by the side panel's face chips and the Loupe's face boxes.
+  async function handleClearFace(faceId: string) {
+    const photo = activePhoto;
+    const face = photo?.faces.find((f) => f.face_id === faceId);
+    if (!photo || !face) return;
+    try {
+      const removedPerson = face.person_name;
+      const rem = removedPerson
+        ? (
+            await call<Record<string, FaceInstance[]>>("unassign_faces_batch", {
+              faceIds: [faceId],
+              personName: removedPerson,
+            })
+          )[photo.hash] ?? photo.faces.map((x) => (x.face_id === faceId ? { ...x, person_name: null } : x))
+        : await call<FaceInstance[]>("remove_face_box", { faceId, hash: photo.hash });
+      const remainingNames = new Set(rem.map((x) => x.person_name?.trim().toLowerCase()).filter(Boolean));
+      setPhotos((prev) =>
+        prev.map((p) => {
+          if (p.hash !== photo.hash) return p;
+          const nextPeople = removedPerson
+            ? p.people.filter((pe) => pe.toLowerCase() !== removedPerson.toLowerCase() || remainingNames.has(pe.toLowerCase()))
+            : p.people;
+          return { ...p, faces: rem, people: nextPeople };
+        })
+      );
+      if (selectedFaceId === faceId) {
+        // An unnamed face stays chosen, ready for another name
+        setSelectedFaceId(removedPerson ? faceId : rem[0]?.face_id ?? null);
+        setFaceNameInput(removedPerson ? "" : rem[0]?.person_name || "");
+      }
+      addLog("FACE", removedPerson ? `Removed the name "${removedPerson}" from a face on ${photo.name}` : `Removed a face box on ${photo.name}`);
+      await refreshPeople();
+    } catch (err) {
+      setError(String(err));
+    }
+  }
+
+  // Returns whether the person was added
+  async function handleBatchAssignPerson(personName: string, targetHashes?: string[]): Promise<boolean> {
     const clean = personName.trim();
     const hashes = resolveTargets(targetHashes);
-    if (!clean || hashes.length === 0) return;
+    if (!clean || hashes.length === 0) return false;
     try {
       // Undo removes the person only from photos that didn't have them before
       const added = hashes.filter((h) => !photoByHash.get(h)?.people.includes(clean));
@@ -495,8 +534,10 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
       setBulkInput("");
       setActiveBulkPopover(null);
       refreshPeople();
+      return true;
     } catch (err) {
       setError(String(err));
+      return false;
     }
   }
 
@@ -596,6 +637,7 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
     handleBatchScanFacesOnnx,
     handleCancelFaceScan,
     handleSaveFaceAndAutomatch,
+    handleClearFace,
     handleBatchAssignPerson,
     handleRenamePerson,
     handleSetPersonHidden,

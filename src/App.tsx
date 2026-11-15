@@ -129,8 +129,22 @@ export default function App() {
   const [newFolderInput, setNewFolderInput] = useState<string>("");
   // The library a new folder goes in (its own in All photos)
   const [newFolderRoot, setNewFolderRoot] = useState<string | null>(null);
+  // The folder being renamed (its path inside the library), or null when the dialog makes a new folder
+  const [renameFolderFrom, setRenameFolderFrom] = useState<string | null>(null);
   // The right-clicked folder as a folder on this PC (null for a server's)
   const contextFolderHere = folderOnThisPc(contextFolderRel);
+  // Photos in it and its subfolders: only an empty folder offers "Remove"
+  const contextFolderTotal = (() => {
+    const find = (nodes: typeof lib.folderTree.nodes): number | null => {
+      for (const n of nodes) {
+        if (n.fullPath === contextFolderRel) return n.totalCount;
+        const inner = find(n.children);
+        if (inner !== null) return inner;
+      }
+      return null;
+    };
+    return find(lib.folderTree.nodes) ?? 0;
+  })();
   const [isPaletteOpen, setIsPaletteOpen] = useState<boolean>(false);
   // The album whose sharing dialog is open (web client)
   const [shareAlbum, setShareAlbum] = useState<{ id: number; name: string; kind?: "album" | "search" } | null>(null);
@@ -493,27 +507,31 @@ export default function App() {
     lib.selectionAnchorHashRef.current = hash;
     return [hash];
   };
-  const handleDropPhotos = (hashes: string[], target: DropTarget) => {
+  // The notice waits for the result: it names the photos that changed, and none when the change failed
+  // (the error says why) or a library couldn't take it (its own notice says so)
+  const handleDropPhotos = async (hashes: string[], target: DropTarget) => {
+    const all = (ok: boolean) => (ok ? hashes.length : 0);
+    let changed: number;
     switch (target.kind) {
       case "folder":
-        lib.handleBatchStageMove(target.value, hashes);
+        changed = await lib.handleBatchStageMove(target.value, hashes);
         break;
       case "person":
-        lib.handleBatchAssignPerson(target.value, hashes);
+        changed = all(await lib.handleBatchAssignPerson(target.value, hashes));
         break;
       case "trash":
-        lib.handleRejectToTrash(hashes);
+        changed = await lib.handleRejectToTrash(hashes);
         break;
       case "pick":
-        lib.handleSetFlag("pick", hashes);
+        changed = all(await lib.handleSetFlag("pick", hashes));
         break;
       case "basket":
-        lib.handleToggleBasketSelection(hashes, true);
+        changed = all(await lib.handleToggleBasketSelection(hashes, true));
         break;
       default:
         return;
     }
-    lib.setAutoMatchNotice(`${target.label}: ${plural(hashes.length, "photo")}. Ctrl+Z undoes it.`);
+    if (changed > 0) lib.setAutoMatchNotice(`${target.label}: ${plural(changed, "photo")}. Ctrl+Z undoes it.`);
   };
   const { drag, onCardPointerDown: startPhotoDrag } = usePhotoDrag(hashesForDrag, handleDropPhotos);
   // Dropping photos on a folder, person or filter changes them: not for users who may only look
@@ -545,6 +563,18 @@ export default function App() {
   });
 
 
+  // In the Loupe, buttons and keys change the photo shown, not every photo selected in the grid behind it
+  const shownOnly = lib.isLoupeOpen && lib.activeHash ? [lib.activeHash] : undefined;
+  const onShown = {
+    setFlag: (flag: "pick" | "reject" | null) => lib.handleSetFlag(flag, shownOnly),
+    stageMove: (target: string | null) => lib.handleBatchStageMove(target, shownOnly),
+    reject: () => lib.handleRejectToTrash(shownOnly),
+    rate: (rating: number) => lib.handleBatchRate(rating, shownOnly),
+    colorLabel: (color: "red" | "yellow" | "green" | "blue" | null) => lib.handleSetColorLabel(color, shownOnly),
+    pin: () => lib.handleToggleBasketSelection(shownOnly),
+    rotate: (delta: number) => lib.handleRotateSelection(delta, shownOnly),
+  };
+
   useKeyboardShortcuts({
     activeHash: lib.activeHash,
     activePhoto: lib.activePhoto,
@@ -554,22 +584,25 @@ export default function App() {
     setIsDrawingFace: lib.setIsDrawingFace,
     setDrawnBox: lib.setDrawnBox,
     setActiveBulkPopover: lib.setActiveBulkPopover,
-    isBlockingModalOpen,
+    isBlockingModalOpen: isDialogOpen,
     closeBlockingModals,
+    isPhotoTab,
+    hasPopoverOrDrawing: lib.activeBulkPopover !== null || lib.isDrawingFace || lib.drawnBox !== null,
+    clearSelection: () => lib.setSelectedHashes(new Set()),
     navigateByOffset,
     navigateVertical,
     autoAdvance: lib.autoAdvance,
     searchInputRef,
-    handleSetFlag: lib.handleSetFlag,
-    handleRejectToTrash: lib.handleRejectToTrash,
-    handleBatchRate: lib.handleBatchRate,
-    handleSetColorLabel: lib.handleSetColorLabel,
-    handleRotateSelection: lib.handleRotateSelection,
+    handleSetFlag: onShown.setFlag,
+    handleRejectToTrash: onShown.reject,
+    handleBatchRate: onShown.rate,
+    handleSetColorLabel: onShown.colorLabel,
+    handleRotateSelection: onShown.rotate,
     handleAiAnalyzeSingle: lib.handleAiAnalyzeSingle,
     setViewMode: lib.setViewMode,
     setCompareZoom: lib.setCompareZoom,
     setComparePan: lib.setComparePan,
-    handleToggleBasketSelection: lib.handleToggleBasketSelection,
+    handleToggleBasketSelection: onShown.pin,
     canEdit: access.edit,
   });
 
@@ -583,7 +616,7 @@ export default function App() {
       {isDraggingOverWindow && (
         <div className="fixed inset-0 z-[99990] bg-zinc-950/85 backdrop-blur-sm border-2 border-dashed border-emerald-500/60 flex flex-col items-center justify-center gap-3 pointer-events-none animate-in fade-in">
           <FolderOpen className="w-12 h-12 text-emerald-400" />
-          <h2 className="text-xl font-semibold text-white">Drop a folder to open it</h2>
+          <h2 className="text-xl font-semibold text-white">{client.dropHint}</h2>
         </div>
       )}
 
@@ -866,6 +899,7 @@ export default function App() {
             setCompareZoom={lib.setCompareZoom}
             setComparePan={lib.setComparePan}
             handleSetFlag={lib.handleSetFlag}
+        handleRejectToTrash={() => lib.handleRejectToTrash()}
             handleBatchRate={lib.handleBatchRate}
             handleSetColorLabel={lib.handleSetColorLabel}
             handleRotateSelection={lib.handleRotateSelection}
@@ -930,7 +964,9 @@ export default function App() {
               setIsPickingMapLocation={lib.setIsPickingMapLocation}
               handleDetectFacesSingleOnnx={lib.handleDetectFacesSingleOnnx}
               handleSaveFaceAndAutomatch={lib.handleSaveFaceAndAutomatch}
+              handleClearFace={lib.handleClearFace}
               handleSetFlag={lib.handleSetFlag}
+        handleRejectToTrash={() => lib.handleRejectToTrash()}
               handleBatchRate={lib.handleBatchRate}
               handleRotateSelection={lib.handleRotateSelection}
               handleSetColorLabel={lib.handleSetColorLabel}
@@ -1075,8 +1111,20 @@ export default function App() {
         }}
         onCreateSubfolder={!contextFolderHere ? undefined : () => {
           setNewFolderRoot(contextFolderHere.root);
+          setRenameFolderFrom(null);
           setNewFolderInput(contextFolderHere.rel ? `${contextFolderHere.rel}/` : "");
           setIsNewFolderModalOpen(true);
+        }}
+        onRenameFolder={!contextFolderHere?.rel || !access.edit ? undefined : () => {
+          setNewFolderRoot(contextFolderHere.root);
+          setRenameFolderFrom(contextFolderHere.rel);
+          setNewFolderInput(contextFolderHere.rel);
+          setIsNewFolderModalOpen(true);
+        }}
+        onDeleteFolder={!contextFolderHere?.rel || !access.edit || contextFolderTotal > 0 ? undefined : async () => {
+          const { root, rel } = contextFolderHere;
+          await lib.handleDeleteEmptyFolder(root, rel);
+          lib.refreshFolderList();
         }}
       />
 
@@ -1085,7 +1133,12 @@ export default function App() {
         setIsNewFolderModalOpen={setIsNewFolderModalOpen}
         newFolderInput={newFolderInput}
         setNewFolderInput={setNewFolderInput}
-        onCreate={(relativePath) => lib.handleCreateSubfolder(relativePath, newFolderRoot ?? undefined)}
+        mode={renameFolderFrom !== null ? "rename" : "create"}
+        onCreate={async (relativePath) => {
+          if (renameFolderFrom !== null && newFolderRoot) await lib.handleRenameFolder(newFolderRoot, renameFolderFrom, relativePath);
+          else await lib.handleCreateSubfolder(relativePath, newFolderRoot ?? undefined);
+          lib.refreshFolderList();
+        }}
       />
 
 
@@ -1096,7 +1149,7 @@ export default function App() {
         )}
         title={
           lib.ollamaPullProgress
-            ? `Downloading AI Vision Model (${lib.ollamaPullProgress.model})`
+            ? `Downloading the caption model (${lib.ollamaPullProgress.model})`
             : lib.progressTitle ?? "Loading the library"
         }
         stage={
@@ -1300,14 +1353,27 @@ export default function App() {
         setSelectedHashes={lib.setSelectedHashes}
         autoAdvance={lib.autoAdvance}
         navigateByOffset={navigateByOffset}
-        handleSetFlag={lib.handleSetFlag}
-        handleBatchStageMove={lib.handleBatchStageMove}
-        handleRejectToTrash={() => lib.handleRejectToTrash()}
-        handleBatchRate={lib.handleBatchRate}
-        handleSetColorLabel={lib.handleSetColorLabel}
-        handleToggleBasketSelection={lib.handleToggleBasketSelection}
-        handleRotateSelection={lib.handleRotateSelection}
+        handleSetFlag={onShown.setFlag}
+        handleBatchStageMove={onShown.stageMove}
+        handleRejectToTrash={onShown.reject}
+        handleBatchRate={onShown.rate}
+        handleSetColorLabel={onShown.colorLabel}
+        handleToggleBasketSelection={onShown.pin}
+        handleRotateSelection={onShown.rotate}
         handleAiAnalyzeSingle={lib.handleAiAnalyzeSingle}
+        faces={{
+          selectedFaceId: lib.selectedFaceId,
+          setSelectedFaceId: lib.setSelectedFaceId,
+          faceNameInput: lib.faceNameInput,
+          setFaceNameInput: lib.setFaceNameInput,
+          isDrawingFace: lib.isDrawingFace,
+          setIsDrawingFace: lib.setIsDrawingFace,
+          drawnBox: lib.drawnBox,
+          setDrawnBox: lib.setDrawnBox,
+          handleSaveFaceAndAutomatch: lib.handleSaveFaceAndAutomatch,
+          handleClearFace: lib.handleClearFace,
+          personNames: lib.people.map((p) => p.name),
+        }}
       />
     </div>
   );

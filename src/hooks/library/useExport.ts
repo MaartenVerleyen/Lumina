@@ -94,7 +94,7 @@ export function useExport(core: LibraryCore) {
       for (const f of result.failures) addLog("DISK", `Could not export ${f.file}`, f.error);
       addLog("DISK", `Exported ${plural(result.exported, "photo")}`, settings.destDir);
       if (result.failures.length > 0) {
-        setError(`${plural(result.failures.length, "photo")} could not be exported. See the Session Log.`);
+        setError(`${plural(result.failures.length, "photo")} could not be exported. See the activity log.`);
       }
       setAutoMatchNotice(
         `${result.cancelled ? "Export stopped: " : ""}${plural(result.exported, "photo")} exported to ${settings.destDir}`
@@ -140,7 +140,7 @@ export function useExport(core: LibraryCore) {
       );
       for (const f of result.failures) addLog("DISK", `Could not add ${f.file} to the gallery`, f.error);
       addLog("DISK", `Web gallery with ${plural(result.exported, "photo")}`, result.folder);
-      if (result.failures.length > 0) setError(`${plural(result.failures.length, "photo")} could not be added. See the Session Log.`);
+      if (result.failures.length > 0) setError(`${plural(result.failures.length, "photo")} could not be added. See the activity log.`);
       notify(`${result.cancelled ? "Gallery stopped: " : "Gallery ready: "}${plural(result.exported, "photo")} in ${result.folder}`, "info", {
         label: "Open the gallery",
         run: () => call("open_in_default_app", { path: result.index }).catch((e) => setError(String(e))),

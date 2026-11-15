@@ -4,7 +4,7 @@ import { sourceKey } from "../../api/allPhotos";
 import { libraryName } from "../../utils/photoHelpers";
 import { ServersSettings } from "../servers/Servers";
 import { useAccess } from "../auth/ServerGate";
-import { getVersion, open as openDialog, openUrl, platform } from "../../api/platform";
+import { fileManager, getVersion, open as openDialog, openUrl, platform } from "../../api/platform";
 import { confirmDialog } from "../../confirm";
 import {
   Brain,
@@ -483,7 +483,7 @@ export default function SettingsModal({
               <>
                 <Group title="Open library">
                   <Row label={lib.folder ? libraryName(lib.folder) : "No library open"} hint={(lib.folder !== ALL_PHOTOS && lib.folder) || "Open a folder of photos to start."}>
-                    {lib.folder && platform.localFiles && <Button onClick={() => lib.handleRevealInFileManager(lib.folder)}>Show in Explorer</Button>}
+                    {lib.folder && platform.localFiles && <Button onClick={() => lib.handleRevealInFileManager(lib.folder)}>Show in {fileManager}</Button>}
                     <Button primary onClick={then(lib.handleOpenFolder)}>
                       {platform.localFiles ? (lib.folder ? "Open another…" : "Open folder…") : "Open a library…"}
                     </Button>
@@ -515,7 +515,7 @@ export default function SettingsModal({
                       label="Offer to import"
                     />
                   </Row>
-                  <Row label="Pick up changes made outside Lumina" hint="Photos added, changed or removed in Explorer or by a sync app show up by themselves.">
+                  <Row label="Pick up changes made outside Lumina" hint={`Photos added, changed or removed in ${fileManager} or by a sync app show up by themselves.`}>
                     <Switch checked={settings.watchLibrary} onChange={(v) => updateSettings({ watchLibrary: v })} label="Watch the library folder" />
                   </Row>
                 </Group>

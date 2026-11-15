@@ -78,19 +78,21 @@ interface BulkActionDockProps {
   setViewMode: React.Dispatch<React.SetStateAction<ViewMode>>;
   setCompareZoom: React.Dispatch<React.SetStateAction<number>>;
   setComparePan: React.Dispatch<React.SetStateAction<{ x: number; y: number }>>;
-  handleSetFlag: (flag: "pick" | "reject" | null) => Promise<void>;
+  handleSetFlag: (flag: "pick" | "reject" | null) => Promise<unknown>;
+  // Reject: flag and plan the move to _Trash, as X does
+  handleRejectToTrash: () => Promise<unknown>;
   handleBatchRate: (rating: number) => Promise<void>;
   handleSetColorLabel: (color: "red" | "yellow" | "green" | "blue" | null) => Promise<void>;
   handleRotateSelection: (deltaDegrees: number) => Promise<void>;
   handleBatchAddTag: (tag: string) => Promise<void>;
-  handleBatchStageMove: (targetSub: string | null) => Promise<void>;
+  handleBatchStageMove: (targetSub: string | null) => Promise<unknown>;
   handleSearchCities: (q: string) => Promise<void>;
   handleAssignCity: (c: CitySearchResult) => Promise<void>;
   handleShiftTimestamps: (e: React.FormEvent) => Promise<void>;
-  handleToggleBasketSelection: () => Promise<void>;
+  handleToggleBasketSelection: () => Promise<unknown>;
   handleForceRescanExifSelected: () => Promise<void>;
   runBatchAiOnList: (targets: PhotoItem[], options?: { reanalyze?: boolean }) => Promise<void>;
-  handleBatchAssignPerson?: (personName: string) => Promise<void>;
+  handleBatchAssignPerson?: (personName: string) => Promise<unknown>;
 }
 
 export default function BulkActionDock({
@@ -118,6 +120,7 @@ export default function BulkActionDock({
   setCompareZoom,
   setComparePan,
   handleSetFlag,
+  handleRejectToTrash,
   handleBatchRate,
   handleSetColorLabel,
   handleRotateSelection,
@@ -362,9 +365,9 @@ export default function BulkActionDock({
             <span>Pick</span>
           </button>
           <button
-            onClick={() => handleSetFlag("reject")}
+            onClick={() => handleRejectToTrash()}
             className="px-1.5 py-1 hover:bg-red-950/60 text-red-400 rounded flex items-center gap-1"
-            title="Reject (X)"
+            title="Reject: moves to _Trash when you apply changes (X)"
           >
             <XCircle className="w-3.5 h-3.5" />
             <span>Reject</span>

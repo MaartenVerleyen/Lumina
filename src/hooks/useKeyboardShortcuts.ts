@@ -18,13 +18,18 @@ interface UseKeyboardShortcutsParams {
   // A dialog (commit, health, face review, ...) is open: grid shortcuts must not act on photos behind it
   isBlockingModalOpen: boolean;
   closeBlockingModals: () => void;
+  // Photos, Map, People (not Collections): grid keys act on the selection
+  isPhotoTab: boolean;
+  // A bulk popover is open or a face is being drawn: Esc closes that first
+  hasPopoverOrDrawing: boolean;
+  clearSelection: () => void;
   navigateByOffset: (offset: number, extendSelection: boolean) => void;
   // Up/down in the grid: the visually nearest photo in the row above/below
   navigateVertical: (direction: 1 | -1, extendSelection: boolean) => void;
   autoAdvance: boolean;
   searchInputRef: RefObject<HTMLInputElement | null>;
-  handleSetFlag: (flag: "pick" | "reject" | null) => Promise<void>;
-  handleRejectToTrash: () => Promise<void>;
+  handleSetFlag: (flag: "pick" | "reject" | null) => Promise<unknown>;
+  handleRejectToTrash: () => Promise<unknown>;
   handleBatchRate: (rating: number) => Promise<void>;
   handleSetColorLabel: (color: "red" | "yellow" | "green" | "blue" | null) => Promise<void>;
   handleRotateSelection: (deltaDegrees: number) => Promise<void>;
@@ -32,7 +37,7 @@ interface UseKeyboardShortcutsParams {
   setViewMode: React.Dispatch<React.SetStateAction<ViewMode>>;
   setCompareZoom: React.Dispatch<React.SetStateAction<number>>;
   setComparePan: React.Dispatch<React.SetStateAction<{ x: number; y: number }>>;
-  handleToggleBasketSelection: () => Promise<void>;
+  handleToggleBasketSelection: () => Promise<unknown>;
   // The user may change photos (a viewer on a server may not: rating, flag, colour, rotate and AI keys do nothing)
   canEdit: boolean;
 }
@@ -76,6 +81,8 @@ export function useKeyboardShortcuts(params: UseKeyboardShortcutsParams) {
         p.searchInputRef.current?.focus();
         return;
       }
+      // Collections shows no photo grid: grid keys (P, X, 1-5 ...) must not act on a hidden selection
+      if (!p.isPhotoTab) return;
       // Ctrl/Cmd/Alt combinations belong to the app-level handlers (undo, session log) or the OS
       if (e.ctrlKey || e.metaKey || e.altKey) return;
 
@@ -108,7 +115,10 @@ export function useKeyboardShortcuts(params: UseKeyboardShortcutsParams) {
           else player.pause();
         } else if (p.activeHash) p.setIsLoupeOpen((prev) => !prev);
       } else if (e.key === "Escape") {
-        p.setIsLoupeOpen(false);
+        // Esc closes what is open; with nothing open it clears the selection
+        if (!p.isLoupeOpen && !p.hasPopoverOrDrawing && hasSelection) p.clearSelection();
+        // Drawing a face box in the full-screen view: Esc stops drawing and leaves the view open
+        if (!(p.isLoupeOpen && p.hasPopoverOrDrawing)) p.setIsLoupeOpen(false);
         p.setIsDrawingFace(false);
         p.setDrawnBox(null);
         p.setActiveBulkPopover(null);

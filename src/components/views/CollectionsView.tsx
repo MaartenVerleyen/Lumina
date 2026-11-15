@@ -330,7 +330,7 @@ export default function CollectionsView({
               menu={[
                 { label: "Highlights", run: () => onHighlights(a.name, a.hashes.filter((h) => photoByHash.has(h))) },
                 ...(onShareGallery
-                  ? [{ label: "Share as web gallery", run: () => onShareGallery(a.name, a.hashes.filter((h) => photoByHash.has(h))) }]
+                  ? [{ label: "Share as a web gallery…", run: () => onShareGallery(a.name, a.hashes.filter((h) => photoByHash.has(h))) }]
                   : []),
                 // An album shared with you: follow it into a library of yours, or stop
                 ...(onFollowAlbum && a.readOnly && a.engine && a.realId !== undefined && !followOf(a)
@@ -493,7 +493,7 @@ export default function CollectionsView({
                   menu={[
                     { label: "Highlights", run: () => onHighlights(e.label, tripsById.get(e.id)?.hashes ?? []) },
                     ...(onShareGallery
-                      ? [{ label: "Share as web gallery", run: () => onShareGallery(e.label, tripsById.get(e.id)?.hashes ?? []) }]
+                      ? [{ label: "Share as a web gallery…", run: () => onShareGallery(e.label, tripsById.get(e.id)?.hashes ?? []) }]
                       : []),
                     ...(access.edit ? [{ label: "Rename", run: () => setRenaming({ kind: "trip", id: e.id, value: "" }) }] : []),
                   ]}

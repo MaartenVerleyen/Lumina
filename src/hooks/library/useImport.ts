@@ -68,7 +68,7 @@ export function useImport(core: LibraryCore, filters: FilterState, folderHook: R
       ].filter(Boolean);
       addLog("DISK", `${result.cancelled ? "Import stopped: " : "Import finished: "}${parts.join(", ")}`);
       if (result.failures.length > 0) {
-        setError(`${plural(result.failures.length, "file")} could not be imported and were left on the card. See the Session Log.`);
+        setError(`${plural(result.failures.length, "file")} could not be imported and were left on the card. See the activity log.`);
       }
 
       // Show the new photos: rescan the library they went into, then select and filter on them

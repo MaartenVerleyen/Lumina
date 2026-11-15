@@ -125,9 +125,8 @@ function DesktopStart({ lib, gridContainerRef }: { lib: LibraryState; gridContai
         {platform.fullApp && (
         <>
         <p className="text-xs text-zinc-400 mt-1 max-w-md leading-relaxed">
-          Drag and drop any photo folder onto this window, or click below to open your
-          collection. Supports JPEG, PNG, WebP, HEIC, and Camera RAW (.CR2, .CR3, .NEF,
-          .ARW, .DNG).
+          Drop a folder of photos and videos on this window, or choose one below. Lumina reads JPEG, PNG,
+          WebP, HEIC, camera RAW (CR2, CR3, NEF, ARW, DNG) and videos (MP4, MOV), and never changes the files.
         </p>
 
         <div className="mt-5 flex items-center gap-2">
@@ -143,7 +142,7 @@ function DesktopStart({ lib, gridContainerRef }: { lib: LibraryState; gridContai
             className="px-4 py-2.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-zinc-200 rounded-xl text-xs font-semibold transition flex items-center gap-2 cursor-pointer"
           >
             <FolderInput className="w-4 h-4 text-emerald-400" />
-            <span>Import from a card...</span>
+            <span>Import from a card…</span>
           </button>
         </div>
 

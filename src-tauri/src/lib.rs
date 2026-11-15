@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock};
 use tauri::{AppHandle, Manager};
 
-pub use lumina_core::{ai, albums, backup, clip, db, decode, duplicates, exif_meta, export, face_engine, face_match, face_ort, face_quality, face_review, face_scan, fastdecode, ffmpeg, files, gallery, highlights, host, imaging, import, library, people, perf, recycle, scan, storage, thumbs, types, video_frames, video_meta, watch, GEOCODER, HTTP_CLIENT, FAST_STATUS_CLIENT};
+pub use lumina_core::{ai, albums, backup, clip, db, decode, duplicates, exif_meta, export, face_engine, face_match, face_ort, face_quality, face_review, face_scan, fastdecode, ffmpeg, files, folders, gallery, highlights, host, imaging, import, library, people, perf, recycle, scan, storage, thumbs, types, video_frames, video_meta, watch, GEOCODER, HTTP_CLIENT, FAST_STATUS_CLIENT};
 pub use types::*;
 mod engine_commands;
 mod system;
@@ -129,6 +129,9 @@ pub fn run() {
             engine_commands::export_xmp_sidecars,
             engine_commands::get_library_health_stats,
             engine_commands::forget_missing_files,
+            engine_commands::list_library_folders,
+            engine_commands::rename_library_folder,
+            engine_commands::delete_empty_library_folder,
             engine_commands::prune_orphaned_cache,
             engine_commands::get_people,
             engine_commands::add_person_to_photos,

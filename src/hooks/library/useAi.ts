@@ -146,7 +146,7 @@ export function useAi(core: LibraryCore) {
       return;
     }
     if (ollamaStatus && !ollamaStatus.running) {
-      setError('Ollama is not running: click "Start Ollama" in the header first.');
+      setError('Ollama is not running: open the AI menu at the top right and click "Start Ollama", or in Settings → AI captions.');
       return;
     }
     const photo = activePhoto;
@@ -190,7 +190,7 @@ export function useAi(core: LibraryCore) {
     requested = photosOnly(requested);
     if (aiBatchProgress || requested.length === 0) return;
     if (ollamaStatus && !ollamaStatus.running) {
-      setError('Ollama is not running: click "Start Ollama" in the header first.');
+      setError('Ollama is not running: open the AI menu at the top right and click "Start Ollama", or in Settings → AI captions.');
       return;
     }
 
