@@ -22,6 +22,7 @@ export const RELEASE_NOTES: ReleaseNotes[] = [
       { title: "Faces in the full-screen view", text: "Click Faces (or press F) in the full-screen view to show who is where. Click a box to name that face, take a name off, or remove a box that isn't a face. Draw a face draws a box around a face the scan missed." },
       { title: "The full-screen view changes one photo", text: "Stars, flags, labels and rotation in the full-screen view apply to the photo shown, not to everything selected behind it." },
       { title: "All photos keeps this PC's folders up to date", text: "With All photos open, Lumina now does the background work for the folders on this PC as it does for a folder opened on its own: faces from the new face engine, eyes and focus, and the smart search index, one folder after the other. Servers keep doing their own." },
+      { title: "A server out of reach stays in All photos", text: "When Lumina can't reach a server, All photos shows its photos as they were last time, and the toolbar says which server is out of reach. Thumbnails Lumina has seen before still show." },
       { title: "Downloaded photos count as on this PC", text: "In All photos, server photos you downloaded show under On this PC in the Where filter and lose the 'server only' mark." },
       { title: "Keys", text: "Esc clears the selection when nothing else is open. Ctrl+Z works on Collections, and Ctrl+, and Ctrl+1–4 work from the search box. The shortcuts list (?) now shows every key, including those for checking faces." },
     ],

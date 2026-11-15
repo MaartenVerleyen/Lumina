@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ArrowUpDown, Calendar, Check, ChevronDown, CloudUpload, Columns, Copy, FilterX, Folder, FolderSync, Layers, SlidersHorizontal, Trophy, X } from "lucide-react";
+import { ArrowUpDown, Calendar, Check, ChevronDown, CloudOff, CloudUpload, Columns, Copy, FilterX, Folder, FolderSync, Layers, SlidersHorizontal, Trophy, X } from "lucide-react";
 import type { LibraryState } from "../../hooks/useLibraryState";
 import { useAccess } from "../auth/ServerGate";
 import { AutoStagePreset, OrientationFilter, SortOption } from "../../types/lumina";
-import { allPhotosCanBackUp, allPhotosHasLocal, allPhotosSources, openLibraryIsAll, openLibraryServer } from "../../api";
+import { ALL_PHOTOS_LOADED, allPhotosCanBackUp, allPhotosHasLocal, allPhotosOffline, allPhotosSources, openLibraryIsAll, openLibraryServer } from "../../api";
 import { whereabouts, type Whereabouts } from "../../api/allPhotos";
 import { libraryName } from "../../utils/photoHelpers";
 import { useOnDeviceSet } from "../../hooks/useOnDevice";
@@ -203,6 +203,7 @@ export default function PhotoToolbar({ lib }: { lib: LibraryState }) {
         )}
 
         <OnDeviceFilter lib={lib} />
+        <OfflineNote />
         <WhereFilter lib={lib} />
         <BackUpButton lib={lib} />
 
@@ -525,6 +526,31 @@ function BackUpButton({ lib }: { lib: LibraryState }) {
         Back up {selected.length > 0 ? `${count} selected` : count}
       </button>
     </div>
+  );
+}
+
+// All photos: servers the last load couldn't reach, whose photos show as they were last seen (lists kept on this PC)
+function OfflineNote() {
+  const [offline, setOffline] = useState<string[]>(allPhotosOffline);
+  useEffect(() => {
+    const update = () => setOffline(allPhotosOffline());
+    window.addEventListener(ALL_PHOTOS_LOADED, update);
+    return () => window.removeEventListener(ALL_PHOTOS_LOADED, update);
+  }, []);
+  if (!openLibraryIsAll() || offline.length === 0) return null;
+  // A server's name as its libraries are labelled ("cachy: Library" → "cachy")
+  const names = offline.map((server) => {
+    const label = [...allPhotosSources().values()].find((s) => s.server === server)?.label ?? server;
+    return label.includes(": ") ? label.slice(0, label.lastIndexOf(": ")) : label;
+  });
+  return (
+    <span
+      className="flex items-center gap-1.5 px-2 py-0.5 rounded-lg border border-zinc-700 bg-zinc-900 text-[11px] text-zinc-400"
+      title="Its photos show as they were when Lumina last reached it. Changes to them can't be saved until it is back; Lumina connects again by itself."
+    >
+      <CloudOff className="w-3.5 h-3.5 text-zinc-500" />
+      {names.join(", ")} out of reach: photos as last seen
+    </span>
   );
 }
 

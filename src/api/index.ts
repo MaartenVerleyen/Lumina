@@ -503,11 +503,13 @@ const lastSegment = (root: string) => root.split(/[\\/]/).filter(Boolean).pop() 
 
 // Every library All photos could show: the folders opened on this computer and the libraries of each server
 // the app is signed in to (in the web client, the libraries of its server)
-// The phone app keeps the last list of each server library (offline.rs): it opens from them (startAllPhotosFromKept)
-// and shows a server out of reach as it was last seen. The phone's own list isn't kept: Android lists it without
+// The apps keep the last list of each server library (offline.rs) and show a server out of reach as it was last
+// seen; the phone app also opens from them (startAllPhotosFromKept). The phone's own list isn't kept: Android lists it without
 // a connection, and sooner than a kept copy of it reads.
 let fromKept = false;
 let offlineServers: string[] = [];
+// The server library lists (`serverLists` keys) that came from the kept copy, not from the server
+const keptLists = new Set<string>();
 
 // The next All photos load takes the kept lists where there are some (the window then loads again, for real)
 export function startAllPhotosFromKept() {
@@ -584,7 +586,7 @@ async function kept<T>(key: string): Promise<T | null> {
 }
 
 function keep(key: string, value: unknown) {
-  if (onAndroid) void callLocal("offline_save", { key, value }).catch(() => {});
+  if (inDesktopApp) void callLocal("offline_save", { key, value }).catch(() => {});
 }
 
 // A list from the server, kept for next time; the kept one when the server can't be reached (or when starting
@@ -592,7 +594,7 @@ function keep(key: string, value: unknown) {
 async function keptOr<T>(key: string, server: string, fetch: () => Promise<T>, useKept: boolean): Promise<T> {
   // A server that didn't answer once in this load isn't waited for again (each try takes the connect timeout)
   const out = offlineServers.includes(server);
-  if (onAndroid && (useKept || out)) {
+  if (inDesktopApp && (useKept || out)) {
     const old = await kept<T>(key);
     if (old !== null) return old;
     if (out) throw new Error(`${server} is out of reach`);
@@ -602,7 +604,7 @@ async function keptOr<T>(key: string, server: string, fetch: () => Promise<T>, u
     keep(key, fresh);
     return fresh;
   } catch (err) {
-    const old = onAndroid ? await kept<T>(key) : null;
+    const old = inDesktopApp ? await kept<T>(key) : null;
     if (old === null) throw err;
     if (!offlineServers.includes(server)) offlineServers = [...offlineServers, server];
     return old;
@@ -793,6 +795,10 @@ async function loadAllNow(check?: string[], reuseServers = false): Promise<Photo
         const checked = !check || check.some((root) => sameRoot(root, source.root));
         const server = source.server;
         const listKey = `${server}|${source.root}`;
+        // A list reused from an earlier load that came from the kept copy still shows a server out of reach
+        if (server !== null && reuseServers && serverLists.has(listKey) && keptLists.has(listKey) && !offlineServers.includes(server)) {
+          offlineServers = [...offlineServers, server];
+        }
         const photos =
           server !== null
             ? reuseServers && serverLists.has(listKey)
@@ -804,6 +810,8 @@ async function loadAllNow(check?: string[], reuseServers = false): Promise<Photo
                   useKept
                 ).then((list) => {
                   serverLists.set(listKey, list);
+                  if (offlineServers.includes(server)) keptLists.add(listKey);
+                  else keptLists.delete(listKey);
                   return list;
                 })
             : source.root === PHONE_ROOT
