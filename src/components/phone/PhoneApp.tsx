@@ -195,6 +195,7 @@ export default function PhoneApp() {
   // The screen under the overlays (viewer, selection, full-screen pages): a tab's first screen, a grid, the map
   const shown = [...stack].reverse().find((s) => s.kind === "grid" || s.kind === "map" || s.kind === "tab") ?? null;
   const showsGrid = shown === null || shown.kind === "grid";
+  const onTab = !shown || shown.kind === "tab";
   const title = shown?.kind === "grid" ? shown.title : shown?.kind === "map" ? "Places" : TABS.find((t) => t.id === tab)!.label;
   const person = scope && "person" in scope ? scope.person : null;
   const toCheck = person && canEdit ? (lib.pendingFaceCounts[person] ?? 0) : 0;
@@ -234,8 +235,9 @@ export default function PhoneApp() {
                 </div>
               )}
             </div>
-            {onAndroid ? <BackupRing onClick={() => push({ kind: "backup" })} /> : <WebUploadButton />}
-            {onAndroid ? <SettingsButton onClick={() => push({ kind: "settings" })} /> : <AccountButton />}
+            {/* Backup and the account on the tabs only: a page over them has its back arrow and title */}
+            {onTab && (onAndroid ? <BackupRing onClick={() => push({ kind: "backup" })} /> : <WebUploadButton />)}
+            {onTab && (onAndroid ? <SettingsButton onClick={() => push({ kind: "settings" })} /> : <AccountButton />)}
           </div>
         )}
         {/* Kept while selecting: the grid must not move under the finger that just selected */}
@@ -462,7 +464,7 @@ function SelectionBar({
 }
 
 function Shell({ children }: { children: React.ReactNode }) {
-  return <div className="h-dvh flex flex-col bg-surface text-zinc-200 overflow-hidden">{children}</div>;
+  return <div className="phone-ui h-dvh flex flex-col bg-surface text-zinc-200 overflow-hidden">{children}</div>;
 }
 
 const MEDIA: { id: MediaFilter; label: string }[] = [

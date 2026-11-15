@@ -36,6 +36,11 @@ pub fn run() {
     #[cfg(target_os = "linux")]
     system::linux_webkit_workarounds();
 
+    // Before any plugin makes an HTTP client: without a crypto provider rustls panics there and the app closes
+    // at start (reqwest 0.13 in Tauri's updater; seen on the OnePlus 8T with 6.2)
+    #[cfg(target_os = "android")]
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     // Lumina Setup downloads the models through the app itself, without a window (see prepare.rs)
     let args: Vec<String> = std::env::args().collect();
     if let Some(i) = args.iter().position(|a| a == "--prepare-models") {

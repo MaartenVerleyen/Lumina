@@ -94,7 +94,7 @@ let openSheets = 0;
 export function useBackCloses(close: () => void) {
   const closeRef = useRef(close);
   closeRef.current = close;
-  const sheet = useRef({ pushed: false, mounted: false, popped: false });
+  const sheet = useRef({ pushed: false, mounted: false, popped: false, closed: false });
   useEffect(() => {
     const s = sheet.current;
     s.mounted = true;
@@ -112,8 +112,11 @@ export function useBackCloses(close: () => void) {
       s.mounted = false;
       window.removeEventListener("popstate", onPop);
       // Later, as React's development mode unmounts and mounts again at once: closed for real only if not back
+      // (Both unmounts can reach here when a sheet closes right after opening: it closes once, or a second
+      // history.back() would close the screen under it too)
       window.setTimeout(() => {
-        if (s.mounted) return;
+        if (s.mounted || s.closed) return;
+        s.closed = true;
         openSheets--;
         if (!s.popped && history.state?.luminaSheet) history.back();
       }, 0);

@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "Lumina"
-version = "6.2.1"
+version = "6.2.2"
 dependencies = [
  "axum",
  "blake3",
@@ -15,6 +15,7 @@ dependencies = [
  "rand 0.9.5",
  "reqwest 0.12.28",
  "rusqlite",
+ "rustls",
  "serde",
  "serde_json",
  "tauri",
@@ -3178,7 +3179,7 @@ checksum = "4050469837a6ff301cd14c1f8f24f88549e6d548f24f64e2148eb0f72cebc51f"
 
 [[package]]
 name = "lumina-core"
-version = "6.2.1"
+version = "6.2.2"
 dependencies = [
  "base64 0.22.1",
  "blake3",
@@ -3208,7 +3209,7 @@ dependencies = [
 
 [[package]]
 name = "lumina-server"
-version = "6.2.1"
+version = "6.2.2"
 dependencies = [
  "argon2",
  "axum",
@@ -3234,7 +3235,7 @@ dependencies = [
 
 [[package]]
 name = "lumina-tray"
-version = "6.2.1"
+version = "6.2.2"
 dependencies = [
  "serde",
  "serde_json",

@@ -14,6 +14,15 @@ export interface ReleaseNotes {
 // Newest first. Add an entry for every release that should greet updating users with "What's new".
 export const RELEASE_NOTES: ReleaseNotes[] = [
   {
+    version: "6.2.2",
+    items: [
+      { title: "The phone app starts again", text: "Lumina 6.2.0 and 6.2.1 closed straight away on Android. This version opens as it should." },
+      { title: "Check faces one by one", text: "On the phone, Is this Emma? shows one face at a time over its photo: swipe right if it's them, left if not, up for someone else. The phone buzzes when a swipe counts, Undo takes answers back, and a tap shows the whole photo. All at once is still there for many faces." },
+      { title: "Asked before many at once", text: "Confirming or turning down more than 20 faces at once asks first." },
+      { title: "A cleaner phone app", text: "Buttons, text and cards look the same everywhere, counts read 51.710, and the cloud mark is gone from photos that are simply on your server: only photos that are just on the phone, or shared with you, are marked." },
+    ],
+  },
+  {
     version: "6.2.1",
     items: [
       { title: "Loading, not empty", text: "On a phone, a server library that takes a while to load says Loading the library… instead of saying it has no photos yet." },

@@ -67,6 +67,35 @@ select option {
   filter: brightness(0.7) invert(1) contrast(3) hue-rotate(200deg) saturate(0.3) brightness(0.7);
 }
 
+/* The phone layout: no desktop scrollbars (a phone shows its own while scrolling), and the map's controls dark */
+.phone-ui *::-webkit-scrollbar {
+  display: none;
+}
+.phone-ui * {
+  scrollbar-width: none;
+}
+.phone-ui .leaflet-bar {
+  border: 1px solid #27272a !important;
+  border-radius: 12px !important;
+  overflow: hidden;
+}
+.phone-ui .leaflet-bar a {
+  background-color: #16181f !important;
+  color: #e4e4e7 !important;
+  border-bottom-color: #27272a !important;
+  width: 40px !important;
+  height: 40px !important;
+  line-height: 40px !important;
+}
+.phone-ui .leaflet-control-attribution {
+  background: rgba(9, 10, 15, 0.7) !important;
+  color: #71717a !important;
+  font-size: 10px;
+}
+.phone-ui .leaflet-control-attribution a {
+  color: #a1a1aa !important;
+}
+
 /* Ensure all inputs and textareas allow text selection and cursor placement */
 input,
 textarea {

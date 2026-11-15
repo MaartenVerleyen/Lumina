@@ -3,7 +3,7 @@ import { Cloud, CloudCheck, Loader2 } from "lucide-react";
 import { callLocal, mediaUrl } from "../../api";
 import { useServers } from "../../hooks/useServers";
 import { formatBytes } from "../../utils/photoHelpers";
-import { Page, Section, Switch, Toggle } from "./PhoneParts";
+import { Button, Page, Section, Switch, T, Toggle } from "./PhoneParts";
 import { refreshBackup, setBackupSettings, usePhoneBackup, type BackupProgress, type BackupStatus } from "./usePhoneBackup";
 import { usePhoneFolders, type PhoneFolder } from "./usePhoneFolders";
 import { freeUpScan, moveToTrash, type FreeUp } from "./freeUp";
@@ -175,32 +175,32 @@ function FreeUpSection({ onRemoved }: { onRemoved: () => void }) {
   return (
     <Section title="Free up space">
       {state === "checking" ? (
-        <div className="flex items-center gap-2 py-2 text-xs text-zinc-400">
-          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+        <div className={`flex items-center gap-2 py-2 ${T.secondary}`}>
+          <Loader2 className="w-4 h-4 animate-spin" />
           Asking {label} what it has…
         </div>
       ) : scan && scan.count > 0 ? (
         <>
-          <div className="py-1 text-sm text-zinc-200">
+          <div className={`py-1 ${T.body}`}>
             {scan.count.toLocaleString()} photos on this phone are backed up on {label} ({formatBytes(scan.bytes)}).
           </div>
-          <div className="pb-2 text-xs text-zinc-400">Remove them from this phone? They stay on {label}, and in Lumina.</div>
-          <button
-            onClick={remove}
-            disabled={state === "removing"}
-            className="w-full py-3 rounded-full bg-zinc-800 text-sm font-semibold text-zinc-100 active:bg-zinc-700 disabled:opacity-50"
-          >
-            {state === "removing" ? "Waiting for Android…" : "Remove from this phone"}
-          </button>
+          <div className={`pb-3 ${T.secondary}`}>Remove them from this phone? They stay on {label}, and in Lumina.</div>
+          <div className="flex">
+            <Button wide onClick={() => void remove()} disabled={state === "removing"}>
+              {state === "removing" ? "Waiting for Android…" : "Remove from this phone"}
+            </Button>
+          </div>
         </>
       ) : (
-        <div className="py-2 text-xs text-zinc-400">{message ?? `Nothing to remove: no photo on this phone is backed up on ${label} yet.`}</div>
+        <div className={`py-2 ${T.secondary}`}>{message ?? `Nothing to remove: no photo on this phone is backed up on ${label} yet.`}</div>
       )}
-      {message && scan && <div className="pt-2 text-xs text-zinc-400">{message}</div>}
+      {message && scan && <div className={`pt-2 ${T.secondary}`}>{message}</div>}
       {state === "error" && (
-        <button onClick={check} className="pt-1 text-xs text-emerald-400">
-          Try again
-        </button>
+        <div className="-ml-4">
+          <Button kind="text" onClick={check}>
+            Try again
+          </Button>
+        </div>
       )}
     </Section>
   );
@@ -215,11 +215,11 @@ function BackupSection() {
   const server = settings?.server ?? signedIn[0]?.id ?? null;
   const serverLabel = servers.find((s) => s.id === server)?.label ?? server ?? "";
 
-  if (!settings) return <Section title="">{error ?? <div className="py-2 text-sm text-zinc-400">Loading…</div>}</Section>;
+  if (!settings) return <Section title="">{error ?? <div className={`py-2 ${T.secondary}`}>Loading…</div>}</Section>;
   if (!server) {
     return (
       <Section title="">
-        <div className="py-2 text-sm text-zinc-400">Sign in to a server below: the phone backs up to it.</div>
+        <div className={`py-2 ${T.secondary}`}>Sign in to a server in Settings: the phone backs up to it.</div>
       </Section>
     );
   }
@@ -248,9 +248,9 @@ function BackupSection() {
     <Section title="">
       <Toggle label={`Back up this phone to ${serverLabel}`} on={settings.enabled} onChange={(enabled) => change({ enabled })} />
       {signedIn.length > 1 && (
-        <label className="flex items-center justify-between py-2 text-sm text-zinc-300">
+        <label className={`flex items-center justify-between min-h-11 py-2 ${T.body}`}>
           Server
-          <select value={server} onChange={(e) => change({ server: e.target.value })} className="bg-zinc-800 rounded-lg px-2 py-1 text-zinc-100">
+          <select value={server} onChange={(e) => change({ server: e.target.value })} className="min-h-11 rounded-full bg-zinc-800 px-4 text-[15px] text-zinc-100 outline-none">
             {signedIn.map((s) => (
               <option key={s.id} value={s.id}>
                 {s.label}
@@ -259,45 +259,45 @@ function BackupSection() {
           </select>
         </label>
       )}
-      <div className={settings.enabled ? "" : "opacity-50"}>
-        <Toggle label="Only on Wi-Fi" on={settings.wifiOnly} onChange={(wifiOnly) => change({ wifiOnly })} />
-        <Toggle label="Only while charging" on={settings.charging} onChange={(charging) => change({ charging })} />
-      </div>
+      {/* Every backup, also Back up now */}
       <Toggle label="Videos too" on={settings.videos} onChange={(videos) => change({ videos })} />
+      {/* Only when the phone backs up by itself */}
+      <Toggle label="Only on Wi-Fi" on={settings.wifiOnly} onChange={(wifiOnly) => change({ wifiOnly })} disabled={!settings.enabled} />
+      <Toggle label="Only while charging" on={settings.charging} onChange={(charging) => change({ charging })} disabled={!settings.enabled} />
 
-      <div className="pt-3 pb-1 text-xs text-zinc-400 min-h-[3rem]">
+      <div className={`pt-3 pb-2 ${T.secondary}`}>
         {p?.running ? (
           <Running p={p} />
         ) : status ? (
           <>
-            <div className="text-sm text-zinc-200">
+            <div className={T.body}>
               {status.backed_up.toLocaleString()} of {status.total.toLocaleString()} backed up
             </div>
-            {status.last && <div>Last backup {when(status.last.at)}</div>}
+            {status.last ? <div>Last backup {when(status.last.at)}</div> : <div>Not backed up yet</div>}
             {status.last && <LastOutcome last={status.last} label={serverLabel} />}
           </>
-        ) : null}
-      </div>
-      {error && <div className="text-xs text-red-300">{error}</div>}
-      <div className="flex items-center gap-3 pt-2">
-        {p?.running ? (
-          <button onClick={() => callLocal("phone_backup_stop")} className="flex-1 py-3 rounded-full bg-zinc-800 text-sm font-semibold text-zinc-100">
-            Stop
-          </button>
         ) : (
-          <button onClick={backUpNow} className="flex-1 py-3 rounded-full bg-emerald-600 text-sm font-semibold text-white active:bg-emerald-700">
-            Back up now
-          </button>
+          <div className="flex items-center gap-2">
+            <Loader2 className="w-4 h-4 animate-spin" />
+            Counting the photos on this phone…
+          </div>
         )}
       </div>
-      {settings.wifiOnly && !p?.running && (
-        <label className="flex items-center gap-2 pt-2 text-xs text-zinc-400">
-          <input type="checkbox" checked={anyNetwork} onChange={(e) => setAnyNetwork(e.target.checked)} />
-          This time also on mobile data
-        </label>
-      )}
+      {error && <div className="pb-2 text-[13px] text-red-300">{error}</div>}
+      <div className="flex">
+        {p?.running ? (
+          <Button wide onClick={() => void callLocal("phone_backup_stop")}>
+            Stop
+          </Button>
+        ) : (
+          <Button wide kind="primary" onClick={() => void backUpNow()}>
+            Back up now
+          </Button>
+        )}
+      </div>
+      {settings.wifiOnly && !p?.running && <Toggle label="This time also on mobile data" on={anyNetwork} onChange={setAnyNetwork} />}
       {p && p.failures.length > 0 && !p.running && (
-        <details className="pt-2 text-xs text-zinc-400">
+        <details className={`pt-2 ${T.secondary}`}>
           <summary className="text-amber-300">{p.failures.length} couldn't be backed up</summary>
           {p.failures.map(([name, why]) => (
             <div key={name} className="pt-1">
@@ -326,7 +326,7 @@ function FoldersSection() {
   return (
     <Section title="Folders">
       {folders === null ? (
-        <div className="py-2 text-xs text-zinc-500">Loading…</div>
+        <div className={`py-2 ${T.secondary}`}>Loading…</div>
       ) : (
         orderFolders(folders, settings.folders).map((f) => (
           <FolderRow key={f.folder} folder={f} on={settings.folders.includes(f.folder)} onChange={(on) => toggleFolder(f.folder, on)} />
@@ -343,12 +343,12 @@ export function orderFolders(folders: PhoneFolder[], chosen: string[]): PhoneFol
 
 function FolderRow({ folder, on, onChange }: { folder: PhoneFolder; on: boolean; onChange: (on: boolean) => void }) {
   return (
-    <button onClick={() => onChange(!on)} className="w-full flex items-center gap-3 py-2 text-left">
+    <button onClick={() => onChange(!on)} className="w-full min-h-11 flex items-center gap-3 py-2 text-left">
       <img src={mediaUrl({ kind: "thumb", hash: "", path: folder.cover })} alt="" className="w-10 h-10 rounded-lg object-cover bg-zinc-800 shrink-0" />
       <span className="flex-1 min-w-0">
-        <span className="block text-sm text-zinc-100 truncate">{folder.name}</span>
-        <span className="block text-[11px] text-zinc-500">
-          {folder.count.toLocaleString()} · {folder.backed_up >= folder.count ? "all backed up" : `${folder.backed_up.toLocaleString()} backed up`}
+        <span className={`block truncate ${T.body}`}>{folder.name}</span>
+        <span className={`block ${T.secondary}`}>
+          {folder.count.toLocaleString()} {folder.count === 1 ? "photo" : "photos"} · {folder.backed_up >= folder.count ? "all backed up" : `${folder.backed_up.toLocaleString()} backed up`}
         </span>
       </span>
       <Switch on={on} />
@@ -360,9 +360,9 @@ function Running({ p }: { p: BackupProgress }) {
   return (
     <div className="flex flex-col gap-1.5">
       <div className="flex items-center gap-2 text-zinc-300">
-        <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-400" />
+        <Loader2 className="w-4 h-4 animate-spin text-emerald-400" />
         {p.stage}
-        {p.files > 0 && ` · ${p.done + p.failed} of ${p.files}`}
+        {p.files > 0 && ` · ${(p.done + p.failed).toLocaleString()} of ${p.files.toLocaleString()}`}
       </div>
       {p.bytes_total > 0 && (
         <>
