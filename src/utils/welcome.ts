@@ -14,6 +14,12 @@ export interface ReleaseNotes {
 // Newest first. Add an entry for every release that should greet updating users with "What's new".
 export const RELEASE_NOTES: ReleaseNotes[] = [
   {
+    version: "6.2.1",
+    items: [
+      { title: "Loading, not empty", text: "On a phone, a server library that takes a while to load says Loading the library… instead of saying it has no photos yet." },
+    ],
+  },
+  {
     version: "6.2.0",
     items: [
       { title: "A renamed folder keeps everything", text: "Rename or move a library folder outside Lumina and open it at its new place: Lumina recognises it and keeps every rating, tag, name and album. A folder it can't find shows in the Library menu with Locate…, to point to where it is now." },
