@@ -5,6 +5,7 @@ import { useAccess } from "../auth/ServerGate";
 import type { LibraryState } from "../../hooks/useLibraryState";
 import type { PhotoItem } from "../../types/lumina";
 import { thumbSrc } from "../../utils/photoHelpers";
+import { Card, photoCount, SectionTitle } from "./PhoneParts";
 
 // The phone app's Search tab (docs/plans/android-app-ui.md): a search field with smart search, and an explore
 // page of people, places and things to tap; results open in a grid of their own
@@ -150,7 +151,7 @@ export default function SearchScreen({
         <Row title="People" onAll={onPeople}>
           {canEdit && pendingTotal > 0 && (
             <button onClick={onPeople} className="mx-4 mb-2 flex items-center gap-1.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 px-3 py-1 text-xs text-emerald-200 active:bg-emerald-500/30">
-              {pendingTotal} {pendingTotal === 1 ? "face" : "faces"} to check
+              {pendingTotal.toLocaleString()} {pendingTotal === 1 ? "face" : "faces"} to check
               <ChevronRight className="w-3 h-3" />
             </button>
           )}
@@ -174,23 +175,28 @@ export default function SearchScreen({
 
       <Row title="Places" onAll={onMap}>
         <Scroller>
-          <button onClick={onMap} className="w-28 shrink-0 text-left active:opacity-70">
-            <div className="aspect-square rounded-xl bg-emerald-900/40 border border-emerald-700/40 flex items-center justify-center">
-              <MapIcon className="w-8 h-8 text-emerald-300" />
-            </div>
-            <div className="pt-1.5 text-sm text-zinc-100">Map</div>
-          </button>
+          <div className="w-28 shrink-0">
+            <Card icon={<MapIcon className="w-8 h-8" />} title="Map" sub="All places" onClick={onMap} />
+          </div>
           {places.map((p) => (
-            <Tile key={p.name} photo={p.cover} title={p.name} onClick={() => search(p.name)} />
+            <div key={p.name} className="w-28 shrink-0">
+              <Card src={p.cover.thumb_ready ? thumbSrc(p.cover) : null} title={p.name} sub={photoCount(p.count)} onClick={() => search(p.name)} />
+            </div>
           ))}
         </Scroller>
       </Row>
 
       {things.length > 0 && (
         <Row title="Things">
-          <div className="grid grid-cols-3 gap-2 px-3">
+          <div className="grid grid-cols-3 gap-3 px-4">
             {things.map((t) => (
-              <Tile key={t.name} photo={t.cover} title={t.name.charAt(0).toUpperCase() + t.name.slice(1)} onClick={() => search(t.name)} grid />
+              <Card
+                key={t.name}
+                src={t.cover.thumb_ready ? thumbSrc(t.cover) : null}
+                title={t.name.charAt(0).toUpperCase() + t.name.slice(1)}
+                sub={photoCount(t.count)}
+                onClick={() => search(t.name)}
+              />
             ))}
           </div>
         </Row>
@@ -281,22 +287,15 @@ function GroupsButton({ title, onClick }: { title: string; onClick: () => void }
 
 function Row({ title, onAll, children }: { title: string; onAll?: () => void; children: React.ReactNode }) {
   return (
-    <section className="pt-5">
-      <div className="flex items-center justify-between px-4 pb-2">
-        <h2 className="text-sm font-semibold text-zinc-100">{title}</h2>
-        {onAll && (
-          <button onClick={onAll} className="text-xs text-emerald-400">
-            All
-          </button>
-        )}
-      </div>
+    <section>
+      <SectionTitle onAll={onAll}>{title}</SectionTitle>
       {children}
     </section>
   );
 }
 
 function Scroller({ children }: { children: React.ReactNode }) {
-  return <div className="flex gap-3 overflow-x-auto px-4 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">{children}</div>;
+  return <div className="flex gap-3 overflow-x-auto px-4 pb-1">{children}</div>;
 }
 
 function Face({
@@ -349,19 +348,3 @@ function FaceThumb({ thumb }: { thumb?: string | null }) {
   );
 }
 
-function Tile({ photo, title, onClick, grid }: { photo: PhotoItem; title: string; onClick: () => void; grid?: boolean }) {
-  return (
-    <button onClick={onClick} className={`${grid ? "w-full" : "w-28 shrink-0"} relative text-left active:opacity-70`}>
-      <div className="aspect-square rounded-xl overflow-hidden bg-zinc-800">
-        {photo.thumb_ready && <img src={thumbSrc(photo)} alt="" loading="lazy" className="w-full h-full object-cover" />}
-      </div>
-      {grid ? (
-        <div className="absolute inset-x-0 bottom-0 rounded-b-xl bg-gradient-to-t from-black/80 to-transparent px-2 pb-1.5 pt-5 text-xs font-semibold text-white truncate">
-          {title}
-        </div>
-      ) : (
-        <div className="pt-1.5 text-sm text-zinc-100 truncate">{title}</div>
-      )}
-    </button>
-  );
-}

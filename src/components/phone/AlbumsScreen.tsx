@@ -6,6 +6,7 @@ import { useServers } from "../../hooks/useServers";
 import type { PhotoItem } from "../../types/lumina";
 import { thumbSrc } from "../../utils/photoHelpers";
 import { orderFolders } from "./BackupScreen";
+import { Card as PhotoCard, photoCount, ROW_CARD, SectionTitle } from "./PhoneParts";
 import { setBackupSettings, usePhoneBackup } from "./usePhoneBackup";
 import { usePhoneFolders } from "./usePhoneFolders";
 import type { Scope } from "./navigation";
@@ -59,8 +60,8 @@ export default function AlbumsScreen({ lib, onOpen }: { lib: LibraryState; onOpe
     <div className="flex-1 overflow-y-auto overscroll-contain pb-6">
       {byServer.map((group) => (
         <div key={group.label}>
-          <Heading>On {group.label}</Heading>
-          <div className="grid grid-cols-2 min-[520px]:grid-cols-3 gap-3 px-3">
+          <SectionTitle>On {group.label}</SectionTitle>
+          <div className="grid grid-cols-2 min-[520px]:grid-cols-3 gap-3 px-4">
             {group.albums.map((a) => {
               const followed = followOf(a.engine, a.realId);
               return (
@@ -68,15 +69,15 @@ export default function AlbumsScreen({ lib, onOpen }: { lib: LibraryState; onOpe
                   <Card
                     cover={byHash.get(a.hashes[0])}
                     title={a.name}
-                    subtitle={`${(lib.albumCounts.get(a.id) ?? 0).toLocaleString()}${a.readOnly ? " · shared with you" : ""}`}
+                    subtitle={`${photoCount(lib.albumCounts.get(a.id) ?? 0)}${a.readOnly ? " · shared with you" : ""}`}
                     badge={a.dynamic ? <Sparkles className="w-3.5 h-3.5 text-indigo-300" /> : a.readOnly ? <Eye className="w-3.5 h-3.5 text-violet-300" /> : null}
                     onClick={() => onOpen(a.name, { album: a.id })}
                   />
                   {onAndroid && a.readOnly && a.engine && a.realId !== undefined && (
                     <button
                       onClick={() => void toggleFollow(a.engine!, a.realId!, a.name)}
-                      className={`mt-1 w-full flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] border ${
-                        followed ? "border-emerald-600/50 text-emerald-300" : "border-zinc-700 text-zinc-300"
+                      className={`mt-1.5 w-full min-h-11 flex items-center justify-center gap-1.5 rounded-full px-3 text-[13px] ${
+                        followed ? "bg-emerald-900/50 text-emerald-200" : "bg-zinc-800 text-zinc-100"
                       }`}
                     >
                       {followed ? <BellRing className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
@@ -91,16 +92,16 @@ export default function AlbumsScreen({ lib, onOpen }: { lib: LibraryState; onOpe
       ))}
       {trips.length > 0 && (
         <>
-          <Heading>Trips and events</Heading>
-          <div className="flex gap-3 overflow-x-auto px-3 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <SectionTitle>Trips and events</SectionTitle>
+          <div className="flex gap-3 overflow-x-auto px-4 pb-1">
             {trips.map((t) => (
-              <div key={t.id} className="w-36 shrink-0">
+              <div key={t.id} className={ROW_CARD}>
                 <Card
                   cover={undefined}
                   coverHash={lib.trips.find((x) => x.id === t.id)?.hashes[0]}
                   byHash={byHash}
                   title={t.label}
-                  subtitle={t.count.toLocaleString()}
+                  subtitle={photoCount(t.count)}
                   onClick={() => onOpen(t.label, { event: t.id })}
                 />
               </div>
@@ -110,8 +111,8 @@ export default function AlbumsScreen({ lib, onOpen }: { lib: LibraryState; onOpe
       )}
       {onAndroid && folders && folders.length > 0 && settings && (
         <>
-          <Heading>On this phone</Heading>
-          <div className="grid grid-cols-2 min-[520px]:grid-cols-3 gap-3 px-3">
+          <SectionTitle>On this phone</SectionTitle>
+          <div className="grid grid-cols-2 min-[520px]:grid-cols-3 gap-3 px-4">
             {orderFolders(folders, settings.folders).map((f) => {
               const on = settings.folders.includes(f.folder);
               const all = f.backed_up >= f.count;
@@ -120,13 +121,13 @@ export default function AlbumsScreen({ lib, onOpen }: { lib: LibraryState; onOpe
                   <Card
                     coverUrl={mediaUrl({ kind: "thumb", hash: "", path: f.cover })}
                     title={f.name}
-                    subtitle={f.count.toLocaleString()}
+                    subtitle={photoCount(f.count)}
                     onClick={() => onOpen(f.name, { folder: f.name, hashes: f.hashes })}
                   />
                   <button
                     onClick={() => toggleBackup(f.folder, !on)}
-                    className={`mt-1 w-full flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] border ${
-                      on ? (all ? "border-emerald-600/50 text-emerald-300" : "border-sky-600/50 text-sky-300") : "border-zinc-700 text-zinc-400"
+                    className={`mt-1.5 w-full min-h-11 flex items-center justify-center gap-1.5 rounded-full px-3 text-[13px] ${
+                      on ? (all ? "bg-emerald-900/50 text-emerald-200" : "bg-sky-900/50 text-sky-200") : "bg-zinc-800 text-zinc-300"
                     }`}
                   >
                     {on ? <CloudCheck className="w-3.5 h-3.5" /> : <CloudOff className="w-3.5 h-3.5" />}
@@ -139,7 +140,7 @@ export default function AlbumsScreen({ lib, onOpen }: { lib: LibraryState; onOpe
         </>
       )}
       {albums.length === 0 && trips.length === 0 && !(folders && folders.length > 0) && (
-        <div className="p-8 text-center text-sm text-zinc-400">No albums yet.</div>
+        <div className="p-8 text-center text-[15px] text-zinc-400">No albums yet.</div>
       )}
     </div>
   );
@@ -151,10 +152,6 @@ interface PhoneFollow {
   album_name: string;
   folder: string;
   photos: number;
-}
-
-function Heading({ children }: { children: React.ReactNode }) {
-  return <h2 className="px-4 pt-5 pb-2 text-sm font-semibold text-zinc-100">{children}</h2>;
 }
 
 function Card({
@@ -178,14 +175,5 @@ function Card({
 }) {
   const photo = cover ?? (coverHash && byHash ? byHash.get(coverHash) : undefined);
   const src = coverUrl ?? (photo?.thumb_ready ? thumbSrc(photo) : null);
-  return (
-    <button onClick={onClick} className="w-full text-left active:opacity-70">
-      <div className="relative aspect-square rounded-xl overflow-hidden bg-zinc-800">
-        {src && <img src={src} alt="" loading="lazy" className="w-full h-full object-cover" />}
-        {badge && <span className="absolute top-1.5 right-1.5 rounded-full bg-zinc-950/80 p-1">{badge}</span>}
-      </div>
-      <div className="pt-1.5 text-sm text-zinc-100 truncate">{title}</div>
-      <div className="text-xs text-zinc-500 tabular-nums truncate">{subtitle}</div>
-    </button>
-  );
+  return <PhotoCard src={src} title={title} sub={subtitle} badge={badge} onClick={onClick} />;
 }

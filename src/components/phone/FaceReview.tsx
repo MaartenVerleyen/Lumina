@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, Loader2, UserPen, UserRound, X } from "lucide-react";
+import { Check, GalleryVerticalEnd, LayoutGrid, Loader2, UserPen, UserRound, X } from "lucide-react";
 import { call, mediaUrl } from "../../api";
+import { confirmDialog } from "../../confirm";
 import type { LibraryState } from "../../hooks/useLibraryState";
 import type { FaceCluster, FaceInstance, SimilarFaceCandidate } from "../../types/lumina";
 import { FaceSheet } from "./PhoneViewer";
@@ -8,6 +9,7 @@ import { Page } from "./PhoneParts";
 import { withFaces } from "./faces";
 import { useBackCloses } from "./navigation";
 import SpotlightPhoto from "../modals/SpotlightPhoto";
+import FaceCards from "./FaceCards";
 
 // The phone app's face review (the People tab): the faces the server thinks are someone already named, to
 // confirm or turn down, and the groups of faces of someone without a name, to name at once. The server works
@@ -15,8 +17,21 @@ import SpotlightPhoto from "../modals/SpotlightPhoto";
 
 // At or above this similarity a suggestion was right every time in face_eval: those start ticked
 const LIKELY = 62;
+// Answering more faces than this at once asks first (a batch is up to 300, all of them likely)
+const ASK_ABOVE = 20;
 
 // The people's counts and covers again once the page closes, by its arrow or by the phone's back
+// One by one (cards to swipe) or the grid: the one used last, remembered on this device
+const MODE_KEY = "lumina_phone_review_mode";
+type ReviewMode = "cards" | "grid";
+function savedMode(): ReviewMode {
+  try {
+    return localStorage.getItem(MODE_KEY) === "grid" ? "grid" : "cards";
+  } catch {
+    return "cards";
+  }
+}
+
 function useRefreshOnLeave(lib: LibraryState) {
   const refresh = useRef(lib.refreshPeople);
   refresh.current = lib.refreshPeople;
@@ -30,14 +45,23 @@ export function ReviewPerson({ lib, name, onBack }: { lib: LibraryState; name: s
   const [error, setError] = useState<string | null>(null);
   // "Someone else": the ticked faces, waiting for their right name
   const [naming, setNaming] = useState<string[] | null>(null);
+  const [mode, setModeState] = useState<ReviewMode>(savedMode);
+  const setMode = (m: ReviewMode) => {
+    setModeState(m);
+    try {
+      localStorage.setItem(MODE_KEY, m);
+    } catch {}
+  };
   const person = lib.people.find((p) => p.name === name);
+  const cardsShown = useRef(false);
 
   useEffect(() => {
     let live = true;
     call<SimilarFaceCandidate[]>("find_similar_faces", { personName: name, rootFolder: null })
       .then((found) => {
         if (!live) return;
-        setCandidates(found);
+        // The likeliest first: the cards go through them in this order, the grid shows them so
+        setCandidates([...found].sort((a, b) => b.similarity - a.similarity));
         setTicked(new Set(found.filter((c) => c.similarity >= LIKELY).map((c) => c.face_id)));
       })
       .catch((e) => live && setError(String(e)));
@@ -58,6 +82,16 @@ export function ReviewPerson({ lib, name, onBack }: { lib: LibraryState; name: s
   const answer = async (yes: boolean) => {
     const ids = [...ticked];
     if (ids.length === 0) return;
+    if (ids.length > ASK_ABOVE) {
+      const n = ids.length.toLocaleString();
+      const ok = await confirmDialog(
+        yes
+          ? `All ${n} ticked faces are ${name}? Lumina names them and looks for more like them. Undo is face by face, in their photos.`
+          : `None of the ${n} ticked faces is ${name}? Lumina won't suggest them for ${name} again.`,
+        { title: yes ? `${n} faces are ${name}` : `${n} faces aren't ${name}`, okLabel: yes ? `Yes, ${n} are ${name}` : `Not ${name}`, cancelLabel: "Check them first" }
+      );
+      if (!ok) return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -94,8 +128,29 @@ export function ReviewPerson({ lib, name, onBack }: { lib: LibraryState; name: s
 
   useRefreshOnLeave(lib);
 
+  const modeButton = candidates && candidates.length > 0 && (
+    <button
+      onClick={() => setMode(mode === "cards" ? "grid" : "cards")}
+      className="flex items-center gap-1.5 px-3 py-2 rounded-full text-xs text-zinc-300 active:bg-white/10"
+      aria-label={mode === "cards" ? "Show all at once" : "One by one"}
+    >
+      {mode === "cards" ? <LayoutGrid className="w-4 h-4" /> : <GalleryVerticalEnd className="w-4 h-4" />}
+      {mode === "cards" ? "All at once" : "One by one"}
+    </button>
+  );
+
+  // Once the cards are on screen they stay, to their own end ("That's all for Emma")
+  if (mode === "cards" && candidates && (candidates.length > 0 || cardsShown.current)) {
+    cardsShown.current = true;
+    return (
+      <Page title={`Is this ${name}?`} onBack={onBack} action={modeButton} fill>
+        <FaceCards lib={lib} name={name} candidates={candidates} setCandidates={setCandidates} likely={LIKELY} onFinished={onBack} />
+      </Page>
+    );
+  }
+
   return (
-    <Page title={`Is this ${name}?`} onBack={onBack}>
+    <Page title={`Is this ${name}?`} onBack={onBack} action={modeButton}>
       <div className="flex items-center gap-3 px-4 pt-4">
         <div className="w-16 h-16 shrink-0 rounded-full overflow-hidden bg-zinc-800 border-2 border-emerald-500/70">
           {person?.cover_thumb ? (
@@ -132,7 +187,7 @@ export function ReviewPerson({ lib, name, onBack }: { lib: LibraryState; name: s
               {ticked.size === candidates.length ? "Untick all" : "Tick all"}
             </button>
           </div>
-          <div className="grid grid-cols-3 min-[520px]:grid-cols-5 gap-2 p-3 pb-28">
+          <div className="grid grid-cols-3 min-[520px]:grid-cols-5 gap-2 p-4 pb-36">
             {candidates.map((c) => {
               const on = ticked.has(c.face_id);
               return (
@@ -152,34 +207,42 @@ export function ReviewPerson({ lib, name, onBack }: { lib: LibraryState; name: s
               );
             })}
           </div>
+          {/* A solid bar, its labels on one line: the two answers side by side, someone else as a link above them */}
           <div
-            className="fixed inset-x-0 bottom-0 z-40 flex gap-2 bg-panel/95 border-t border-zinc-800 px-3 pt-3"
+            className="fixed inset-x-0 bottom-0 z-40 bg-panel border-t border-zinc-800 px-4 pt-1"
             style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 0.75rem)" }}
           >
-            <button
-              disabled={busy || ticked.size === 0}
-              onClick={() => void answer(false)}
-              className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl border border-zinc-700 text-zinc-200 disabled:opacity-40 active:bg-white/5"
-            >
-              <X className="w-4 h-4" />
-              Not {name}
-            </button>
-            <button
-              disabled={busy || ticked.size === 0}
-              onClick={() => setNaming([...ticked])}
-              className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl border border-zinc-700 text-zinc-200 disabled:opacity-40 active:bg-white/5"
-            >
-              <UserPen className="w-4 h-4" />
-              Someone else
-            </button>
-            <button
-              disabled={busy || ticked.size === 0}
-              onClick={() => void answer(true)}
-              className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-emerald-600 text-white font-medium disabled:opacity-40 active:bg-emerald-700"
-            >
-              {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-              {ticked.size > 0 ? `${ticked.size} ${ticked.size === 1 ? "is" : "are"} ${name}` : `Is ${name}`}
-            </button>
+            <div className="flex justify-center">
+              <button
+                disabled={busy || ticked.size === 0}
+                onClick={() => setNaming([...ticked])}
+                className="min-h-11 flex items-center gap-1.5 px-3 rounded-full text-[15px] text-emerald-400 disabled:opacity-40 active:bg-white/5"
+              >
+                <UserPen className="w-4 h-4" />
+                Someone else…
+              </button>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                disabled={busy || ticked.size === 0}
+                onClick={() => void answer(false)}
+                className="min-w-0 min-h-11 flex items-center justify-center gap-1.5 px-3 rounded-full bg-zinc-800 text-[15px] text-zinc-100 disabled:opacity-40 active:bg-zinc-700"
+              >
+                <X className="w-4 h-4 shrink-0" />
+                <span className="truncate">Not {name}</span>
+              </button>
+              <button
+                disabled={busy || ticked.size === 0}
+                onClick={() => void answer(true)}
+                className="min-w-0 min-h-11 flex items-center justify-center gap-1.5 px-3 rounded-full bg-emerald-600 text-[15px] font-semibold text-white disabled:opacity-40 active:bg-emerald-700"
+              >
+                {busy ? <Loader2 className="w-4 h-4 shrink-0 animate-spin" /> : <Check className="w-4 h-4 shrink-0" />}
+                <span className="truncate">
+                  {name}
+                  {ticked.size > 0 ? ` (${ticked.size.toLocaleString()})` : ""}
+                </span>
+              </button>
+            </div>
           </div>
         </>
       )}
@@ -244,9 +307,9 @@ export function UnnamedGroups({ lib, onBack }: { lib: LibraryState; onBack: () =
 
   return (
     <Page title="Without a name" onBack={onBack}>
-      <p className="px-4 pt-4 text-sm text-zinc-300">
+      <p className="px-4 pt-4 text-[15px] text-zinc-300">
         {groups === null
-          ? "Grouping the faces without a name…"
+          ? "Grouping the faces without a name… This can take a minute when the server is busy."
           : groups.length === 0
             ? "Every face that comes back often has a name."
             : "Faces that look like the same person. Name a group and the faces shown get that name; tap a face that is someone else to leave it out."}

@@ -4,6 +4,7 @@ import { allPhotosCanBackUp, allPhotosSources, call, callLocal, canEditPhoto, me
 import { whereabouts, type Source } from "../../api/allPhotos";
 import { useServers } from "../../hooks/useServers";
 import { openWith, saveToPhone, serverOf, sharePhotos } from "./share";
+import { Button } from "./PhoneParts";
 import type { FaceInstance, PersonItem, PhotoItem } from "../../types/lumina";
 import { formatBytes, thumbSrc } from "../../utils/photoHelpers";
 import { isVideo } from "../../utils/media";
@@ -255,7 +256,7 @@ export default function PhoneViewer({
           <div className="flex-1 min-w-0 text-white">
             <div className="text-sm font-semibold truncate">{capturedLabel(photo.captured_at) || photo.name}</div>
             <div className="text-[11px] text-zinc-300 truncate">
-              {index + 1} of {photos.length}
+              {(index + 1).toLocaleString()} of {photos.length.toLocaleString()}
               {photo.location ? ` · ${photo.location}` : ""}
             </div>
           </div>
@@ -345,7 +346,7 @@ function Menu({ photo, onClose, onAction, canShowFolder }: { photo: PhotoItem; o
   useBackCloses(onClose);
   const where = whereOf(photo);
   const items: { what: Action; label: string; icon: typeof Share2 }[] = [
-    { what: "share", label: "Share", icon: Share2 },
+    // Share has its own button in the header
     ...(serverOf(photo) && !where?.phone ? [{ what: "save" as const, label: "Download to this phone", icon: Download }] : []),
     ...(where?.where === "not-backed-up" ? [{ what: "backup" as const, label: "Back up now", icon: CloudUpload }] : []),
     { what: "open", label: "Open with…", icon: ExternalLink },
@@ -475,13 +476,13 @@ function Details({
     <div data-viewer-chrome className="absolute inset-0 flex flex-col justify-end" onClick={onClose}>
       <div
         onClick={(e) => e.stopPropagation()}
-        className="max-h-[70%] overflow-y-auto rounded-t-2xl bg-raised border-t border-zinc-700/80 px-4 pt-3 text-sm text-zinc-200"
+        className="max-h-[70%] overflow-y-auto rounded-t-2xl bg-raised border-t border-zinc-700/80 px-4 pt-3 text-[15px] text-zinc-200"
         style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 1rem)" }}
       >
         <div className="flex items-center justify-between">
           <div className="min-w-0">
-            <div className="font-semibold text-zinc-100 truncate">{photo.name}</div>
-            <div className="text-xs text-zinc-400">
+            <div className="text-[17px] font-semibold text-zinc-100 truncate">{photo.name}</div>
+            <div className="text-[13px] text-zinc-400">
               {capturedLabel(photo.captured_at) || "No date"}
               {photo.width > 0 && ` · ${photo.width} × ${photo.height}`}
             </div>
@@ -491,7 +492,7 @@ function Details({
           </button>
         </div>
         {where && (
-          <div className="mt-3 flex items-center gap-2 text-xs text-zinc-300">
+          <div className="mt-3 flex items-center gap-2 text-[13px] text-zinc-300">
             {where.where === "not-backed-up" ? (
               <CloudOff className="w-4 h-4 text-amber-400 shrink-0" />
             ) : where.phone ? (
@@ -507,40 +508,42 @@ function Details({
                   : `Only on ${where.servers.map(labelOf).join(", ")}`}
             </span>
             {onAndroid && where.where === "not-backed-up" && (
-              <button onClick={() => onAction("backup")} className="px-2.5 py-1 rounded-full bg-amber-500/15 border border-amber-500/40 text-amber-200 active:bg-amber-500/30">
+              <Button kind="primary" onClick={() => onAction("backup")}>
                 Back up now
-              </button>
+              </Button>
             )}
-            {onAndroid && !where.phone && (
-              <button onClick={() => onAction("save")} className="px-2.5 py-1 rounded-full bg-zinc-800 border border-zinc-700 text-zinc-200 active:bg-zinc-700">
-                Download
-              </button>
-            )}
+            {onAndroid && !where.phone && <Button onClick={() => onAction("save")}>Download</Button>}
           </div>
         )}
-        <div className="mt-2 flex items-center gap-2 text-xs text-zinc-300">
+        <div className="mt-2 flex items-center gap-2 text-[13px] text-zinc-300">
           <FileImage className="w-4 h-4 text-emerald-400 shrink-0" />
           <span className="truncate">
-            {[photo.name, photo.size_kb > 0 ? formatBytes(photo.size_kb * 1024) : "", photo.width > 0 ? `${((photo.width * photo.height) / 1e6).toFixed(1)} MP` : ""]
+            {/* The name is the sheet's title already */}
+            {[photo.size_kb > 0 ? formatBytes(photo.size_kb * 1024) : "", photo.width > 0 ? `${((photo.width * photo.height) / 1e6).toFixed(1)} MP` : ""]
               .filter(Boolean)
               .join(" · ")}
           </span>
         </div>
         {photo.location && (
-          <div className="mt-2 flex items-center gap-2 text-xs text-zinc-300">
+          <div className="mt-2 flex items-center gap-2 text-[13px] text-zinc-300">
             <MapPin className="w-4 h-4 text-emerald-400 shrink-0" />
             {photo.location}
           </div>
         )}
         {(photo.camera_model || exposure) && (
-          <div className="mt-2 flex items-center gap-2 text-xs text-zinc-300">
+          <div className="mt-2 flex items-center gap-2 text-[13px] text-zinc-300">
             <Camera className="w-4 h-4 text-emerald-400 shrink-0" />
-            <span>{[photo.camera_model, photo.lens_model, exposure].filter(Boolean).join(" · ")}</span>
+            {/* A phone's lens name starts with its model already ("OnePlus 13R back camera 24mm f/1.8") */}
+            <span>
+              {[photo.lens_model && photo.camera_model && photo.lens_model.startsWith(photo.camera_model) ? "" : photo.camera_model, photo.lens_model, exposure]
+                .filter(Boolean)
+                .join(" · ")}
+            </span>
           </div>
         )}
         {shownFaces.length > 0 && (
           <div className="mt-4">
-            <div className="text-xs text-zinc-500 mb-2">People</div>
+            <div className="text-[13px] text-zinc-500 mb-2">People</div>
             <div className="flex gap-3 overflow-x-auto pb-1">
               {shownFaces.map((f) => (
                 <button

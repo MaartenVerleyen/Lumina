@@ -1,6 +1,6 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { Check, Cloud, CloudOff, Eye, Loader2, Play, RefreshCw } from "lucide-react";
+import { Check, CloudOff, Eye, Loader2, Play, RefreshCw } from "lucide-react";
 import type { PhotoItem } from "../../types/lumina";
 import { allPhotosCanBackUp, allPhotosHasLocal, allPhotosSources } from "../../api";
 import { whereabouts } from "../../api/allPhotos";
@@ -546,10 +546,6 @@ const Thumb = memo(function Thumb({
       ) : mark === "phone" ? (
         <Badge className="text-amber-300 border-amber-400/60" small={small}>
           <CloudOff className="w-full h-full" />
-        </Badge>
-      ) : mark === "server" ? (
-        <Badge className="text-sky-300 border-sky-400/50" small={small}>
-          <Cloud className="w-full h-full" />
         </Badge>
       ) : mark === "shared" ? (
         <Badge className="text-violet-300 border-violet-400/50" small={small}>

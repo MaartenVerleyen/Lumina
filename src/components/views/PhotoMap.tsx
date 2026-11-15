@@ -95,7 +95,17 @@ function ClusteredMarkers({ photos, onSelectPhoto }: { photos: GpsPhoto[]; onSel
   );
 
   useEffect(() => {
-    const group = L.markerClusterGroup({ showCoverageOnHover: false, maxClusterRadius: 50, chunkedLoading: true });
+    const group = L.markerClusterGroup({
+      showCoverageOnHover: false,
+      maxClusterRadius: 50,
+      chunkedLoading: true,
+      // The plugin's own look, with the count written as every count in Lumina ("13.202", not "13202")
+      iconCreateFunction: (cluster) => {
+        const n = cluster.getChildCount();
+        const size = n < 10 ? "small" : n < 100 ? "medium" : "large";
+        return L.divIcon({ html: `<div><span>${n.toLocaleString()}</span></div>`, className: `marker-cluster marker-cluster-${size}`, iconSize: L.point(40, 40) });
+      },
+    });
     clusterRef.current = group;
     map.addLayer(group);
     return () => {

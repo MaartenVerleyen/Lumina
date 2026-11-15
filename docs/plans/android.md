@@ -276,3 +276,114 @@ library of yours from the desktop instead.
 - The app looks for a newer release once a day (`phone_update.rs`, GitHub's latest release): a dot on the account
   button, "Lumina X is out" with the notes and Update in Settings → About; the APK is downloaded into the cache
   and handed to Android's installer (`REQUEST_INSTALL_PACKAGES`).
+
+## Next: checking faces one by one, and a polish pass
+
+Status: proposal for Maarten to read and agree to (2026-11-15); work starts when the phone is connected to this
+PC again. No server change: both are the Android app's screens (`src/components/phone/`), the web client's phone
+layout gets them too.
+
+### Checking faces one by one
+
+Today **Is this Emma?** (People → a person with faces to check, `ReviewPerson` in `FaceReview.tsx`) is a grid:
+tick faces, then Not Emma, Someone else or N are Emma. It stays, for clearing many at once. Next to it comes a
+full-screen mode, one face at a time, made to be quick with one thumb:
+
+```
+┌──────────────────────────────┐
+│ ←  Is this Emma?      12 / 40│
+│                              │
+│   ┌──────────────────────┐   │
+│   │                      │   │
+│   │   the face, large    │   │
+│   │                      │   │
+│   └──────────────────────┘   │
+│   Likely · IMG_2041.jpg      │
+│   [ the whole photo, small,  │
+│     the face boxed ]         │
+│                              │
+│    ✕         ↑         ✓     │
+│   Not      Someone    Emma   │
+│            else              │
+│           ↶ Undo             │
+└──────────────────────────────┘
+```
+
+- **Swipe right: Emma.** **Swipe left: not Emma.** **Swipe up: someone else**, which opens the sheet already used
+  for that (`FaceSheet`: name suggestions, type a name); picking a name gives the face to them and turns it down
+  for Emma, as the grid does. The three buttons under the card do the same, for whoever doesn't swipe.
+- **While dragging** the card follows the finger, turns a little (up to about 12°) and colours: green with "Emma"
+  to the right, red with "Not Emma" to the left, blue with "Someone else" upwards. Let go past about a third of the
+  screen (or with a quick flick) and it flies off with a short vibration (`phone_haptic`); short of that it
+  springs back.
+- **Each answer is saved at once**, one face per call (`assign_faces_to_person_batch`,
+  `reject_face_candidates_batch`), so nothing is lost when the app is closed halfway. **Undo** brings the last
+  card back and takes the answer back on the server (`unassign_faces_batch`, `unreject_face_candidates_batch`);
+  it goes back several cards, one at a time.
+- **The card** shows the face crop large, how sure the server is (Likely / Maybe, as the grid), a face that has
+  another name now ("Now Anna") and, below it, the whole photo with the face boxed (the suggestion has the photo
+  and the box). A tap opens the photo full screen (`SpotlightPhoto`), for when the face alone doesn't say.
+- **Order:** the likeliest first. The next few faces are loaded ahead, so the next card is there at once.
+- **The end:** "That's all for Emma" with how many were confirmed and turned down, and Done. The person's count on
+  People goes down as you go (`reducePendingCount`), as it does now.
+- **Getting there:** on Is this Emma?, a **One by one** button at the top; the app remembers which of the two you
+  used last and opens that one next time. The "N more faces might be Emma" banner on a person's photos opens it
+  too.
+
+Later, if it works well: the same cards for **Who is this?** (groups of faces without a name: swipe up to name,
+left for not a face).
+
+### Polish pass
+
+Buttons and text don't always look finished. With the phone connected:
+
+1. **Inventory.** A screenshot of every screen on the phone (`adb exec-out screencap`), in a page to look at
+   together: Photos (grid, header, chips, selection bar), the viewer and its details, Search, People, Is this …?,
+   Who is this?, Albums, Places, Backup, Free up space, Settings, sign-in, and the empty, loading and error
+   states. For each, what is off: sizes, spacing, alignment, contrast, wording, things under the notch or the
+   gesture bar.
+2. **A few rules**, agreed with Maarten before changing anything, and kept in one place (`PhoneParts.tsx`):
+   - one primary button style (filled), one secondary (outlined) and one quiet (text), each at least 44 px high
+     to tap;
+   - a type scale of three or four sizes (title, body, small, tiny) instead of the many sizes used now;
+   - one page header (back arrow, title, at most two actions), one sheet style, one list-row style;
+   - 16 px side margins, safe areas on every screen.
+3. **Apply them screen by screen**, with a screenshot before and after each, checked on the phone.
+
+### Checks
+
+- On the OnePlus 8T over USB (`npm run tauri android dev`), against cachy and against a test server: swipes,
+  buttons, undo across several cards, closing the app halfway and opening it again.
+- A test for the swipe decision (how far and how fast counts as an answer) in `tests/`; `npm test` and
+  `npx tsc --noEmit`.
+- The web client's phone layout in a narrow browser window still works the same.
+
+### What needs Maarten
+
+- The phone plugged in with USB debugging on.
+- Agreeing the polish rules after the inventory, before they are applied.
+
+### The rules, as agreed (2026-11-15, after the inventory)
+
+The inventory (12 screens on the OnePlus 8T) found the same few problems on many screens. Maarten agreed these:
+
+1. **One number format:** every count with thousands separators (`toLocaleString`), also in the viewer, map and face counts.
+2. **Three button styles:** filled green for the main action, grey for the others, green text for small links; at
+   least 44 px high, with a word, not only an icon (icon-only stays for the standard header icons: back, share, ⋮).
+   In `PhoneParts.tsx` (`Button`).
+3. **Four text sizes:** page title, body, secondary, caption.
+4. **One header for every page:** back arrow (or the logo on a tab), title, at most two actions.
+5. **One card style** for albums, trips, places and things: the same size in a row, label under the picture, the
+   count as "15 photos".
+6. **16 px side margins**, cards lined up under their section title.
+7. **Action bars at the bottom:** a solid background, labels on one line.
+8. **Marks only when they tell something:** no cloud on every tile when nothing shown is on the phone; while
+   selecting, the select circle instead of the cloud.
+9. **Dark everywhere:** no desktop scrollbars, dark map controls, the map opens on where the photos are.
+10. **Long waits say so** ("Grouping faces… this can take a minute when the server is busy").
+
+Also agreed: the details sheet shows the file name and camera once; Share only in the viewer's header; Backup's
+"Videos too" greys out with the others while backup is off, and Backup gets a status line; Settings' sign out gets
+its word, "1 · 92 KB" becomes "1 photo · 92 KB", the cache size a normal setting. "300 faces to check" stays (the
+server sends suggestions in batches of 300). In "Is this …? → All at once" only likely faces start ticked, and
+confirming many at once asks first.

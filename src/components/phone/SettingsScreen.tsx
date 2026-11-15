@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
-import { Cloud, Download, Loader2, LogOut, Plus, Server, Smartphone, Trash2 } from "lucide-react";
+import { Cloud, Download, HardDrive, Loader2, LogOut, Plus, Server, Smartphone, Trash2 } from "lucide-react";
 import { allPhotosOnServer, callLocal, onAndroid } from "../../api";
 import { getVersion } from "../../api/platform";
 import { connectServer, removeServer, signOutServer, useServers } from "../../hooks/useServers";
 import { formatBytes } from "../../utils/photoHelpers";
-import { Page, Section } from "./PhoneParts";
+import { Button, Page, Section, T } from "./PhoneParts";
 import { checkForUpdate, useUpdate } from "./useUpdate";
 
 // The phone app's Settings (docs/plans/android-app-ui.md), opened from the header's account button: the servers,
@@ -17,6 +17,20 @@ export default function SettingsScreen({ onBack }: { onBack: () => void }) {
       <StorageSection />
       <AboutSection />
     </Page>
+  );
+}
+
+// A setting's row: its icon, what it is and a line about it, and at most one button
+function Row({ icon, title, sub, children }: { icon: React.ReactNode; title: string; sub?: React.ReactNode; children?: React.ReactNode }) {
+  return (
+    <div className="flex items-center gap-3 py-2.5">
+      <span className="shrink-0 text-zinc-400">{icon}</span>
+      <div className="flex-1 min-w-0">
+        <div className={`${T.body} text-zinc-100`}>{title}</div>
+        {sub && <div className={`pt-0.5 ${T.secondary}`}>{sub}</div>}
+      </div>
+      {children}
+    </div>
   );
 }
 
@@ -39,33 +53,29 @@ function ServersSection() {
   return (
     <Section title="Servers">
       {servers.map((s) => (
-        <div key={s.id} className="flex items-center gap-3 py-2">
-          <Server className="w-5 h-5 text-zinc-400 shrink-0" />
-          <div className="flex-1 min-w-0">
-            <div className="text-sm text-zinc-100 truncate">{s.label}</div>
-            <div className="text-[11px] text-zinc-500 truncate">{s.signed_in ? `${s.user} · ${s.role}` : "Signed out"}</div>
-          </div>
+        <Row key={s.id} icon={<Server className="w-5 h-5" />} title={s.label} sub={s.signed_in ? `${s.user} · ${s.role}` : "Signed out"}>
           {busy === s.id ? (
-            <Loader2 className="w-4 h-4 animate-spin text-zinc-400" />
+            <Loader2 className="w-5 h-5 animate-spin text-zinc-400" />
           ) : s.signed_in ? (
-            <button onClick={() => run(s.id, () => signOutServer(s.id))} className="p-2 rounded-full text-zinc-400 active:bg-white/10" aria-label={`Sign out of ${s.label}`}>
-              <LogOut className="w-4 h-4" />
-            </button>
+            <Button icon={<LogOut className="w-4 h-4" />} onClick={() => run(s.id, () => signOutServer(s.id))}>
+              Sign out
+            </Button>
           ) : (
-            <button onClick={() => run(s.id, () => removeServer(s.id))} className="p-2 rounded-full text-zinc-400 active:bg-white/10" aria-label={`Remove ${s.label}`}>
-              <Trash2 className="w-4 h-4" />
-            </button>
+            <Button icon={<Trash2 className="w-4 h-4" />} onClick={() => run(s.id, () => removeServer(s.id))}>
+              Remove
+            </Button>
           )}
-        </div>
+        </Row>
       ))}
-      {error && <div className="text-xs text-red-300 pb-1">{error}</div>}
+      {error && <div className="pb-1 text-[13px] text-red-300">{error}</div>}
       {adding ? (
         <AddServer onDone={() => setAdding(false)} />
       ) : (
-        <button onClick={() => setAdding(true)} className="flex items-center gap-2 py-2 text-sm text-emerald-400">
-          <Plus className="w-4 h-4" />
-          Sign in to a server
-        </button>
+        <div className="-ml-4">
+          <Button kind="text" icon={<Plus className="w-4 h-4" />} onClick={() => setAdding(true)}>
+            Sign in to a server
+          </Button>
+        </div>
       )}
     </Section>
   );
@@ -98,14 +108,18 @@ function AddServer({ onDone }: { onDone: () => void }) {
       <input className={field} placeholder="Address (cachy.tailnet.ts.net)" value={url} onChange={(e) => setUrl(e.target.value)} autoCapitalize="off" autoCorrect="off" />
       <input className={field} placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} autoCapitalize="off" autoCorrect="off" />
       <input className={field} placeholder="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
-      {error && <div className="text-xs text-red-300">{error}</div>}
+      {error && <div className="text-[13px] text-red-300">{error}</div>}
       <div className="flex gap-2 pt-1">
-        <button type="button" onClick={onDone} className="flex-1 py-2.5 rounded-full bg-zinc-800 text-sm text-zinc-200">
-          Cancel
-        </button>
-        <button type="submit" disabled={busy || !url || !name || !password} className="flex-1 py-2.5 rounded-full bg-emerald-600 text-sm font-semibold text-white disabled:opacity-50">
-          {busy ? "Signing in…" : "Sign in"}
-        </button>
+        <div className="flex-1 flex">
+          <Button wide onClick={onDone}>
+            Cancel
+          </Button>
+        </div>
+        <div className="flex-1 flex">
+          <Button wide kind="primary" type="submit" disabled={busy || !url || !name || !password}>
+            {busy ? "Signing in…" : "Sign in"}
+          </Button>
+        </div>
       </div>
     </form>
   );
@@ -122,41 +136,34 @@ function StorageSection() {
   useEffect(load, []);
   return (
     <Section title="On this phone">
-      <div className="flex items-center gap-3 py-2">
-        <Smartphone className="w-5 h-5 text-zinc-400 shrink-0" />
-        <div className="flex-1 min-w-0">
-          <div className="text-sm text-zinc-100">Thumbnails of the phone's photos</div>
-          <div className="text-[11px] text-zinc-500">{thumbs ? `${thumbs.count.toLocaleString()} · ${formatBytes(thumbs.bytes)}` : "…"}</div>
-        </div>
-        <button onClick={() => callLocal("clear_phone_thumbs").then(load)} className="px-3 py-1.5 rounded-full bg-zinc-800 text-xs text-zinc-200">
-          Clear
-        </button>
-      </div>
-      <div className="flex items-center gap-3 py-2">
-        <Cloud className="w-5 h-5 text-zinc-400 shrink-0" />
-        <div className="flex-1 min-w-0">
-          <div className="text-sm text-zinc-100">Server photos kept for viewing</div>
-          <div className="text-[11px] text-zinc-500">
-            {remote ? `${formatBytes(remote.bytes)} of ` : "… of "}
-            <select
-              value={remote?.limit_mb ?? 2048}
-              onChange={(e) => callLocal("set_remote_cache_limit", { limitMb: Number(e.target.value) }).then(load)}
-              className="bg-transparent text-emerald-400 underline"
-              aria-label="How much the server photos kept may take"
-            >
-              {LIMITS_MB.concat(remote && !LIMITS_MB.includes(remote.limit_mb) ? [remote.limit_mb] : []).map((mb) => (
-                <option key={mb} value={mb}>
-                  {formatBytes(mb * 1024 * 1024)}
-                </option>
-              ))}
-            </select>
-            {" · the oldest go first"}
-          </div>
-        </div>
-        <button onClick={() => callLocal("clear_remote_cache").then(load)} className="px-3 py-1.5 rounded-full bg-zinc-800 text-xs text-zinc-200">
-          Clear
-        </button>
-      </div>
+      <Row
+        icon={<Smartphone className="w-5 h-5" />}
+        title="Thumbnails of the phone's photos"
+        sub={thumbs ? `${thumbs.count.toLocaleString()} ${thumbs.count === 1 ? "photo" : "photos"} · ${formatBytes(thumbs.bytes)}` : "…"}
+      >
+        <Button onClick={() => void callLocal("clear_phone_thumbs").then(load)}>Clear</Button>
+      </Row>
+      <Row
+        icon={<Cloud className="w-5 h-5" />}
+        title="Server photos kept for viewing"
+        sub={remote ? `${formatBytes(remote.bytes)} kept` : "…"}
+      >
+        <Button onClick={() => void callLocal("clear_remote_cache").then(load)}>Clear</Button>
+      </Row>
+      <Row icon={<HardDrive className="w-5 h-5" />} title="Space for them" sub="When it's full, the oldest go">
+        <select
+          value={remote?.limit_mb ?? 2048}
+          onChange={(e) => void callLocal("set_remote_cache_limit", { limitMb: Number(e.target.value) }).then(load)}
+          className="min-h-11 shrink-0 rounded-full bg-zinc-800 px-4 text-[15px] text-zinc-100 outline-none"
+          aria-label="Space for server photos kept for viewing"
+        >
+          {LIMITS_MB.concat(remote && !LIMITS_MB.includes(remote.limit_mb) ? [remote.limit_mb] : []).map((mb) => (
+            <option key={mb} value={mb}>
+              {formatBytes(mb * 1024 * 1024)}
+            </option>
+          ))}
+        </select>
+      </Row>
       {servers.filter((x) => x.signed_in).map((x) => (
         <KeepAll key={x.id} server={x.id} label={x.label} onChange={load} />
       ))}
@@ -202,25 +209,20 @@ function KeepAll({ server, label, onChange }: { server: string; label: string; o
   };
   const finished = p && !p.running && p.total > 0;
   return (
-    <div className="py-2">
-      <div className="flex items-center gap-3">
-        <Download className="w-5 h-5 text-zinc-400 shrink-0" />
-        <div className="flex-1 min-w-0">
-          <div className="text-sm text-zinc-100">Keep all thumbnails of {label}</div>
-          <div className="text-[11px] text-zinc-500">
-            {ids.length.toLocaleString()} photos · about {formatBytes(ids.length * 50 * 1024)} · to look through without a connection
-          </div>
-        </div>
+    <div>
+      <Row
+        icon={<Download className="w-5 h-5" />}
+        title={`Keep all thumbnails of ${label}`}
+        sub={`${ids.length.toLocaleString()} photos · about ${formatBytes(ids.length * 50 * 1024)} · to look through without a connection`}
+      >
         {p?.running ? (
-          <button onClick={() => callLocal("stop_keep_thumbs")} className="px-3 py-1.5 rounded-full bg-zinc-800 text-xs text-zinc-200">
-            Stop
-          </button>
+          <Button onClick={() => void callLocal("stop_keep_thumbs")}>Stop</Button>
         ) : (
-          <button onClick={start} disabled={ids.length === 0} className="px-3 py-1.5 rounded-full bg-emerald-700 text-xs text-white disabled:opacity-50">
+          <Button onClick={() => void start()} disabled={ids.length === 0}>
             Keep
-          </button>
+          </Button>
         )}
-      </div>
+      </Row>
       {p?.running && p.total > 0 && (
         <div className="pt-2 pl-8">
           <div className="h-1.5 rounded-full bg-zinc-800 overflow-hidden">
@@ -280,11 +282,11 @@ function AboutSection() {
   };
   return (
     <Section title="About">
-      <div className="py-2 text-sm text-zinc-200">Lumina {version}</div>
+      <div className={`py-2 ${T.body}`}>Lumina {version}</div>
       {onAndroid && update ? (
         <div className="py-1">
           <div className="text-sm text-emerald-300">Lumina {update.version} is out</div>
-          {update.notes && <div className="pt-1 text-[11px] text-zinc-400 whitespace-pre-line line-clamp-6">{update.notes}</div>}
+          {update.notes && <div className={`pt-1 whitespace-pre-line line-clamp-6 ${T.secondary}`}>{update.notes}</div>}
           {installing ? (
             <div className="pt-2">
               <div className="h-1.5 rounded-full bg-zinc-800 overflow-hidden">
@@ -295,23 +297,25 @@ function AboutSection() {
               </div>
             </div>
           ) : (
-            <button onClick={install} className="mt-2 w-full py-2.5 rounded-full bg-emerald-600 text-sm font-semibold text-white">
-              Update ({formatBytes(update.size)})
-            </button>
+            <div className="mt-2 flex">
+              <Button wide kind="primary" onClick={() => void install()}>
+                Update ({formatBytes(update.size)})
+              </Button>
+            </div>
           )}
           {installError && <div className="pt-1 text-[11px] text-red-300">{installError}</div>}
         </div>
       ) : onAndroid ? (
-        <div className="flex items-center gap-2 pb-1 text-[11px] text-zinc-500">
-          <span className="flex-1">
+        <div className="flex items-center gap-2 pb-1">
+          <span className={`flex-1 ${T.secondary}`}>
             {checking ? "Looking for updates…" : error ? error : checkedAt ? "This is the latest version." : ""}
           </span>
-          <button onClick={() => void checkForUpdate(true)} disabled={checking} className="text-emerald-400">
+          <Button kind="text" onClick={() => void checkForUpdate(true)} disabled={checking}>
             Check now
-          </button>
+          </Button>
         </div>
       ) : null}
-      <div className="pb-1 text-[11px] text-zinc-500">Your photos on your own server. Photos on this phone are never changed by Lumina.</div>
+      <div className={`pb-1 ${T.caption}`}>Your photos on your own server. Photos on this phone are never changed by Lumina.</div>
     </Section>
   );
 }
