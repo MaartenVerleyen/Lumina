@@ -215,12 +215,18 @@ test("smart search hits from two engines count once, with the best score", () =>
 });
 
 test("marks: not backed up only where there is a server to back up to", () => {
-  const at = (...keys: Source[]) => ({ copies: keys.map(sourceKey) });
+  const at = (...keys: Source[]) => ({ hash: "x", copies: keys.map(sourceKey) });
   assert.equal(whereabouts(at(pc), sources, true), "not-backed-up");
   assert.equal(whereabouts(at(pc), sources, false), "this-pc");
   assert.equal(whereabouts(at(pc, cachy), sources, true), "both");
   assert.equal(whereabouts(at(cachy), sources, true), "server-only");
   assert.equal(whereabouts(at(shared), sources, false), "server-only");
+});
+
+test("a server's photo downloaded to this PC counts as on this PC too", () => {
+  const onServer = { hash: "x", copies: [sourceKey(cachy)] };
+  assert.equal(whereabouts(onServer, sources, true, new Set(["x"])), "both");
+  assert.equal(whereabouts(onServer, sources, true, new Set(["y"])), "server-only");
 });
 
 test("a library switched off in Settings is left out", () => {

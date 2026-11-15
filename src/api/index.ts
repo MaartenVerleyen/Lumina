@@ -742,6 +742,10 @@ function loadAll(check?: string[], reuseServers = false): Promise<PhotoItem[]> {
 // Each engine's faces-to-check counts as it last gave them (All photos)
 const lastPendingCounts = new Map<string, Record<string, number>>();
 
+// Where each photo of the duplicate sets last found in All photos came from: the engine that found the set and the
+// photo's id there, so staging the extras goes back to that library (a set never spans two libraries)
+const duplicateHomes = new Map<string, { engine: string; id: string }>();
+
 // Each server library's list as the last load fetched it. A server answers from its database, so a load that
 // only checks this computer's folders (the background check after opening) reuses these: a large library's
 // list is tens of megabytes.
@@ -1265,6 +1269,22 @@ async function callAll<T>(command: string, args: Record<string, unknown>): Promi
       const hits = await engineTransport(engine).call<SemanticHit[]>(command, { ...args, hash });
       return (engine === "" ? hits.map((h) => ({ ...h, hash: all.fromLocal.get(h.hash) ?? h.hash })) : hits) as T;
     }
+    // The extras of duplicate sets, each set staged in the library that found it
+    case "stage_duplicate_extras": {
+      const byEngine = new Map<string, { keep: string; extras: string[] }[]>();
+      for (const set of args.sets as { keep: string; extras: string[] }[]) {
+        const home = duplicateHomes.get(set.keep);
+        if (!home) throw new Error("The list of duplicates is out of date: find them again.");
+        const id = (h: string) => duplicateHomes.get(h)?.id ?? h;
+        const list = byEngine.get(home.engine) ?? [];
+        list.push({ keep: id(set.keep), extras: set.extras.map(id) });
+        byEngine.set(home.engine, list);
+      }
+      const counts = await Promise.all(
+        [...byEngine].map(([engine, sets]) => engineTransport(engine).call<number>(command, { ...args, sets }))
+      );
+      return counts.reduce((n, c) => n + (Number(c) || 0), 0) as T;
+    }
     // Trip names of every library (a new one is kept where the window's own commands go)
     case "get_trip_names": {
       const maps = await Promise.all(engines().map((e) => engineTransport(e).call<Record<string, string>>(command).catch(() => ({}))));
@@ -1333,10 +1353,15 @@ async function perLibrary(command: string, args: Record<string, unknown>): Promi
     );
   }
   // find_duplicates: sets of photos, by All photos' ids
+  duplicateHomes.clear();
   return answers.flatMap(({ engine, answer }) =>
     ((answer as { kind: string; hashes: string[] }[]) ?? []).map((set) => ({
       ...set,
-      hashes: engine === "" ? set.hashes.map((h) => all.fromLocal.get(h) ?? h) : set.hashes,
+      hashes: set.hashes.map((h) => {
+        const shown = engine === "" ? all.fromLocal.get(h) ?? h : h;
+        duplicateHomes.set(shown, { engine, id: h });
+        return shown;
+      }),
     }))
   );
 }

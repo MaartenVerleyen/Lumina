@@ -530,6 +530,8 @@ function BackUpButton({ lib }: { lib: LibraryState }) {
 
 function WhereFilter({ lib }: { lib: LibraryState }) {
   const isAll = openLibraryIsAll();
+  // Server photos downloaded to this PC count as on this PC
+  const downloaded = useOnDeviceSet();
   const canBackUp = allPhotosCanBackUp();
   const label = lib.hashFilter?.label;
   const current = WHERE.find((w) => w.value !== "all" && w.text === label)?.value ?? "all";
@@ -540,13 +542,13 @@ function WhereFilter({ lib }: { lib: LibraryState }) {
       return;
     }
     const sources = allPhotosSources();
-    const hashes = lib.photos.filter((p) => choice.matches(whereabouts(p, sources, canBackUp))).map((p) => p.hash);
+    const hashes = lib.photos.filter((p) => choice.matches(whereabouts(p, sources, canBackUp, downloaded))).map((p) => p.hash);
     lib.setHashFilter({ label: choice.text, hashes: new Set(hashes) });
   };
   useEffect(() => {
     if (isAll && current !== "all") apply(current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lib.photos]);
+  }, [lib.photos, downloaded]);
   if (!isAll || !allPhotosHasLocal()) return null;
   return (
     <div className="flex bg-zinc-900 border border-zinc-800 rounded-lg p-0.5 text-[11px]" role="group" aria-label="Where the photos are">

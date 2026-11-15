@@ -225,9 +225,15 @@ export function mergeStatus(list: SemanticStatus[]): SemanticStatus {
 // Where a photo is, for its mark in the grid and the Where filter
 export type Whereabouts = "not-backed-up" | "this-pc" | "server-only" | "both";
 
-export function whereabouts(p: Pick<PhotoItem, "copies">, sources: Map<string, Source>, canBackUp: boolean): Whereabouts {
+// `downloaded`: server photos whose original was downloaded to this PC (outside a library), which count as here too
+export function whereabouts(
+  p: Pick<PhotoItem, "copies" | "hash">,
+  sources: Map<string, Source>,
+  canBackUp: boolean,
+  downloaded?: ReadonlySet<string>
+): Whereabouts {
   const found = (p.copies ?? []).map((k) => sources.get(k)).filter((s): s is Source => !!s);
-  const local = found.some((s) => s.server === null);
+  const local = found.some((s) => s.server === null) || Boolean(downloaded?.has(p.hash));
   const server = found.some((s) => s.server !== null);
   if (local && server) return "both";
   if (server) return "server-only";
