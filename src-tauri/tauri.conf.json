@@ -1,6 +1,6 @@
 {
   "productName": "Lumina",
-  "version": "6.2.0",
+  "version": "6.2.1",
   "identifier": "com.amazhr.lumina",
   "build": {
     "beforeDevCommand": "npm run dev",
