@@ -42,7 +42,20 @@ export const platform = {
   get libraryJobs() {
     return openLibraryIsLocal();
   },
+  // The web client exports and downloads as zips the server makes, which the browser saves as downloads
+  browserDownloads: !inDesktopApp,
 };
+
+// Saves what is at `url` (the server's, with the session cookie) as the browser saves a download
+export function browserDownload(url: string) {
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "";
+  a.rel = "noopener";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
 
 const noComputer = () => Promise.reject("Not available in the browser");
 

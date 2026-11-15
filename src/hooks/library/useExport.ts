@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
-import { call, callLocal, originalsOf, subscribe, subscribeLocal } from "../../api";
+import { call, callLocal, exportZipUrl, inDesktopApp, makeExportZip, originalsOf, subscribe, subscribeLocal } from "../../api";
+import { browserDownload } from "../../api/platform";
 import { ExportProgress, ExportResult, PhotoItem } from "../../types/lumina";
 import type { ExportSettings } from "../../components/modals/ExportModal";
 import type { GallerySettings } from "../../components/modals/GalleryModal";
@@ -74,10 +75,47 @@ export function useExport(core: LibraryCore) {
     setExportTargets(hashes);
   }
 
+  // In a browser the server makes a zip, which the browser then downloads. `originals`: the files as they are
+  // (Download); otherwise JPEGs as `settings` say (Export).
+  async function zipInBrowser(hashes: string[], originals: boolean, settings?: ExportSettings) {
+    const what = originals ? "originals" : "photos";
+    setExportProgress({ completed: 0, total: 0, done: false, cancelled: false, stage: `Making a zip of ${plural(hashes.length, originals ? "original" : "photo")} on the server` });
+    try {
+      const made = await makeExportZip({
+        hashes,
+        originals,
+        longEdge: settings?.longEdge,
+        quality: settings?.quality,
+        stripGps: settings?.stripGps,
+      });
+      for (const name of made.failed) addLog("DISK", `Could not export ${name}`);
+      if (made.failed.length > 0) setError(`${plural(made.failed.length, "photo")} could not be added to the zip. See the activity log.`);
+      if (made.exported === 0) return;
+      browserDownload(exportZipUrl(made.id));
+      addLog("DISK", `Zip of ${plural(made.exported, originals ? "original" : "photo")} made for downloading`);
+      setAutoMatchNotice(`Your browser is downloading ${plural(made.exported, what === "originals" ? "original" : "photo")} as one zip file.`);
+    } catch (err) {
+      setError(`${originals ? "Download" : "Export"} failed: ${String(err)}`);
+    } finally {
+      setExportProgress(null);
+    }
+  }
+
+  // Download in a browser: one photo as itself, several as one zip of the originals
+  async function downloadInBrowser(hashes: string[]) {
+    if (hashes.length === 0) return;
+    if (hashes.length === 1) {
+      browserDownload(`/media/download/${encodeURIComponent(hashes[0])}`);
+      return;
+    }
+    await zipInBrowser(hashes, true);
+  }
+
   async function runExport(settings: ExportSettings) {
     const hashes = exportTargets ?? [];
     setExportTargets(null);
     if (hashes.length === 0) return;
+    if (!inDesktopApp) return zipInBrowser(hashes, false, settings);
     setExportProgress({ completed: 0, total: hashes.length, done: false, cancelled: false });
     try {
       const { hashes: here, fetched } = await sourcesOf(hashes);
@@ -165,6 +203,7 @@ export function useExport(core: LibraryCore) {
     exportProgress,
     openExport,
     runExport,
+    downloadInBrowser,
     handleCancelExport,
     galleryTarget,
     setGalleryTarget,

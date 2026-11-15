@@ -28,6 +28,7 @@ blake3 = "1.5"
 time = "0.3"
 
 [dev-dependencies]
+zip = { version = "9", default-features = false, features = ["deflate"] }
 image = "0.25"
 
 # Free disk space of the data folder, for the admin page

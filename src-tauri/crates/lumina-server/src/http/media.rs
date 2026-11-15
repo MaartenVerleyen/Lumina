@@ -31,7 +31,7 @@ fn may_see(conn: &rusqlite::Connection, user: &User, hash: &str) -> Result<bool,
     Scope::load(conn, user)?.can_see(conn, hash)
 }
 
-async fn send_file(path: PathBuf, req: Request) -> Response {
+pub(super) async fn send_file(path: PathBuf, req: Request) -> Response {
     if !path.is_file() {
         return not_found().into_response();
     }
@@ -163,7 +163,7 @@ fn full_blake3(conn: &rusqlite::Connection, hash: &str, path: &std::path::Path) 
 }
 
 // Content-Disposition for a file name with any characters: a plain fallback and the exact name (RFC 6266)
-fn attachment(name: &str) -> String {
+pub(super) fn attachment(name: &str) -> String {
     let plain: String = name.chars().map(|c| if c.is_ascii_graphic() && c != '"' && c != '\\' || c == ' ' { c } else { '_' }).collect();
     let exact: String = name
         .bytes()

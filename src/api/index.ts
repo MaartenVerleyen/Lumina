@@ -14,7 +14,7 @@ import {
   type RemoteEventMessage,
   type ServerInfo,
 } from "./desktopRemote.ts";
-import { createRemoteAuth, createRemoteTransport, hasRole, RECONNECTED, uploadBackup, type RemoteUser, type Role } from "./remote.ts";
+import { createRemoteAuth, createRemoteTransport, exportZipUrl, hasRole, makeExportZip, RECONNECTED, uploadBackup, type RemoteUser, type Role } from "./remote.ts";
 import {
   copyDownEdits,
   engineOf,
@@ -46,7 +46,7 @@ import type { FaceCluster, PersonItem, PhotoItem, SemanticHit, SemanticStatus, S
 
 export type { EngineEvent, MediaRef, Transport, RemoteUser, Role, LibraryRef, ServerInfo, Source };
 export { libraryRefFromString, libraryRefToString };
-export { hasRole, RECONNECTED, uploadBackup };
+export { exportZipUrl, hasRole, makeExportZip, RECONNECTED, uploadBackup };
 
 // Opens the admin page (from the account menu; App shows it)
 export const OPEN_ADMIN_EVENT = "lumina-open-admin";

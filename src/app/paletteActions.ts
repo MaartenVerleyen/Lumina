@@ -175,7 +175,9 @@ export function buildPaletteActions({
   if (platform.localFiles) return allowed;
   // Export and galleries work from any library in the desktop app; Explorer and the default app need a file here
   return allowed.filter(
-    (a) => (!NEEDS_THIS_COMPUTER.has(a.id) || (platform.exports && EXPORTS.has(a.id))) && !a.id.startsWith("recent-")
+    (a) =>
+      (!NEEDS_THIS_COMPUTER.has(a.id) || (platform.exports && EXPORTS.has(a.id)) || (platform.browserDownloads && a.id === "export")) &&
+      !a.id.startsWith("recent-")
   );
 }
 

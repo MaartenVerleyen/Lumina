@@ -567,7 +567,7 @@ export default function BulkActionDock({
           <button
             onClick={onDownload}
             className="flex items-center gap-1 text-zinc-300 hover:text-white"
-            title="Download the originals of the selected photos to this PC"
+            title="Download the originals of the selected photos"
           >
             <HardDriveDownload className="w-3.5 h-3.5 text-zinc-400" />
             <span>Download</span>

@@ -2297,6 +2297,64 @@ fn a_restore_moves_library_roots_with_the_photos() {
 }
 
 #[test]
+fn an_export_zip_holds_jpegs_or_the_originals() {
+    let base = std::env::temp_dir().join(format!("lumina_export_zip_test_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&base);
+    let (library, data) = (base.join("Library"), base.join("Data"));
+    fs::create_dir_all(library.join("Trip")).unwrap();
+    // Two photos with the same name in different folders, and a PNG that exports as a JPEG
+    for (i, path) in [library.join("a.png"), library.join("Trip").join("a.png")].iter().enumerate() {
+        image::RgbImage::from_fn(640, 480, |x, y| image::Rgb([(x % 255) as u8, (y % 255) as u8, (i * 90) as u8])).save(path).unwrap();
+    }
+    let host: SharedHost = Arc::new(DirHost(data.clone()));
+    db::migrate(&open_global_db(&*host).unwrap()).unwrap();
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    let photos = rt.block_on(scan::scan_folder(host.clone(), library.to_string_lossy().to_string(), None)).unwrap();
+    let hashes: Vec<String> = photos.iter().map(|p| p.hash.clone()).collect();
+    let options = export::ExportOptions {
+        hashes: hashes.clone(),
+        dest_dir: String::new(),
+        long_edge: 200,
+        quality: 85,
+        strip_gps: true,
+        fetched: vec![],
+    };
+    let names = |zip: &std::path::Path| -> Vec<(String, Vec<u8>)> {
+        let mut archive = zip::ZipArchive::new(fs::File::open(zip).unwrap()).unwrap();
+        let mut out: Vec<(String, Vec<u8>)> = (0..archive.len())
+            .map(|i| {
+                let mut entry = archive.by_index(i).unwrap();
+                let mut bytes = Vec::new();
+                std::io::Read::read_to_end(&mut entry, &mut bytes).unwrap();
+                (entry.name().unwrap().to_string(), bytes)
+            })
+            .collect();
+        out.sort();
+        out
+    };
+
+    // JPEGs, resized, with names that don't clash; the work folder is gone afterwards
+    let jpegs = base.join("jpegs.zip");
+    let result = export::export_zip(&*host, &options, false, &jpegs).unwrap();
+    assert_eq!((result.exported, result.failures.len()), (2, 0));
+    let entries = names(&jpegs);
+    assert_eq!(entries.iter().map(|e| e.0.as_str()).collect::<Vec<_>>(), vec!["a.jpg", "a_2.jpg"]);
+    let img = image::load_from_memory(&entries[0].1).unwrap();
+    assert_eq!((img.width(), img.height()), (200, 150));
+    assert!(!jpegs.with_extension("parts").exists());
+
+    // The originals as they are
+    let originals = base.join("originals.zip");
+    let result = export::export_zip(&*host, &options, true, &originals).unwrap();
+    assert_eq!(result.exported, 2);
+    let entries = names(&originals);
+    assert_eq!(entries.iter().map(|e| e.0.as_str()).collect::<Vec<_>>(), vec!["a.png", "a_2.png"]);
+    let on_disk = [fs::read(library.join("a.png")).unwrap(), fs::read(library.join("Trip").join("a.png")).unwrap()];
+    assert!(entries.iter().all(|(_, bytes)| on_disk.contains(bytes)));
+    let _ = fs::remove_dir_all(&base);
+}
+
+#[test]
 fn a_backup_names_its_folders_from_the_libraries_table() {
     // A library deeper than the backup's own grouping (two levels below the drive), not in the window's list
     if !cfg!(windows) {

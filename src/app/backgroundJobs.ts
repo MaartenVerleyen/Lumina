@@ -1,5 +1,6 @@
 import type { BackgroundJob } from "../components/layout/BottomStatusBar";
 import type { LibraryState } from "../hooks/useLibraryState";
+import { inDesktopApp } from "../api";
 
 // Batch AI speed and remaining time, from the photos finished so far
 export function aiBatchRateOf(prog: LibraryState["aiBatchProgress"]) {
@@ -129,7 +130,8 @@ export function backgroundJobsOf(lib: LibraryState): BackgroundJob[] {
       label: lib.exportProgress.stage ?? "Exporting photos",
       completed: lib.exportProgress.completed,
       total: lib.exportProgress.total,
-      onCancel: lib.handleCancelExport,
+      // A zip the server makes for a browser can't be stopped from here
+      onCancel: inDesktopApp ? lib.handleCancelExport : undefined,
       cancelLabel: "Stop",
     });
   }

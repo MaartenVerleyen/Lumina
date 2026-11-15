@@ -111,7 +111,9 @@ Server configuration: `lumina-server.toml` (`data_dir`, `libraries`, `ollama_url
 `web_dir`, `upload_library`) or the variables `LUMINA_DATA_DIR`, `LUMINA_LIBRARIES` (separated by `;`),
 `LUMINA_OLLAMA_URL`, `LUMINA_CAPTION_MODEL`, `LUMINA_LISTEN` (default `127.0.0.1:8080`), `LUMINA_WEB_DIR` (the
 built `dist`), `LUMINA_UPLOAD_LIBRARY` (default the first library). Uploads (`http/upload.rs`) are resumable and
-land in `<library>/uploads/<user>/`; `/media/download/{hash}` sends originals with their BLAKE3.
+land in `<library>/uploads/<user>/`; `/media/download/{hash}` sends originals with their BLAKE3. The web client's
+Export and Download go through `POST /api/export` (a zip of JPEGs or originals in `<data_dir>/exports/`, per user,
+kept an hour) and `GET /api/export/{id}` (`http/export.rs`, `export::export_zip`).
 `LUMINA_FFMPEG` names another ffmpeg. The admin page's Libraries and Settings change libraries, the upload library,
 the caption model and Ollama's address while the server runs (`settings.rs`, saved in `<data_dir>/server-settings.json`
 over the file; variables win). A library taken off is hidden (`settings::served`), its rows kept. Accounts: `lumina-server create-user NAME --role admin` (see

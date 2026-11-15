@@ -922,8 +922,9 @@ export default function App() {
             albums={lib.albums}
             handleAddToAlbum={lib.handleAddToAlbum}
             handleCreateAlbum={lib.handleCreateAlbum}
-            onExport={platform.exports ? () => lib.openExport() : undefined}
-            onDownload={client.downloadSelection}
+            onExport={platform.exports || platform.browserDownloads ? () => lib.openExport() : undefined}
+            // In a browser: one original as itself, several as a zip the server makes
+            onDownload={platform.browserDownloads ? () => void lib.downloadInBrowser([...lib.selectedHashes]) : client.downloadSelection}
             onRemoveLocal={client.removeLocalSelection}
           />
           </>
@@ -1081,7 +1082,7 @@ export default function App() {
         onRotate={!access.edit ? undefined : (degrees) => {
           if (contextPhoto) lib.handleRotateSelection(degrees, contextMenuTargets(contextPhoto.hash));
         }}
-        onExport={!platform.exports ? undefined : () => {
+        onExport={!platform.exports && !platform.browserDownloads ? undefined : () => {
           if (contextPhoto) lib.openExport(contextMenuTargets(contextPhoto.hash));
         }}
         onShareGallery={!platform.exports ? undefined : () => {
@@ -1345,6 +1346,7 @@ export default function App() {
 
       <ExportModal
         isOpen={lib.exportTargets !== null}
+        toZip={platform.browserDownloads}
         count={lib.exportTargets?.length ?? 0}
         defaultDir={platform.localFiles && lib.folder ? `${lib.folder.replace(/[\\/]+$/, "")}\\Export` : exportDir}
         onClose={() => lib.setExportTargets(null)}
