@@ -2297,6 +2297,22 @@ fn a_restore_moves_library_roots_with_the_photos() {
 }
 
 #[test]
+fn a_backup_names_its_folders_from_the_libraries_table() {
+    // A library deeper than the backup's own grouping (two levels below the drive), not in the window's list
+    if !cfg!(windows) {
+        return;
+    }
+    let conn = Connection::open_in_memory().unwrap();
+    db::migrate(&conn).unwrap();
+    libraries::open(&conn, r"D:\Media\Family\Phone\Camera").unwrap();
+    add_photo(&conn, "a", r"D:\Media\Family\Phone\Camera\2024\a.jpg");
+    add_photo(&conn, "b", r"D:\Media\Family\Phone\Camera\b.jpg");
+    let manifest = crate::backup::build_manifest(&conn, &[], std::path::Path::new(r"C:\AppData"), 0).unwrap();
+    let roots: Vec<(String, usize)> = manifest.roots.iter().map(|r| (r.path.clone(), r.photos)).collect();
+    assert_eq!(roots, vec![(r"D:\Media\Family\Phone\Camera".to_string(), 2)]);
+}
+
+#[test]
 fn library_roots_have_one_spelling() {
     if cfg!(windows) {
         assert_eq!(libraries::normalize_root("C:/LuminaTest/Library/"), r"C:\LuminaTest\Library");

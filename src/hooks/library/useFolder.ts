@@ -38,6 +38,7 @@ import { useSettings } from "../../settings";
 import type { LibraryCore } from "./core";
 import type { FilterState } from "./useFilterState";
 import { plural } from "../../utils/plural";
+import { keepKnownRecent } from "../../utils/recentFolders";
 
 // The open library folder: opening, scanning, thumbnails as they arrive, rescans, _Trash, Explorer actions
 // A photo with what a thumbnail pass found for it (its thumbnail, fingerprint, size, automatic tags)
@@ -134,14 +135,28 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
     // Recent folders are folders on this computer; a server's libraries are listed per server, and All
     // photos has its own place in the menu
     if (server || path === ALL_PHOTOS) return;
+    updateRecentFolders((prev) => [path, ...prev.filter((p) => p !== path)].slice(0, 6));
+  }
+
+  // The recent folders changed (a folder opened, forgotten or located): saved for the next start
+  function updateRecentFolders(change: (prev: string[]) => string[]) {
     setRecentFolders((prev) => {
-      const next = [path, ...prev.filter((p) => p !== path)].slice(0, 6);
+      const next = change(prev);
       try {
         localStorage.setItem("lumina_recent_folders", JSON.stringify(next));
       } catch {}
       return next;
     });
   }
+
+  // A recent folder Lumina has forgotten since (Forget, or a backup restored over it) leaves the list at start
+  useEffect(() => {
+    if (!inDesktopApp) return;
+    callLocal<{ root: string }[]>("local_libraries")
+      .then((list) => updateRecentFolders((prev) => keepKnownRecent(prev, list.map((l) => l.root))))
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Listen for Folder Scan Progress Events. A rescan of an indexed library sends hundreds a second; only the
   // latest is shown, once per frame (setting state for each one made React report an update loop)
@@ -988,6 +1003,7 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
     silentRescan,
     watchQuietUntilRef,
     recentFolders,
+    updateRecentFolders,
     scanProgress,
     backgroundScanProgress,
     libraryLoading,

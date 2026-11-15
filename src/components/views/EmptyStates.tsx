@@ -1,5 +1,5 @@
 import { useEffect, useState, type RefObject } from "react";
-import { Clock, FolderInput, FolderOpen, Images, Loader2, Search, Server } from "lucide-react";
+import { Clock, FolderInput, FolderOpen, Images, Loader2, Search, Server, X } from "lucide-react";
 import type { LibraryState } from "../../hooks/useLibraryState";
 import { call, inDesktopApp, onAndroid, rememberLibraryRoles, subscribe, type Role } from "../../api";
 import { useAccount } from "../auth/ServerGate";
@@ -7,6 +7,8 @@ import { ConnectServerForm, ServerLibraryList } from "../servers/Servers";
 import { platform } from "../../api/platform";
 import { useServers } from "../../hooks/useServers";
 import { plural } from "../../utils/plural";
+import { useLocalLibraries } from "../../hooks/useLocalLibraries";
+import { dropRecent, renameRecent, sameFolder } from "../../utils/recentFolders";
 
 type GridRef = RefObject<HTMLDivElement | null>;
 
@@ -101,6 +103,12 @@ export function NoLibrary({ lib, gridContainerRef }: { lib: LibraryState; gridCo
 
 // The desktop app with nothing open: a folder on this PC (the full app), or a library on a Lumina server
 function DesktopStart({ lib, gridContainerRef }: { lib: LibraryState; gridContainerRef: GridRef }) {
+  // This PC's libraries: which recent folders are still there, and how many photos they hold
+  const local = useLocalLibraries(lib.setError);
+  useEffect(() => {
+    if (inDesktopApp) void local.reload();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const { servers } = useServers();
   const [connecting, setConnecting] = useState(false);
   return (
@@ -153,18 +161,52 @@ function DesktopStart({ lib, gridContainerRef }: { lib: LibraryState; gridContai
               Recent libraries
             </span>
             <div className="flex flex-col gap-1.5">
-              {lib.recentFolders.map((rf) => (
-                <button
-                  key={rf}
-                  onClick={() => lib.handleLoadFolderPath(rf)}
-                  className="w-full px-3 py-2 rounded-lg bg-zinc-900/80 hover:bg-zinc-800 border border-zinc-800 text-xs text-zinc-300 hover:text-white flex items-center justify-between transition truncate"
-                >
-                  <span className="truncate font-mono text-[11px]">{rf}</span>
-                  <span className="text-[11px] text-emerald-400 font-semibold ml-2 shrink-0">
-                    Open →
-                  </span>
-                </button>
-              ))}
+              {lib.recentFolders.map((rf) => {
+                // A folder that is gone (renamed, moved, a drive not connected) says so and can be located
+                const known = local.libraries?.find((l) => sameFolder(l.root, rf));
+                return (
+                  <div key={rf} className="group flex items-center gap-1">
+                    <button
+                      onClick={() => lib.handleLoadFolderPath(rf)}
+                      disabled={known?.missing}
+                      className="flex-1 min-w-0 px-3 py-2 rounded-lg bg-zinc-900/80 hover:bg-zinc-800 disabled:hover:bg-zinc-900/80 border border-zinc-800 text-xs text-zinc-300 hover:text-white disabled:text-zinc-500 flex items-center justify-between transition"
+                      title={known?.missing ? "Folder not found: renamed or moved? Use Locate… to show Lumina where it is now" : rf}
+                    >
+                      <span className="truncate font-mono text-[11px]">
+                        {known?.missing && <span className="font-sans text-amber-300/80">Folder not found · </span>}
+                        {rf}
+                      </span>
+                      {!known?.missing && (
+                        <span className="text-[11px] text-emerald-400 font-semibold ml-2 shrink-0">
+                          {known ? `${known.photos.toLocaleString()} · ` : ""}Open →
+                        </span>
+                      )}
+                    </button>
+                    {known?.missing && (
+                      <button
+                        onClick={async () => {
+                          const picked = await local.locate(rf);
+                          if (!picked) return;
+                          lib.updateRecentFolders((r) => renameRecent(r, rf, picked));
+                          void lib.handleLoadFolderPath(picked);
+                        }}
+                        className="shrink-0 px-2 py-2 rounded-lg text-[11px] text-amber-200 hover:bg-zinc-800"
+                        title="Show Lumina where the folder is now; ratings, tags and names are kept"
+                      >
+                        Locate…
+                      </button>
+                    )}
+                    <button
+                      onClick={() => lib.updateRecentFolders((r) => dropRecent(r, rf))}
+                      className="shrink-0 p-2 rounded-lg text-zinc-600 hover:text-zinc-200 hover:bg-zinc-800 opacity-0 group-hover:opacity-100 focus:opacity-100"
+                      title="Take off this list (Lumina keeps the library; Forget is in the Library menu)"
+                      aria-label={`Take ${rf} off the recent list`}
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}

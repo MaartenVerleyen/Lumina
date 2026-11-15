@@ -657,6 +657,7 @@ export default function App() {
         onOpenImport={platform.localFiles ? () => lib.openImport() : undefined}
         onOpenServerLibrary={inDesktopApp ? (root, server) => lib.handleLoadFolderPath(root, server) : undefined}
         recentFolders={lib.recentFolders}
+        updateRecentFolders={lib.updateRecentFolders}
         onOpenAllPhotos={() => lib.handleLoadFolderPath(ALL_PHOTOS)}
         onOpenRecentFolder={platform.fullApp ? (path) => lib.handleLoadFolderPath(path) : undefined}
         onUpload={client.pickAndUpload}

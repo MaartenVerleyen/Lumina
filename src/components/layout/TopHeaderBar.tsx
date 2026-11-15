@@ -2,10 +2,12 @@ import { useState, useRef, useEffect, RefObject } from "react";
 import { AccountMenu } from "../auth/AccountMenu";
 import { ServerLibraryList } from "../servers/Servers";
 import { WebUploadButton } from "../servers/WebUpload";
-import { open as openDialog, platform } from "../../api/platform";
+import { platform } from "../../api/platform";
 import { useAccess } from "../auth/ServerGate";
 import { confirmDialog } from "../../confirm";
-import { ALL_PHOTOS, allPhotosHasLocal, call, callLocal, inDesktopApp, openLibraryIsAll } from "../../api";
+import { useLocalLibraries } from "../../hooks/useLocalLibraries";
+import { dropRecent, renameRecent } from "../../utils/recentFolders";
+import { ALL_PHOTOS, allPhotosHasLocal, call, inDesktopApp, openLibraryIsAll } from "../../api";
 import { libraryName } from "../../utils/photoHelpers";
 import luminaMark from "../../assets/lumina-mark.svg";
 import { completeTerm, termBeingTyped, TermKey } from "../../utils/searchQuery";
@@ -97,6 +99,8 @@ interface TopHeaderBarProps {
   onOpenServerLibrary?: (root: string, server: string) => void;
   // Libraries on this computer opened before, to switch back to from a server's (desktop app)
   recentFolders?: string[];
+  // Keeps the recent folders in step when a folder is forgotten or located
+  updateRecentFolders?: (change: (prev: string[]) => string[]) => void;
   // This PC's folders and the servers' libraries in one view
   onOpenAllPhotos?: () => void;
   onOpenRecentFolder?: (path: string) => void;
@@ -159,6 +163,7 @@ export default function TopHeaderBar({
   onOpenImport,
   onOpenServerLibrary,
   recentFolders = [],
+  updateRecentFolders,
   onOpenRecentFolder,
   onOpenAllPhotos,
   onUpload,
@@ -192,43 +197,22 @@ export default function TopHeaderBar({
   const [isLibraryMenuOpen, setIsLibraryMenuOpen] = useState(false);
   // The folders opened on this PC (its libraries), by name so the list stays put; recent folders until known.
   // A library whose folder is gone (renamed, moved, a drive not connected) says so and can be located.
-  type LocalLibrary = { root: string; photos: number; missing: boolean };
-  const [localLibraries, setLocalLibraries] = useState<LocalLibrary[] | null>(null);
-  const localFolders = localLibraries?.map((l) => l.root) ?? null;
-  const libraryAt = (path: string) => localLibraries?.find((l) => l.root === path);
-  const loadLocalFolders = () =>
-    callLocal<LocalLibrary[]>("local_libraries")
-      .then((list) => setLocalLibraries([...list].sort((a, b) => a.root.localeCompare(b.root, undefined, { sensitivity: "base" }))))
-      .catch(() => setLocalLibraries(null));
+  const local = useLocalLibraries(onError);
+  const localFolders = local.libraries?.map((l) => l.root) ?? null;
+  const libraryAt = local.at;
   useEffect(() => {
-    if (isLibraryMenuOpen && inDesktopApp && onOpenRecentFolder) loadLocalFolders();
+    if (isLibraryMenuOpen && inDesktopApp && onOpenRecentFolder) void local.reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLibraryMenuOpen]);
   const forgetFolder = async (path: string) => {
-    const lib = libraryAt(path);
-    const count = lib ? `${lib.photos.toLocaleString()} photo${lib.photos === 1 ? "" : "s"}` : "its photos";
-    const moved = lib?.missing ? " Renamed or moved the folder? Use Locate… instead: everything is kept." : "";
-    const ok = await confirmDialog(
-      `Lumina forgets "${path}": the ratings, tags, names and album places of ${count} go, and it leaves All photos. The files stay in the folder; opening it again starts afresh.${moved}`,
-      { title: "Forget this folder", okLabel: "Forget", kind: "danger" }
-    );
-    if (!ok) return;
-    await callLocal("forget_local_library", { root: path }).catch((e) => onError?.(`Couldn't forget the folder: ${e}`));
-    loadLocalFolders();
+    if (await local.forget(path)) updateRecentFolders?.((r) => dropRecent(r, path));
   };
-  // A library renamed or moved outside Lumina: point it to its new place, and everything known about its photos goes along
   const locateFolder = async (path: string) => {
-    const name = path.split(/[\\/]/).filter(Boolean).pop() || path;
-    const picked = await openDialog({ directory: true, multiple: false, title: `Where is "${name}" now?` });
-    if (!picked || Array.isArray(picked)) return;
-    try {
-      await callLocal<number>("locate_local_library", { root: path, newRoot: picked });
-      setIsLibraryMenuOpen(false);
-      onOpenRecentFolder?.(picked);
-    } catch (e) {
-      onError?.(`Couldn't move the library to ${picked}: ${e}`);
-    }
-    loadLocalFolders();
+    const picked = await local.locate(path);
+    if (!picked) return;
+    updateRecentFolders?.((r) => renameRecent(r, path, picked));
+    setIsLibraryMenuOpen(false);
+    onOpenRecentFolder?.(picked);
   };
   const [isAiMenuOpen, setIsAiMenuOpen] = useState(false);
   // Flash attention: when Ollama runs without it, offer to switch it on (saves a Windows setting, restarts Ollama)
