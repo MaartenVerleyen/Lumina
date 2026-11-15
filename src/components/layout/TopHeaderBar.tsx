@@ -5,7 +5,9 @@ import { WebUploadButton } from "../servers/WebUpload";
 import { platform } from "../../api/platform";
 import { useAccess } from "../auth/ServerGate";
 import { confirmDialog } from "../../confirm";
-import { ALL_PHOTOS, call, callLocal, inDesktopApp } from "../../api";
+import { useLocalLibraries } from "../../hooks/useLocalLibraries";
+import { dropRecent, renameRecent } from "../../utils/recentFolders";
+import { ALL_PHOTOS, allPhotosHasLocal, call, inDesktopApp, openLibraryIsAll } from "../../api";
 import { libraryName } from "../../utils/photoHelpers";
 import luminaMark from "../../assets/lumina-mark.svg";
 import { completeTerm, termBeingTyped, TermKey } from "../../utils/searchQuery";
@@ -97,6 +99,8 @@ interface TopHeaderBarProps {
   onOpenServerLibrary?: (root: string, server: string) => void;
   // Libraries on this computer opened before, to switch back to from a server's (desktop app)
   recentFolders?: string[];
+  // Keeps the recent folders in step when a folder is forgotten or located
+  updateRecentFolders?: (change: (prev: string[]) => string[]) => void;
   // This PC's folders and the servers' libraries in one view
   onOpenAllPhotos?: () => void;
   onOpenRecentFolder?: (path: string) => void;
@@ -122,6 +126,8 @@ interface TopHeaderBarProps {
   handlePullDefaultAiModel?: (modelName?: string) => Promise<void>;
   totalPendingFaceMatches?: number;
   onOpenFaceReviewStudio?: () => void;
+  // Shows an error in the window (actions in the menus that fail)
+  onError?: (message: string) => void;
 }
 
 export default function TopHeaderBar({
@@ -157,6 +163,7 @@ export default function TopHeaderBar({
   onOpenImport,
   onOpenServerLibrary,
   recentFolders = [],
+  updateRecentFolders,
   onOpenRecentFolder,
   onOpenAllPhotos,
   onUpload,
@@ -181,27 +188,31 @@ export default function TopHeaderBar({
   handlePullDefaultAiModel,
   totalPendingFaceMatches = 0,
   onOpenFaceReviewStudio,
+  onError,
 }: TopHeaderBarProps) {
   const access = useAccess();
+  // Planned moves are applied by whoever may move the files: an admin, or in All photos this PC for its own folders
+  // (a server's are applied by its admin)
+  const canApply = access.admin || (openLibraryIsAll() && allPhotosHasLocal());
   const [isLibraryMenuOpen, setIsLibraryMenuOpen] = useState(false);
-  // The folders opened on this PC (its libraries), by name so the list stays put; recent folders until known
-  const [localFolders, setLocalFolders] = useState<string[] | null>(null);
-  const loadLocalFolders = () =>
-    callLocal<{ root: string }[]>("local_libraries")
-      .then((list) => setLocalFolders(list.map((l) => l.root).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }))))
-      .catch(() => setLocalFolders(null));
+  // The folders opened on this PC (its libraries), by name so the list stays put; recent folders until known.
+  // A library whose folder is gone (renamed, moved, a drive not connected) says so and can be located.
+  const local = useLocalLibraries(onError);
+  const localFolders = local.libraries?.map((l) => l.root) ?? null;
+  const libraryAt = local.at;
   useEffect(() => {
-    if (isLibraryMenuOpen && inDesktopApp && onOpenRecentFolder) loadLocalFolders();
+    if (isLibraryMenuOpen && inDesktopApp && onOpenRecentFolder) void local.reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLibraryMenuOpen]);
   const forgetFolder = async (path: string) => {
-    const ok = await confirmDialog(
-      `Lumina forgets "${path}": its photos' ratings, tags, names and album places in Lumina go, and it leaves All photos. The files stay in the folder; opening it again starts afresh.`,
-      { title: "Forget this folder", okLabel: "Forget", kind: "danger" }
-    );
-    if (!ok) return;
-    await callLocal("forget_local_library", { root: path }).catch((e) => console.error(e));
-    loadLocalFolders();
+    if (await local.forget(path)) updateRecentFolders?.((r) => dropRecent(r, path));
+  };
+  const locateFolder = async (path: string) => {
+    const picked = await local.locate(path);
+    if (!picked) return;
+    updateRecentFolders?.((r) => renameRecent(r, path, picked));
+    setIsLibraryMenuOpen(false);
+    onOpenRecentFolder?.(picked);
   };
   const [isAiMenuOpen, setIsAiMenuOpen] = useState(false);
   // Flash attention: when Ollama runs without it, offer to switch it on (saves a Windows setting, restarts Ollama)
@@ -285,7 +296,7 @@ export default function TopHeaderBar({
         } catch {}
       }
     } catch (err) {
-      console.error("Could not start Ollama:", err);
+      onError?.(`Couldn't start Ollama: ${err}`);
     } finally {
       setIsStartingOllama(false);
     }
@@ -313,6 +324,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
     <header className="flex items-center justify-between px-4 py-2 bg-card/95 backdrop-blur-md border-b border-zinc-800/70 z-30 gap-3 shrink-0">
       {/* ZONE 1: Left Navigation, Unified Library Split-Pill, View Switcher & Undo/Redo */}
       <div className="flex items-center gap-2.5 shrink-0">
+        {viewMode !== "collections" && (
         <button
           onClick={() => setIsLeftCollapsed((p) => !p)}
           className="p-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 border border-zinc-800 transition"
@@ -324,6 +336,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
             <PanelLeftClose className="w-4 h-4" />
           )}
         </button>
+        )}
 
         <div className="flex items-center gap-2 mr-0.5">
           <img src={luminaMark} alt="Lumina" className="w-6 h-6 object-contain" />
@@ -382,21 +395,24 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                   </div>
                 </button>
               )}
-              <button
-                onClick={() => {
-                  setIsLibraryMenuOpen(false);
-                  handleOpenFolder();
-                }}
-                className="w-full flex items-start gap-2.5 p-2 rounded-lg hover:bg-zinc-800/80 text-left transition"
-              >
-                <FolderOpen className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                <div>
-                  <div className="font-medium text-zinc-200">{serverLabel || folder === ALL_PHOTOS ? "Open a folder on this PC…" : "Open another folder…"}</div>
-                  <div className="text-[11px] text-zinc-500 truncate max-w-[180px]">
-                    Choose a folder on this PC
+              {/* Folders on this computer: the full app only (a Mac, a phone and the web client work with servers) */}
+              {platform.fullApp && (
+                <button
+                  onClick={() => {
+                    setIsLibraryMenuOpen(false);
+                    handleOpenFolder();
+                  }}
+                  className="w-full flex items-start gap-2.5 p-2 rounded-lg hover:bg-zinc-800/80 text-left transition"
+                >
+                  <FolderOpen className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                  <div>
+                    <div className="font-medium text-zinc-200">{serverLabel || folder === ALL_PHOTOS ? "Open a folder on this PC…" : "Open another folder…"}</div>
+                    <div className="text-[11px] text-zinc-500 truncate max-w-[180px]">
+                      Choose a folder on this PC
+                    </div>
                   </div>
-                </div>
-              </button>
+                </button>
+              )}
               {onOpenImport && (
                 <button
                   onClick={() => {
@@ -444,9 +460,24 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                         }`}
                         title={path}
                       >
-                        <div className="truncate text-[13px] font-medium">{path.split(/[\\/]/).filter(Boolean).pop() || path}</div>
-                        <div className="truncate text-[11px] text-zinc-500">{path}</div>
+                        <div className={`truncate text-[13px] font-medium ${libraryAt(path)?.missing ? "text-zinc-500" : ""}`}>
+                          {path.split(/[\\/]/).filter(Boolean).pop() || path}
+                          {libraryAt(path) && <span className="ml-1.5 text-[11px] font-normal text-zinc-500">{libraryAt(path)!.photos.toLocaleString()}</span>}
+                        </div>
+                        <div className="truncate text-[11px] text-zinc-500">
+                          {libraryAt(path)?.missing && <span className="text-amber-300/80">Folder not found · </span>}
+                          {path}
+                        </div>
                       </button>
+                      {libraryAt(path)?.missing && (
+                        <button
+                          onClick={() => void locateFolder(path)}
+                          className="shrink-0 px-1.5 py-1 rounded text-[11px] text-amber-200 hover:bg-zinc-800"
+                          title="Renamed or moved the folder? Show Lumina where it is now; ratings, tags and names are kept"
+                        >
+                          Locate…
+                        </button>
+                      )}
                       {localFolders && path !== folder && (
                         <button
                           onClick={() => void forgetFolder(path)}
@@ -564,8 +595,9 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
             onFocus={() => setIsSearchFocused(true)}
             onBlur={() => setIsSearchFocused(false)}
             onKeyDown={(e) => {
-              // Ctrl+P (command palette) still reaches the app; other keys stay in the box
-              if (!((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "p")) e.stopPropagation();
+              // Ctrl+P (palette), Ctrl+, (settings) and Ctrl+1…4 (tabs) still reach the app; other keys stay in the box
+              const appKey = (e.ctrlKey || e.metaKey) && !e.altKey && ["p", ",", "1", "2", "3", "4"].includes(e.key.toLowerCase());
+              if (!appKey) e.stopPropagation();
               if (suggestions.length > 0 && typing) {
                 if (e.key === "ArrowDown" || e.key === "ArrowUp") {
                   e.preventDefault();
@@ -676,7 +708,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
 
       {/* ZONE 3: Staged Commit, Unified AI & Faces Hub, and Studio Tools Menu */}
       <div className="flex items-center gap-2 shrink-0">
-        {stagedPhotosCount > 0 && !access.admin && access.edit && (
+        {stagedPhotosCount > 0 && !canApply && access.edit && (
           <span
             className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500/10 text-emerald-300/80 border border-emerald-500/30 rounded-lg text-xs font-semibold"
             title="Planned moves and photos for _Trash: an admin applies them"
@@ -685,7 +717,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
             <span>{stagedPhotosCount} to apply</span>
           </span>
         )}
-        {stagedPhotosCount > 0 && access.admin && (
+        {stagedPhotosCount > 0 && canApply && (
           <div className="flex items-center gap-1">
             <button
               onClick={() => setIsCommitModalOpen(true)}
@@ -806,7 +838,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                           {ollamaStatus?.running ? "Ollama is running" : "Ollama isn't running"}
                         </span>
                       </div>
-                      <span className="text-[11px] text-zinc-500">A caption, tags and the text in each photo, written on this computer.</span>
+                      <span className="text-[11px] text-zinc-500">A caption, tags and the text in each photo, written {platform.localFiles ? "on this computer" : "by the server"}.</span>
                       {aiBatchProgress ? (
                         <div className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800">
                           <span className="text-zinc-300 tabular-nums">
@@ -913,7 +945,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                                   await call("preload_ollama_vram", { modelName: aiModel });
                                   setOllamaStatus(await call<OllamaStatus>("check_ollama_status"));
                                 } catch (err) {
-                                  console.error("Loading the AI model failed:", err);
+                                  onError?.(`Loading the AI model failed: ${err}`);
                                 } finally {
                                   // Never leave the button stuck in its disabled "loading" state
                                   setIsLoadingVram(false);
@@ -1032,7 +1064,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                 >
                   <span className="flex items-center gap-2.5">
                     <FileText className="w-4 h-4 text-zinc-400 shrink-0" />
-                    <span>What Lumina did</span>
+                    <span>Activity log</span>
                   </span>
                   {sessionLogsCount > 0 && <span className="text-[11px] text-zinc-500 tabular-nums">{sessionLogsCount}</span>}
                 </button>
@@ -1044,6 +1076,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
         {!platform.fileDialogs && <WebUploadButton className="!rounded-lg !p-1.5 [&_svg]:!w-4 [&_svg]:!h-4" />}
         <AccountMenu />
 
+        {viewMode !== "collections" && (
         <button
           onClick={() => setIsRightCollapsed((p) => !p)}
           className="p-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 border border-zinc-800 transition"
@@ -1055,6 +1088,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
             <PanelRightClose className="w-4 h-4" />
           )}
         </button>
+        )}
       </div>
     </header>
   );

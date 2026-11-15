@@ -38,33 +38,39 @@ export function useStaging(
   const [smartRenameOnCommit, setSmartRenameOnCommit] = useState<boolean>(false);
   const [autoStagePreset, setAutoStagePreset] = useState<AutoStagePreset>("YEAR_MONTH_CITY");
 
-  async function handleBatchStageMove(targetSub: string | null, targetHashes?: string[]) {
+  // Returns how many photos were staged (0 when none could be)
+  async function handleBatchStageMove(targetSub: string | null, targetHashes?: string[]): Promise<number> {
     const hashes = resolveTargets(targetHashes);
-    if (hashes.length === 0) return;
+    if (hashes.length === 0) return 0;
     try {
-      const hashSet = new Set(hashes);
-      const before = captureSnapshots(photos, hashSet);
-      const after = before.map((s: PhotoActionSnapshot) => ({ ...s, staged_target: targetSub }));
       const ops = hashes.map((hash) => ({
         hash,
         target_subfolder: targetSub,
       }));
-      await call("stage_photos_move", { ops });
+      // All photos leaves photos whose library can't take the move as they were
+      const res = await call<{ skipped?: string[] } | null>("stage_photos_move", { ops });
+      const skipped = new Set(res?.skipped ?? []);
+      const hashSet = new Set(hashes.filter((h) => !skipped.has(h)));
+      if (hashSet.size === 0) return 0;
+      const before = captureSnapshots(photos, hashSet);
+      const after = before.map((s: PhotoActionSnapshot) => ({ ...s, staged_target: targetSub }));
       undo.pushUndoEntry({
         description: `Stage move (${targetSub || "clear"}) on ${plural(hashes.length, "photo")}`,
         previousActiveHash: activeHash,
-        previousSelectedHashes: hashes,
+        previousSelectedHashes: [...hashSet],
         before,
         after,
       });
       setPhotos((prev) =>
         prev.map((p) => (hashSet.has(p.hash) ? { ...p, staged_target: targetSub } : p))
       );
-      addLog("DISK", `Staged ${plural(hashes.length, "photo")} for move`, targetSub || "Cleared");
+      addLog("DISK", `Staged ${plural(hashSet.size, "photo")} for move`, targetSub || "Cleared");
       setBulkInput("");
       setActiveBulkPopover(null);
+      return hashSet.size;
     } catch (err) {
       setError(String(err));
+      return 0;
     }
   }
 
@@ -110,8 +116,9 @@ export function useStaging(
         { title: "Stage photos", kind: "info" }
       );
       if (!ok) return;
+      const res = await call<{ skipped?: string[] } | null>("stage_photos_move", { ops });
+      for (const h of res?.skipped ?? []) updates.delete(h);
       const before = captureSnapshots(photos, Array.from(updates.keys()));
-      await call("stage_photos_move", { ops });
       pushSnapshotUndo(
         `Auto-stage ${plural(ops.length, "photo")}`,
         before,
@@ -155,7 +162,7 @@ export function useStaging(
       }
       if (result.failures.length > 0) {
         setError(
-          `${plural(result.failures.length, "file")} could not be moved (they stay staged). See the Session Log for details.`
+          `${plural(result.failures.length, "file")} could not be moved (they stay staged). See the activity log.`
         );
       }
     } catch (err) {

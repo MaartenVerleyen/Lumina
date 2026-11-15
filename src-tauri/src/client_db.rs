@@ -181,6 +181,26 @@ pub async fn forget_local_library(app: AppHandle, root: String) -> Result<usize,
         .map_err(|e| e.to_string())?
 }
 
+// The Library menu's Locate…: a library renamed or moved outside Lumina now lives at `new_root`; its photos keep
+// everything (when that folder was opened again meanwhile, the two become one). Answers how many photos moved.
+#[tauri::command]
+pub async fn locate_local_library(app: AppHandle, root: String, new_root: String) -> Result<usize, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut conn = open_global_db(&app)?;
+        let wanted = lumina_core::libraries::normalize_root(&root);
+        let library = lumina_core::libraries::list(&conn)?
+            .into_iter()
+            .find(|l| lumina_core::libraries::normalize_root(&l.root).eq_ignore_ascii_case(&wanted))
+            .ok_or_else(|| format!("{root} isn't one of this PC's libraries"))?;
+        if !std::path::Path::new(&new_root).is_dir() {
+            return Err(format!("{new_root} isn't a folder"));
+        }
+        lumina_core::libraries::relocate_or_merge(&mut conn, library.id, &new_root)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 // A library on this computer as its database has it, without walking the folder: All photos lists every
 // library this way (a scan of one folder would stop another's scan and thumbnail pass)
 #[tauri::command]

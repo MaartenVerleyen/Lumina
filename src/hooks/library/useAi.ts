@@ -1,3 +1,4 @@
+import { platform } from "../../api/platform";
 import { useState, useEffect, useRef } from "react";
 import { call, subscribe } from "../../api";
 import { confirmDialog } from "../../confirm";
@@ -81,7 +82,8 @@ export function useAi(core: LibraryCore) {
       }
     }
     checkStatus();
-    const interval = setInterval(checkStatus, 10000);
+    // On a server each check is a request: once a minute is enough there
+    const interval = setInterval(checkStatus, platform.localFiles ? 10000 : 60000);
     return () => {
       mounted = false;
       clearInterval(interval);
@@ -144,7 +146,7 @@ export function useAi(core: LibraryCore) {
       return;
     }
     if (ollamaStatus && !ollamaStatus.running) {
-      setError('Ollama is not running: click "Start Ollama" in the header first.');
+      setError('Ollama is not running: open the AI menu at the top right and click "Start Ollama", or in Settings → AI captions.');
       return;
     }
     const photo = activePhoto;
@@ -188,7 +190,7 @@ export function useAi(core: LibraryCore) {
     requested = photosOnly(requested);
     if (aiBatchProgress || requested.length === 0) return;
     if (ollamaStatus && !ollamaStatus.running) {
-      setError('Ollama is not running: click "Start Ollama" in the header first.');
+      setError('Ollama is not running: open the AI menu at the top right and click "Start Ollama", or in Settings → AI captions.');
       return;
     }
 

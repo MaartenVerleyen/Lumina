@@ -1,13 +1,13 @@
 import { thumbSrc } from "../../utils/photoHelpers";
 import { codecLabel, formatDuration, isVideo } from "../../utils/media";
 import { shutterLabel } from "../../utils/exposure";
-import { memo, useEffect, useRef } from "react";
-import { call, mediaUrl } from "../../api";
+import { memo, useEffect, useRef, useState } from "react";
+import { call, hasPhotoHistory, mediaUrl, photoHistory } from "../../api";
+import { collapseChanges, describeChange, type PhotoChange } from "../../utils/photoHistory";
 import { PersonName } from "../people/PersonName";
 import { useAccess } from "../auth/ServerGate";
 import {
   CitySearchResult,
-  FaceInstance,
   PhotoItem,
   ViewMode,
 } from "../../types/lumina";
@@ -15,12 +15,14 @@ import {
   Aperture,
   Calendar,
   Camera,
+  ChevronDown,
   Compass,
   Crosshair,
   FileText,
   Flag,
   Folder,
   Gauge,
+  History,
   Layers,
   Loader2,
   MapPin,
@@ -191,7 +193,11 @@ interface RightInspectorProps {
   setIsPickingMapLocation: React.Dispatch<React.SetStateAction<boolean>>;
   handleDetectFacesSingleOnnx: () => Promise<void>;
   handleSaveFaceAndAutomatch: (e: React.FormEvent) => Promise<void>;
-  handleSetFlag: (flag: "pick" | "reject" | null) => Promise<void>;
+  // Takes a face's name off, or removes a box that isn't a face
+  handleClearFace: (faceId: string) => Promise<void>;
+  handleSetFlag: (flag: "pick" | "reject" | null) => Promise<unknown>;
+  // Reject: flag and plan the move to _Trash, as X does
+  handleRejectToTrash: () => Promise<unknown>;
   handleBatchRate: (rating: number) => Promise<void>;
   handleRotateSelection: (deltaDegrees: number) => Promise<void>;
   handleSetColorLabel: (color: "red" | "yellow" | "green" | "blue" | null) => Promise<void>;
@@ -237,7 +243,9 @@ function RightInspector({
   setIsPickingMapLocation,
   handleDetectFacesSingleOnnx,
   handleSaveFaceAndAutomatch,
+  handleClearFace,
   handleSetFlag,
+  handleRejectToTrash,
   handleBatchRate,
   handleRotateSelection,
   handleSetColorLabel,
@@ -552,47 +560,9 @@ function RightInspector({
                     </span>
                     {access.edit && (
                     <button
-                      onClick={async (e) => {
+                      onClick={(e) => {
                         e.stopPropagation();
-                        const removedPerson = f.person_name;
-                        // A named face loses its name and stays a face; an unnamed one isn't a face: its box goes
-                        const rem = removedPerson
-                          ? (
-                              await call<Record<string, FaceInstance[]>>("unassign_faces_batch", {
-                                faceIds: [f.face_id],
-                                personName: removedPerson,
-                              })
-                            )[activePhoto.hash] ?? activePhoto.faces.map((x) => (x.face_id === f.face_id ? { ...x, person_name: null } : x))
-                          : await call<FaceInstance[]>("remove_face_box", {
-                              faceId: f.face_id,
-                              hash: activePhoto.hash,
-                            });
-                        const remainingNames = new Set(
-                          rem
-                            .map((x) => x.person_name?.trim().toLowerCase())
-                            .filter(Boolean)
-                        );
-                        setPhotos((prev) =>
-                          prev.map((p) => {
-                            if (p.hash !== activePhoto.hash) return p;
-                            const nextPeople = removedPerson
-                              ? p.people.filter(
-                                  (pe) =>
-                                    pe.toLowerCase() !== removedPerson.toLowerCase() ||
-                                    remainingNames.has(pe.toLowerCase())
-                                )
-                              : p.people;
-                            return { ...p, faces: rem, people: nextPeople };
-                          })
-                        );
-                        if (selectedFaceId === f.face_id) {
-                          // An unnamed face stays chosen, ready for another name
-                          setSelectedFaceId(removedPerson ? f.face_id : rem[0]?.face_id ?? null);
-                          setFaceNameInput(removedPerson ? "" : rem[0]?.person_name || "");
-                        }
-                        if (refreshPeople) {
-                          await refreshPeople();
-                        }
+                        void handleClearFace(f.face_id);
                       }}
                       className="text-zinc-500 hover:text-red-400 ml-0.5 text-xs"
                       title={f.person_name ? `Remove the name "${f.person_name}" from this face` : "Not a face: remove this box"}
@@ -741,13 +711,13 @@ function RightInspector({
               <span>Pick</span>
             </button>
             <button
-              onClick={() => handleSetFlag(activePhoto.flag === "reject" ? null : "reject")}
+              onClick={() => (activePhoto.flag === "reject" ? handleSetFlag(null) : handleRejectToTrash())}
               className={`px-2 py-1 rounded text-xs font-medium flex items-center gap-1.5 transition ${
                 activePhoto.flag === "reject"
                   ? "bg-red-600 text-white shadow-sm"
                   : "bg-zinc-800 text-zinc-400 hover:text-red-300"
               }`}
-              title="Set reject flag (X)"
+              title="Reject: moves to _Trash when you apply changes (X)"
             >
               <XCircle className="w-3.5 h-3.5" />
               <span>Reject</span>
@@ -1144,8 +1114,62 @@ function RightInspector({
             </p>
           </div>
         )}
+        {hasPhotoHistory(activePhoto.hash) && <PhotoHistory hash={activePhoto.hash} />}
       </div>
     </aside>
+  );
+}
+
+// A server photo's history: who changed it and when. Asked only while open, again for each photo shown.
+function PhotoHistory({ hash }: { hash: string }) {
+  const [open, setOpen] = useState(false);
+  const [rows, setRows] = useState<PhotoChange[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    let stale = false;
+    setRows(null);
+    setError(null);
+    photoHistory(hash)
+      .then((list) => !stale && setRows(list ?? []))
+      .catch((e) => !stale && setError(String(e)));
+    return () => {
+      stale = true;
+    };
+  }, [open, hash]);
+  const shown = rows ? collapseChanges(rows) : [];
+  return (
+    <div className="p-3 bg-zinc-900/90 border border-zinc-800 rounded-xl flex flex-col gap-2 text-xs">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className="text-xs font-medium text-zinc-400 hover:text-zinc-200 flex items-center gap-1.5 text-left"
+      >
+        <History className="w-3.5 h-3.5" />
+        History
+        <ChevronDown className={`w-3.5 h-3.5 ml-auto transition ${open ? "rotate-180" : ""}`} />
+      </button>
+      {open &&
+        (error ? (
+          <span className="text-red-300">{error}</span>
+        ) : rows === null ? (
+          <span className="text-zinc-500">Loading…</span>
+        ) : shown.length === 0 ? (
+          <span className="text-zinc-500">Nobody has changed this photo on the server yet.</span>
+        ) : (
+          <ul className="flex flex-col gap-1.5">
+            {shown.map((c, i) => (
+              <li key={i} className="flex flex-col">
+                <span className="text-zinc-200">
+                  {describeChange(c)}
+                  {c.times > 1 ? ` (${c.times}×)` : ""}
+                </span>
+                <span className="text-[11px] text-zinc-500">{new Date(c.at * 1000).toLocaleString()}</span>
+              </li>
+            ))}
+          </ul>
+        ))}
+    </div>
   );
 }
 // Pick or reject, colour label and stars as they are, for users who may only look

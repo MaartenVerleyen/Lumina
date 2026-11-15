@@ -14,6 +14,8 @@ interface ExportModalProps {
   isOpen: boolean;
   count: number;
   defaultDir: string;
+  // In a browser: no folder to choose, the photos come as one zip download
+  toZip?: boolean;
   onClose: () => void;
   onExport: (settings: ExportSettings) => void;
 }
@@ -35,7 +37,7 @@ function loadSettings(defaultDir: string): ExportSettings {
 }
 
 // Export the selection as JPEGs (resized, rotated, optionally without GPS) to a folder
-export default function ExportModal({ isOpen, count, defaultDir, onClose, onExport }: ExportModalProps) {
+export default function ExportModal({ isOpen, count, defaultDir, toZip = false, onClose, onExport }: ExportModalProps) {
   const [settings, setSettings] = useState<ExportSettings>(() => loadSettings(defaultDir));
   const dialogRef = useDialogFocus<HTMLDivElement>(isOpen);
 
@@ -142,6 +144,11 @@ export default function ExportModal({ isOpen, count, defaultDir, onClose, onExpo
           </span>
         </label>
 
+        {toZip ? (
+          <span className="text-[11px] text-zinc-500">
+            The server makes the JPEGs and your browser downloads them as one zip file. Originals are never changed.
+          </span>
+        ) : (
         <div className="flex flex-col gap-1.5">
           <span className="text-xs font-medium text-zinc-500">Folder</span>
           <div className="flex gap-1.5">
@@ -163,6 +170,7 @@ export default function ExportModal({ isOpen, count, defaultDir, onClose, onExpo
             Originals are never changed. Existing files are not overwritten (a _2 is added).
           </span>
         </div>
+        )}
 
         <div className="flex justify-end gap-2 pt-1">
           <button onClick={onClose} className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-lg">
@@ -170,7 +178,7 @@ export default function ExportModal({ isOpen, count, defaultDir, onClose, onExpo
           </button>
           <button
             onClick={start}
-            disabled={!settings.destDir.trim() || count === 0}
+            disabled={(!toZip && !settings.destDir.trim()) || count === 0}
             className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white rounded-lg font-semibold"
           >
             Export

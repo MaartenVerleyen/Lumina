@@ -14,7 +14,7 @@ import {
   type RemoteEventMessage,
   type ServerInfo,
 } from "./desktopRemote.ts";
-import { createRemoteAuth, createRemoteTransport, hasRole, RECONNECTED, uploadBackup, type RemoteUser, type Role } from "./remote.ts";
+import { createRemoteAuth, createRemoteTransport, exportZipUrl, hasRole, makeExportZip, RECONNECTED, uploadBackup, type RemoteUser, type Role } from "./remote.ts";
 import {
   copyDownEdits,
   engineOf,
@@ -37,6 +37,7 @@ import {
   mergeStatus,
   sourceKey,
   splitByHome,
+  splitOps,
   type Copies,
   type LocalValues,
   type Source,
@@ -45,7 +46,7 @@ import type { FaceCluster, PersonItem, PhotoItem, SemanticHit, SemanticStatus, S
 
 export type { EngineEvent, MediaRef, Transport, RemoteUser, Role, LibraryRef, ServerInfo, Source };
 export { libraryRefFromString, libraryRefToString };
-export { hasRole, RECONNECTED, uploadBackup };
+export { exportZipUrl, hasRole, makeExportZip, RECONNECTED, uploadBackup };
 
 // Opens the admin page (from the account menu; App shows it)
 export const OPEN_ADMIN_EVENT = "lumina-open-admin";
@@ -272,6 +273,9 @@ async function withBasket(photos: PhotoItem[]): Promise<PhotoItem[]> {
 
 // Sent with the number of photos an edit left alone because they are shared read-only; App says so
 export const READ_ONLY_EVENT = "lumina-read-only-photos";
+
+// Sent when photos weren't moved because the folder is in another library than theirs: { count }
+export const MOVE_SKIPPED_EVENT = "lumina-move-skipped";
 // Sources taken off All photos (Settings → All photos), by sourceKey
 const EXCLUDED_KEY = "lumina_all_photos_off";
 // The web client's sources are all on the server the page came from
@@ -323,6 +327,28 @@ export const PHONE_ROOT = "phone";
 export function allPhotosServerOf(hash: string): string | null {
   const engine = engineOfShown(hash);
   return engine ? engine : null;
+}
+
+// Where the originals of these photos can be read: this computer's copy (by its id here) when there is one,
+// else a server that has the photo (by server). Export, the web gallery and Download use it.
+export function originalsOf(hashes: string[]): { local: string[]; byServer: Map<string, string[]> } {
+  const local: string[] = [];
+  const byServer = new Map<string, string[]>();
+  const onServer = (server: string, hash: string) => byServer.set(server, [...(byServer.get(server) ?? []), hash]);
+  for (const hash of hashes) {
+    if (openLibrary !== ALL_PHOTOS) {
+      if (openServer) onServer(openServer, hash);
+      else local.push(hash);
+      continue;
+    }
+    const keys = all.copies.get(hash)?.copies ?? [];
+    const sources = keys.map((k) => all.sources.get(k)).filter((x): x is Source => !!x);
+    const here = sources.find((x) => x.server === null && x.root !== PHONE_ROOT);
+    const there = sources.find((x) => x.server !== null);
+    if (here) local.push((all.localIds.get(hash) ?? [hash])[0]);
+    else if (there) onServer(there.server!, hash);
+  }
+  return { local, byServer };
 }
 
 // This account may change the photo (name its faces, rate it): All photos knows a home for it. A library open on
@@ -477,11 +503,13 @@ const lastSegment = (root: string) => root.split(/[\\/]/).filter(Boolean).pop() 
 
 // Every library All photos could show: the folders opened on this computer and the libraries of each server
 // the app is signed in to (in the web client, the libraries of its server)
-// The phone app keeps the last list of each server library (offline.rs): it opens from them (startAllPhotosFromKept)
-// and shows a server out of reach as it was last seen. The phone's own list isn't kept: Android lists it without
+// The apps keep the last list of each server library (offline.rs) and show a server out of reach as it was last
+// seen; the phone app also opens from them (startAllPhotosFromKept). The phone's own list isn't kept: Android lists it without
 // a connection, and sooner than a kept copy of it reads.
 let fromKept = false;
 let offlineServers: string[] = [];
+// The server library lists (`serverLists` keys) that came from the kept copy, not from the server
+const keptLists = new Set<string>();
 
 // The next All photos load takes the kept lists where there are some (the window then loads again, for real)
 export function startAllPhotosFromKept() {
@@ -558,7 +586,7 @@ async function kept<T>(key: string): Promise<T | null> {
 }
 
 function keep(key: string, value: unknown) {
-  if (onAndroid) void callLocal("offline_save", { key, value }).catch(() => {});
+  if (inDesktopApp) void callLocal("offline_save", { key, value }).catch(() => {});
 }
 
 // A list from the server, kept for next time; the kept one when the server can't be reached (or when starting
@@ -566,7 +594,7 @@ function keep(key: string, value: unknown) {
 async function keptOr<T>(key: string, server: string, fetch: () => Promise<T>, useKept: boolean): Promise<T> {
   // A server that didn't answer once in this load isn't waited for again (each try takes the connect timeout)
   const out = offlineServers.includes(server);
-  if (onAndroid && (useKept || out)) {
+  if (inDesktopApp && (useKept || out)) {
     const old = await kept<T>(key);
     if (old !== null) return old;
     if (out) throw new Error(`${server} is out of reach`);
@@ -576,7 +604,7 @@ async function keptOr<T>(key: string, server: string, fetch: () => Promise<T>, u
     keep(key, fresh);
     return fresh;
   } catch (err) {
-    const old = onAndroid ? await kept<T>(key) : null;
+    const old = inDesktopApp ? await kept<T>(key) : null;
     if (old === null) throw err;
     if (!offlineServers.includes(server)) offlineServers = [...offlineServers, server];
     return old;
@@ -598,7 +626,8 @@ export async function allPhotosCandidates(useKept = false): Promise<Source[]> {
     const me = await serverAuth.me().catch(() => null);
     return fromServer(WEB_SERVER, "", list, me);
   }
-  const local = await callLocal<{ root: string }[]>("local_libraries").catch(() => []);
+  // A library whose folder is gone (renamed, a drive not connected) waits in the Library menu to be located
+  const local = (await callLocal<{ root: string; missing?: boolean }[]>("local_libraries").catch(() => [])).filter((l) => !l.missing);
   const sources: Source[] = local.map((l) => ({ server: null, root: l.root, label: l.root, editable: true, uploadable: false }));
   // The phone app: the phone's own photos and videos (its camera roll), looked at here, backed up to a server
   if (onAndroid) sources.unshift({ server: null, root: PHONE_ROOT, label: "This phone", editable: false, uploadable: false });
@@ -609,10 +638,82 @@ export async function allPhotosCandidates(useKept = false): Promise<Source[]> {
       rememberLibraryRoles(list, s.id);
       sources.push(...fromServer(s.id, s.label, list, serverUsers.get(s.id) ?? ({ name: s.user, role: s.role } as RemoteUser)));
     } catch {
-      // A server out of reach leaves its photos out until the next reload
+      // A server out of reach leaves its photos out until it is back (it connects again by itself), and says so
+      unreachable.add(s.label || s.id);
     }
   }
   return sources;
+}
+
+// The servers and libraries the last All photos load couldn't list, by name; the window says so when that changes
+let unreachable = new Set<string>();
+let unreachableShown = "";
+export const UNREACHABLE_EVENT = "lumina-unreachable-libraries";
+function noteUnreachable() {
+  const now = [...unreachable].sort().join("|");
+  if (now === unreachableShown) return;
+  unreachableShown = now;
+  window.dispatchEvent(new CustomEvent(UNREACHABLE_EVENT, { detail: [...unreachable].sort() }));
+}
+
+// The servers that have these photos, each with the photos it has (All photos; else the open library's server)
+export function serversHolding(hashes: string[]): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  const add = (server: string, hash: string) => out.set(server, [...(out.get(server) ?? []), hash]);
+  for (const hash of hashes) {
+    if (openLibrary !== ALL_PHOTOS) {
+      if (openServer) add(openServer, hash);
+      continue;
+    }
+    const servers = new Set((all.copies.get(hash)?.copies ?? []).map((k) => all.sources.get(k)?.server).filter((x): x is string => !!x));
+    for (const server of servers) add(server, hash);
+  }
+  return out;
+}
+
+// Who changed a server photo and when (newest first); null for a photo no server has (a library on this PC keeps
+// no history: it has no accounts)
+export async function photoHistory(hash: string): Promise<{ at: number; user: string; what: string }[] | null> {
+  if (serverTransport && openLibrary !== ALL_PHOTOS) return serverTransport.call("get_photo_history", { hash });
+  const server = [...serversHolding([hash]).keys()][0];
+  return server ? engineTransport(server).call("get_photo_history", { hash }) : null;
+}
+
+export function hasPhotoHistory(hash: string): boolean {
+  return (!!serverTransport && openLibrary !== ALL_PHOTOS) || serversHolding([hash]).size > 0;
+}
+
+// A folder of the folder tree ("Root", "Trip / Day 1", in All photos "D:\Photos / Trip") as a folder on this
+// computer: its library's root and the path inside it ('/'-separated, "" for the top). Null for a server's folder.
+export function folderOnThisPc(treePath: string): { root: string; rel: string } | null {
+  const inside = (path: string) => (path === "Root" || !path ? "" : path.replace(/ \/ /g, "/"));
+  if (openLibraryIsLocal() && openLibrary) return { root: openLibrary, rel: inside(treePath) };
+  if (openLibrary !== ALL_PHOTOS) return null;
+  const here = [...all.sources.values()]
+    .filter((s) => s.server === null && s.root !== PHONE_ROOT)
+    .sort((a, b) => b.label.length - a.label.length)
+    .find((s) => treePath === s.label || treePath.startsWith(`${s.label} / `));
+  if (!here) return null;
+  return { root: here.root, rel: treePath === here.label ? "" : inside(treePath.slice(here.label.length + 3)) };
+}
+
+// The folders on this PC in the open view, as folder-tree paths, empty ones too (a new folder shows before a
+// photo is in it). A server's folders come from its photos only.
+export async function foldersOnThisPc(): Promise<string[]> {
+  if (!inDesktopApp) return [];
+  const roots: { root: string; label: string | null }[] = openLibraryIsLocal() && openLibrary
+    ? [{ root: openLibrary, label: null }]
+    : openLibrary === ALL_PHOTOS
+      ? [...all.sources.values()].filter((s) => s.server === null && s.root !== PHONE_ROOT).map((s) => ({ root: s.root, label: s.label }))
+      : [];
+  const lists = await Promise.all(
+    roots.map(({ root, label }) =>
+      callLocal<string[]>("list_library_folders", { rootFolder: root })
+        .then((rels) => rels.map((rel) => (label ? `${label} / ` : "") + rel.split("/").join(" / ")))
+        .catch(() => [] as string[])
+    )
+  );
+  return lists.flat();
 }
 
 // The libraries the view came from, by key (the grid's marks and the Where filter read them)
@@ -622,6 +723,14 @@ export function allPhotosSources(): Map<string, Source> {
 
 // Whether All photos holds a folder on this PC (the web client's never does): only then do "on the server"
 // marks and the Where filter say anything
+// The libraries on this PC whose background work (faces, eyes and focus, the smart search index) this window
+// runs: the open one, or in All photos each folder on this PC in the view. A server runs its own.
+export function localJobRoots(): string[] {
+  if (openLibraryIsLocal()) return openLibrary ? [openLibrary] : [];
+  if (openLibrary !== ALL_PHOTOS || !inDesktopApp) return [];
+  return [...all.sources.values()].filter((s) => s.server === null && s.root !== PHONE_ROOT).map((s) => s.root);
+}
+
 export function allPhotosHasLocal(): boolean {
   return [...all.sources.values()].some((s) => s.server === null);
 }
@@ -655,6 +764,10 @@ function loadAll(check?: string[], reuseServers = false): Promise<PhotoItem[]> {
 // Each engine's faces-to-check counts as it last gave them (All photos)
 const lastPendingCounts = new Map<string, Record<string, number>>();
 
+// Where each photo of the duplicate sets last found in All photos came from: the engine that found the set and the
+// photo's id there, so staging the extras goes back to that library (a set never spans two libraries)
+const duplicateHomes = new Map<string, { engine: string; id: string }>();
+
 // Each server library's list as the last load fetched it. A server answers from its database, so a load that
 // only checks this computer's folders (the background check after opening) reuses these: a large library's
 // list is tens of megabytes.
@@ -671,10 +784,16 @@ export function forgetServerList(eventServer: string | undefined, root: string) 
   }
 }
 
+// A server connected again, or signed out: the next load that reuses lists fetches all of its libraries again
+export function forgetServerLists(server: string) {
+  for (const key of [...serverLists.keys()]) if (key.startsWith(`${server}|`)) serverLists.delete(key);
+}
+
 async function loadAllNow(check?: string[], reuseServers = false): Promise<PhotoItem[]> {
   const useKept = fromKept;
   fromKept = false;
   offlineServers = [];
+  unreachable = new Set();
   const sources = includedSources(await allPhotosCandidates(useKept), excludedSources());
   let localTurn: Promise<unknown> = Promise.resolve();
   const scanHere = (root: string) => {
@@ -688,6 +807,10 @@ async function loadAllNow(check?: string[], reuseServers = false): Promise<Photo
         const checked = !check || check.some((root) => sameRoot(root, source.root));
         const server = source.server;
         const listKey = `${server}|${source.root}`;
+        // A list reused from an earlier load that came from the kept copy still shows a server out of reach
+        if (server !== null && reuseServers && serverLists.has(listKey) && keptLists.has(listKey) && !offlineServers.includes(server)) {
+          offlineServers = [...offlineServers, server];
+        }
         const photos =
           server !== null
             ? reuseServers && serverLists.has(listKey)
@@ -699,6 +822,8 @@ async function loadAllNow(check?: string[], reuseServers = false): Promise<Photo
                   useKept
                 ).then((list) => {
                   serverLists.set(listKey, list);
+                  if (offlineServers.includes(server)) keptLists.add(listKey);
+                  else keptLists.delete(listKey);
                   return list;
                 })
             : source.root === PHONE_ROOT
@@ -709,6 +834,7 @@ async function loadAllNow(check?: string[], reuseServers = false): Promise<Photo
         return { source, photos };
       } catch (err) {
         console.error(`All photos: ${source.label} could not be listed`, err);
+        unreachable.add(source.label);
         return { source, photos: [] as PhotoItem[] };
       }
     })
@@ -747,6 +873,7 @@ async function loadAllNow(check?: string[], reuseServers = false): Promise<Photo
   if (watchAllPhotos) await watchAllPhotosFolders().catch((err) => console.error("All photos: could not watch this computer's folders", err));
   await copyDown(merged.photos);
   window.dispatchEvent(new Event(ALL_PHOTOS_LOADED));
+  noteUnreachable();
   return merged.photos;
 }
 
@@ -790,7 +917,10 @@ function afterLocalEdit(command: string, args: Record<string, unknown>, hashes: 
 }
 
 // Photos an edit left alone (shared, read-only): the window fetches their real values again, and says why
-function readOnlyLeft(hashes: string[]) {
+// Read-only photos an edit left alone: the window takes back what it showed (their server's photos-changed), and
+// a note says why (`notify`), unless the edit fails with that reason instead
+const READ_ONLY_MESSAGE = "These photos are shared with you and can't be changed.";
+function readOnlyLeft(hashes: string[], notify = true) {
   if (hashes.length === 0) return;
   const byServer = new Map<string, string[]>();
   for (const h of hashes) {
@@ -801,7 +931,7 @@ function readOnlyLeft(hashes: string[]) {
     byServer.set(engine, list);
   }
   for (const [server, list] of byServer) remoteEvents.deliver({ server, event: "photos-changed", payload: { hashes: list, by: "", origin: "" } });
-  window.dispatchEvent(new CustomEvent(READ_ONLY_EVENT, { detail: hashes.length }));
+  if (notify) window.dispatchEvent(new CustomEvent(READ_ONLY_EVENT, { detail: hashes.length }));
 }
 
 // A command's person names as that engine knows them ("Maarten" is cachy's "Me" for this account)
@@ -813,12 +943,19 @@ function namedFor(engine: string, args: Record<string, unknown>): Record<string,
 
 async function editAll<T>(command: string, args: Record<string, unknown>, hashes: string[]): Promise<T> {
   const { byEngine, readOnly, alsoLocal } = splitByHome(hashes, all.copies, all.sources);
-  const results = await Promise.all(
-    [...byEngine].map(([engine, part]) => {
+  // Nothing this account may change: an error the caller shows, not an answer it would take for the photos' new values
+  if (byEngine.size === 0 && readOnly.length > 0) {
+    readOnlyLeft(readOnly, false);
+    throw new Error(READ_ONLY_MESSAGE);
+  }
+  const answers = await Promise.all(
+    [...byEngine].map(async ([engine, part]) => {
       const partArgs = namedFor(engine, { ...args, hashes: part });
-      return engineTransport(engine).call<T>(command, engine === "" ? withLocalIds(partArgs, all.localIds) : partArgs);
+      const answer = await engineTransport(engine).call<T>(command, engine === "" ? withLocalIds(partArgs, all.localIds) : partArgs);
+      return { engine, answer };
     })
   );
+  const results = answers.map((a) => a.answer);
   for (const [engine, part] of byEngine) if (engine === "") afterLocalEdit(command, args, part);
   if (FOLLOWED_BY_LOCAL_COPY.has(command) && alsoLocal.length > 0) {
     try {
@@ -831,6 +968,24 @@ async function editAll<T>(command: string, args: Record<string, unknown>, hashes
   readOnlyLeft(readOnly);
   if (results.length > 0 && results.every((r) => typeof r === "number")) {
     return results.reduce((a, b) => (a as number) + (b as number), 0) as T;
+  }
+  // Answers about photos (a list of them, or one entry per photo) join, this computer's ids becoming All photos'
+  const shown = (engine: string, hash: string) => (engine === "" ? all.fromLocal.get(hash) ?? hash : hash);
+  if (results.length > 0 && results.every((r) => Array.isArray(r))) {
+    return answers.flatMap(({ engine, answer }) =>
+      (answer as unknown[]).map((item) =>
+        item && typeof item === "object" && typeof (item as { hash?: unknown }).hash === "string"
+          ? { ...item, hash: shown(engine, (item as { hash: string }).hash) }
+          : item
+      )
+    ) as T;
+  }
+  if (results.length > 0 && results.every((r) => r && typeof r === "object" && !Array.isArray(r))) {
+    const merged: Record<string, unknown> = {};
+    for (const { engine, answer } of answers) {
+      for (const [key, value] of Object.entries(answer as Record<string, unknown>)) merged[shown(engine, key)] = value;
+    }
+    return merged as T;
   }
   return results[0] as T;
 }
@@ -1017,7 +1172,11 @@ async function callAll<T>(command: string, args: Record<string, unknown>): Promi
     }
     case "set_person_hidden":
     case "set_person_starred": {
-      for (const p of allPhotosPersonParts(String(args.name ?? ""))) {
+      const parts = allPhotosPersonParts(String(args.name ?? ""));
+      if (parts.length > 0 && !parts.some((p) => p.editable)) {
+        throw new Error(`${args.name} is shared with you: only who shared them can change that.`);
+      }
+      for (const p of parts) {
         if (p.editable) await engineTransport(p.engine).call(command, { ...args, name: p.name });
       }
       return undefined as T;
@@ -1054,6 +1213,21 @@ async function callAll<T>(command: string, args: Record<string, unknown>): Promi
       );
       return lists.flat().sort((a, b) => b.similarity - a.similarity) as T;
     }
+    // A person's confirmed and turned-down faces, from every library they are in
+    case "get_confirmed_faces_for_person":
+    case "get_rejected_faces_for_person": {
+      const parts = allPhotosPersonParts(String(args.personName ?? ""));
+      const lists = await Promise.all(
+        parts.map(async (p) => {
+          const found = await engineTransport(p.engine).call<SimilarFaceCandidate[]>(command, { ...args, personName: p.name });
+          return found.map((c) => fromEngineFace(p.engine, c));
+        })
+      );
+      return lists.flat() as T;
+    }
+    // The accounts an album can be shared with are its server's
+    case "list_share_users":
+      return albumCommand<T>(command, args, args.kind === "search" ? all.searches : all.albums);
     case "get_unknown_face_clusters": {
       const lists = await Promise.all(
         engines()
@@ -1104,9 +1278,40 @@ async function callAll<T>(command: string, args: Record<string, unknown>): Promi
       );
       return mergeStatus(list.filter((s): s is SemanticStatus => !!s)) as T;
     }
+    // Hits by All photos' ids (this computer's engine answers with its own)
     case "semantic_search": {
-      const lists = await Promise.all(engines().map((e) => engineTransport(e).call<SemanticHit[]>(command, args).catch(() => [] as SemanticHit[])));
+      const lists = await Promise.all(
+        engines().map((e) =>
+          engineTransport(e)
+            .call<SemanticHit[]>(command, args)
+            .then((hits) => (e === "" ? hits.map((h) => ({ ...h, hash: all.fromLocal.get(h.hash) ?? h.hash })) : hits))
+            .catch(() => [] as SemanticHit[])
+        )
+      );
       return mergeHits(lists) as T;
+    }
+    case "find_similar_photos": {
+      const engine = engineOfShown(String(args.hash));
+      if (engine === undefined) return [] as T;
+      const hash = engine === "" ? all.localIds.get(String(args.hash))?.[0] ?? args.hash : args.hash;
+      const hits = await engineTransport(engine).call<SemanticHit[]>(command, { ...args, hash });
+      return (engine === "" ? hits.map((h) => ({ ...h, hash: all.fromLocal.get(h.hash) ?? h.hash })) : hits) as T;
+    }
+    // The extras of duplicate sets, each set staged in the library that found it
+    case "stage_duplicate_extras": {
+      const byEngine = new Map<string, { keep: string; extras: string[] }[]>();
+      for (const set of args.sets as { keep: string; extras: string[] }[]) {
+        const home = duplicateHomes.get(set.keep);
+        if (!home) throw new Error("The list of duplicates is out of date: find them again.");
+        const id = (h: string) => duplicateHomes.get(h)?.id ?? h;
+        const list = byEngine.get(home.engine) ?? [];
+        list.push({ keep: id(set.keep), extras: set.extras.map(id) });
+        byEngine.set(home.engine, list);
+      }
+      const counts = await Promise.all(
+        [...byEngine].map(([engine, sets]) => engineTransport(engine).call<number>(command, { ...args, sets }))
+      );
+      return counts.reduce((n, c) => n + (Number(c) || 0), 0) as T;
     }
     // Trip names of every library (a new one is kept where the window's own commands go)
     case "get_trip_names": {
@@ -1119,17 +1324,74 @@ async function callAll<T>(command: string, args: Record<string, unknown>): Promi
   if (typeof args.hash === "string") {
     // A change to a photo with no copy this account may change: the note, not the server's refusal
     if (all.copies.get(args.hash) && !all.copies.get(args.hash)!.home && !/^(get_|find_|existing_|make_playable|ensure_)/.test(command)) {
-      readOnlyLeft([args.hash]);
-      return undefined as T;
+      readOnlyLeft([args.hash], false);
+      throw new Error("This photo is shared with you and can't be changed.");
     }
     const engine = engineOfShown(args.hash);
     const hash = engine === "" ? all.localIds.get(args.hash)?.[0] ?? args.hash : args.hash;
     if (engine !== undefined) return engineTransport(engine).call<T>(command, namedFor(engine, { ...args, hash }));
   }
-  if ("rootFolder" in args || "folderPath" in args || "root" in args || Array.isArray(args.ops)) {
+  if (Array.isArray(args.ops)) return (await opsAll(command, args)) as T;
+  // Per library: planned moves cancelled or applied, duplicates found, in each library this account may change
+  if (command === "clear_all_staged" || command === "find_duplicates" || command === "commit_staged_operations") {
+    return (await perLibrary(command, args)) as T;
+  }
+  if ("rootFolder" in args || "folderPath" in args || "root" in args) {
     throw new Error("Open the library on its own for this: All photos shows several libraries at once.");
   }
   return (serverTransport ?? localTransport).call<T>(command, args);
+}
+
+// Planned moves and exact rotations in All photos: each photo's to the engine of its home. Answers the photos
+// left as they were ({ skipped }), so the window doesn't show a move that wasn't planned.
+async function opsAll(command: string, args: Record<string, unknown>): Promise<{ skipped: string[] }> {
+  const ops = args.ops as { hash: string; target_subfolder?: string | null }[];
+  const { byEngine, readOnly, elsewhere } = splitOps(ops, all.copies, all.sources, all.localIds);
+  if (byEngine.size === 0 && elsewhere.length > 0) {
+    throw new Error("A photo moves within its own library: drop it on a folder of the library it is in. To copy it to another, back it up or download it.");
+  }
+  await Promise.all([...byEngine].map(([engine, part]) => engineTransport(engine).call(command, { ...args, ops: part })));
+  readOnlyLeft(readOnly);
+  if (elsewhere.length > 0) window.dispatchEvent(new CustomEvent(MOVE_SKIPPED_EVENT, { detail: elsewhere.length }));
+  return { skipped: [...readOnly, ...elsewhere] };
+}
+
+// A library-wide command in All photos, run in each library this account may change: numbers add up, lists join
+// (this computer's photo ids become All photos' ids), commit results merge. Applying planned moves on a server is
+// its admin's work, so only this computer's folders are applied here.
+async function perLibrary(command: string, args: Record<string, unknown>): Promise<unknown> {
+  const libraries = [...all.sources.values()].filter(
+    (s) => s.editable && s.root !== PHONE_ROOT && (command !== "commit_staged_operations" || s.server === null)
+  );
+  const answers = await Promise.all(
+    libraries.map(async (s) => {
+      const engine = engineOf(s);
+      const answer = await engineTransport(engine).call<unknown>(command, { ...args, rootFolder: s.root });
+      return { engine, answer };
+    })
+  );
+  if (command === "clear_all_staged") return answers.reduce((n, a) => n + (Number(a.answer) || 0), 0);
+  if (command === "commit_staged_operations") {
+    return answers.reduce<{ moved: number; failures: unknown[] }>(
+      (acc, a) => {
+        const r = a.answer as { moved: number; failures: unknown[] };
+        return { moved: acc.moved + (r?.moved ?? 0), failures: [...acc.failures, ...(r?.failures ?? [])] };
+      },
+      { moved: 0, failures: [] }
+    );
+  }
+  // find_duplicates: sets of photos, by All photos' ids
+  duplicateHomes.clear();
+  return answers.flatMap(({ engine, answer }) =>
+    ((answer as { kind: string; hashes: string[] }[]) ?? []).map((set) => ({
+      ...set,
+      hashes: set.hashes.map((h) => {
+        const shown = engine === "" ? all.fromLocal.get(h) ?? h : h;
+        duplicateHomes.set(shown, { engine, id: h });
+        return shown;
+      }),
+    }))
+  );
 }
 
 const sameRoot = (a: string, b: string) => {

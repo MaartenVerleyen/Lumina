@@ -392,6 +392,23 @@ fn save_indexed(
     if upsert_count == 0 {
         return 0;
     }
+    // Files that take over the row of a file that was moved or renamed outside Lumina: the row keeps its
+    // ratings, tags and names, and the scan's list shows them (read back below), not the blank values of a new file
+    let moved_in: Vec<usize> = {
+        let mut stmt = conn.prepare_cached("SELECT current_path FROM photos WHERE hash = ?1").ok();
+        indexed
+            .iter()
+            .enumerate()
+            .filter(|(_, (p, disk_path, _, _, upsert))| {
+                *upsert
+                    && stmt
+                        .as_mut()
+                        .and_then(|s| s.query_row(params![p.hash], |r| r.get::<_, String>(0)).ok())
+                        .is_some_and(|old| !old.eq_ignore_ascii_case(disk_path))
+            })
+            .map(|(i, _)| i)
+            .collect()
+    };
     if let Ok(tx) = conn.transaction() {
         for (p, orig_disk_path, size_bytes, mtime, needs_upsert) in indexed.iter() {
             if !*needs_upsert {
@@ -407,12 +424,13 @@ fn save_indexed(
                     modified_time = excluded.modified_time,
                     width = CASE WHEN excluded.width > 0 THEN excluded.width ELSE photos.width END,
                     height = CASE WHEN excluded.height > 0 THEN excluded.height ELSE photos.height END,
-                    captured_at = excluded.captured_at,
+                    -- A moved file is the same file: a date shifted, a place set and a move planned in Lumina stay
+                    captured_at = CASE WHEN photos.current_path != excluded.current_path AND COALESCE(photos.captured_at, '') != '' THEN photos.captured_at ELSE excluded.captured_at END,
                     camera_model = excluded.camera_model,
-                    location = excluded.location,
-                    latitude = excluded.latitude,
-                    longitude = excluded.longitude,
-                    staged_target = excluded.staged_target,
+                    location = CASE WHEN photos.current_path != excluded.current_path THEN photos.location ELSE excluded.location END,
+                    latitude = CASE WHEN photos.current_path != excluded.current_path THEN photos.latitude ELSE excluded.latitude END,
+                    longitude = CASE WHEN photos.current_path != excluded.current_path THEN photos.longitude ELSE excluded.longitude END,
+                    staged_target = CASE WHEN photos.current_path != excluded.current_path THEN photos.staged_target ELSE excluded.staged_target END,
                     focal_length = COALESCE(excluded.focal_length, photos.focal_length),
                     aperture = COALESCE(excluded.aperture, photos.aperture),
                     shutter_speed = COALESCE(excluded.shutter_speed, photos.shutter_speed),
@@ -437,6 +455,26 @@ fn save_indexed(
             }
         }
         let _ = tx.commit();
+    }
+    for i in moved_in {
+        let (p, ..) = &mut indexed[i];
+        let Ok(index) = load_index(conn, "p.hash = ?1", &p.hash) else { continue };
+        let Some(c) = index.cache.values().next() else { continue };
+        p.rating = c.rating;
+        p.flag = c.flag.clone();
+        p.color_label = c.color_label.clone();
+        p.rotation = c.rotation;
+        p.in_basket = c.in_basket;
+        p.ai_caption = c.ai_caption.clone();
+        p.ocr_text = c.ocr_text.clone();
+        p.captured_at = c.captured_at.clone();
+        p.location = c.location.clone();
+        p.latitude = c.lat;
+        p.longitude = c.lon;
+        p.staged_target = c.staged_target.clone();
+        p.tags = index.tags.get(&p.hash).cloned().unwrap_or_default();
+        p.people = index.people.get(&p.hash).cloned().unwrap_or_default();
+        p.faces = index.faces.get(&p.hash).cloned().unwrap_or_default();
     }
     upsert_count
 }
@@ -890,6 +928,13 @@ pub async fn scan_library(app: SharedHost, folder_path: String, force_reprocess:
         );
 
         let mut conn = open_global_db(&app)?;
+        // A library renamed or moved outside Lumina, opened at its new place: it moves here with everything
+        // known about its photos, instead of starting again as a new library
+        if let Some(moved) = libraries::find_moved(&conn, &root_path.to_string_lossy())? {
+            let n = libraries::relocate_or_merge(&mut conn, moved, &root_path.to_string_lossy())?;
+            eprintln!("[scan] a library whose folder was gone is at {} now ({n} photos)", root_path.display());
+            let _ = emit_to(&app, "libraries-changed", serde_json::json!({ "root": root_path.to_string_lossy() }));
+        }
         libraries::open(&conn, &root_path.to_string_lossy())?;
         let folder_prefix = make_folder_prefix(Some(&root_path.to_string_lossy()));
 

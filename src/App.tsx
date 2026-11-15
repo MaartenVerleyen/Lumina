@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import { ALBUM_SKIPPED_EVENT, ALL_PHOTOS, call, inDesktopApp, OPEN_ADMIN_EVENT, openLibraryIsLocal, READ_ONLY_EVENT, subscribeLocal } from "./api";
-import { platform } from "./api/platform";
+import { ALBUM_SKIPPED_EVENT, ALL_PHOTOS, allPhotosServerOf, call, callLocal, folderOnThisPc, inDesktopApp, openLibraryIsAll, openLibraryServer, MOVE_SKIPPED_EVENT, UNREACHABLE_EVENT, OPEN_ADMIN_EVENT, openLibraryIsLocal, READ_ONLY_EVENT, subscribeLocal } from "./api";
+import { join, pictureDir, platform } from "./api/platform";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useLibraryState } from "./hooks/useLibraryState";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
@@ -117,20 +117,48 @@ export default function App() {
   // Context Menu State (Photos & Folders)
   const [photoMenuPos, setPhotoMenuPos] = useState<ContextMenuPosition | null>(null);
   const [contextPhoto, setContextPhoto] = useState<PhotoItem | null>(null);
+  // Where the right-clicked photo's file is: on this PC (a local library, or All photos showing this PC's copy), or
+  // the server it is on
+  const contextServer = contextPhoto ? (openLibraryIsAll() ? allPhotosServerOf(contextPhoto.hash) : openLibraryServer()) : null;
+  const contextOnPc = !!contextPhoto && inDesktopApp && (platform.localFiles || (openLibraryIsAll() && contextServer === null));
   const [folderMenuPos, setFolderMenuPos] = useState<ContextMenuPosition | null>(null);
   const [contextFolderRel, setContextFolderRel] = useState<string>("");
 
   // New Subfolder Modal State
   const [isNewFolderModalOpen, setIsNewFolderModalOpen] = useState<boolean>(false);
   const [newFolderInput, setNewFolderInput] = useState<string>("");
+  // The library a new folder goes in (its own in All photos)
+  const [newFolderRoot, setNewFolderRoot] = useState<string | null>(null);
+  // The folder being renamed (its path inside the library), or null when the dialog makes a new folder
+  const [renameFolderFrom, setRenameFolderFrom] = useState<string | null>(null);
+  // The right-clicked folder as a folder on this PC (null for a server's)
+  const contextFolderHere = folderOnThisPc(contextFolderRel);
+  // Photos in it and its subfolders: only an empty folder offers "Remove"
+  const contextFolderTotal = (() => {
+    const find = (nodes: typeof lib.folderTree.nodes): number | null => {
+      for (const n of nodes) {
+        if (n.fullPath === contextFolderRel) return n.totalCount;
+        const inner = find(n.children);
+        if (inner !== null) return inner;
+      }
+      return null;
+    };
+    return find(lib.folderTree.nodes) ?? 0;
+  })();
   const [isPaletteOpen, setIsPaletteOpen] = useState<boolean>(false);
   // The album whose sharing dialog is open (web client)
   const [shareAlbum, setShareAlbum] = useState<{ id: number; name: string; kind?: "album" | "search" } | null>(null);
   const [followAlbum, setFollowAlbum] = useState<FollowTarget | null>(null);
-  // The server's admin page (web client, admins; opened from the account menu)
+  // The server's admin page: the web client's own server (the account menu), or in the desktop app a server it is
+  // signed in to as an admin (Settings → Servers; the event names it)
   const [isAdminOpen, setIsAdminOpen] = useState(false);
+  const [adminServer, setAdminServer] = useState<string | null>(null);
   useEffect(() => {
-    const open = () => setIsAdminOpen(true);
+    const open = (e: Event) => {
+      setAdminServer((e as CustomEvent<string | undefined>).detail ?? null);
+      setIsSettingsOpen(false);
+      setIsAdminOpen(true);
+    };
     // The tray on the server's computer opens the web client at #admin (after signing in, if need be)
     if (!inDesktopApp && window.location.hash === "#admin") {
       setIsAdminOpen(true);
@@ -141,6 +169,17 @@ export default function App() {
   }, []);
   // All photos: an edit left photos shared with this user alone (they can look, not change)
   const { setAutoMatchNotice } = lib;
+  // An action that failed without anyone catching it says so, instead of seeming to do nothing
+  const { setError } = lib;
+  useEffect(() => {
+    const unhandled = (e: PromiseRejectionEvent) => {
+      const message = String(e.reason?.message ?? e.reason ?? "");
+      if (!message || /abort|cancel/i.test(message)) return;
+      setError(message);
+    };
+    window.addEventListener("unhandledrejection", unhandled);
+    return () => window.removeEventListener("unhandledrejection", unhandled);
+  }, [setError]);
   useEffect(() => {
     const note = (e: Event) => {
       const n = (e as CustomEvent<number>).detail;
@@ -153,8 +192,21 @@ export default function App() {
         `${count} photo${count === 1 ? " isn't" : "s aren't"} on ${where}, so ${count === 1 ? "it wasn't" : "they weren't"} added: back ${count === 1 ? "it" : "them"} up first.`
       );
     };
+    // A move stays within a photo's library
+    const moveSkipped = (e: Event) => {
+      const n = (e as CustomEvent<number>).detail;
+      setAutoMatchNotice(`${n} photo${n === 1 ? " is" : "s are"} in another library than that folder, so ${n === 1 ? "it stays" : "they stay"} where ${n === 1 ? "it is" : "they are"}.`);
+    };
     window.addEventListener(READ_ONLY_EVENT, note);
     window.addEventListener(ALBUM_SKIPPED_EVENT, skipped);
+    window.addEventListener(MOVE_SKIPPED_EVENT, moveSkipped);
+    // All photos couldn't list a server or a library: its photos are missing until it is back
+    const unreachableNote = (e: Event) => {
+      const names = (e as CustomEvent<string[]>).detail;
+      if (names.length === 0) setAutoMatchNotice("Every library in All photos is back.");
+      else setAutoMatchNotice(`All photos can't reach ${names.join(", ")} right now, so ${names.length === 1 ? "its" : "their"} photos aren't shown. They come back when ${names.length === 1 ? "it is" : "they are"} reachable again.`);
+    };
+    window.addEventListener(UNREACHABLE_EVENT, unreachableNote);
     // A followed album that is no longer shared with you: the follow ended, the photos stay
     const offEnded = subscribeLocal<{ albums: string[] }>("follows-ended", (e) =>
       setAutoMatchNotice(
@@ -165,8 +217,19 @@ export default function App() {
       offEnded.then((f) => f());
       window.removeEventListener(READ_ONLY_EVENT, note);
       window.removeEventListener(ALBUM_SKIPPED_EVENT, skipped);
+      window.removeEventListener(MOVE_SKIPPED_EVENT, moveSkipped);
+      window.removeEventListener(UNREACHABLE_EVENT, unreachableNote);
     };
   }, [setAutoMatchNotice]);
+  // Export from All photos or a server's library: into Pictures\Lumina\Export (a local folder exports next to itself)
+  const [exportDir, setExportDir] = useState("");
+  useEffect(() => {
+    if (!platform.exports) return;
+    pictureDir()
+      .then((pictures) => join(pictures, "Lumina", "Export"))
+      .then(setExportDir)
+      .catch(() => {});
+  }, []);
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("general");
 
@@ -450,27 +513,31 @@ export default function App() {
     lib.selectionAnchorHashRef.current = hash;
     return [hash];
   };
-  const handleDropPhotos = (hashes: string[], target: DropTarget) => {
+  // The notice waits for the result: it names the photos that changed, and none when the change failed
+  // (the error says why) or a library couldn't take it (its own notice says so)
+  const handleDropPhotos = async (hashes: string[], target: DropTarget) => {
+    const all = (ok: boolean) => (ok ? hashes.length : 0);
+    let changed: number;
     switch (target.kind) {
       case "folder":
-        lib.handleBatchStageMove(target.value, hashes);
+        changed = await lib.handleBatchStageMove(target.value, hashes);
         break;
       case "person":
-        lib.handleBatchAssignPerson(target.value, hashes);
+        changed = all(await lib.handleBatchAssignPerson(target.value, hashes));
         break;
       case "trash":
-        lib.handleRejectToTrash(hashes);
+        changed = await lib.handleRejectToTrash(hashes);
         break;
       case "pick":
-        lib.handleSetFlag("pick", hashes);
+        changed = all(await lib.handleSetFlag("pick", hashes));
         break;
       case "basket":
-        lib.handleToggleBasketSelection(hashes, true);
+        changed = all(await lib.handleToggleBasketSelection(hashes, true));
         break;
       default:
         return;
     }
-    lib.setAutoMatchNotice(`${target.label}: ${plural(hashes.length, "photo")}. Ctrl+Z undoes it.`);
+    if (changed > 0) lib.setAutoMatchNotice(`${target.label}: ${plural(changed, "photo")}. Ctrl+Z undoes it.`);
   };
   const { drag, onCardPointerDown: startPhotoDrag } = usePhotoDrag(hashesForDrag, handleDropPhotos);
   // Dropping photos on a folder, person or filter changes them: not for users who may only look
@@ -502,6 +569,18 @@ export default function App() {
   });
 
 
+  // In the Loupe, buttons and keys change the photo shown, not every photo selected in the grid behind it
+  const shownOnly = lib.isLoupeOpen && lib.activeHash ? [lib.activeHash] : undefined;
+  const onShown = {
+    setFlag: (flag: "pick" | "reject" | null) => lib.handleSetFlag(flag, shownOnly),
+    stageMove: (target: string | null) => lib.handleBatchStageMove(target, shownOnly),
+    reject: () => lib.handleRejectToTrash(shownOnly),
+    rate: (rating: number) => lib.handleBatchRate(rating, shownOnly),
+    colorLabel: (color: "red" | "yellow" | "green" | "blue" | null) => lib.handleSetColorLabel(color, shownOnly),
+    pin: () => lib.handleToggleBasketSelection(shownOnly),
+    rotate: (delta: number) => lib.handleRotateSelection(delta, shownOnly),
+  };
+
   useKeyboardShortcuts({
     activeHash: lib.activeHash,
     activePhoto: lib.activePhoto,
@@ -511,22 +590,25 @@ export default function App() {
     setIsDrawingFace: lib.setIsDrawingFace,
     setDrawnBox: lib.setDrawnBox,
     setActiveBulkPopover: lib.setActiveBulkPopover,
-    isBlockingModalOpen,
+    isBlockingModalOpen: isDialogOpen,
     closeBlockingModals,
+    isPhotoTab,
+    hasPopoverOrDrawing: lib.activeBulkPopover !== null || lib.isDrawingFace || lib.drawnBox !== null,
+    clearSelection: () => lib.setSelectedHashes(new Set()),
     navigateByOffset,
     navigateVertical,
     autoAdvance: lib.autoAdvance,
     searchInputRef,
-    handleSetFlag: lib.handleSetFlag,
-    handleRejectToTrash: lib.handleRejectToTrash,
-    handleBatchRate: lib.handleBatchRate,
-    handleSetColorLabel: lib.handleSetColorLabel,
-    handleRotateSelection: lib.handleRotateSelection,
+    handleSetFlag: onShown.setFlag,
+    handleRejectToTrash: onShown.reject,
+    handleBatchRate: onShown.rate,
+    handleSetColorLabel: onShown.colorLabel,
+    handleRotateSelection: onShown.rotate,
     handleAiAnalyzeSingle: lib.handleAiAnalyzeSingle,
     setViewMode: lib.setViewMode,
     setCompareZoom: lib.setCompareZoom,
     setComparePan: lib.setComparePan,
-    handleToggleBasketSelection: lib.handleToggleBasketSelection,
+    handleToggleBasketSelection: onShown.pin,
     canEdit: access.edit,
   });
 
@@ -540,11 +622,12 @@ export default function App() {
       {isDraggingOverWindow && (
         <div className="fixed inset-0 z-[99990] bg-zinc-950/85 backdrop-blur-sm border-2 border-dashed border-emerald-500/60 flex flex-col items-center justify-center gap-3 pointer-events-none animate-in fade-in">
           <FolderOpen className="w-12 h-12 text-emerald-400" />
-          <h2 className="text-xl font-semibold text-white">Drop a folder to open it</h2>
+          <h2 className="text-xl font-semibold text-white">{client.dropHint}</h2>
         </div>
       )}
 
       <TopHeaderBar
+        onError={lib.setError}
         folder={lib.folder}
         photos={lib.photos}
         visiblePhotos={lib.visiblePhotos}
@@ -574,6 +657,7 @@ export default function App() {
         onOpenImport={platform.localFiles ? () => lib.openImport() : undefined}
         onOpenServerLibrary={inDesktopApp ? (root, server) => lib.handleLoadFolderPath(root, server) : undefined}
         recentFolders={lib.recentFolders}
+        updateRecentFolders={lib.updateRecentFolders}
         onOpenAllPhotos={() => lib.handleLoadFolderPath(ALL_PHOTOS)}
         onOpenRecentFolder={platform.fullApp ? (path) => lib.handleLoadFolderPath(path) : undefined}
         onUpload={client.pickAndUpload}
@@ -707,7 +791,7 @@ export default function App() {
               onFollowAlbum={inDesktopApp ? setFollowAlbum : undefined}
               pickHighlights={lib.pickHighlights}
               bestOfFocus={bestOfFocus}
-              onShareGallery={platform.localFiles ? (title, hashes) => lib.openGallery(title, hashes) : undefined}
+              onShareGallery={platform.exports ? (title, hashes) => lib.openGallery(title, hashes) : undefined}
               onHighlights={(title, hashes, count, focus) =>
                 lib.openHighlights(
                   title,
@@ -822,6 +906,7 @@ export default function App() {
             setCompareZoom={lib.setCompareZoom}
             setComparePan={lib.setComparePan}
             handleSetFlag={lib.handleSetFlag}
+        handleRejectToTrash={() => lib.handleRejectToTrash()}
             handleBatchRate={lib.handleBatchRate}
             handleSetColorLabel={lib.handleSetColorLabel}
             handleRotateSelection={lib.handleRotateSelection}
@@ -837,8 +922,9 @@ export default function App() {
             albums={lib.albums}
             handleAddToAlbum={lib.handleAddToAlbum}
             handleCreateAlbum={lib.handleCreateAlbum}
-            onExport={platform.localFiles ? () => lib.openExport() : undefined}
-            onDownload={client.downloadSelection}
+            onExport={platform.exports || platform.browserDownloads ? () => lib.openExport() : undefined}
+            // In a browser: one original as itself, several as a zip the server makes
+            onDownload={platform.browserDownloads ? () => void lib.downloadInBrowser([...lib.selectedHashes]) : client.downloadSelection}
             onRemoveLocal={client.removeLocalSelection}
           />
           </>
@@ -886,7 +972,9 @@ export default function App() {
               setIsPickingMapLocation={lib.setIsPickingMapLocation}
               handleDetectFacesSingleOnnx={lib.handleDetectFacesSingleOnnx}
               handleSaveFaceAndAutomatch={lib.handleSaveFaceAndAutomatch}
+              handleClearFace={lib.handleClearFace}
               handleSetFlag={lib.handleSetFlag}
+        handleRejectToTrash={() => lib.handleRejectToTrash()}
               handleBatchRate={lib.handleBatchRate}
               handleRotateSelection={lib.handleRotateSelection}
               handleSetColorLabel={lib.handleSetColorLabel}
@@ -931,21 +1019,31 @@ export default function App() {
       <PhotoContextMenu
         position={photoMenuPos}
         onClose={() => setPhotoMenuPos(null)}
-        onOpenDefault={!platform.localFiles ? undefined : () => {
+        onOpenDefault={contextOnPc ? () => {
           if (contextPhoto) {
             lib.handleOpenInDefaultViewer(
               diskPathOf(contextPhoto)
             );
           }
-        }}
-        onRevealInFolder={!platform.localFiles ? undefined : () => {
+        } : contextServer && platform.exports ? () => {
+          // A server's photo: its original is downloaded first, then opened
+          if (!contextPhoto) return;
+          lib.setAutoMatchNotice(`Downloading ${contextPhoto.name} to open it…`);
+          callLocal<{ hash: string; path: string }[]>("fetch_originals", { photos: [{ server: contextServer, hash: contextPhoto.hash }], folder: "open" })
+            .then((got) => {
+              if (got[0]) lib.handleOpenInDefaultViewer(got[0].path);
+              else lib.setError(`Couldn't download ${contextPhoto.name}.`);
+            })
+            .catch((err) => lib.setError(`Couldn't download ${contextPhoto.name}: ${err}`));
+        } : undefined}
+        onRevealInFolder={!contextOnPc ? undefined : () => {
           if (contextPhoto) {
             lib.handleRevealInFileManager(
               diskPathOf(contextPhoto)
             );
           }
         }}
-        onCopyFullImage={!platform.localFiles ? undefined : async () => {
+        onCopyFullImage={!contextOnPc ? undefined : async () => {
           if (!contextPhoto) return;
           try {
             await call("copy_image_to_clipboard", { path: contextPhoto.path });
@@ -960,7 +1058,7 @@ export default function App() {
             lib.setError(String(err));
           }
         }}
-        onCopyPath={!platform.localFiles ? undefined : () => {
+        onCopyPath={!contextOnPc ? undefined : () => {
           if (!contextPhoto) return;
           const diskPath = diskPathOf(contextPhoto);
           navigator.clipboard?.writeText(diskPath).catch(() => {});
@@ -984,10 +1082,10 @@ export default function App() {
         onRotate={!access.edit ? undefined : (degrees) => {
           if (contextPhoto) lib.handleRotateSelection(degrees, contextMenuTargets(contextPhoto.hash));
         }}
-        onExport={!platform.localFiles ? undefined : () => {
+        onExport={!platform.exports && !platform.browserDownloads ? undefined : () => {
           if (contextPhoto) lib.openExport(contextMenuTargets(contextPhoto.hash));
         }}
-        onShareGallery={!platform.localFiles ? undefined : () => {
+        onShareGallery={!platform.exports ? undefined : () => {
           if (contextPhoto) lib.openGallery(scopeTitle(lib), contextMenuTargets(contextPhoto.hash));
         }}
         albums={lib.albums}
@@ -1008,26 +1106,33 @@ export default function App() {
         }
       />
 
-      {/* Right-Click Folder Tree Context Menu */}
+      {/* Right-Click Folder Tree Context Menu: folders on this PC (a local library's, or this PC's in All photos) */}
       <FolderContextMenu
         position={folderMenuPos}
         folderPath={contextFolderRel}
         onClose={() => setFolderMenuPos(null)}
-        onRevealFolder={!platform.localFiles ? undefined : () => {
-          if (!lib.folder) return;
-          const target =
-            contextFolderRel === "Root" || !contextFolderRel
-              ? lib.folder
-              : `${lib.folder}/${contextFolderRel.replace(/ \/ /g, "/")}`;
-          lib.handleRevealInFileManager(target);
+        onRevealFolder={!contextFolderHere ? undefined : () => {
+          const { root, rel } = contextFolderHere;
+          // Explorer wants one kind of separator
+          const sep = root.includes("\\") ? "\\" : "/";
+          lib.handleRevealInFileManager(rel ? `${root.replace(/[\\/]+$/, "")}${sep}${rel.replace(/\//g, sep)}` : root);
         }}
-        onCreateSubfolder={!platform.localFiles ? undefined : () => {
-          const prefix =
-            contextFolderRel && contextFolderRel !== "Root"
-              ? `${contextFolderRel.replace(/ \/ /g, "/")}/`
-              : "";
-          setNewFolderInput(prefix);
+        onCreateSubfolder={!contextFolderHere ? undefined : () => {
+          setNewFolderRoot(contextFolderHere.root);
+          setRenameFolderFrom(null);
+          setNewFolderInput(contextFolderHere.rel ? `${contextFolderHere.rel}/` : "");
           setIsNewFolderModalOpen(true);
+        }}
+        onRenameFolder={!contextFolderHere?.rel || !access.edit ? undefined : () => {
+          setNewFolderRoot(contextFolderHere.root);
+          setRenameFolderFrom(contextFolderHere.rel);
+          setNewFolderInput(contextFolderHere.rel);
+          setIsNewFolderModalOpen(true);
+        }}
+        onDeleteFolder={!contextFolderHere?.rel || !access.edit || contextFolderTotal > 0 ? undefined : async () => {
+          const { root, rel } = contextFolderHere;
+          await lib.handleDeleteEmptyFolder(root, rel);
+          lib.refreshFolderList();
         }}
       />
 
@@ -1036,7 +1141,12 @@ export default function App() {
         setIsNewFolderModalOpen={setIsNewFolderModalOpen}
         newFolderInput={newFolderInput}
         setNewFolderInput={setNewFolderInput}
-        onCreate={lib.handleCreateSubfolder}
+        mode={renameFolderFrom !== null ? "rename" : "create"}
+        onCreate={async (relativePath) => {
+          if (renameFolderFrom !== null && newFolderRoot) await lib.handleRenameFolder(newFolderRoot, renameFolderFrom, relativePath);
+          else await lib.handleCreateSubfolder(relativePath, newFolderRoot ?? undefined);
+          lib.refreshFolderList();
+        }}
       />
 
 
@@ -1047,7 +1157,7 @@ export default function App() {
         )}
         title={
           lib.ollamaPullProgress
-            ? `Downloading AI Vision Model (${lib.ollamaPullProgress.model})`
+            ? `Downloading the caption model (${lib.ollamaPullProgress.model})`
             : lib.progressTitle ?? "Loading the library"
         }
         stage={
@@ -1121,7 +1231,7 @@ export default function App() {
         onCount={lib.setHighlightsCount}
         onShowInGrid={lib.showHighlightsInGrid}
         onSaveAsAlbum={access.edit ? lib.saveHighlightsAsAlbum : undefined}
-        onShareGallery={!platform.localFiles ? undefined : () => {
+        onShareGallery={!platform.exports ? undefined : () => {
           if (!lib.highlights?.hashes) return;
           const { title, hashes } = lib.highlights;
           lib.setHighlights(null);
@@ -1153,7 +1263,7 @@ export default function App() {
           void lib.silentRescan();
         }}
       />
-      <AdminPage isOpen={isAdminOpen} onClose={() => setIsAdminOpen(false)} />
+      <AdminPage isOpen={isAdminOpen} server={adminServer} onClose={() => setIsAdminOpen(false)} />
 
       <RestoreModal
         target={lib.restoreTarget}
@@ -1236,8 +1346,9 @@ export default function App() {
 
       <ExportModal
         isOpen={lib.exportTargets !== null}
+        toZip={platform.browserDownloads}
         count={lib.exportTargets?.length ?? 0}
-        defaultDir={lib.folder ? `${lib.folder.replace(/[\\/]+$/, "")}\\Export` : ""}
+        defaultDir={platform.localFiles && lib.folder ? `${lib.folder.replace(/[\\/]+$/, "")}\\Export` : exportDir}
         onClose={() => lib.setExportTargets(null)}
         onExport={lib.runExport}
       />
@@ -1251,13 +1362,27 @@ export default function App() {
         setSelectedHashes={lib.setSelectedHashes}
         autoAdvance={lib.autoAdvance}
         navigateByOffset={navigateByOffset}
-        handleSetFlag={lib.handleSetFlag}
-        handleBatchStageMove={lib.handleBatchStageMove}
-        handleBatchRate={lib.handleBatchRate}
-        handleSetColorLabel={lib.handleSetColorLabel}
-        handleToggleBasketSelection={lib.handleToggleBasketSelection}
-        handleRotateSelection={lib.handleRotateSelection}
+        handleSetFlag={onShown.setFlag}
+        handleBatchStageMove={onShown.stageMove}
+        handleRejectToTrash={onShown.reject}
+        handleBatchRate={onShown.rate}
+        handleSetColorLabel={onShown.colorLabel}
+        handleToggleBasketSelection={onShown.pin}
+        handleRotateSelection={onShown.rotate}
         handleAiAnalyzeSingle={lib.handleAiAnalyzeSingle}
+        faces={{
+          selectedFaceId: lib.selectedFaceId,
+          setSelectedFaceId: lib.setSelectedFaceId,
+          faceNameInput: lib.faceNameInput,
+          setFaceNameInput: lib.setFaceNameInput,
+          isDrawingFace: lib.isDrawingFace,
+          setIsDrawingFace: lib.setIsDrawingFace,
+          drawnBox: lib.drawnBox,
+          setDrawnBox: lib.setDrawnBox,
+          handleSaveFaceAndAutomatch: lib.handleSaveFaceAndAutomatch,
+          handleClearFace: lib.handleClearFace,
+          personNames: lib.people.map((p) => p.name),
+        }}
       />
     </div>
   );

@@ -468,6 +468,8 @@ export interface ExportProgress {
   total: number;
   done: boolean;
   cancelled: boolean;
+  // What the job is doing when it isn't writing the files ("Downloading originals")
+  stage?: string;
 }
 
 export interface ExportResult {

@@ -35,6 +35,7 @@ pub mod face_scan;
 pub mod fastdecode;
 pub mod ffmpeg;
 pub mod files;
+pub mod folders;
 pub mod gallery;
 pub mod highlights;
 pub mod host;

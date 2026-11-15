@@ -225,6 +225,21 @@ export function createRemoteAuth(options: Pick<RemoteOptions, "base" | "fetch"> 
 }
 
 // Uploads a backup to restore (admin page). XMLHttpRequest rather than fetch, for the upload's progress.
+// Export and Download in a browser (http/export.rs): the server makes one zip of the photos (JPEGs as asked, or
+// the originals), then the browser downloads it from browserZipUrl like any file
+export async function makeExportZip(
+  request: { hashes: string[]; originals: boolean; longEdge?: number; quality?: number; stripGps?: boolean },
+  base = ""
+): Promise<{ id: string; exported: number; failed: string[] }> {
+  const resp = await fetch(`${base}/api/export`, { method: "POST", credentials: "same-origin", headers: HEADERS, body: JSON.stringify(request) });
+  if (!resp.ok) throw await errorText(resp);
+  return resp.json();
+}
+
+export function exportZipUrl(id: string, base = ""): string {
+  return `${base}/api/export/${id}`;
+}
+
 export function uploadBackup(
   file: Blob,
   onProgress: (sent: number, total: number) => void,

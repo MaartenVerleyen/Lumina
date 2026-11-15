@@ -349,6 +349,26 @@ pub async fn forget_missing_files(app: AppHandle, root_folder: String) -> Result
     files::forget_missing_files(Arc::new(app), root_folder).await
 }
 
+// Folders in the folder tree: listed also when empty, renamed or moved inside the library, removed when empty
+#[tauri::command]
+pub async fn list_library_folders(root_folder: String) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || folders::list_library_folders(&root_folder)).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn rename_library_folder(app: AppHandle, root_folder: String, rel_path: String, new_rel_path: String) -> Result<usize, String> {
+    tauri::async_runtime::spawn_blocking(move || folders::rename_library_folder(&app, &root_folder, &rel_path, &new_rel_path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn delete_empty_library_folder(root_folder: String, rel_path: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || folders::delete_empty_library_folder(&root_folder, &rel_path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 pub async fn prune_orphaned_cache(app: AppHandle) -> Result<usize, String> {
     files::prune_orphaned_cache(Arc::new(app)).await

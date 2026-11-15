@@ -1,5 +1,5 @@
 import { ALL_PHOTOS, mediaUrl } from "../api";
-import { PhotoItem, FolderTreeNode, AutoStagePreset } from "../types/lumina";
+import { PhotoItem, AutoStagePreset } from "../types/lumina";
 
 // What the open library is called: a folder's own name, or All photos
 export function libraryName(folder: string): string {
@@ -7,69 +7,7 @@ export function libraryName(folder: string): string {
   return folder.split(/[\\/]/).filter(Boolean).pop() || folder;
 }
 
-// The folders a photo is in: its own, and in All photos those of its other copies
-export function foldersOf(p: Pick<PhotoItem, "subfolder" | "also_in">): string[] {
-  return p.also_in && p.also_in.length > 0 ? [p.subfolder, ...p.also_in] : [p.subfolder];
-}
-
-export function buildFolderTree(photos: PhotoItem[]): { rootCount: number; nodes: FolderTreeNode[] } {
-  const directCounts = new Map<string, number>();
-  for (const p of photos) {
-    // In All photos a photo is in the folder of each of its copies
-    for (const sub of foldersOf(p)) directCounts.set(sub, (directCounts.get(sub) || 0) + 1);
-  }
-
-  const rootCount = directCounts.get("Root") || 0;
-  const nodeMap = new Map<string, FolderTreeNode>();
-  const topNodes: FolderTreeNode[] = [];
-
-  const allPaths = Array.from(directCounts.keys())
-    .filter((k) => k !== "Root")
-    .sort();
-
-  for (const subPath of allPaths) {
-    const parts = subPath.split(" / ");
-    let currentFull = "";
-
-    for (let i = 0; i < parts.length; i++) {
-      const part = parts[i];
-      const parentFull = currentFull;
-      currentFull = currentFull ? `${currentFull} / ${part}` : part;
-
-      if (!nodeMap.has(currentFull)) {
-        const newNode: FolderTreeNode = {
-          name: part,
-          fullPath: currentFull,
-          directCount: directCounts.get(currentFull) || 0,
-          totalCount: 0,
-          children: [],
-        };
-        nodeMap.set(currentFull, newNode);
-
-        if (i === 0) {
-          topNodes.push(newNode);
-        } else {
-          const parentNode = nodeMap.get(parentFull);
-          if (parentNode) {
-            parentNode.children.push(newNode);
-          }
-        }
-      }
-    }
-  }
-
-  function calcTotal(node: FolderTreeNode): number {
-    let sum = node.directCount;
-    for (const c of node.children) {
-      sum += calcTotal(c);
-    }
-    node.totalCount = sum;
-    return sum;
-  }
-
-  topNodes.forEach(calcTotal);
-  return { rootCount, nodes: topNodes };
-}
+export { foldersOf, buildFolderTree } from "./folderTree";
 
 export function getPhotoEventName(p: PhotoItem): string {
   const ym =

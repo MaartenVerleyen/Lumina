@@ -10,6 +10,8 @@ import {
   FileText,
   Flag,
   Folder,
+  FolderMinus,
+  FolderPen,
   FolderPlus,
   RotateCcw,
   RotateCw,
@@ -17,6 +19,7 @@ import {
   Star,
   Trash2,
 } from "lucide-react";
+import { fileManager } from "../../api/platform";
 
 export interface ContextMenuPosition {
   x: number;
@@ -131,7 +134,7 @@ export function PhotoContextMenu({
           className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-zinc-800 text-zinc-200 transition text-left"
         >
           <ExternalLink className="w-3.5 h-3.5 text-cyan-400" />
-          <span>Show in File Explorer</span>
+          <span>Show in {fileManager}</span>
         </button>
       )}
 
@@ -363,6 +366,9 @@ interface FolderContextMenuProps {
   onRevealFolder?: () => void;
   // Absent in the web client (it acts on this computer's files)
   onCreateSubfolder?: () => void;
+  // A folder on this PC other than the library's own: rename or move it, remove it when empty
+  onRenameFolder?: () => void;
+  onDeleteFolder?: () => void;
 }
 
 export function FolderContextMenu({
@@ -371,6 +377,8 @@ export function FolderContextMenu({
   onClose,
   onRevealFolder,
   onCreateSubfolder,
+  onRenameFolder,
+  onDeleteFolder,
 }: FolderContextMenuProps) {
   const ref = useRef<HTMLDivElement>(null);
 
@@ -404,7 +412,7 @@ export function FolderContextMenu({
       className="fixed z-[99999] w-56 bg-raised/95 backdrop-blur-md border border-zinc-700/80 rounded-xl shadow-2xl p-1 text-xs select-none animate-in fade-in zoom-in-95"
     >
       <div className="px-2.5 py-1 text-[11px] text-zinc-400 font-mono truncate border-b border-zinc-800 mb-1">
-        📂 {folderPath || "Root"}
+        {folderPath || "Root"}
       </div>
 
       {onRevealFolder && (
@@ -416,7 +424,7 @@ export function FolderContextMenu({
           className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-zinc-800 text-zinc-200 transition text-left"
         >
           <Folder className="w-3.5 h-3.5 text-emerald-400" />
-          <span>Open folder in Explorer</span>
+          <span>Show in {fileManager}</span>
         </button>
       )}
 
@@ -429,7 +437,33 @@ export function FolderContextMenu({
           className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-zinc-800 text-zinc-200 transition text-left"
         >
           <FolderPlus className="w-3.5 h-3.5 text-zinc-400" />
-          <span>New subfolder here…</span>
+          <span>New folder here…</span>
+        </button>
+      )}
+
+      {onRenameFolder && (
+        <button
+          onClick={() => {
+            onRenameFolder();
+            onClose();
+          }}
+          className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-zinc-800 text-zinc-200 transition text-left"
+        >
+          <FolderPen className="w-3.5 h-3.5 text-zinc-400" />
+          <span>Rename or move…</span>
+        </button>
+      )}
+
+      {onDeleteFolder && (
+        <button
+          onClick={() => {
+            onDeleteFolder();
+            onClose();
+          }}
+          className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-zinc-800 text-zinc-200 transition text-left"
+        >
+          <FolderMinus className="w-3.5 h-3.5 text-zinc-400" />
+          <span>Remove empty folder</span>
         </button>
       )}
     </div>

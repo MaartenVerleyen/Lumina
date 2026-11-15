@@ -58,7 +58,7 @@ export default function SessionLogModal({
         <div className="p-4 border-b border-zinc-800 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <FileText className="w-5 h-5 text-emerald-400" />
-            <h3 className="text-sm font-semibold text-zinc-100">Session Activity Log ({logs.length})</h3>
+            <h3 className="text-sm font-semibold text-zinc-100">Activity log ({logs.length})</h3>
           </div>
           <button onClick={onClose} className="text-zinc-500 hover:text-zinc-300" aria-label="Close">
             <X className="w-4 h-4" />
@@ -71,7 +71,7 @@ export default function SessionLogModal({
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Filter log actions..."
+            placeholder="Filter…"
             className="flex-1 bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1 text-zinc-200 focus:outline-none focus:border-emerald-500 font-mono text-[11px]"
           />
 

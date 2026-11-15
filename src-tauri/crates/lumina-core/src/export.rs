@@ -11,7 +11,7 @@ use little_exif::rational::uR64;
 // the user's rotation applied. The EXIF is written fresh (capture date, camera, lens and, unless stripped,
 // GPS) instead of copying the original block, so nothing private is carried over by accident.
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 pub struct ExportOptions {
     pub hashes: Vec<String>,
     pub dest_dir: String,
@@ -19,6 +19,26 @@ pub struct ExportOptions {
     pub long_edge: u32,
     pub quality: u8,
     pub strip_gps: bool,
+    // Photos this computer's database doesn't have (a server's), their originals fetched by the app
+    #[serde(default)]
+    pub fetched: Vec<FetchedPhoto>,
+}
+
+// A server's photo whose original the app downloaded to `path`, with the values the window has for it
+#[derive(Deserialize, Clone, Default)]
+#[serde(default)]
+pub struct FetchedPhoto {
+    pub path: String,
+    pub name: String,
+    pub rotation: i32,
+    pub captured_at: String,
+    pub camera_model: String,
+    pub lens_model: Option<String>,
+    pub latitude: Option<f64>,
+    pub longitude: Option<f64>,
+    pub caption: String,
+    pub location: String,
+    pub people: Vec<String>,
 }
 
 #[derive(Serialize, Clone, Default)]
@@ -157,86 +177,178 @@ fn export_one(src: &ExportSource, target: &Path, opts: &ExportOptions) -> Result
 }
 
 pub async fn export_photos(app: SharedHost, options: ExportOptions) -> Result<ExportResult, String> {
-    tokio::task::spawn_blocking(move || {
-        let started = Instant::now();
-        let dest = PathBuf::from(&options.dest_dir);
-        fs::create_dir_all(&dest).map_err(|e| format!("Can't use the export folder: {e}"))?;
+    tokio::task::spawn_blocking(move || run_export(&*app, &options, true))
+        .await
+        .map_err(|e| e.to_string())?
+}
 
-        let conn = open_global_db(&app)?;
-        let mut sources: Vec<ExportSource> = Vec::with_capacity(options.hashes.len());
-        {
-            let mut stmt = conn
-                .prepare(
-                    "SELECT current_path, COALESCE(rotation, 0), COALESCE(captured_at, ''), COALESCE(camera_model, ''),
-                            lens_model, latitude, longitude
-                     FROM photos WHERE hash = ?1",
-                )
-                .map_err(|e| e.to_string())?;
-            for hash in &options.hashes {
-                if let Ok(src) = stmt.query_row(params![hash], |r| {
-                    let disk_path: String = r.get(0)?;
-                    Ok(ExportSource {
-                        name: Path::new(&disk_path).file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default(),
-                        disk_path,
-                        rotation: r.get(1)?,
-                        captured_at: r.get(2)?,
-                        camera_model: r.get(3)?,
-                        lens_model: r.get(4)?,
-                        latitude: r.get(5)?,
-                        longitude: r.get(6)?,
-                    })
-                }) {
-                    sources.push(src);
-                }
+// The photos to export: this database's, then the ones the app fetched from a server
+fn export_sources(conn: &Connection, options: &ExportOptions) -> Result<Vec<ExportSource>, String> {
+    let mut sources: Vec<ExportSource> = Vec::with_capacity(options.hashes.len());
+    {
+        let mut stmt = conn
+            .prepare(
+                "SELECT current_path, COALESCE(rotation, 0), COALESCE(captured_at, ''), COALESCE(camera_model, ''),
+                        lens_model, latitude, longitude
+                 FROM photos WHERE hash = ?1",
+            )
+            .map_err(|e| e.to_string())?;
+        for hash in &options.hashes {
+            if let Ok(src) = stmt.query_row(params![hash], |r| {
+                let disk_path: String = r.get(0)?;
+                Ok(ExportSource {
+                    name: Path::new(&disk_path).file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default(),
+                    disk_path,
+                    rotation: r.get(1)?,
+                    captured_at: r.get(2)?,
+                    camera_model: r.get(3)?,
+                    lens_model: r.get(4)?,
+                    latitude: r.get(5)?,
+                    longitude: r.get(6)?,
+                })
+            }) {
+                sources.push(src);
             }
         }
-
-        let total = sources.len();
-        let cancel_generation = EXPORT_CANCEL.load(Ordering::Acquire);
-        let completed = AtomicUsize::new(0);
-        let taken = Mutex::new(HashSet::new());
-        let failures = Mutex::new(Vec::new());
-        let _ = emit_to(&app, "export-progress", ExportProgress { completed: 0, total, ..Default::default() });
-
-        BG_POOL.install(|| {
-            sources.par_iter().for_each(|src| {
-                if EXPORT_CANCEL.load(Ordering::Acquire) != cancel_generation {
-                    return;
-                }
-                let target = unique_target(&dest, &src.name, &taken);
-                if let Err(e) = export_one(src, &target, &options) {
-                    if let Ok(mut f) = failures.lock() {
-                        f.push(FileOpFailure { file: src.disk_path.clone(), error: e });
-                    }
-                }
-                let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
-                if done % 4 == 0 || done == total {
-                    let _ = emit_to(&app, "export-progress", ExportProgress { completed: done, total, ..Default::default() });
-                }
-            });
+    }
+    for f in &options.fetched {
+        sources.push(ExportSource {
+            disk_path: f.path.clone(),
+            name: f.name.clone(),
+            rotation: f.rotation,
+            captured_at: f.captured_at.clone(),
+            camera_model: f.camera_model.clone(),
+            lens_model: f.lens_model.clone(),
+            latitude: f.latitude,
+            longitude: f.longitude,
         });
+    }
+    Ok(sources)
+}
 
-        let cancelled = EXPORT_CANCEL.load(Ordering::Acquire) != cancel_generation;
-        let failures = failures.into_inner().unwrap_or_default();
-        let done = completed.load(Ordering::Relaxed);
-        let exported = done.saturating_sub(failures.len());
-        emit_perf(
-            &app,
-            "Export",
-            started,
-            exported,
-            format!(
-                "{} · quality {} · GPS {}",
-                if options.long_edge == 0 { "full size".to_string() } else { format!("{} px", options.long_edge) },
-                options.quality,
-                if options.strip_gps { "removed" } else { "kept" }
-            ),
-        );
-        let _ = emit_to(&app, "export-progress", ExportProgress { completed: done, total, done: true, cancelled });
-        Ok(ExportResult { exported, failures, cancelled })
-    })
-    .await
-    .map_err(|e| e.to_string())?
+// Exports into options.dest_dir. `report`: progress events and the performance line (the desktop's export
+// dialog); a server's zip for one user's browser sends none, as other users' windows would hear them.
+fn run_export(app: &dyn Host, options: &ExportOptions, report: bool) -> Result<ExportResult, String> {
+    let started = Instant::now();
+    let dest = PathBuf::from(&options.dest_dir);
+    fs::create_dir_all(&dest).map_err(|e| format!("Can't use the export folder: {e}"))?;
+    let conn = open_global_db(app)?;
+    let sources = export_sources(&conn, options)?;
+    drop(conn);
+
+    let total = sources.len();
+    let cancel_generation = EXPORT_CANCEL.load(Ordering::Acquire);
+    let completed = AtomicUsize::new(0);
+    let taken = Mutex::new(HashSet::new());
+    let failures = Mutex::new(Vec::new());
+    if report {
+        let _ = emit_to(app, "export-progress", ExportProgress { completed: 0, total, ..Default::default() });
+    }
+
+    BG_POOL.install(|| {
+        sources.par_iter().for_each(|src| {
+            if EXPORT_CANCEL.load(Ordering::Acquire) != cancel_generation {
+                return;
+            }
+            let target = unique_target(&dest, &src.name, &taken);
+            if let Err(e) = export_one(src, &target, options) {
+                if let Ok(mut f) = failures.lock() {
+                    f.push(FileOpFailure { file: src.disk_path.clone(), error: e });
+                }
+            }
+            let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
+            if report && (done % 4 == 0 || done == total) {
+                let _ = emit_to(app, "export-progress", ExportProgress { completed: done, total, ..Default::default() });
+            }
+        });
+    });
+
+    let cancelled = EXPORT_CANCEL.load(Ordering::Acquire) != cancel_generation;
+    let failures = failures.into_inner().unwrap_or_default();
+    let done = completed.load(Ordering::Relaxed);
+    let exported = done.saturating_sub(failures.len());
+    if !report {
+        return Ok(ExportResult { exported, failures, cancelled });
+    }
+    emit_perf(
+        app,
+        "Export",
+        started,
+        exported,
+        format!(
+            "{} · quality {} · GPS {}",
+            if options.long_edge == 0 { "full size".to_string() } else { format!("{} px", options.long_edge) },
+            options.quality,
+            if options.strip_gps { "removed" } else { "kept" }
+        ),
+    );
+    let _ = emit_to(app, "export-progress", ExportProgress { completed: done, total, done: true, cancelled });
+    Ok(ExportResult { exported, failures, cancelled })
+}
+
+// The photos in one zip at `zip_path` (for a browser to download from a server): exported as JPEGs as
+// options say, or with `originals` the files as they are. JPEGs and videos don't shrink, so nothing is
+// compressed. A failed photo is left out and reported; the zip holds the others.
+pub fn export_zip(app: &dyn Host, options: &ExportOptions, originals: bool, zip_path: &Path) -> Result<ExportResult, String> {
+    let mut failures = Vec::new();
+    let mut entries: Vec<(String, PathBuf)> = Vec::new();
+    let work = zip_path.with_extension("parts");
+    if originals {
+        let conn = open_global_db(app)?;
+        let taken = Mutex::new(HashSet::new());
+        for src in export_sources(&conn, options)? {
+            let name = unique_name(&src.name, &taken);
+            entries.push((name, PathBuf::from(&src.disk_path)));
+        }
+    } else {
+        let _ = fs::remove_dir_all(&work);
+        let into = ExportOptions { dest_dir: work.to_string_lossy().into_owned(), fetched: Vec::new(), ..options.clone() };
+        let result = run_export(app, &into, false)?;
+        failures = result.failures;
+        for entry in fs::read_dir(&work).map_err(|e| e.to_string())?.flatten() {
+            entries.push((entry.file_name().to_string_lossy().into_owned(), entry.path()));
+        }
+        entries.sort();
+    }
+    let written = write_zip(zip_path, &entries, &mut failures);
+    let _ = fs::remove_dir_all(&work);
+    let exported = written?;
+    Ok(ExportResult { exported, failures, cancelled: false })
+}
+
+// "IMG_1.CR3" stays itself, a second one becomes "IMG_1_2.CR3" (names compared in any case)
+fn unique_name(name: &str, taken: &Mutex<HashSet<String>>) -> String {
+    let path = Path::new(name);
+    let stem = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "photo".into());
+    let ext = path.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();
+    let mut taken = taken.lock().unwrap_or_else(|e| e.into_inner());
+    (1..)
+        .map(|n| if n == 1 { format!("{stem}{ext}") } else { format!("{stem}_{n}{ext}") })
+        .find(|c| taken.insert(c.to_lowercase()))
+        .unwrap()
+}
+
+fn write_zip(zip_path: &Path, entries: &[(String, PathBuf)], failures: &mut Vec<FileOpFailure>) -> Result<usize, String> {
+    let part = zip_path.with_extension("zip.part");
+    let file = fs::File::create(&part).map_err(|e| format!("Can't write the zip: {e}"))?;
+    let mut zip = zip::ZipWriter::new(std::io::BufWriter::new(file));
+    let stored = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Stored)
+        .large_file(true);
+    let mut written = 0;
+    for (name, path) in entries {
+        match fs::File::open(path) {
+            Ok(mut f) => {
+                zip.start_file(name.as_str(), stored).map_err(|e| e.to_string())?;
+                std::io::copy(&mut f, &mut zip).map_err(|e| format!("Can't write the zip: {e}"))?;
+                written += 1;
+            }
+            Err(e) => failures.push(FileOpFailure { file: name.clone(), error: e.to_string() }),
+        }
+    }
+    zip.finish().map_err(|e| e.to_string())?;
+    fs::rename(&part, zip_path).map_err(|e| e.to_string())?;
+    Ok(written)
 }
 
 #[cfg(test)]
@@ -294,7 +406,7 @@ fn export_real_files() {
         return;
     };
     fs::create_dir_all(&out).unwrap();
-    let opts = ExportOptions { hashes: vec![], dest_dir: out.clone(), long_edge: 2048, quality: 88, strip_gps: true };
+    let opts = ExportOptions { hashes: vec![], dest_dir: out.clone(), long_edge: 2048, quality: 88, strip_gps: true, fetched: vec![] };
     for ext in ["jpg", "heic", "cr3"] {
         let Some(path) = WalkDir::new(&dir)
             .into_iter()

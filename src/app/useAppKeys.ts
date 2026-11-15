@@ -36,22 +36,36 @@ export function useAppKeys(lib: LibraryState) {
         return;
       }
       if (isEditableTarget(e.target)) return;
-      const { lib: l, isBlockingModalOpen: blocked, canEdit } = extraKeysRef.current;
+      const { lib: l, isBlockingModalOpen: blocked, isDialogOpen: dialog, canEdit } = extraKeysRef.current;
 
+      // Ctrl+A selects every photo shown (the grid's own text can't be selected, so nothing else would happen)
+      if (mod && key === "a" && !e.shiftKey && !e.altKey) {
+        if (blocked) return;
+        e.preventDefault();
+        const shown = l.visiblePhotos;
+        if (shown.length === 0) return;
+        l.setSelectedHashes(new Set(shown.map((p) => p.hash)));
+        if (!l.activeHash || !shown.some((p) => p.hash === l.activeHash)) l.setActiveHash(shown[0].hash);
+        return;
+      }
       if (mod && key === "z" && !e.shiftKey) {
-        // Undo/redo would change photos behind an open dialog (Face Review has its own Ctrl+Z)
-        if (blocked || !canEdit) return;
+        // Undo/redo would change photos behind an open dialog (Face Review has its own Ctrl+Z);
+        // on Collections it is fine, the change shows in the session log either way
+        if (dialog || !canEdit) return;
         e.preventDefault();
         l.handleUndo();
       } else if (mod && (key === "y" || (e.shiftKey && key === "z"))) {
-        if (blocked || !canEdit) return;
+        if (dialog || !canEdit) return;
         e.preventDefault();
         l.handleRedo();
       } else if (e.key === "?" || (e.shiftKey && e.key === "/")) {
+        // Opens or closes the shortcuts, never on top of another dialog
+        if (dialog && !l.isShortcutsModalOpen) return;
         e.preventDefault();
         l.setIsShortcutsModalOpen((prev) => !prev);
       } else if (key === "l" && mod) {
         e.preventDefault();
+        if (dialog && !l.isSessionLogModalOpen) return;
         l.setIsSessionLogModalOpen((prev) => !prev);
       }
     }

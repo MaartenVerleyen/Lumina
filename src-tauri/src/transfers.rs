@@ -1079,3 +1079,76 @@ pub fn retry_transfers(app: AppHandle, kind: String) -> Result<(), String> {
 pub fn client_id(app: AppHandle) -> String {
     transfers(&app).client_id.clone()
 }
+
+// Export and the web gallery of photos that are only on a server (from All photos, or a server's library): their
+// originals downloaded into the app's cache first, four at a time. The folder is emptied at the start, and again
+// when the window calls this with no photos after the export. Stop on the export stops this too.
+#[derive(Deserialize)]
+pub struct ToFetch {
+    server: String,
+    hash: String,
+}
+
+#[derive(Serialize)]
+pub struct Fetched {
+    hash: String,
+    path: String,
+}
+
+// `folder`: "open" for a photo opened in another app (kept until the next one), else the export's own
+#[tauri::command]
+pub async fn fetch_originals(app: AppHandle, photos: Vec<ToFetch>, folder: Option<String>) -> Result<Vec<Fetched>, String> {
+    use tauri::Manager;
+    let name = if folder.as_deref() == Some("open") { "opened" } else { "fetched" };
+    let dir = app.path().app_cache_dir().map_err(|e| e.to_string())?.join(name);
+    let _ = fs::remove_dir_all(&dir);
+    if photos.is_empty() {
+        return Ok(Vec::new());
+    }
+    fs::create_dir_all(&dir).map_err(|e| format!("Can't make a folder for the originals: {e}"))?;
+    let started = lumina_core::export::export_cancel_generation();
+    let stop = AtomicBool::new(false);
+    let total = photos.len();
+    let done = std::sync::atomic::AtomicUsize::new(0);
+    let _ = app.emit("fetch-progress", serde_json::json!({ "completed": 0, "total": total }));
+    let results: Vec<Result<Fetched, String>> = futures_util::stream::iter(photos)
+        .map(|p| {
+            let (app, dir, stop, done) = (&app, &dir, &stop, &done);
+            async move {
+                if lumina_core::export::export_cancel_generation() != started {
+                    stop.store(true, Ordering::SeqCst);
+                    return Err("Stopped".to_string());
+                }
+                let c = conn(app, &p.server).ok_or_else(|| format!("Signed out of {}: sign in again in Settings → Servers", p.server))?;
+                // One folder per photo: two originals of the same name don't overwrite each other
+                let own = dir.join(&p.hash);
+                let (path, _) = transfer::download_one(&c, &p.hash, &own, &AtomicU64::new(0), stop).await.map_err(|f| match f {
+                    Failure::Refused(e) | Failure::Network(e) => e,
+                    Failure::SignedOut => format!("Signed out of {}: sign in again in Settings → Servers", p.server),
+                    Failure::Cancelled => "Stopped".to_string(),
+                })?;
+                let n = done.fetch_add(1, Ordering::SeqCst) + 1;
+                let _ = app.emit("fetch-progress", serde_json::json!({ "completed": n, "total": total }));
+                Ok(Fetched { hash: p.hash, path: path.to_string_lossy().to_string() })
+            }
+        })
+        .buffer_unordered(4)
+        .collect()
+        .await;
+    if stop.load(Ordering::SeqCst) {
+        let _ = fs::remove_dir_all(&dir);
+        return Err("Stopped".into());
+    }
+    let mut fetched = Vec::new();
+    let mut failed = Vec::new();
+    for r in results {
+        match r {
+            Ok(f) => fetched.push(f),
+            Err(e) => failed.push(e),
+        }
+    }
+    if fetched.is_empty() && !failed.is_empty() {
+        return Err(format!("Couldn't download the originals: {}", failed[0]));
+    }
+    Ok(fetched)
+}

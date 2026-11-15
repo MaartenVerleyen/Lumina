@@ -1177,7 +1177,7 @@ export default function FaceMatchReviewModal({
               <div className="flex-1 flex flex-col items-center justify-center gap-3 text-zinc-400">
                 <Loader2 className="w-8 h-8 animate-spin text-zinc-400" />
                 <span className="text-xs font-mono">
-                  Loading faces for "{activePerson}"...
+                  Loading faces for "{activePerson}"…
                 </span>
               </div>
             ) : loadFailed ? (

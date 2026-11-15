@@ -172,15 +172,21 @@ fn modified_day(path: &Path) -> Option<String> {
     day_of(&day_from_unix(secs))
 }
 
+// In a library already: the file is there, or it is in a library whose drive isn't connected (its file can't be
+// checked, but it wasn't deleted: importing it again would make a second copy)
 fn hash_in_library(conn: &Connection, hash: &str) -> bool {
-    let Ok(mut stmt) = conn.prepare_cached("SELECT current_path FROM photos WHERE hash = ?1") else {
+    // (A database from before libraries were kept has only the paths)
+    let Ok(mut stmt) = conn
+        .prepare_cached("SELECT p.current_path, l.root FROM photos p LEFT JOIN libraries l ON l.id = p.library_id WHERE p.hash = ?1")
+        .or_else(|_| conn.prepare_cached("SELECT current_path, NULL FROM photos WHERE hash = ?1"))
+    else {
         return false;
     };
-    let paths: Vec<String> = stmt
-        .query_map(params![hash], |r| r.get::<_, String>(0))
+    let rows: Vec<(String, Option<String>)> = stmt
+        .query_map(params![hash], |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?)))
         .map(|rows| rows.flatten().collect())
         .unwrap_or_default();
-    paths.iter().any(|p| Path::new(p).exists())
+    rows.iter().any(|(path, root)| Path::new(path).exists() || root.as_deref().is_some_and(|r| !Path::new(r).is_dir()))
 }
 
 // Reads the source: every photo, video and sidecar, grouped by folder and name (IMG_1234.CR3 + IMG_1234.JPG

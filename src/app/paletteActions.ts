@@ -1,6 +1,6 @@
 import type { RefObject } from "react";
 import { openLibraryIsAll } from "../api";
-import { platform } from "../api/platform";
+import { fileManager, platform, recycleBin } from "../api/platform";
 import type { PaletteAction } from "../components/modals/CommandPalette";
 import type { SettingsSection } from "../components/modals/SettingsModal";
 import { UNKNOWN_FACES } from "../components/modals/FaceMatchReviewModal";
@@ -56,7 +56,7 @@ export function buildPaletteActions({
       keywords: f,
       run: () => lib.handleLoadFolderPath(f),
     })),
-    { id: "rescan", group: "Library", label: "Rescan the library", enabled: hasPhotos, run: lib.handleRescanFolder },
+    { id: "rescan", group: "Library", label: platform.localFiles ? "Look for new photos" : "Reload library", enabled: hasPhotos, run: lib.handleRescanFolder },
     { id: "deep", group: "Library", label: "Rebuild thumbnails", enabled: hasPhotos, run: lib.handleRescanAndProcessFolder },
     // Also for a library left without photos: its rows of files that are gone can be forgotten there
     { id: "health", group: "Library", label: "Library health & XMP export", keywords: "cache sidecar lightroom", enabled: !!lib.folder && !openLibraryIsAll(), run: lib.handleOpenHealthDashboard },
@@ -71,7 +71,7 @@ export function buildPaletteActions({
     { id: "highlights", group: "Select", label: "Highlights of what is shown", keywords: "best of favourites top", enabled: lib.visiblePhotos.length > 1, run: () => lib.openHighlights(scopeTitle(lib), lib.visiblePhotos) },
     { id: "eyes-closed", group: "Select", label: "Show photos with closed eyes", keywords: "blink blinking culling", enabled: lib.eyesClosedCount > 0, run: () => lib.setSmartFilter("EYES_CLOSED") },
     { id: "soft-focus", group: "Select", label: "Show out-of-focus photos", keywords: "blurry soft sharp culling", enabled: lib.softFocusCount > 0, run: () => lib.setSmartFilter("SOFT_FOCUS") },
-    { id: "empty-trash", group: "Organize", label: "Empty _Trash to Recycle Bin", keywords: "delete", enabled: hasPhotos, run: lib.handleEmptyTrashToRecycleBin },
+    { id: "empty-trash", group: "Organize", label: recycleBin ? `Empty _Trash to the ${recycleBin}` : "Empty _Trash (deletes for good)", keywords: "delete", enabled: hasPhotos, run: lib.handleEmptyTrashToRecycleBin },
     { id: "pick", group: "Triage", label: "Flag as pick", shortcut: "P", enabled: hasSelection, run: () => lib.handleSetFlag("pick") },
     { id: "reject", group: "Triage", label: "Reject & stage for _Trash", shortcut: "X", enabled: hasSelection, run: () => lib.handleRejectToTrash() },
     { id: "unflag", group: "Triage", label: "Remove flag", shortcut: "U", enabled: hasSelection, run: () => lib.handleSetFlag(null) },
@@ -95,11 +95,11 @@ export function buildPaletteActions({
     { id: "rotate-left", group: "Triage", label: "Rotate left", shortcut: "[", enabled: hasSelection, run: () => lib.handleRotateSelection(-90) },
     { id: "rotate-right", group: "Triage", label: "Rotate right", shortcut: "]", enabled: hasSelection, run: () => lib.handleRotateSelection(90) },
     { id: "basket", group: "Triage", label: "Pin or unpin", shortcut: "B", enabled: hasSelection, run: () => lib.handleToggleBasketSelection() },
-    { id: "select-all", group: "Select", label: "Select all visible photos", keywords: "everything", enabled: lib.visiblePhotos.length > 0, run: () => lib.setSelectedHashes(new Set(lib.visiblePhotos.map((p) => p.hash))) },
+    { id: "select-all", group: "Select", label: "Select all visible photos", shortcut: "Ctrl+A", keywords: "everything", enabled: lib.visiblePhotos.length > 0, run: () => lib.setSelectedHashes(new Set(lib.visiblePhotos.map((p) => p.hash))) },
     { id: "select-none", group: "Select", label: "Clear selection", enabled: hasSelection, run: () => lib.setSelectedHashes(new Set()) },
     { id: "clear-filters", group: "Select", label: "Clear all filters", keywords: "reset show everything", enabled: hasPhotos, run: lib.clearAllFilters },
-    { id: "save-search", group: "Albums", label: "Save this search as a smart album", enabled: lib.searchQuery.trim() !== "", run: () => setSaveSearchName("") },
-    { id: "album-new", group: "Albums", label: "New album from selection", enabled: hasSelection, run: () => { lib.setActiveBulkPopover("album"); lib.setBulkInput(""); } },
+    { id: "save-search", group: "Albums", label: "Save this search as a smart album", enabled: lib.searchQuery.trim() !== "", run: () => { if (lib.viewMode === "collections") lib.setViewMode("grid"); setSaveSearchName(""); } },
+    { id: "album-new", group: "Albums", label: "New album from selection", enabled: hasSelection, run: () => { if (lib.viewMode === "collections") lib.setViewMode("grid"); lib.setActiveBulkPopover("album"); lib.setBulkInput(""); } },
     ...lib.albums.map((a) => ({
       id: `album-add-${a.id}`,
       group: "Albums",
@@ -128,7 +128,7 @@ export function buildPaletteActions({
     },
     { id: "similar", group: "Select", label: "Find photos similar to this one", keywords: "smart clip like", enabled: Boolean(lib.activePhoto), run: () => lib.activePhoto && lib.handleFindSimilar(lib.activePhoto) },
     { id: "index", group: "Select", label: "Index this folder for smart search", enabled: hasPhotos && Boolean(lib.semanticStatus?.models_ready) && !lib.semanticProgress, run: () => lib.startSemanticIndex() },
-    { id: "loupe", group: "View", label: "Open in Loupe", shortcut: "Space", enabled: Boolean(lib.activePhoto), run: () => lib.setIsLoupeOpen(true) },
+    { id: "loupe", group: "View", label: "Open full screen", shortcut: "Space", enabled: Boolean(lib.activePhoto), run: () => lib.setIsLoupeOpen(true) },
     { id: "tab-photos", group: "Go to", label: "Photos", shortcut: "Ctrl+1", run: () => lib.setViewMode("grid") },
     { id: "tab-map", group: "Go to", label: "Map", shortcut: "Ctrl+2", run: () => lib.setViewMode("map") },
     { id: "tab-people", group: "Go to", label: "People", shortcut: "Ctrl+3", run: () => lib.setViewMode("people") },
@@ -146,7 +146,7 @@ export function buildPaletteActions({
     { id: "zoom-out", group: "View", label: "Smaller thumbnails", run: () => lib.setZoomLevel((z) => Math.max(0, z - 0.15)) },
     { id: "left-pane", group: "View", label: isLeftCollapsed ? "Show left sidebar" : "Hide left sidebar", run: () => setIsLeftCollapsed((v) => !v) },
     { id: "right-pane", group: "View", label: isRightCollapsed ? "Show inspector" : "Hide inspector", run: () => setIsRightCollapsed((v) => !v) },
-    { id: "mode", group: "View", label: lib.simpleMode ? "Switch to Pro mode" : "Switch to Simple mode", run: lib.toggleSimpleMode },
+    { id: "mode", group: "View", label: lib.simpleMode ? "Switch to Advanced mode" : "Switch to Simple mode", run: lib.toggleSimpleMode },
     { id: "scan-faces", group: "Faces", label: "Scan all faces (photos and videos)", enabled: hasPhotos && !lib.faceScanProgress, run: () => lib.handleBatchScanFacesOnnx("all") },
     { id: "scan-faces-photos", group: "Faces", label: "Scan faces in photos only", enabled: hasPhotos && !lib.faceScanProgress, run: () => lib.handleBatchScanFacesOnnx("photos") },
     { id: "scan-faces-videos", group: "Faces", label: "Scan faces in videos only", keywords: "movies clips", enabled: hasPhotos && !lib.faceScanProgress, run: () => lib.handleBatchScanFacesOnnx("videos") },
@@ -157,15 +157,15 @@ export function buildPaletteActions({
     { id: "detect-one", group: "Faces", label: "Detect faces in this photo", enabled: Boolean(lib.activePhoto), run: lib.handleDetectFacesSingleOnnx },
     { id: "ai-visible", group: "AI", label: "AI captions for visible photos", keywords: "caption tags", enabled: hasPhotos && !lib.aiBatchProgress, run: () => lib.runBatchAiOnList(lib.visiblePhotos) },
     { id: "ai-selected", group: "AI", label: "AI captions for selected photos", keywords: "caption tags", enabled: hasSelection && !lib.aiBatchProgress, run: () => lib.runBatchAiOnList(selected()) },
-    { id: "ai-one", group: "AI", label: "AI analyze this photo", shortcut: "A", enabled: Boolean(lib.activePhoto), run: lib.handleAiAnalyzeSingle },
+    { id: "ai-one", group: "AI", label: "AI caption for this photo", shortcut: "A", enabled: Boolean(lib.activePhoto), run: lib.handleAiAnalyzeSingle },
     { id: "ai-stop", group: "AI", label: "Stop AI captions", enabled: Boolean(lib.aiBatchProgress), run: lib.handleStopAiBatch },
     { id: "export", group: "Photo", label: "Export selected photos…", keywords: "jpeg share save resize", enabled: hasSelection, run: () => lib.openExport() },
     { id: "exif", group: "Photo", label: "Re-read EXIF of selection", keywords: "date camera gps refresh", enabled: hasSelection, run: lib.handleForceRescanExifSelected },
-    { id: "reveal", group: "Photo", label: "Show in Explorer", enabled: Boolean(lib.activePhoto), run: () => lib.activePhoto && lib.handleRevealInFileManager(diskPathOf(lib.activePhoto)) },
+    { id: "reveal", group: "Photo", label: `Show in ${fileManager}`, enabled: Boolean(lib.activePhoto), run: () => lib.activePhoto && lib.handleRevealInFileManager(diskPathOf(lib.activePhoto)) },
     { id: "external", group: "Photo", label: "Open in default app", enabled: Boolean(lib.activePhoto), run: () => lib.activePhoto && lib.handleOpenInDefaultViewer(diskPathOf(lib.activePhoto)) },
     { id: "undo", group: "Edit", label: "Undo", shortcut: "Ctrl+Z", enabled: lib.canUndo, run: lib.handleUndo },
     { id: "redo", group: "Edit", label: "Redo", shortcut: "Ctrl+Y", enabled: lib.canRedo, run: lib.handleRedo },
-    { id: "log", group: "Help", label: "Session log", shortcut: "Ctrl+L", run: () => lib.setIsSessionLogModalOpen(true) },
+    { id: "log", group: "Help", label: "Activity log", shortcut: "Ctrl+L", run: () => lib.setIsSessionLogModalOpen(true) },
     { id: "shortcuts", group: "Help", label: "Keyboard shortcuts", shortcut: "?", run: () => lib.setIsShortcutsModalOpen(true) },
     { id: "settings", group: "Help", label: "Settings", shortcut: "Ctrl+,", keywords: "preferences options", run: () => openSettings() },
     { id: "updates", group: "Help", label: "Check for updates", keywords: "new version upgrade", run: () => { openSettings("updates"); checkForUpdates(); } },
@@ -173,13 +173,18 @@ export function buildPaletteActions({
   ];
   const allowed = paletteActions.filter((a) => (access.edit || !needsEdit(a.id)) && (access.admin || !NEEDS_ADMIN.has(a.id)));
   if (platform.localFiles) return allowed;
-  return allowed.filter((a) => !NEEDS_THIS_COMPUTER.has(a.id) && !a.id.startsWith("recent-"));
+  // Export and galleries work from any library in the desktop app; Explorer and the default app need a file here
+  return allowed.filter(
+    (a) =>
+      (!NEEDS_THIS_COMPUTER.has(a.id) || (platform.exports && EXPORTS.has(a.id)) || (platform.browserDownloads && a.id === "export")) &&
+      !a.id.startsWith("recent-")
+  );
 }
 
 // Actions that change photos, people or albums (editor and up on a server)
 const NEEDS_EDIT = new Set([
   "auto-stage", "duplicates", "keep-sharpest", "pick", "reject", "unflag", "label-clear", "rotate-left", "rotate-right",
-  "basket", "save-search", "album-new", "album-remove", "review-faces", "who", "detect-one", "ai-one", "exif", "undo", "redo",
+  "save-search", "album-new", "album-remove", "review-faces", "who", "detect-one", "ai-one", "exif", "undo", "redo",
 ]);
 function needsEdit(id: string): boolean {
   return NEEDS_EDIT.has(id) || id.startsWith("rate-") || id.startsWith("label-") || id.startsWith("album-add-");
@@ -192,4 +197,5 @@ const NEEDS_ADMIN = new Set([
 ]);
 
 // Actions on this computer's folders, files and updater: not in the web client
-const NEEDS_THIS_COMPUTER = new Set(["open-folder", "import", "backup", "restore", "csv", "gallery", "export", "updates"]);
+const NEEDS_THIS_COMPUTER = new Set(["open-folder", "import", "backup", "restore", "csv", "gallery", "export", "updates", "reveal", "external"]);
+const EXPORTS = new Set(["gallery", "export"]);

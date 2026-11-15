@@ -78,19 +78,21 @@ interface BulkActionDockProps {
   setViewMode: React.Dispatch<React.SetStateAction<ViewMode>>;
   setCompareZoom: React.Dispatch<React.SetStateAction<number>>;
   setComparePan: React.Dispatch<React.SetStateAction<{ x: number; y: number }>>;
-  handleSetFlag: (flag: "pick" | "reject" | null) => Promise<void>;
+  handleSetFlag: (flag: "pick" | "reject" | null) => Promise<unknown>;
+  // Reject: flag and plan the move to _Trash, as X does
+  handleRejectToTrash: () => Promise<unknown>;
   handleBatchRate: (rating: number) => Promise<void>;
   handleSetColorLabel: (color: "red" | "yellow" | "green" | "blue" | null) => Promise<void>;
   handleRotateSelection: (deltaDegrees: number) => Promise<void>;
   handleBatchAddTag: (tag: string) => Promise<void>;
-  handleBatchStageMove: (targetSub: string | null) => Promise<void>;
+  handleBatchStageMove: (targetSub: string | null) => Promise<unknown>;
   handleSearchCities: (q: string) => Promise<void>;
   handleAssignCity: (c: CitySearchResult) => Promise<void>;
   handleShiftTimestamps: (e: React.FormEvent) => Promise<void>;
-  handleToggleBasketSelection: () => Promise<void>;
+  handleToggleBasketSelection: () => Promise<unknown>;
   handleForceRescanExifSelected: () => Promise<void>;
   runBatchAiOnList: (targets: PhotoItem[], options?: { reanalyze?: boolean }) => Promise<void>;
-  handleBatchAssignPerson?: (personName: string) => Promise<void>;
+  handleBatchAssignPerson?: (personName: string) => Promise<unknown>;
 }
 
 export default function BulkActionDock({
@@ -118,6 +120,7 @@ export default function BulkActionDock({
   setCompareZoom,
   setComparePan,
   handleSetFlag,
+  handleRejectToTrash,
   handleBatchRate,
   handleSetColorLabel,
   handleRotateSelection,
@@ -133,7 +136,9 @@ export default function BulkActionDock({
 }: BulkActionDockProps) {
   const [showMore, setShowMore] = useState(false);
   const access = useAccess();
-  if (selectedHashes.size <= 1) return null;
+  // One photo has the side panel; the dock still comes up for it when an action (the palette's "New album
+  // from selection") opened one of its popovers
+  if (selectedHashes.size === 0 || (selectedHashes.size === 1 && !activeBulkPopover)) return null;
 
   return (
     <div className="absolute bottom-5 left-1/2 -translate-x-1/2 w-max max-w-[calc(100%-2rem)] flex flex-col items-center gap-2 z-50 animate-in fade-in slide-in-from-bottom-2">
@@ -362,9 +367,9 @@ export default function BulkActionDock({
             <span>Pick</span>
           </button>
           <button
-            onClick={() => handleSetFlag("reject")}
+            onClick={() => handleRejectToTrash()}
             className="px-1.5 py-1 hover:bg-red-950/60 text-red-400 rounded flex items-center gap-1"
-            title="Reject (X)"
+            title="Reject: moves to _Trash when you apply changes (X)"
           >
             <XCircle className="w-3.5 h-3.5" />
             <span>Reject</span>
@@ -538,6 +543,15 @@ export default function BulkActionDock({
           <span>Shift time</span>
         </button>
 
+          </>
+        )}
+
+          </>
+        )}
+
+        {/* Copies out of Lumina and this device's own pins: no edit rights needed, so viewers have them too */}
+        {(showMore || !access.edit) && (
+          <>
         {onExport && (
           <button
             onClick={onExport}
@@ -553,7 +567,7 @@ export default function BulkActionDock({
           <button
             onClick={onDownload}
             className="flex items-center gap-1 text-zinc-300 hover:text-white"
-            title="Download the originals of the selected photos to this PC"
+            title="Download the originals of the selected photos"
           >
             <HardDriveDownload className="w-3.5 h-3.5 text-zinc-400" />
             <span>Download</span>
@@ -578,9 +592,6 @@ export default function BulkActionDock({
           <Pin className="w-3.5 h-3.5 text-zinc-400" />
           <span>Pin</span>
         </button>
-          </>
-        )}
-
           </>
         )}
 

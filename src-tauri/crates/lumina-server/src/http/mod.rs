@@ -6,6 +6,7 @@ mod admin_settings;
 pub mod local;
 mod auth;
 mod events;
+mod export;
 mod lookup;
 mod media;
 mod rpc;
@@ -93,6 +94,9 @@ pub fn router(state: Shared) -> Router {
         // A backup to restore can be large: no body limit here (the handler caps it)
         .route("/admin/restore", post(admin::upload_backup).layer(axum::extract::DefaultBodyLimit::disable()))
         .route("/events", get(events::events))
+        // Export and Download in a browser: a zip made here, then fetched as a download
+        .route("/export", post(export::start))
+        .route("/export/{id}", get(export::fetch))
         .fallback(|| async { ApiError::new(StatusCode::NOT_FOUND, "Unknown API route") })
         .layer(middleware::from_fn_with_state(state.clone(), require_session))
         .layer(middleware::from_fn(require_lumina_header));

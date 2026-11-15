@@ -1,6 +1,6 @@
 [package]
 name = "lumina-server"
-version = "6.0.2"
+version = "6.2.0"
 description = "Lumina without a window: keeps libraries scanned, with thumbnails, faces and smart search, for clients"
 authors = ["Maarten"]
 edition = "2024"
@@ -28,6 +28,7 @@ blake3 = "1.5"
 time = "0.3"
 
 [dev-dependencies]
+zip = { version = "9", default-features = false, features = ["deflate"] }
 image = "0.25"
 
 # Free disk space of the data folder, for the admin page

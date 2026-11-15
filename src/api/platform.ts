@@ -16,6 +16,12 @@ export type { Update } from "@tauri-apps/plugin-updater";
 // A Mac runs the desktop app as a client of a Lumina server for now: its own decoding (HEIC, video frames
 // through ffmpeg) isn't checked yet, so it doesn't open folders on the Mac itself
 const onMac = typeof navigator !== "undefined" && /Macintosh|Mac OS X/.test(navigator.userAgent);
+const onWindows = typeof navigator !== "undefined" && /Windows/.test(navigator.userAgent);
+
+// What the computer's file manager is called, for "Show in Explorer" and the like
+export const fileManager = onWindows ? "Explorer" : onMac ? "Finder" : "Files";
+// Where deleted files go: Windows' Recycle Bin, the Mac's Bin; Linux has none Lumina uses
+export const recycleBin: string | null = onWindows ? "Recycle Bin" : onMac ? "Bin" : null;
 
 export const platform = {
   // The full app: libraries in folders on this computer (everywhere but a Mac or a phone, for now)
@@ -27,6 +33,8 @@ export const platform = {
   get localFiles() {
     return openLibraryIsLocal();
   },
+  // Export and web galleries: written on this computer, from any library (a server's originals are fetched first)
+  exports: inDesktopApp && !onAndroid,
   // Updates through the built-in updater (a server updates with its image; Android installs a new APK)
   updater: inDesktopApp && !onAndroid,
   // The library's background work runs in this app (face scans and their upgrades, eyes and focus, the smart
@@ -34,7 +42,20 @@ export const platform = {
   get libraryJobs() {
     return openLibraryIsLocal();
   },
+  // The web client exports and downloads as zips the server makes, which the browser saves as downloads
+  browserDownloads: !inDesktopApp,
 };
+
+// Saves what is at `url` (the server's, with the session cookie) as the browser saves a download
+export function browserDownload(url: string) {
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "";
+  a.rel = "noopener";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
 
 const noComputer = () => Promise.reject("Not available in the browser");
 

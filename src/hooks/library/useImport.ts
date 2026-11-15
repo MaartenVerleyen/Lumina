@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { call, subscribe } from "../../api";
 import { ImportOptions, ImportProgress, ImportResult, ImportSource } from "../../types/lumina";
 import { diskPathOf } from "../../utils/rawPairs";
+import { platform } from "../../api/platform";
 import { getSettings } from "../../settings";
 import { isSameFolder } from "./shared";
 import type { LibraryCore } from "./core";
@@ -37,7 +38,8 @@ export function useImport(core: LibraryCore, filters: FilterState, folderHook: R
   openImportRef.current = openImport;
   useEffect(() => {
     const unlisten = subscribe<ImportSource>("removable-drive-arrived", (event) => {
-      if (!getSettings().offerImportOnCard) return;
+      // Importing copies files into a folder on this PC: the full app only
+      if (!getSettings().offerImportOnCard || !platform.fullApp) return;
       const d = event.payload;
       notify(`${d.label} (${d.path.replace(/\\$/, "")}) is connected.`, "info", {
         label: "Import photos…",
@@ -66,7 +68,7 @@ export function useImport(core: LibraryCore, filters: FilterState, folderHook: R
       ].filter(Boolean);
       addLog("DISK", `${result.cancelled ? "Import stopped: " : "Import finished: "}${parts.join(", ")}`);
       if (result.failures.length > 0) {
-        setError(`${plural(result.failures.length, "file")} could not be imported and were left on the card. See the Session Log.`);
+        setError(`${plural(result.failures.length, "file")} could not be imported and were left on the card. See the activity log.`);
       }
 
       // Show the new photos: rescan the library they went into, then select and filter on them
@@ -101,9 +103,10 @@ export function useImport(core: LibraryCore, filters: FilterState, folderHook: R
     } catch {}
   }
 
-  // The destination for an import: the open library, unless it is the card itself
+  // The destination for an import: the open library when it is a folder on this PC and not the card itself (All
+  // photos and a server's library leave the choice to the import dialog)
   const defaultImportDest = (source: string) =>
-    folder && !(source && isSameFolder(folder, source)) ? folder : "";
+    platform.localFiles && folder && !(source && isSameFolder(folder, source)) ? folder : "";
 
   return {
     importSource,

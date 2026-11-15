@@ -11,6 +11,8 @@ pub struct Library {
     pub root: String,
     pub name: String,
     pub photos: usize,
+    // Its folder isn't there: renamed or moved outside Lumina, or on a drive that isn't connected
+    pub missing: bool,
 }
 
 // The library and relative path of the file at `path` (an SQL expression): the longest root it sits under,
@@ -158,7 +160,9 @@ pub fn list(conn: &Connection) -> Result<Vec<Library>, String> {
         .map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map([], |r| {
-            Ok(Library { id: r.get(0)?, root: r.get(1)?, name: r.get(2)?, photos: r.get::<_, i64>(3)?.max(0) as usize })
+            let root: String = r.get(1)?;
+            let missing = !std::path::Path::new(&root).is_dir();
+            Ok(Library { id: r.get(0)?, root, name: r.get(2)?, photos: r.get::<_, i64>(3)?.max(0) as usize, missing })
         })
         .map_err(|e| e.to_string())?;
     Ok(rows.flatten().collect())
@@ -191,4 +195,103 @@ pub fn relocate(conn: &mut Connection, id: i64, new_root: &str) -> Result<usize,
         .map_err(|e| e.to_string())?;
     tx.commit().map_err(|e| e.to_string())?;
     Ok(moved)
+}
+
+// A library whose folder is gone and whose files are at the same places under `new_root`: the same library,
+// renamed or moved outside Lumina. Checked on up to 200 of its photos; most must be there.
+pub fn find_moved(conn: &Connection, new_root: &str) -> Result<Option<i64>, String> {
+    let new_root = normalize_root(new_root);
+    let base = PathBuf::from(&new_root);
+    for lib in list(conn)? {
+        if !lib.missing || crate::backup::under_root(&new_root, &lib.root) || crate::backup::under_root(&lib.root, &new_root) {
+            continue;
+        }
+        let sample: Vec<String> = {
+            let mut stmt = conn
+                .prepare("SELECT rel_path FROM photos WHERE library_id = ?1 AND rel_path IS NOT NULL ORDER BY hash LIMIT 200")
+                .map_err(|e| e.to_string())?;
+            let rows = stmt.query_map([lib.id], |r| r.get::<_, String>(0)).map_err(|e| e.to_string())?;
+            rows.flatten().collect()
+        };
+        if sample.is_empty() {
+            continue;
+        }
+        let found = sample.iter().filter(|rel| base.join(rel.replace('/', std::path::MAIN_SEPARATOR_STR)).exists()).count();
+        if found * 10 >= sample.len() * 8 {
+            return Ok(Some(lib.id));
+        }
+    }
+    Ok(None)
+}
+
+// The library now lives at `new_root`, also when a library was made there already (the folder was opened
+// again after a rename): its photos join that one and it goes. Returns how many photos moved.
+pub fn relocate_or_merge(conn: &mut Connection, id: i64, new_root: &str) -> Result<usize, String> {
+    let new_root = normalize_root(new_root);
+    if !list(conn)?.iter().any(|l| l.id != id && normalize_root(&l.root).eq_ignore_ascii_case(&new_root)) {
+        return relocate(conn, id, &new_root);
+    }
+    let sep = if is_windows_path(&new_root) { "\\" } else { "/" };
+    let base = new_root.trim_end_matches(['\\', '/']).to_string();
+    // A copy of the library opened at the new place before the old one went (copied, then the original deleted)
+    // has rows of its own for the same files, made new and empty. The old rows hold the ratings, tags and names: a
+    // new row that nobody has changed gives way to the old one; one that was changed keeps its place.
+    let rows: Vec<(String, String)> = {
+        let mut stmt = conn
+            .prepare("SELECT hash, rel_path FROM photos WHERE library_id = ?1 AND rel_path IS NOT NULL")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt.query_map([id], |r| Ok((r.get(0)?, r.get(1)?))).map_err(|e| e.to_string())?;
+        rows.flatten().collect()
+    };
+    let mut give_way: Vec<String> = Vec::new();
+    let mut stay: Vec<String> = Vec::new();
+    {
+        let mut at = conn
+            .prepare("SELECT hash FROM photos WHERE lower(current_path) = lower(?1) AND hash != ?2")
+            .map_err(|e| e.to_string())?;
+        for (hash, rel) in &rows {
+            let path = format!("{base}{sep}{}", rel.replace('/', sep));
+            let Ok(other) = at.query_row(params![path, hash], |r| r.get::<_, String>(0)) else { continue };
+            if untouched(conn, &other) {
+                give_way.push(other);
+            } else {
+                stay.push(hash.clone());
+            }
+        }
+    }
+    crate::files::forget_photos(conn, &give_way)?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let mut moved = 0;
+    {
+        let mut update = tx
+            .prepare("UPDATE photos SET current_path = ?2 || ?3 || replace(rel_path, '/', ?3) WHERE hash = ?1")
+            .map_err(|e| e.to_string())?;
+        // The paths change first, while this library is still listed: the trigger then files each photo under the other
+        for (hash, _) in rows.iter().filter(|(h, _)| !stay.contains(h)) {
+            moved += update.execute(params![hash, base, sep]).map_err(|e| e.to_string())?;
+        }
+    }
+    tx.execute("DELETE FROM libraries WHERE id = ?1", params![id]).map_err(|e| e.to_string())?;
+    tx.execute("UPDATE photos SET library_id = NULL WHERE library_id = ?1", params![id]).map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(moved)
+}
+
+// A photo's row as a scan made it: no rating, flag, label or caption, no tags but the ones a scan sets, no people
+// and no album place
+fn untouched(conn: &Connection, hash: &str) -> bool {
+    let plain: bool = conn
+        .query_row(
+            "SELECT COALESCE(rating, 0) = 0 AND flag IS NULL AND color_label IS NULL AND COALESCE(ai_caption, '') = ''
+                    AND staged_target IS NULL
+             FROM photos WHERE hash = ?1",
+            [hash],
+            |r| r.get(0),
+        )
+        .unwrap_or(false);
+    let count = |sql: &str| conn.query_row(sql, [hash], |r| r.get::<_, i64>(0)).unwrap_or(1);
+    plain
+        && count("SELECT COUNT(*) FROM photo_tags WHERE hash = ?1 AND tag NOT IN ('screenshot', 'whatsapp')") == 0
+        && count("SELECT COUNT(*) FROM photo_people WHERE hash = ?1") == 0
+        && count("SELECT COUNT(*) FROM album_photos WHERE hash = ?1") == 0
 }

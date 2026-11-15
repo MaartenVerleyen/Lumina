@@ -1258,6 +1258,52 @@ async fn a_download_is_the_original_with_its_blake3_and_follows_who_may_see_it()
 }
 
 #[tokio::test]
+async fn an_export_is_a_zip_of_what_the_user_may_see_and_only_they_fetch_it() {
+    let s = server("export");
+    two_libraries(&s);
+    let ada = login(&s.app, "ada").await;
+    let gus = login(&s.app, "gus").await;
+    let zip_names = |bytes: &[u8]| -> Vec<String> {
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes.to_vec())).unwrap();
+        let mut names: Vec<String> = (0..archive.len()).map(|i| archive.by_index(i).unwrap().name().unwrap().to_string()).collect();
+        names.sort();
+        names
+    };
+    let fetch = |id: &str, cookie: &str| get(&format!("/api/export/{id}"), Some(cookie));
+    let raw = |app: Router, req: HttpRequest<Body>| async move {
+        let resp = app.oneshot(req).await.unwrap();
+        let status = resp.status();
+        let disposition = resp.headers().get("content-disposition").map(|v| v.to_str().unwrap().to_string());
+        (status, disposition, resp.into_body().collect().await.unwrap().to_bytes().to_vec())
+    };
+
+    // The originals of the photos asked for; an unknown id is left out
+    let (status, _, made) = send(&s.app, post("/api/export", json!({"hashes": ["a1", "b1", "nope"], "originals": true}), Some(&ada))).await;
+    assert_eq!(status, StatusCode::OK, "{made}");
+    assert_eq!(made["exported"], 2);
+    let id = made["id"].as_str().unwrap().to_string();
+    let (status, disposition, bytes) = raw(s.app.clone(), fetch(&id, &ada)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(disposition.unwrap().starts_with("attachment; filename=\"Lumina export.zip\""));
+    assert_eq!(zip_names(&bytes), vec!["a1.jpg", "b1.jpg"]);
+
+    // A guest gets only what is shared with them, and can't fetch someone else's zip
+    let (_, _, theirs) = send(&s.app, post("/api/export", json!({"hashes": ["b1", "b2"], "originals": true}), Some(&gus))).await;
+    let their_id = theirs["id"].as_str().unwrap().to_string();
+    let (_, _, bytes) = raw(s.app.clone(), fetch(&their_id, &gus)).await;
+    assert_eq!(zip_names(&bytes), vec!["b2.jpg"]);
+    assert_eq!(raw(s.app.clone(), fetch(&id, &gus)).await.0, StatusCode::NOT_FOUND);
+    assert_eq!(raw(s.app.clone(), fetch("../../library.db", &ada)).await.0, StatusCode::NOT_FOUND);
+    let (status, _, _) = send(&s.app, post("/api/export", json!({"hashes": ["a1"], "originals": true}), Some(&gus))).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "nothing they may see");
+
+    // As JPEGs: these test files aren't real images, so each is reported by its name alone
+    let (status, _, made) = send(&s.app, post("/api/export", json!({"hashes": ["b1"], "longEdge": 1024}), Some(&ada))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!((made["exported"].clone(), made["failed"].clone()), (json!(0), json!(["b1.jpg"])));
+}
+
+#[tokio::test]
 async fn a_partial_upload_untouched_for_a_week_is_given_up() {
     let s = server("uploadold");
     add_library(&s);

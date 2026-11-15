@@ -323,14 +323,17 @@ export default function CollectionsView({
               subtitle={
                 followOf(a)
                   ? `${a.source} · following into ${followOf(a)!.upload_to ?? followOf(a)!.folder}`
-                  : `${a.source ? `${a.source} · ` : ""}${albumCounts.get(a.id) ?? 0} in this folder · ${a.hashes.length} in total`
+                  : // Photos of the album that aren't in the open library (another folder, or not backed up) are counted apart
+                    `${a.source ? `${a.source} · ` : ""}${a.hashes.length} photo${a.hashes.length === 1 ? "" : "s"}${
+                      (albumCounts.get(a.id) ?? 0) < a.hashes.length ? ` · ${albumCounts.get(a.id) ?? 0} in this library` : ""
+                    }`
               }
               cover={<Cover hashes={a.hashes} photoByHash={photoByHash} icon={<BookImage className="w-8 h-8" />} />}
               onOpen={() => onOpenAlbum(a.id)}
               menu={[
                 { label: "Highlights", run: () => onHighlights(a.name, a.hashes.filter((h) => photoByHash.has(h))) },
                 ...(onShareGallery
-                  ? [{ label: "Share as web gallery", run: () => onShareGallery(a.name, a.hashes.filter((h) => photoByHash.has(h))) }]
+                  ? [{ label: "Share as a web gallery…", run: () => onShareGallery(a.name, a.hashes.filter((h) => photoByHash.has(h))) }]
                   : []),
                 // An album shared with you: follow it into a library of yours, or stop
                 ...(onFollowAlbum && a.readOnly && a.engine && a.realId !== undefined && !followOf(a)
@@ -341,9 +344,10 @@ export default function CollectionsView({
                       {
                         label: "Stop following",
                         run: () =>
-                          callLocal("unfollow_album", { server: a.engine, albumId: a.realId })
-                            .then(() => setFollows((list) => list.filter((f) => f !== followOf(a))))
-                            .catch((e) => console.error(e)),
+                          // A failure shows in the window (App's unhandled-error note)
+                          void callLocal("unfollow_album", { server: a.engine, albumId: a.realId }).then(() =>
+                            setFollows((list) => list.filter((f) => f !== followOf(a)))
+                          ),
                       },
                     ]
                   : []),
@@ -492,7 +496,7 @@ export default function CollectionsView({
                   menu={[
                     { label: "Highlights", run: () => onHighlights(e.label, tripsById.get(e.id)?.hashes ?? []) },
                     ...(onShareGallery
-                      ? [{ label: "Share as web gallery", run: () => onShareGallery(e.label, tripsById.get(e.id)?.hashes ?? []) }]
+                      ? [{ label: "Share as a web gallery…", run: () => onShareGallery(e.label, tripsById.get(e.id)?.hashes ?? []) }]
                       : []),
                     ...(access.edit ? [{ label: "Rename", run: () => setRenaming({ kind: "trip", id: e.id, value: "" }) }] : []),
                   ]}

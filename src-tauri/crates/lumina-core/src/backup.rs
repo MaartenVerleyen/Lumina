@@ -174,7 +174,7 @@ fn count(conn: &Connection, sql: &str) -> usize {
     conn.query_row(sql, [], |r| r.get::<_, i64>(0)).map(|n| n.max(0) as usize).unwrap_or(0)
 }
 
-fn build_manifest(conn: &Connection, known_roots: &[String], app_dir: &Path, face_crops: usize) -> Result<BackupManifest, String> {
+pub(crate) fn build_manifest(conn: &Connection, known_roots: &[String], app_dir: &Path, face_crops: usize) -> Result<BackupManifest, String> {
     let mut stmt = conn
         .prepare("SELECT current_path FROM photos WHERE current_path IS NOT NULL AND current_path != ''")
         .map_err(|e| e.to_string())?;
@@ -183,6 +183,14 @@ fn build_manifest(conn: &Connection, known_roots: &[String], app_dir: &Path, fac
         .map_err(|e| e.to_string())?
         .filter_map(Result::ok)
         .collect();
+    // Every library the database has names its folder, also one that left the recent-folders list long ago
+    let mut known: Vec<String> = known_roots.to_vec();
+    if let Ok(mut stmt) = conn.prepare("SELECT root FROM libraries") {
+        if let Ok(rows) = stmt.query_map([], |r| r.get::<_, String>(0)) {
+            known.extend(rows.filter_map(Result::ok));
+        }
+    }
+    let known_roots = &known[..];
     Ok(BackupManifest {
         format: FORMAT,
         app_version: env!("CARGO_PKG_VERSION").to_string(),

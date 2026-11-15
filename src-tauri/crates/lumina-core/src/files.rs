@@ -102,6 +102,8 @@ fn commit_staged_blocking(
     let mut result = CommitResult::default();
     let mut seq = 1usize;
     let total = ops.len();
+    // The folders photos left: removed afterwards when nothing is left in them (not the library itself)
+    let mut left_folders: HashSet<PathBuf> = HashSet::new();
 
     for (op_idx, (hash, current_path, target_sub, captured_at, location)) in ops.into_iter().enumerate() {
         let src = Path::new(&current_path);
@@ -139,6 +141,11 @@ fn commit_staged_blocking(
             .unwrap_or_else(|| "jpg".to_string());
 
         let clean_sub = target_sub.trim().replace('\\', "/");
+        // A folder name never leads out of the library
+        if clean_sub.split('/').any(|part| part.trim() == "..") {
+            result.failures.push(FileOpFailure { file: current_path.clone(), error: format!("not a folder inside the library: {target_sub}") });
+            continue;
+        }
         let target_dir = if clean_sub.is_empty() || clean_sub.eq_ignore_ascii_case("Root") {
             root.to_path_buf()
         } else {
@@ -241,7 +248,13 @@ fn commit_staged_blocking(
             "UPDATE photos SET current_path = ?1, subfolder = ?2, staged_target = NULL WHERE hash = ?3",
             params![new_path, new_sub, hash],
         );
+        if let Some(parent) = src.parent() {
+            left_folders.insert(parent.to_path_buf());
+        }
         result.moved += 1;
+    }
+    for folder in left_folders {
+        remove_emptied_folder(&folder, root);
     }
 
     let _ = emit_to(&app, 
@@ -985,6 +998,22 @@ fn empty_trash_blocking(app: &dyn Host, root_folder: String, permanent: bool) ->
     Ok(result)
 }
 
+// A folder that moves left empty goes, and so do its parents that end up empty, up to (not including) the library.
+// Only truly empty folders: anything still in one (a file Lumina doesn't show) keeps it.
+fn remove_emptied_folder(folder: &Path, root: &Path) {
+    let mut dir = folder.to_path_buf();
+    while dir.starts_with(root) && dir != root {
+        let empty = fs::read_dir(&dir).map(|mut entries| entries.next().is_none()).unwrap_or(false);
+        if !empty || fs::remove_dir(&dir).is_err() {
+            return;
+        }
+        match dir.parent() {
+            Some(parent) => dir = parent.to_path_buf(),
+            None => return,
+        }
+    }
+}
+
 // Removes empty folders bottom-up, the folder itself included when it ends up empty
 fn remove_empty_dirs(dir: &Path) {
     if let Ok(entries) = fs::read_dir(dir) {
@@ -1022,8 +1051,14 @@ fn forget_deleted_photos(app: &dyn Host, conn: &mut Connection, hashes: &[String
             let _ = tx.execute("DELETE FROM photo_faces WHERE hash = ?1", params![h]);
             let _ = tx.execute("DELETE FROM photo_clip WHERE hash = ?1", params![h]);
             let _ = tx.execute("DELETE FROM photo_clip_frames WHERE hash = ?1", params![h]);
+            // An album keeps no place for a photo that is gone
+            let _ = tx.execute("DELETE FROM album_photos WHERE hash = ?1", params![h]);
         }
         let _ = tx.commit();
+    }
+    // People left on no photo leave the list, as when files are forgotten
+    for name in face_engine::unused_people(conn) {
+        face_engine::forget_unused_person(conn, &name);
     }
     clip::forget_vectors(hashes);
     if let Ok(mut pending) = PENDING_CANDIDATES_CACHE.lock() {

@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from "react";
-import { platform } from "../../api/platform";
 import { useAccess } from "../../components/auth/ServerGate";
-import { ALL_PHOTOS_LOADED, call, isOwnChange, openLibraryIsAll, RECONNECTED, subscribe } from "../../api";
+import { ALL_PHOTOS, ALL_PHOTOS_LOADED, allPhotosSources, call, callLocal, isOwnChange, localJobRoots, openLibraryIsAll, RECONNECTED, subscribe } from "../../api";
 import { PhotoItem, PersonItem, FaceScanProgress, FaceMatchEvent, FaceInstance, FaceModelDownloadProgress, FaceQualityProgress } from "../../types/lumina";
 import { diskPathOf } from "../../utils/rawPairs";
 import { isLiveClip, isVideo } from "../../utils/media";
@@ -80,11 +79,14 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
       const res = await call<PersonItem[]>("get_people", {
         rootFolder: currentFolder || null,
       });
-      setPeople(res);
+      // The same list again keeps its identity, so what is drawn from it (centroids, counts) isn't asked again
+      setPeople((prev) => (JSON.stringify(prev) === JSON.stringify(res) ? prev : res));
 
       // 2. Asynchronously compute & cache pending face match counts in the background (suggestions are for
-      // those who may accept them)
-      if (!skipPendingScan && access.edit) {
+      // those who may accept them). All photos tells itself whether anything may be changed: right after it
+      // loads, the window hasn't drawn the new rights yet.
+      const mayEdit = openLibraryIsAll() ? [...allPhotosSources().values()].some((s) => s.editable) : access.edit;
+      if (!skipPendingScan && mayEdit) {
         // Only the latest ask may set the badges: an older one can answer later, from before changes made since
         const asked = ++pendingAskRef.current;
         call<Record<string, number>>("get_pending_face_match_counts", {
@@ -128,13 +130,15 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
   }
 
   // Debounced: opening a folder changes `folder` and then `photos.length`, which used to run the
-  // (expensive) face-match count twice back to back
+  // (expensive) face-match count twice back to back. All photos asks again when it has loaded (ALL_PHOTOS_LOADED),
+  // not at every change in its count while a server indexes.
+  const countTrigger = folder === ALL_PHOTOS ? 0 : photos.length;
   useEffect(() => {
     const timer = setTimeout(() => {
       refreshPeople(folder);
     }, 400);
     return () => clearTimeout(timer);
-  }, [photos.length, folder]);
+  }, [countTrigger, folder]);
 
   useEffect(() => {
     const unlisten = subscribe<FaceMatchEvent>("face-automatch-complete", (event) => {
@@ -209,7 +213,7 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
           );
         }
         // A server's own scan (after an upload, say) isn't one this window started: no notice for it
-        const ours = !event.server && platform.libraryJobs;
+        const ours = !event.server && localJobRoots().length > 0;
         refreshPeople(folder, false).then(() => {
           if (!ours) return;
           setAutoMatchNotice(
@@ -256,7 +260,8 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
 
   // Starts a background face scan (detect, align, embed) for these photos. Unconfirmed faces are replaced
   // photo by photo as results arrive (face-scan-progress), so a cancelled scan leaves unreached photos untouched.
-  async function startFaceScan(hashes: string[], logMessage: string) {
+  // `onThisPc`: photos of this PC's libraries by their ids here (All photos' background upgrade), for this PC's engine
+  async function startFaceScan(hashes: string[], logMessage: string, onThisPc = false) {
     if (faceScanProgressRef.current || hashes.length === 0) return;
     try {
       setPendingFaceCounts({});
@@ -270,7 +275,7 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
       });
       addLog("FACE", logMessage);
       // The first call downloads (288 MB, once) and loads the face models before the scan starts
-      await call<number>("scan_library_faces_batch", { hashes });
+      await (onThisPc ? callLocal : call)<number>("scan_library_faces_batch", { hashes });
     } catch (err) {
       setFaceScanProgress(null);
       setFaceModelDownload(null);
@@ -297,22 +302,27 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
   }
 
   // Face engine upgrade: photos whose faces came from the previous engine are re-scanned automatically once
-  // per opened folder (confirmed names and rejections carry over; the old embeddings can't be matched)
+  // per opened folder (confirmed names and rejections carry over; the old embeddings can't be matched). In
+  // All photos that is every folder on this PC in the view; a server upgrades its own.
   const faceScanProgressRef = useRef(faceScanProgress);
   faceScanProgressRef.current = faceScanProgress;
   const hasPhotos = photos.length > 0;
   const faceUpgradeCheckedRef = useRef<Set<string>>(new Set());
   useEffect(() => {
-    if (!platform.libraryJobs || !folder || !hasPhotos || faceUpgradeCheckedRef.current.has(folder)) return;
+    if (!folder || !hasPhotos) return;
     const timer = setTimeout(async () => {
       if (faceScanProgressRef.current) return;
-      faceUpgradeCheckedRef.current.add(folder);
+      const roots = localJobRoots().filter((r) => !faceUpgradeCheckedRef.current.has(r));
+      if (roots.length === 0) return;
+      for (const r of roots) faceUpgradeCheckedRef.current.add(r);
       try {
-        const outdated = await call<string[]>("get_outdated_face_photos", { rootFolder: folder });
+        const lists = await Promise.all(roots.map((rootFolder) => callLocal<string[]>("get_outdated_face_photos", { rootFolder })));
+        const outdated = [...new Set(lists.flat())];
         if (outdated.length > 0) {
           await startFaceScan(
             outdated,
-            `Upgrading faces in ${plural(outdated.length, "photo")} to the new face engine (names and rejections are kept)`
+            `Upgrading faces in ${plural(outdated.length, "photo")} to the new face engine (names and rejections are kept)`,
+            true
           );
         }
       } catch {}
@@ -321,35 +331,57 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
   }, [folder, hasPhotos]);
 
   // Eyes and focus: faces found before Lumina measured them are measured in the background, once per opened
-  // folder (also picks up closed eyes once the smart search models that judge them are installed)
+  // folder (also picks up closed eyes once the smart search models that judge them are installed). The engine
+  // measures one library at a time, so All photos' folders on this PC wait in a queue.
+  const qualityQueueRef = useRef<string[]>([]);
+  // A measuring pass is running: the engine would turn the next library down, so it waits its turn
+  const qualityRunningRef = useRef(false);
   const [faceQualityProgress, setFaceQualityProgress] = useState<{ completed: number; total: number } | null>(null);
   useEffect(() => {
     const unlisten = subscribe<FaceQualityProgress>("face-quality-progress", (event) => {
       const { batch, done, completed, total } = event.payload;
       setPhotos((prev) => prev.map((p) => (p.hash in batch ? { ...p, faces: batch[p.hash] } : p)));
       setFaceQualityProgress(done ? null : { completed, total });
-      if (done) addLog("FACE", `Checked eyes and focus in ${plural(total, "photo")}`);
+      if (done) {
+        addLog("FACE", `Checked eyes and focus in ${plural(total, "photo")}`);
+        qualityRunningRef.current = false;
+        void measureNextQuality();
+      }
     });
     return () => {
       unlisten.then((f) => f());
     };
   }, [addLog]);
 
-  async function measureFaceQuality(root = folder) {
-    if (!root) return;
-    try {
-      const total = await call<number>("measure_face_quality", { rootFolder: root });
-      if (total > 0) setFaceQualityProgress({ completed: 0, total });
-    } catch {}
+  // The next library in the queue with faces to measure (one with none is passed over)
+  async function measureNextQuality() {
+    for (let root = qualityQueueRef.current.shift(); root; root = qualityQueueRef.current.shift()) {
+      try {
+        const total = await callLocal<number>("measure_face_quality", { rootFolder: root });
+        if (total > 0) {
+          qualityRunningRef.current = true;
+          setFaceQualityProgress({ completed: 0, total });
+          return;
+        }
+      } catch {}
+    }
+  }
+
+  async function measureFaceQuality(roots = localJobRoots()) {
+    const queued = new Set(qualityQueueRef.current);
+    qualityQueueRef.current.push(...roots.filter((r) => !queued.has(r)));
+    if (!qualityRunningRef.current) await measureNextQuality();
   }
 
   const qualityCheckedRef = useRef<Set<string>>(new Set());
   useEffect(() => {
-    if (!platform.libraryJobs || !folder || !hasPhotos || qualityCheckedRef.current.has(folder)) return;
+    if (!folder || !hasPhotos) return;
     const timer = setTimeout(() => {
       if (faceScanProgressRef.current) return;
-      qualityCheckedRef.current.add(folder);
-      measureFaceQuality(folder);
+      const roots = localJobRoots().filter((r) => !qualityCheckedRef.current.has(r));
+      if (roots.length === 0) return;
+      for (const r of roots) qualityCheckedRef.current.add(r);
+      void measureFaceQuality(roots);
     }, 4000);
     return () => clearTimeout(timer);
   }, [folder, hasPhotos]);
@@ -452,10 +484,49 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
     }
   }
 
-  async function handleBatchAssignPerson(personName: string, targetHashes?: string[]) {
+  // A named face on the shown photo loses its name and stays a face; an unnamed one isn't a face: its box goes.
+  // Used by the side panel's face chips and the Loupe's face boxes.
+  async function handleClearFace(faceId: string) {
+    const photo = activePhoto;
+    const face = photo?.faces.find((f) => f.face_id === faceId);
+    if (!photo || !face) return;
+    try {
+      const removedPerson = face.person_name;
+      const rem = removedPerson
+        ? (
+            await call<Record<string, FaceInstance[]>>("unassign_faces_batch", {
+              faceIds: [faceId],
+              personName: removedPerson,
+            })
+          )[photo.hash] ?? photo.faces.map((x) => (x.face_id === faceId ? { ...x, person_name: null } : x))
+        : await call<FaceInstance[]>("remove_face_box", { faceId, hash: photo.hash });
+      const remainingNames = new Set(rem.map((x) => x.person_name?.trim().toLowerCase()).filter(Boolean));
+      setPhotos((prev) =>
+        prev.map((p) => {
+          if (p.hash !== photo.hash) return p;
+          const nextPeople = removedPerson
+            ? p.people.filter((pe) => pe.toLowerCase() !== removedPerson.toLowerCase() || remainingNames.has(pe.toLowerCase()))
+            : p.people;
+          return { ...p, faces: rem, people: nextPeople };
+        })
+      );
+      if (selectedFaceId === faceId) {
+        // An unnamed face stays chosen, ready for another name
+        setSelectedFaceId(removedPerson ? faceId : rem[0]?.face_id ?? null);
+        setFaceNameInput(removedPerson ? "" : rem[0]?.person_name || "");
+      }
+      addLog("FACE", removedPerson ? `Removed the name "${removedPerson}" from a face on ${photo.name}` : `Removed a face box on ${photo.name}`);
+      await refreshPeople();
+    } catch (err) {
+      setError(String(err));
+    }
+  }
+
+  // Returns whether the person was added
+  async function handleBatchAssignPerson(personName: string, targetHashes?: string[]): Promise<boolean> {
     const clean = personName.trim();
     const hashes = resolveTargets(targetHashes);
-    if (!clean || hashes.length === 0) return;
+    if (!clean || hashes.length === 0) return false;
     try {
       // Undo removes the person only from photos that didn't have them before
       const added = hashes.filter((h) => !photoByHash.get(h)?.people.includes(clean));
@@ -490,8 +561,10 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
       setBulkInput("");
       setActiveBulkPopover(null);
       refreshPeople();
+      return true;
     } catch (err) {
       setError(String(err));
+      return false;
     }
   }
 
@@ -591,6 +664,7 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
     handleBatchScanFacesOnnx,
     handleCancelFaceScan,
     handleSaveFaceAndAutomatch,
+    handleClearFace,
     handleBatchAssignPerson,
     handleRenamePerson,
     handleSetPersonHidden,

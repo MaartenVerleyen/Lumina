@@ -28,7 +28,7 @@ import {
   CloudOff,
   Eye,
 } from "lucide-react";
-import { useIsOnDevice } from "../../hooks/useOnDevice";
+import { useIsOnDevice, useOnDeviceSet } from "../../hooks/useOnDevice";
 import { allPhotosCanBackUp, allPhotosHasLocal, allPhotosSources } from "../../api";
 import { whereabouts } from "../../api/allPhotos";
 
@@ -398,7 +398,7 @@ const PhotoCard = memo(function PhotoCard({
 
         {/* Top-Left Badges */}
         <div className="absolute top-2 left-2 flex items-center gap-1 z-20 flex-wrap">
-          <OnDeviceBadge hash={photo.hash} />
+          {!photo.copies && <OnDeviceBadge hash={photo.hash} />}
           {photo.copies && <WhereBadge photo={photo} />}
           {photo.in_basket && (
             <span
@@ -581,7 +581,9 @@ const PhotoCard = memo(function PhotoCard({
 // All photos: where the photo is. A photo in both places, or on this PC with no server to back up to, has no
 // mark; one only on a server is marked, and shared photos (read-only) say so.
 function WhereBadge({ photo }: { photo: PhotoItem }) {
-  const where = whereabouts(photo, allPhotosSources(), allPhotosCanBackUp());
+  // A server's photo downloaded to this PC is here as well: no "server only" mark
+  const downloaded = useOnDeviceSet();
+  const where = whereabouts(photo, allPhotosSources(), allPhotosCanBackUp(), downloaded);
   const mark = (className: string, title: string, icon: ReactNode) => (
     <span className={`p-1 rounded bg-zinc-950/85 border backdrop-blur shadow ${className}`} title={title}>
       {icon}

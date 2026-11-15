@@ -22,6 +22,9 @@ pub struct GalleryOptions {
     pub places: bool,
     // A zip of the photos for "Download all"
     pub zip: bool,
+    // Photos this computer's database doesn't have (a server's), their originals fetched by the app
+    #[serde(default)]
+    pub fetched: Vec<export::FetchedPhoto>,
 }
 
 #[derive(Serialize)]
@@ -171,6 +174,21 @@ pub async fn export_gallery(app: SharedHost, options: GalleryOptions) -> Result<
                 }
                 sources.push(src);
             }
+        }
+        for f in &options.fetched {
+            if video_meta::is_video_path(Path::new(&f.name)) {
+                continue;
+            }
+            sources.push(GallerySource {
+                disk_path: f.path.clone(),
+                rotation: f.rotation,
+                date: f.captured_at.chars().take(10).map(|c| if c == ':' { '-' } else { c }).collect(),
+                caption: f.caption.clone(),
+                place: f.location.split(',').next().unwrap_or("").trim().to_string(),
+                lat: f.latitude,
+                lon: f.longitude,
+                people: if options.people { f.people.clone() } else { Vec::new() },
+            });
         }
         // Oldest first, as the story happened
         sources.sort_by(|a, b| (a.date.is_empty(), &a.date).cmp(&(b.date.is_empty(), &b.date)));

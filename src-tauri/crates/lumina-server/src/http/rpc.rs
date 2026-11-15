@@ -612,10 +612,11 @@ commands! {
     } => after Ok(Changed { people: true, albums: true, ..Default::default() });
     Admin blocking video_cache_info() |host, scope| Ok::<_, String>(ffmpeg::video_cache_info(host));
     Admin blocking clear_video_cache() |host, scope| Ok::<_, String>(ffmpeg::clear_video_cache(host));
-    // A rescan walks the library's folders (the listing above doesn't)
-    Admin async rescan_library(folder_path: String) |host, scope| {
+    // A rescan walks the library's folders (the listing above doesn't); with force_reprocess it also makes every
+    // thumbnail, duplicate fingerprint and focus score again (a client's "Rebuild thumbnails")
+    Admin async rescan_library(folder_path: String, force_reprocess: Option<bool>) |host, scope| {
         let root = lookup::library_root(&*host, &folder_path)?;
-        scan::scan_folder(host, root, Some(false)).await.map_err(ApiError::from)
+        scan::scan_folder(host, root, Some(force_reprocess.unwrap_or(false))).await.map_err(ApiError::from)
     };
     Admin blocking cancel_folder_scan() |host, scope| { let _ = host; scan::cancel_folder_scan(); Ok::<(), String>(()) };
     Admin blocking cancel_thumbnail_pass() |host, scope| { let _ = host; scan::cancel_thumbnail_pass(); Ok::<(), String>(()) };

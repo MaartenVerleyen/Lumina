@@ -38,7 +38,7 @@ export default function ShareAlbumDialog({
     if (!album) return;
     setUsers(null);
     setError(null);
-    Promise.all([call<ShareUser[]>("list_share_users"), call<string[]>(album.kind === "search" ? "get_search_shares" : "get_album_shares", { id: album.id })])
+    Promise.all([call<ShareUser[]>("list_share_users", { id: album.id, kind: album.kind }), call<string[]>(album.kind === "search" ? "get_search_shares" : "get_album_shares", { id: album.id })])
       .then(([list, names]) => {
         setUsers(list);
         setShared(new Set(names.map((n) => n.toLowerCase())));
