@@ -37,6 +37,8 @@ interface LoupeModalProps {
   navigateByOffset: (offset: number, extendSelection: boolean) => void;
   handleSetFlag: (flag: "pick" | "reject" | null) => Promise<void>;
   handleBatchStageMove: (targetSub: string | null) => Promise<void>;
+  // The X key's action: reject and mark for _Trash in one step (one undo)
+  handleRejectToTrash?: () => Promise<void>;
   handleBatchRate: (rating: number) => Promise<void>;
   handleRotateSelection: (deltaDegrees: number) => Promise<void>;
   handleAiAnalyzeSingle: () => Promise<void>;
@@ -56,6 +58,7 @@ export default function LoupeModal({
   navigateByOffset,
   handleSetFlag,
   handleBatchStageMove,
+  handleRejectToTrash,
   handleBatchRate,
   handleRotateSelection,
   handleAiAnalyzeSingle,
@@ -440,8 +443,11 @@ export default function LoupeModal({
             </button>
             <button
               onClick={() => {
-                handleSetFlag("reject");
-                handleBatchStageMove("_Trash");
+                if (handleRejectToTrash) void handleRejectToTrash();
+                else {
+                  handleSetFlag("reject");
+                  handleBatchStageMove("_Trash");
+                }
                 if (autoAdvance) navigateByOffset(1, false);
               }}
               className={`px-2.5 py-1 rounded-lg font-medium flex items-center gap-1.5 transition ${

@@ -15,6 +15,7 @@ import {
   withPeopleNamed,
   sourceKey,
   splitByHome,
+  splitOps,
   withLocalIds,
   whereabouts,
   type Source,
@@ -293,4 +294,51 @@ test("near-duplicates of two libraries share a group; within one library the eng
   assert.equal(g.c, g.d);
   assert.notEqual(g.a, g.c);
   assert.equal(g.e ?? null, null);
+});
+
+test("planned moves in All photos go to each photo's own library", () => {
+  const here = { server: null, root: "D:\Photos", label: "D:\Photos", editable: true, uploadable: false };
+  const cachy = { server: "cachy", root: "/srv/lib", label: "cachy: Library", editable: true, uploadable: true };
+  const shared = { server: "cachy", root: "/srv/shared", label: "cachy: Library 2", editable: false, uploadable: false };
+  const sources = new Map([
+    [sourceKey(here), here],
+    [sourceKey(cachy), cachy],
+    [sourceKey(shared), shared],
+  ]);
+  const copies = new Map([
+    ["a", { copies: [sourceKey(here)], home: sourceKey(here), shown: sourceKey(here) }],
+    ["b", { copies: [sourceKey(cachy)], home: sourceKey(cachy), shown: sourceKey(cachy) }],
+    ["c", { copies: [sourceKey(shared)], home: null, shown: sourceKey(shared) }],
+  ]);
+  const localIds = new Map([["a", ["a-here"]]]);
+  // "_Trash" is that folder in each photo's own library; this PC's photos go by their ids here
+  const trash = splitOps(
+    ["a", "b", "c"].map((hash) => ({ hash, target_subfolder: "_Trash" })),
+    copies,
+    sources,
+    localIds
+  );
+  assert.deepEqual(trash.byEngine.get(""), [{ hash: "a-here", target_subfolder: "_Trash" }]);
+  assert.deepEqual(trash.byEngine.get("cachy"), [{ hash: "b", target_subfolder: "_Trash" }]);
+  assert.deepEqual(trash.readOnly, ["c"]);
+  // A folder of the tree names its library: only that library's photos move there, under its own name
+  const trip = splitOps(
+    ["a", "b"].map((hash) => ({ hash, target_subfolder: "cachy: Library / Trip" })),
+    copies,
+    sources,
+    localIds
+  );
+  assert.deepEqual(trip.byEngine.get("cachy"), [{ hash: "b", target_subfolder: "Trip" }]);
+  assert.equal(trip.byEngine.has(""), false);
+  assert.deepEqual(trip.elsewhere, ["a"]);
+  // The library itself is its top folder; the longer label isn't taken for the shorter one
+  const top = splitOps([{ hash: "b", target_subfolder: "cachy: Library" }], copies, sources, localIds);
+  assert.deepEqual(top.byEngine.get("cachy"), [{ hash: "b", target_subfolder: "Root" }]);
+  const other = splitOps([{ hash: "b", target_subfolder: "cachy: Library 2 / X" }], copies, sources, localIds);
+  assert.deepEqual(other.elsewhere, ["b"]);
+  // Clearing a move and rotations carry no folder
+  const cleared = splitOps([{ hash: "a", target_subfolder: null }], copies, sources, localIds);
+  assert.deepEqual(cleared.byEngine.get(""), [{ hash: "a-here", target_subfolder: null }]);
+  const turned = splitOps([{ hash: "b", rotation: 90 }], copies, sources, localIds);
+  assert.deepEqual(turned.byEngine.get("cachy"), [{ hash: "b", rotation: 90 }]);
 });

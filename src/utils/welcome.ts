@@ -14,6 +14,16 @@ export interface ReleaseNotes {
 // Newest first. Add an entry for every release that should greet updating users with "What's new".
 export const RELEASE_NOTES: ReleaseNotes[] = [
   {
+    version: "6.1.0",
+    items: [
+      { title: "A renamed folder keeps everything", text: "Rename or move a library folder outside Lumina and open it at its new place: Lumina recognises it and keeps every rating, tag, name and album. A folder it can't find shows in the Library menu with Locate…, to point to where it is now." },
+      { title: "All photos does it all", text: "Reject (X), dragging photos onto a folder, Move, Trash, Auto-sort, Keep the best and Find duplicates now work in All photos, each photo in its own library. Apply changes moves this PC's photos; a server's admin applies its own." },
+      { title: "Export, share and download from anywhere", text: "Export, the web gallery and Download work from All photos and server libraries too; a server's originals are fetched first. Viewers can download and pin." },
+      { title: "Ctrl+A and the folder menu", text: "Ctrl+A selects every photo shown. Right-click a folder on this PC (also in All photos) to show it in Explorer or add a folder; empty folders left behind by Apply changes are tidied up." },
+      { title: "Clearer when something is wrong", text: "A server All photos can't reach says so, and photos shared with you that can't be changed say why, instead of quietly doing nothing." },
+    ],
+  },
+  {
     version: "6.0.2",
     items: [
       { title: "Faces to check, in seconds", text: "Working out which faces might be someone you named is three times faster, and when several windows ask at once the server works it out once for all of them. On a large library this took minutes when the server was busy." },

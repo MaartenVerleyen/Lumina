@@ -253,6 +253,7 @@ pub fn run() {
             follows::unfollow_album,
             follows::sync_follows,
             transfers::download_originals,
+            transfers::fetch_originals,
             transfers::transfer_progress,
             transfers::cancel_transfers,
             transfers::clear_transfers,
@@ -266,6 +267,7 @@ pub fn run() {
             client_db::list_local_library,
             client_db::local_copy_ids,
             client_db::forget_local_library,
+            client_db::locate_local_library,
             system::close_splashscreen,
             window_close::set_close_behaviour,
             window_close::quit_app

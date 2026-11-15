@@ -60,21 +60,24 @@ export function useTriage(core: LibraryCore, view: LibraryView) {
     const hashes = resolveTargets(targetHashes);
     if (hashes.length === 0) return;
     try {
-      const hashSet = new Set(hashes);
+      await call("set_photo_flag", { hashes, flag: "reject" });
+      // All photos answers the photos it couldn't change (shared with you alone): those stay as they were
+      const res = await call<{ skipped?: string[] } | null>("stage_photos_move", {
+        ops: hashes.map((hash) => ({ hash, target_subfolder: "_Trash" })),
+      });
+      const skipped = new Set(res?.skipped ?? []);
+      const hashSet = new Set(hashes.filter((h) => !skipped.has(h)));
+      if (hashSet.size === 0) return;
       const before = captureSnapshots(photos, hashSet);
       const after = before.map((s: PhotoActionSnapshot) => ({
         ...s,
         flag: "reject" as const,
         staged_target: "_Trash",
       }));
-      await call("set_photo_flag", { hashes, flag: "reject" });
-      await call("stage_photos_move", {
-        ops: hashes.map((hash) => ({ hash, target_subfolder: "_Trash" })),
-      });
       undo.pushUndoEntry({
-        description: `Reject & stage to _Trash on ${plural(hashes.length, "photo")}`,
+        description: `Reject & stage to _Trash on ${plural(hashSet.size, "photo")}`,
         previousActiveHash: activeHash,
-        previousSelectedHashes: hashes,
+        previousSelectedHashes: [...hashSet],
         before,
         after,
       });
@@ -83,7 +86,7 @@ export function useTriage(core: LibraryCore, view: LibraryView) {
           hashSet.has(p.hash) ? { ...p, flag: "reject", staged_target: "_Trash" } : p
         )
       );
-      addLog("TRIAGE", `Rejected & staged ${plural(hashes.length, "photo")} to _Trash`);
+      addLog("TRIAGE", `Rejected & staged ${plural(hashSet.size, "photo")} to _Trash`);
     } catch (err) {
       setError(String(err));
     }
@@ -105,9 +108,11 @@ export function useTriage(core: LibraryCore, view: LibraryView) {
       await call("set_photo_flag", { hashes: keep, flag: "pick" });
       if (rest.length > 0) {
         await call("set_photo_flag", { hashes: rest, flag: "reject" });
-        await call("stage_photos_move", {
+        const res = await call<{ skipped?: string[] } | null>("stage_photos_move", {
           ops: rest.map((hash) => ({ hash, target_subfolder: "_Trash" })),
         });
+        // Photos All photos couldn't change keep what they showed
+        for (const h of res?.skipped ?? []) restSet.delete(h);
       }
       undo.pushUndoEntry({
         description: `Keep 1 & trash ${plural(rest.length, "photo")} (Compare)`,
@@ -344,10 +349,11 @@ export function useTriage(core: LibraryCore, view: LibraryView) {
         { title: "Keep the best of each burst" }
       );
       if (!ok) return;
-      const trashHashes = new Set(toTrash.map((p) => p.hash));
-      const before = captureSnapshots(photos, trashHashes);
       const ops = toTrash.map((p) => ({ hash: p.hash, target_subfolder: "_Trash" }));
-      await call("stage_photos_move", { ops });
+      const res = await call<{ skipped?: string[] } | null>("stage_photos_move", { ops });
+      const skipped = new Set(res?.skipped ?? []);
+      const trashHashes = new Set(toTrash.map((p) => p.hash).filter((h) => !skipped.has(h)));
+      const before = captureSnapshots(photos, trashHashes);
       pushSnapshotUndo(
         `Keep best: stage ${plural(toTrash.length, "photo")} for _Trash`,
         before,

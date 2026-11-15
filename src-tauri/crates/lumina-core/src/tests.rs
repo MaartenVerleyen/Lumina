@@ -2262,7 +2262,7 @@ fn opening_a_folder_views_or_takes_in_libraries() {
     // The parent folder becomes the library and takes the inner one in
     let media = libraries::open(&conn, r"D:\Media").unwrap();
     let all = libraries::list(&conn).unwrap();
-    assert_eq!(all, vec![libraries::Library { id: media, root: r"D:\Media".into(), name: String::new(), photos: 2 }]);
+    assert_eq!(all, vec![libraries::Library { id: media, root: r"D:\Media".into(), name: String::new(), photos: 2, missing: true }]);
     assert_eq!(library_of(&conn, "a").1.as_deref(), Some("Photos/a.jpg"));
     assert_eq!(library_of(&conn, "v").1.as_deref(), Some("Videos/v.mp4"));
 }
@@ -2518,6 +2518,25 @@ fn watcher_ignores_reads_and_sees_a_new_photo() {
     fs::write(dir.join("b.jpg"), b"not really a jpeg either").unwrap();
     std::thread::sleep(Duration::from_millis(2800));
     assert!(changes(&events) > 0, "a new photo was not noticed");
+
+    // A folder of photos renamed: the event names only the folder
+    fs::create_dir_all(dir.join("Trip")).unwrap();
+    fs::write(dir.join("Trip").join("c.jpg"), b"x").unwrap();
+    std::thread::sleep(Duration::from_millis(2800));
+    let before = changes(&events);
+    fs::rename(dir.join("Trip"), dir.join("Trip 2024")).unwrap();
+    std::thread::sleep(Duration::from_millis(2800));
+    assert!(changes(&events) > before, "a renamed folder was not noticed");
+
+    // A folder that isn't there doesn't stop the others being watched
+    let missing = dir.with_extension("missing");
+    let err = watch::watch_libraries(events.clone(), vec![missing.to_string_lossy().to_string(), dir.to_string_lossy().to_string()]);
+    assert!(err.is_err());
+    std::thread::sleep(Duration::from_millis(300));
+    let before = changes(&events);
+    fs::write(dir.join("d.jpg"), b"y").unwrap();
+    std::thread::sleep(Duration::from_millis(2800));
+    assert!(changes(&events) > before, "the folder after a missing one wasn't watched");
 
     watch::watch_libraries(events, Vec::new()).unwrap();
     let _ = fs::remove_dir_all(&dir);
@@ -2844,4 +2863,217 @@ fn dot_matches_the_plain_sum() {
         let plain: f32 = a.iter().zip(&b).map(|(x, y)| x * y).sum();
         assert!((crate::face_match::dot(&a, &b) - plain).abs() < 1e-4, "n = {n}");
     }
+}
+
+// Export from All photos: a photo this computer has (by its row) and a server's photo whose original the app
+// fetched (by its file and the values the window sent) both come out, the server's under its own name
+#[test]
+fn export_takes_fetched_server_photos_too() {
+    let base = std::env::temp_dir().join(format!("lumina_export_fetched_test_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&base);
+    let (library, data, fetched, out) = (base.join("Library"), base.join("Data"), base.join("fetched"), base.join("Out"));
+    for d in [&library, &fetched] {
+        fs::create_dir_all(d).unwrap();
+    }
+    let img = image::RgbImage::from_pixel(64, 48, image::Rgb([200, 120, 40]));
+    img.save(library.join("here.jpg")).unwrap();
+    img.save(fetched.join("download.jpg")).unwrap();
+    let host: SharedHost = Arc::new(DirHost(data.clone()));
+    let conn = open_global_db(&*host).unwrap();
+    db::migrate(&conn).unwrap();
+    conn.execute("INSERT INTO photos (hash, current_path) VALUES ('here', ?1)", params![library.join("here.jpg").to_string_lossy()]).unwrap();
+    drop(conn);
+    let options = export::ExportOptions {
+        hashes: vec!["here".into(), "not-here".into()],
+        dest_dir: out.to_string_lossy().to_string(),
+        long_edge: 0,
+        quality: 85,
+        strip_gps: true,
+        fetched: vec![export::FetchedPhoto {
+            path: fetched.join("download.jpg").to_string_lossy().to_string(),
+            name: "IMG_0042.jpg".into(),
+            captured_at: "2024:06:15 18:30:00".into(),
+            ..Default::default()
+        }],
+    };
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    let result = rt.block_on(export::export_photos(host, options)).unwrap();
+    assert_eq!(result.exported, 2);
+    assert!(result.failures.is_empty());
+    assert!(out.join("here.jpg").exists());
+    assert!(out.join("IMG_0042.jpg").exists());
+    let _ = fs::remove_dir_all(&base);
+}
+
+// A library folder renamed outside Lumina and opened again: its photos come back with their rating, flag, tags,
+// people, a place set by hand and a planned move, in the scan's own list as well as in the database
+#[test]
+fn a_renamed_library_shows_its_values_at_once() {
+    let _turn = SCAN_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+    let base = std::env::temp_dir().join(format!("lumina_renamed_library_test_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&base);
+    let (library, renamed, data) = (base.join("Holiday"), base.join("Holiday 2024"), base.join("Data"));
+    fs::create_dir_all(library.join("Day 1")).unwrap();
+    let photo = library.join("Day 1").join("beach.jpg");
+    image::RgbImage::from_fn(64, 48, |x, y| image::Rgb([(x * 3) as u8, (y * 4) as u8, 90])).save(&photo).unwrap();
+    let host: SharedHost = Arc::new(DirHost(data.clone()));
+    db::migrate(&open_global_db(&*host).unwrap()).unwrap();
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    let first = rt.block_on(scan::scan_folder(host.clone(), library.to_string_lossy().to_string(), None)).unwrap();
+    let hash = first[0].hash.clone();
+    while thumbs::thumbnail_passes_running() {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let conn = open_global_db(&*host).unwrap();
+    conn.execute_batch(&format!(
+        "UPDATE photos SET rating = 4, flag = 'pick', location = 'Knokke, BE', latitude = 51.35, longitude = 3.29,
+                staged_target = 'Best' WHERE hash = '{hash}';
+         INSERT INTO photo_tags (hash, tag) VALUES ('{hash}', 'sea');
+         INSERT INTO people (name) VALUES ('Emma');
+         INSERT INTO photo_people (hash, person_name) VALUES ('{hash}', 'Emma');"
+    ))
+    .unwrap();
+    drop(conn);
+
+    fs::rename(&library, &renamed).unwrap();
+    let again = rt.block_on(scan::scan_folder(host.clone(), renamed.to_string_lossy().to_string(), None)).unwrap();
+    while thumbs::thumbnail_passes_running() {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert_eq!(again.len(), 1);
+    let p = &again[0];
+    assert_eq!(p.hash, hash, "the moved file keeps its row");
+    assert_eq!(p.rating, 4);
+    assert_eq!(p.flag.as_deref(), Some("pick"));
+    assert_eq!(p.tags, vec!["sea".to_string()]);
+    assert_eq!(p.people, vec!["Emma".to_string()]);
+    assert_eq!(p.location, "Knokke, BE");
+    assert_eq!(p.latitude, Some(51.35));
+    assert_eq!(p.staged_target.as_deref(), Some("Best"));
+    // The database agrees: the next listing shows the same
+    let listed = scan::list_library_photos(&*host, &renamed.to_string_lossy()).unwrap();
+    assert_eq!(listed[0].rating, 4);
+    assert_eq!(listed[0].location, "Knokke, BE");
+    // One library, at its new place: the old one was recognised and moved, not left behind empty
+    let libs = libraries::list(&open_global_db(&*host).unwrap()).unwrap();
+    assert_eq!(libs.len(), 1);
+    assert!(libs[0].root.ends_with("Holiday 2024"));
+    assert!(!libs[0].missing);
+    assert_eq!(libs[0].photos, 1);
+    let _ = fs::remove_dir_all(&base);
+}
+
+// A library opened again at its new place before Lumina recognised it (two libraries now): Locate… merges the
+// old one into the new one, and photos that weren't taken over yet follow
+#[test]
+fn locating_a_moved_library_merges_it_into_the_new_one() {
+    let base = std::env::temp_dir().join(format!("lumina_merge_library_test_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&base);
+    let host: SharedHost = Arc::new(DirHost(base.join("Data")));
+    let mut conn = open_global_db(&*host).unwrap();
+    db::migrate(&conn).unwrap();
+    let (old_root, new_root) = (base.join("Old"), base.join("New"));
+    fs::create_dir_all(&new_root).unwrap();
+    let old_id = libraries::open(&conn, &old_root.to_string_lossy()).unwrap();
+    let new_id = libraries::open(&conn, &new_root.to_string_lossy()).unwrap();
+    conn.execute(
+        "INSERT INTO photos (hash, current_path, rating) VALUES ('a', ?1, 5), ('b', ?2, 3)",
+        params![old_root.join("x").join("a.jpg").to_string_lossy(), new_root.join("b.jpg").to_string_lossy()],
+    )
+    .unwrap();
+    assert_eq!(libraries::relocate_or_merge(&mut conn, old_id, &new_root.to_string_lossy()).unwrap(), 1);
+    let libs = libraries::list(&conn).unwrap();
+    assert_eq!(libs.iter().map(|l| l.id).collect::<Vec<_>>(), vec![new_id]);
+    assert_eq!(libs[0].photos, 2);
+    let (path, rating): (String, i32) =
+        conn.query_row("SELECT current_path, rating FROM photos WHERE hash = 'a'", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+    assert_eq!(PathBuf::from(path), new_root.join("x").join("a.jpg"));
+    assert_eq!(rating, 5);
+    let _ = fs::remove_dir_all(&base);
+}
+
+// A library copied to a new place and opened there while the original was still there, then the original deleted:
+// the copy's photos take the original's ratings and tags (the copy's own rows were new and untouched)
+#[test]
+fn a_copied_library_takes_over_when_the_original_goes() {
+    let _turn = SCAN_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+    let base = std::env::temp_dir().join(format!("lumina_copied_library_test_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&base);
+    let (original, copy, data) = (base.join("Old drive").join("Photos"), base.join("New drive").join("Photos"), base.join("Data"));
+    fs::create_dir_all(&original).unwrap();
+    image::RgbImage::from_fn(64, 48, |x, y| image::Rgb([(x * 2) as u8, (y * 5) as u8, 40])).save(original.join("cat.jpg")).unwrap();
+    let host: SharedHost = Arc::new(DirHost(data.clone()));
+    db::migrate(&open_global_db(&*host).unwrap()).unwrap();
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    let scan = |root: &Path| rt.block_on(scan::scan_folder(host.clone(), root.to_string_lossy().to_string(), None)).unwrap();
+    let wait = || {
+        while thumbs::thumbnail_passes_running() {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    };
+    let hash = scan(&original)[0].hash.clone();
+    wait();
+    open_global_db(&*host)
+        .unwrap()
+        .execute_batch(&format!("UPDATE photos SET rating = 5 WHERE hash = '{hash}'; INSERT INTO photo_tags (hash, tag) VALUES ('{hash}', 'pet');"))
+        .unwrap();
+
+    fs::create_dir_all(&copy).unwrap();
+    fs::copy(original.join("cat.jpg"), copy.join("cat.jpg")).unwrap();
+    let seen = scan(&copy);
+    wait();
+    assert_ne!(seen[0].hash, hash, "while the original is there, the copy is a photo of its own");
+    assert_eq!(seen[0].rating, 0);
+
+    fs::remove_dir_all(base.join("Old drive")).unwrap();
+    let again = scan(&copy);
+    wait();
+    assert_eq!(again.len(), 1);
+    assert_eq!(again[0].hash, hash);
+    assert_eq!(again[0].rating, 5);
+    assert_eq!(again[0].tags, vec!["pet".to_string()]);
+    let libs = libraries::list(&open_global_db(&*host).unwrap()).unwrap();
+    assert_eq!(libs.len(), 1, "the old library went into the new one");
+    let rows: i64 = open_global_db(&*host).unwrap().query_row("SELECT COUNT(*) FROM photos", [], |r| r.get(0)).unwrap();
+    assert_eq!(rows, 1, "the copy's empty row gave way");
+    let _ = fs::remove_dir_all(&base);
+}
+
+// Apply changes: photos go to their planned folders, a folder they all left goes too (an emptied parent as well,
+// never the library), and a folder name that leads out of the library is refused
+#[test]
+fn applying_moves_tidies_emptied_folders_and_stays_inside_the_library() {
+    let base = std::env::temp_dir().join(format!("lumina_apply_moves_test_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&base);
+    let (library, data) = (base.join("Library"), base.join("Data"));
+    let from = library.join("Import").join("Card 1");
+    fs::create_dir_all(&from).unwrap();
+    fs::create_dir_all(library.join("Kept")).unwrap();
+    for name in ["a.jpg", "b.jpg"] {
+        fs::write(from.join(name), name).unwrap();
+    }
+    fs::write(library.join("Kept").join("c.jpg"), "c").unwrap();
+    fs::write(library.join("Kept").join("notes.txt"), "not a photo").unwrap();
+    let host: SharedHost = Arc::new(DirHost(data.clone()));
+    let conn = open_global_db(&*host).unwrap();
+    db::migrate(&conn).unwrap();
+    conn.execute(
+        "INSERT INTO photos (hash, current_path, staged_target) VALUES ('a', ?1, 'Sorted'), ('b', ?2, 'Sorted'), ('c', ?3, '../Outside')",
+        params![
+            from.join("a.jpg").to_string_lossy(),
+            from.join("b.jpg").to_string_lossy(),
+            library.join("Kept").join("c.jpg").to_string_lossy()
+        ],
+    )
+    .unwrap();
+    drop(conn);
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    let result = rt.block_on(files::commit_staged_operations(host.clone(), library.to_string_lossy().to_string(), Some(false))).unwrap();
+    assert_eq!(result.moved, 2);
+    assert_eq!(result.failures.len(), 1, "../Outside is refused");
+    assert!(library.join("Sorted").join("a.jpg").exists() && library.join("Sorted").join("b.jpg").exists());
+    assert!(!library.join("Import").exists(), "the emptied folder and its emptied parent went");
+    assert!(library.join("Kept").join("c.jpg").exists() && !base.join("Outside").exists());
+    assert!(library.exists());
+    let _ = fs::remove_dir_all(&base);
 }

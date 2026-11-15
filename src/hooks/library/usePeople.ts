@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { platform } from "../../api/platform";
 import { useAccess } from "../../components/auth/ServerGate";
-import { ALL_PHOTOS_LOADED, call, isOwnChange, openLibraryIsAll, RECONNECTED, subscribe } from "../../api";
+import { ALL_PHOTOS, ALL_PHOTOS_LOADED, allPhotosSources, call, isOwnChange, openLibraryIsAll, RECONNECTED, subscribe } from "../../api";
 import { PhotoItem, PersonItem, FaceScanProgress, FaceMatchEvent, FaceInstance, FaceModelDownloadProgress, FaceQualityProgress } from "../../types/lumina";
 import { diskPathOf } from "../../utils/rawPairs";
 import { isLiveClip, isVideo } from "../../utils/media";
@@ -80,11 +80,14 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
       const res = await call<PersonItem[]>("get_people", {
         rootFolder: currentFolder || null,
       });
-      setPeople(res);
+      // The same list again keeps its identity, so what is drawn from it (centroids, counts) isn't asked again
+      setPeople((prev) => (JSON.stringify(prev) === JSON.stringify(res) ? prev : res));
 
       // 2. Asynchronously compute & cache pending face match counts in the background (suggestions are for
-      // those who may accept them)
-      if (!skipPendingScan && access.edit) {
+      // those who may accept them). All photos tells itself whether anything may be changed: right after it
+      // loads, the window hasn't drawn the new rights yet.
+      const mayEdit = openLibraryIsAll() ? [...allPhotosSources().values()].some((s) => s.editable) : access.edit;
+      if (!skipPendingScan && mayEdit) {
         // Only the latest ask may set the badges: an older one can answer later, from before changes made since
         const asked = ++pendingAskRef.current;
         call<Record<string, number>>("get_pending_face_match_counts", {
@@ -128,13 +131,15 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
   }
 
   // Debounced: opening a folder changes `folder` and then `photos.length`, which used to run the
-  // (expensive) face-match count twice back to back
+  // (expensive) face-match count twice back to back. All photos asks again when it has loaded (ALL_PHOTOS_LOADED),
+  // not at every change in its count while a server indexes.
+  const countTrigger = folder === ALL_PHOTOS ? 0 : photos.length;
   useEffect(() => {
     const timer = setTimeout(() => {
       refreshPeople(folder);
     }, 400);
     return () => clearTimeout(timer);
-  }, [photos.length, folder]);
+  }, [countTrigger, folder]);
 
   useEffect(() => {
     const unlisten = subscribe<FaceMatchEvent>("face-automatch-complete", (event) => {

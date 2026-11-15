@@ -23,6 +23,7 @@ import {
   Trash2,
   XCircle,
 } from "lucide-react";
+import { folderOnThisPc } from "../../api";
 import { plural } from "../../utils/plural";
 
 interface LeftSidebarProps {
@@ -158,7 +159,7 @@ function LeftSidebar({
               }
             }}
             onContextMenu={(e) => {
-              if (onFolderContextMenu) {
+              if (onFolderContextMenu && folderOnThisPc(node.fullPath)) {
                 e.preventDefault();
                 e.stopPropagation();
                 onFolderContextMenu(node.fullPath, e);
@@ -170,7 +171,7 @@ function LeftSidebar({
                 ? "bg-emerald-500/15 text-emerald-300 font-medium border border-emerald-500/30"
                 : "text-zinc-400 hover:bg-zinc-900/70 hover:text-zinc-200 border border-transparent"
             }`}
-            title="Left-click to filter • Right-click for folder options"
+            title={folderOnThisPc(node.fullPath) ? "Click to show this folder • Right-click to open it or add a folder" : "Click to show this folder"}
           >
             <div className="flex items-center gap-1.5 truncate">
               {hasChildren ? (
@@ -470,7 +471,7 @@ function LeftSidebar({
                   setActiveSubfolder(activeSubfolder === "Root" ? "ALL" : "Root")
                 }
                 onContextMenu={(e) => {
-                  if (onFolderContextMenu) {
+                  if (onFolderContextMenu && folderOnThisPc("Root")) {
                     e.preventDefault();
                     e.stopPropagation();
                     onFolderContextMenu("Root", e);
@@ -481,7 +482,7 @@ function LeftSidebar({
                     ? "bg-emerald-500/15 text-emerald-300 font-medium border-emerald-500/30"
                     : "text-zinc-400 hover:bg-zinc-900/70 hover:text-zinc-200 border-transparent"
                 }`}
-                title="Left-click to filter • Right-click for folder options"
+                title={folderOnThisPc("Root") ? "Click to show this folder • Right-click to open it or add a folder" : "Click to show this folder"}
               >
                 <div className="flex items-center gap-1.5 truncate">
                   <span className="w-4" />

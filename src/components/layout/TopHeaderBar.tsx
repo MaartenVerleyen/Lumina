@@ -2,10 +2,10 @@ import { useState, useRef, useEffect, RefObject } from "react";
 import { AccountMenu } from "../auth/AccountMenu";
 import { ServerLibraryList } from "../servers/Servers";
 import { WebUploadButton } from "../servers/WebUpload";
-import { platform } from "../../api/platform";
+import { open as openDialog, platform } from "../../api/platform";
 import { useAccess } from "../auth/ServerGate";
 import { confirmDialog } from "../../confirm";
-import { ALL_PHOTOS, call, callLocal, inDesktopApp } from "../../api";
+import { ALL_PHOTOS, allPhotosHasLocal, call, callLocal, inDesktopApp, openLibraryIsAll } from "../../api";
 import { libraryName } from "../../utils/photoHelpers";
 import luminaMark from "../../assets/lumina-mark.svg";
 import { completeTerm, termBeingTyped, TermKey } from "../../utils/searchQuery";
@@ -122,6 +122,8 @@ interface TopHeaderBarProps {
   handlePullDefaultAiModel?: (modelName?: string) => Promise<void>;
   totalPendingFaceMatches?: number;
   onOpenFaceReviewStudio?: () => void;
+  // Shows an error in the window (actions in the menus that fail)
+  onError?: (message: string) => void;
 }
 
 export default function TopHeaderBar({
@@ -181,26 +183,51 @@ export default function TopHeaderBar({
   handlePullDefaultAiModel,
   totalPendingFaceMatches = 0,
   onOpenFaceReviewStudio,
+  onError,
 }: TopHeaderBarProps) {
   const access = useAccess();
+  // Planned moves are applied by whoever may move the files: an admin, or in All photos this PC for its own folders
+  // (a server's are applied by its admin)
+  const canApply = access.admin || (openLibraryIsAll() && allPhotosHasLocal());
   const [isLibraryMenuOpen, setIsLibraryMenuOpen] = useState(false);
-  // The folders opened on this PC (its libraries), by name so the list stays put; recent folders until known
-  const [localFolders, setLocalFolders] = useState<string[] | null>(null);
+  // The folders opened on this PC (its libraries), by name so the list stays put; recent folders until known.
+  // A library whose folder is gone (renamed, moved, a drive not connected) says so and can be located.
+  type LocalLibrary = { root: string; photos: number; missing: boolean };
+  const [localLibraries, setLocalLibraries] = useState<LocalLibrary[] | null>(null);
+  const localFolders = localLibraries?.map((l) => l.root) ?? null;
+  const libraryAt = (path: string) => localLibraries?.find((l) => l.root === path);
   const loadLocalFolders = () =>
-    callLocal<{ root: string }[]>("local_libraries")
-      .then((list) => setLocalFolders(list.map((l) => l.root).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }))))
-      .catch(() => setLocalFolders(null));
+    callLocal<LocalLibrary[]>("local_libraries")
+      .then((list) => setLocalLibraries([...list].sort((a, b) => a.root.localeCompare(b.root, undefined, { sensitivity: "base" }))))
+      .catch(() => setLocalLibraries(null));
   useEffect(() => {
     if (isLibraryMenuOpen && inDesktopApp && onOpenRecentFolder) loadLocalFolders();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLibraryMenuOpen]);
   const forgetFolder = async (path: string) => {
+    const lib = libraryAt(path);
+    const count = lib ? `${lib.photos.toLocaleString()} photo${lib.photos === 1 ? "" : "s"}` : "its photos";
+    const moved = lib?.missing ? " Renamed or moved the folder? Use Locate… instead: everything is kept." : "";
     const ok = await confirmDialog(
-      `Lumina forgets "${path}": its photos' ratings, tags, names and album places in Lumina go, and it leaves All photos. The files stay in the folder; opening it again starts afresh.`,
+      `Lumina forgets "${path}": the ratings, tags, names and album places of ${count} go, and it leaves All photos. The files stay in the folder; opening it again starts afresh.${moved}`,
       { title: "Forget this folder", okLabel: "Forget", kind: "danger" }
     );
     if (!ok) return;
-    await callLocal("forget_local_library", { root: path }).catch((e) => console.error(e));
+    await callLocal("forget_local_library", { root: path }).catch((e) => onError?.(`Couldn't forget the folder: ${e}`));
+    loadLocalFolders();
+  };
+  // A library renamed or moved outside Lumina: point it to its new place, and everything known about its photos goes along
+  const locateFolder = async (path: string) => {
+    const name = path.split(/[\\/]/).filter(Boolean).pop() || path;
+    const picked = await openDialog({ directory: true, multiple: false, title: `Where is "${name}" now?` });
+    if (!picked || Array.isArray(picked)) return;
+    try {
+      await callLocal<number>("locate_local_library", { root: path, newRoot: picked });
+      setIsLibraryMenuOpen(false);
+      onOpenRecentFolder?.(picked);
+    } catch (e) {
+      onError?.(`Couldn't move the library to ${picked}: ${e}`);
+    }
     loadLocalFolders();
   };
   const [isAiMenuOpen, setIsAiMenuOpen] = useState(false);
@@ -285,7 +312,7 @@ export default function TopHeaderBar({
         } catch {}
       }
     } catch (err) {
-      console.error("Could not start Ollama:", err);
+      onError?.(`Couldn't start Ollama: ${err}`);
     } finally {
       setIsStartingOllama(false);
     }
@@ -444,9 +471,24 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                         }`}
                         title={path}
                       >
-                        <div className="truncate text-[13px] font-medium">{path.split(/[\\/]/).filter(Boolean).pop() || path}</div>
-                        <div className="truncate text-[11px] text-zinc-500">{path}</div>
+                        <div className={`truncate text-[13px] font-medium ${libraryAt(path)?.missing ? "text-zinc-500" : ""}`}>
+                          {path.split(/[\\/]/).filter(Boolean).pop() || path}
+                          {libraryAt(path) && <span className="ml-1.5 text-[11px] font-normal text-zinc-500">{libraryAt(path)!.photos.toLocaleString()}</span>}
+                        </div>
+                        <div className="truncate text-[11px] text-zinc-500">
+                          {libraryAt(path)?.missing && <span className="text-amber-300/80">Folder not found · </span>}
+                          {path}
+                        </div>
                       </button>
+                      {libraryAt(path)?.missing && (
+                        <button
+                          onClick={() => void locateFolder(path)}
+                          className="shrink-0 px-1.5 py-1 rounded text-[11px] text-amber-200 hover:bg-zinc-800"
+                          title="Renamed or moved the folder? Show Lumina where it is now; ratings, tags and names are kept"
+                        >
+                          Locate…
+                        </button>
+                      )}
                       {localFolders && path !== folder && (
                         <button
                           onClick={() => void forgetFolder(path)}
@@ -676,7 +718,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
 
       {/* ZONE 3: Staged Commit, Unified AI & Faces Hub, and Studio Tools Menu */}
       <div className="flex items-center gap-2 shrink-0">
-        {stagedPhotosCount > 0 && !access.admin && access.edit && (
+        {stagedPhotosCount > 0 && !canApply && access.edit && (
           <span
             className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500/10 text-emerald-300/80 border border-emerald-500/30 rounded-lg text-xs font-semibold"
             title="Planned moves and photos for _Trash: an admin applies them"
@@ -685,7 +727,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
             <span>{stagedPhotosCount} to apply</span>
           </span>
         )}
-        {stagedPhotosCount > 0 && access.admin && (
+        {stagedPhotosCount > 0 && canApply && (
           <div className="flex items-center gap-1">
             <button
               onClick={() => setIsCommitModalOpen(true)}
@@ -806,7 +848,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                           {ollamaStatus?.running ? "Ollama is running" : "Ollama isn't running"}
                         </span>
                       </div>
-                      <span className="text-[11px] text-zinc-500">A caption, tags and the text in each photo, written on this computer.</span>
+                      <span className="text-[11px] text-zinc-500">A caption, tags and the text in each photo, written {platform.localFiles ? "on this computer" : "by the server"}.</span>
                       {aiBatchProgress ? (
                         <div className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800">
                           <span className="text-zinc-300 tabular-nums">
@@ -913,7 +955,7 @@ It is about 6 GB and is stored by Ollama. You can cancel the download at any tim
                                   await call("preload_ollama_vram", { modelName: aiModel });
                                   setOllamaStatus(await call<OllamaStatus>("check_ollama_status"));
                                 } catch (err) {
-                                  console.error("Loading the AI model failed:", err);
+                                  onError?.(`Loading the AI model failed: ${err}`);
                                 } finally {
                                   // Never leave the button stuck in its disabled "loading" state
                                   setIsLoadingVram(false);

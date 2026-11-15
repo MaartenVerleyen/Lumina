@@ -98,6 +98,9 @@ function watch() {
   // The server ended a session (password changed, account removed), or an admin shared an album or changed
   // a role: list again
   subscribeLocal("remote-signed-out", () => refreshServers());
+  // A server that couldn't be reached at start-up is back: who this account is there (its role) comes with it,
+  // or its libraries would stay read-only until Settings → Servers is opened
+  subscribeLocal("remote-connected", () => refreshServers());
   subscribeLocal<{ event: string }>("remote-event", (e) => {
     if (e.payload.event === "shares-changed" || e.payload.event === "roles-changed") refreshServers();
   });

@@ -4,6 +4,7 @@ import App from "./App";
 import { ServerGate } from "./components/auth/ServerGate";
 import PhoneApp from "./components/phone/PhoneApp";
 import { PhoneLayoutContext, usePhoneLayoutState } from "./app/usePhoneLayout";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import "./App.css";
 
 // A phone in a browser gets the phone layout; everything else (and the desktop app) the full one
@@ -14,8 +15,10 @@ function Root() {
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
-    <ServerGate>
-      <Root />
-    </ServerGate>
+    <ErrorBoundary>
+      <ServerGate>
+        <Root />
+      </ServerGate>
+    </ErrorBoundary>
   </React.StrictMode>,
 );

@@ -485,13 +485,21 @@ export default function SettingsModal({
                   <Row label={lib.folder ? libraryName(lib.folder) : "No library open"} hint={(lib.folder !== ALL_PHOTOS && lib.folder) || "Open a folder of photos to start."}>
                     {lib.folder && platform.localFiles && <Button onClick={() => lib.handleRevealInFileManager(lib.folder)}>Show in Explorer</Button>}
                     <Button primary onClick={then(lib.handleOpenFolder)}>
-                      {platform.localFiles ? (lib.folder ? "Open another…" : "Open folder…") : "Libraries…"}
+                      {platform.localFiles ? (lib.folder ? "Open another…" : "Open folder…") : "Open a library…"}
                     </Button>
                   </Row>
                   {hasPhotos && (
                     <Row label="Photos" hint={`${lib.photos.length.toLocaleString()} photos · ${plural(lib.stagedPhotos.length, "change", "changes")} to apply`} />
                   )}
                 </Group>
+                {/* All photos watches this PC's folders in it too */}
+                {lib.folder === ALL_PHOTOS && platform.fullApp && (
+                  <Group title="Changes made outside Lumina">
+                    <Row label="Pick up changes made outside Lumina" hint="Photos added, changed or removed in this PC's folders show up by themselves.">
+                      <Switch checked={settings.watchLibrary} onChange={(v) => updateSettings({ watchLibrary: v })} label="Watch the library folders" />
+                    </Row>
+                  </Group>
+                )}
                 {platform.localFiles && (
                 <>
                 <Group title="Import and changes">

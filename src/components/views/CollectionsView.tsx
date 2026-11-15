@@ -341,9 +341,10 @@ export default function CollectionsView({
                       {
                         label: "Stop following",
                         run: () =>
-                          callLocal("unfollow_album", { server: a.engine, albumId: a.realId })
-                            .then(() => setFollows((list) => list.filter((f) => f !== followOf(a))))
-                            .catch((e) => console.error(e)),
+                          // A failure shows in the window (App's unhandled-error note)
+                          void callLocal("unfollow_album", { server: a.engine, albumId: a.realId }).then(() =>
+                            setFollows((list) => list.filter((f) => f !== followOf(a)))
+                          ),
                       },
                     ]
                   : []),

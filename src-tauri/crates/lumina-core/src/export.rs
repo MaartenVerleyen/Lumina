@@ -19,6 +19,26 @@ pub struct ExportOptions {
     pub long_edge: u32,
     pub quality: u8,
     pub strip_gps: bool,
+    // Photos this computer's database doesn't have (a server's), their originals fetched by the app
+    #[serde(default)]
+    pub fetched: Vec<FetchedPhoto>,
+}
+
+// A server's photo whose original the app downloaded to `path`, with the values the window has for it
+#[derive(Deserialize, Clone, Default)]
+#[serde(default)]
+pub struct FetchedPhoto {
+    pub path: String,
+    pub name: String,
+    pub rotation: i32,
+    pub captured_at: String,
+    pub camera_model: String,
+    pub lens_model: Option<String>,
+    pub latitude: Option<f64>,
+    pub longitude: Option<f64>,
+    pub caption: String,
+    pub location: String,
+    pub people: Vec<String>,
 }
 
 #[derive(Serialize, Clone, Default)]
@@ -190,6 +210,18 @@ pub async fn export_photos(app: SharedHost, options: ExportOptions) -> Result<Ex
                 }
             }
         }
+        for f in &options.fetched {
+            sources.push(ExportSource {
+                disk_path: f.path.clone(),
+                name: f.name.clone(),
+                rotation: f.rotation,
+                captured_at: f.captured_at.clone(),
+                camera_model: f.camera_model.clone(),
+                lens_model: f.lens_model.clone(),
+                latitude: f.latitude,
+                longitude: f.longitude,
+            });
+        }
 
         let total = sources.len();
         let cancel_generation = EXPORT_CANCEL.load(Ordering::Acquire);
@@ -294,7 +326,7 @@ fn export_real_files() {
         return;
     };
     fs::create_dir_all(&out).unwrap();
-    let opts = ExportOptions { hashes: vec![], dest_dir: out.clone(), long_edge: 2048, quality: 88, strip_gps: true };
+    let opts = ExportOptions { hashes: vec![], dest_dir: out.clone(), long_edge: 2048, quality: 88, strip_gps: true, fetched: vec![] };
     for ext in ["jpg", "heic", "cr3"] {
         let Some(path) = WalkDir::new(&dir)
             .into_iter()

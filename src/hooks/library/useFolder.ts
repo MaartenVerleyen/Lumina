@@ -10,6 +10,7 @@ import {
   call,
   callLocal,
   forgetServerList,
+  forgetServerLists,
   isOpenLibraryRoot,
   libraryRefFromString,
   libraryRefToString,
@@ -271,6 +272,7 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
             if (!list.some((l) => isSameFolder(l.root, open)) && isSameFolder(open, folderRef.current)) {
               setFolder("");
               setPhotos([]);
+              setAutoMatchNotice(`${open.split(/[\\/]/).filter(Boolean).pop() || open} was taken off the server by its admin. Its photos are still on the server's disk.`);
             }
           })
           .catch(() => {});
@@ -466,7 +468,13 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
       setIsScanningFolder(false);
       setScanProgress(null);
       if (String(err).includes(SCAN_CANCELLED)) setAutoMatchNotice("Opening the folder was cancelled.");
-      else setError(String(err));
+      else if (String(err).includes("Folder does not exist")) {
+        // Renamed, moved or on a drive that isn't connected: not opened again at every start
+        try {
+          if (localStorage.getItem("lumina_active_folder") === libraryRefToString({ server, root: targetPath })) localStorage.removeItem("lumina_active_folder");
+        } catch {}
+        setError(`Lumina can't find ${targetPath}. Renamed or moved it? Open the Library menu and click Locate… next to it: its ratings, tags and names are kept.`);
+      } else setError(String(err));
     }
   }
 
@@ -636,6 +644,12 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
 
   async function handleRescanFolder() {
     if (!folder || isScanningFolder) return;
+    // A server keeps its libraries up to date itself: its list is fetched again, without blocking the window
+    const server = openLibraryServer();
+    if (server) {
+      void handleLoadFolderPath(folder, server);
+      return;
+    }
     try {
       setIsScanningFolder(true);
       setScanProgress({
@@ -673,6 +687,13 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
       { title: "Rebuild thumbnails" }
     );
     if (!ok) return;
+    // On a server the server does it (an admin's work); its progress shows as a job, and the photos follow
+    if (openLibraryServer()) {
+      call("rescan_library", { folderPath: folder, forceReprocess: true }).catch((err) => setError(`The server couldn't rebuild the thumbnails: ${err}`));
+      setAutoMatchNotice("The server is rebuilding the thumbnails; its progress shows at the bottom.");
+      addLog("LIBRARY", "Asked the server to rebuild thumbnails", folder);
+      return;
+    }
     try {
       setIsScanningFolder(true);
       setScanProgress({
@@ -774,36 +795,44 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
     }
   }
 
-  async function handleCreateSubfolder(relativePath: string) {
-    if (!folder || !relativePath.trim()) return;
+  // `root`: the library the folder goes in (in All photos, the folder's own; else the open one)
+  async function handleCreateSubfolder(relativePath: string, root = folder) {
+    if (!root || !relativePath.trim()) return;
     try {
       const created = await call<string>("create_library_subfolder", {
-        rootFolder: folder,
+        rootFolder: root,
         relativePath: relativePath.trim(),
       });
       addLog("DISK", `Created new subfolder: ${relativePath.trim()}`, created);
       setAutoMatchNotice(`Created folder: ${relativePath.trim()}`);
-      await handleRescanFolder();
+      // Quietly, without the progress dialog
+      await silentRescan(folder === ALL_PHOTOS ? [root] : []);
     } catch (err) {
       setError(String(err));
     }
   }
 
   const rescanAgainRef = useRef<string[] | null>(null);
+  // A rescan asked for meanwhile wants every server's list again
+  const rescanEverythingRef = useRef(false);
   // Rescans without the progress dialog and keeps the selection; returns the photos, or null when it couldn't.
   // All photos lists its libraries again and checks on disk only the folders in `check` (where files changed).
   // One asked for while another runs isn't dropped: it runs once that one ends (its folders to check added
   // up), since what it was asked for can be newer than what the running one sees.
-  async function silentRescan(check: string[] = []): Promise<PhotoItem[] | null> {
+  // `reuseServers`: All photos keeps the server lists it has (only this computer's folders changed, or the server
+  // that changed was forgotten with forgetServerLists); a change in this computer's folders (`check`) reuses them too
+  async function silentRescan(check: string[] = [], reuseServers = false): Promise<PhotoItem[] | null> {
     const target = folderRef.current;
     if (!target || isScanningFolder) return null;
     if (silentScanRef.current) {
       rescanAgainRef.current = [...(rescanAgainRef.current ?? []), ...check];
+      if (!reuseServers && check.length === 0) rescanEverythingRef.current = true;
       return null;
     }
     silentScanRef.current = true;
     try {
-      const args = target === ALL_PHOTOS ? { folderPath: target, forceReprocess: false, check } : { folderPath: target, forceReprocess: false };
+      const reuse = reuseServers || check.length > 0;
+      const args = target === ALL_PHOTOS ? { folderPath: target, forceReprocess: false, check, reuseServers: reuse } : { folderPath: target, forceReprocess: false };
       const res = await call<PhotoItem[]>("scan_folder", args);
       if (!isSameFolder(target, folderRef.current)) return null;
       const shown = withEarlyThumbs(res);
@@ -814,8 +843,10 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
     } finally {
       silentScanRef.current = false;
       const again = rescanAgainRef.current;
+      const everything = rescanEverythingRef.current;
       rescanAgainRef.current = null;
-      if (again && isSameFolder(target, folderRef.current)) void silentRescanRef.current(again);
+      rescanEverythingRef.current = false;
+      if (again && isSameFolder(target, folderRef.current)) void silentRescanRef.current(everything ? [] : again, !everything);
     }
   }
 
@@ -858,14 +889,27 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
 
   // The server's event socket was down for a while: whatever changed meanwhile is fetched by listing again
   useEffect(() => {
-    const off = subscribe(RECONNECTED, () => {
-      if (folderRef.current) silentRescanRef.current();
+    // In All photos only that server's lists are fetched again
+    const off = subscribe(RECONNECTED, (event) => {
+      if (!folderRef.current) return;
+      if (openLibraryIsAll() && event.server) {
+        forgetServerLists(event.server);
+        silentRescanRef.current([], true);
+      } else silentRescanRef.current();
     });
     // All photos: signed in to a server (again, perhaps as someone else) or out of one, so what it may show
-    // changed
-    const offs = (inDesktopApp ? ["remote-connected", "remote-signed-out"] : []).map((event) =>
-      subscribeLocal(event, () => {
-        if (openLibraryIsAll()) silentRescanRef.current();
+    // changed. The first connection after starting changes nothing: All photos was just listed.
+    const connectedOnce = new Set<string>();
+    const offs = (inDesktopApp ? ["remote-connected", "remote-signed-out"] : []).map((name) =>
+      subscribeLocal<{ server: string }>(name, (event) => {
+        if (!openLibraryIsAll()) return;
+        const server = event.payload?.server;
+        if (name === "remote-connected" && server && !connectedOnce.has(server)) {
+          connectedOnce.add(server);
+          return;
+        }
+        if (server) forgetServerLists(server);
+        silentRescanRef.current([], !!server);
       })
     );
     return () => {

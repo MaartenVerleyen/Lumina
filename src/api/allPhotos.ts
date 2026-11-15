@@ -401,3 +401,46 @@ export function groupAcrossSources(photos: PhotoItem[], shownIn: (p: PhotoItem) 
     return { ...p, duplicate_group: numbers.get(root)! };
   });
 }
+
+// Commands with a list of per-photo operations (planned moves, exact rotations) in All photos: each photo's goes to
+// the engine of its home, under its id there. A move's folder is the folder tree's ("cachy: Library / Trip", or a
+// name without a library such as "_Trash" or "2024/06 Paris", which means that folder in each photo's own
+// library); a folder of another library than the photo's home can't take it (a move stays within a library).
+export function splitOps<Op extends { hash: string; target_subfolder?: string | null }>(
+  ops: Op[],
+  copies: Map<string, Copies>,
+  sources: Map<string, Source>,
+  localIds: Map<string, string[]>
+): { byEngine: Map<string, Op[]>; readOnly: string[]; elsewhere: string[] } {
+  const byEngine = new Map<string, Op[]>();
+  const readOnly: string[] = [];
+  const elsewhere: string[] = [];
+  // Longest label first: "cachy: Library 2" isn't "cachy: Library"
+  const labelled = [...sources.entries()].sort(([, a], [, b]) => b.label.length - a.label.length);
+  for (const op of ops) {
+    const c = copies.get(op.hash);
+    const homeKey = c?.home ?? null;
+    const home = homeKey ? sources.get(homeKey) : undefined;
+    if (!c || !home || !homeKey) {
+      readOnly.push(op.hash);
+      continue;
+    }
+    let target = op.target_subfolder;
+    if (typeof target === "string") {
+      const named = labelled.find(([, s]) => target === s.label || target!.startsWith(`${s.label} / `));
+      if (named) {
+        if (named[0] !== homeKey) {
+          elsewhere.push(op.hash);
+          continue;
+        }
+        target = target === named[1].label ? "Root" : target.slice(named[1].label.length + 3);
+      }
+    }
+    const engine = engineOf(home);
+    const ids = engine === "" ? localIds.get(op.hash) ?? [op.hash] : [op.hash];
+    let list = byEngine.get(engine);
+    if (!list) byEngine.set(engine, (list = []));
+    for (const id of ids) list.push(typeof target === "string" || target === null ? { ...op, hash: id, target_subfolder: target } : { ...op, hash: id });
+  }
+  return { byEngine, readOnly, elsewhere };
+}

@@ -126,7 +126,7 @@ export function backgroundJobsOf(lib: LibraryState): BackgroundJob[] {
   if (lib.exportProgress) {
     jobs.push({
       id: "export",
-      label: "Exporting photos",
+      label: lib.exportProgress.stage ?? "Exporting photos",
       completed: lib.exportProgress.completed,
       total: lib.exportProgress.total,
       onCancel: lib.handleCancelExport,

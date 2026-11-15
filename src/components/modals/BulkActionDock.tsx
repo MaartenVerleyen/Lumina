@@ -538,6 +538,15 @@ export default function BulkActionDock({
           <span>Shift time</span>
         </button>
 
+          </>
+        )}
+
+          </>
+        )}
+
+        {/* Copies out of Lumina and this device's own pins: no edit rights needed, so viewers have them too */}
+        {(showMore || !access.edit) && (
+          <>
         {onExport && (
           <button
             onClick={onExport}
@@ -578,9 +587,6 @@ export default function BulkActionDock({
           <Pin className="w-3.5 h-3.5 text-zinc-400" />
           <span>Pin</span>
         </button>
-          </>
-        )}
-
           </>
         )}
 

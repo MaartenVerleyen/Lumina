@@ -112,7 +112,7 @@ export function useKeyboardShortcuts(params: UseKeyboardShortcutsParams) {
         p.setIsDrawingFace(false);
         p.setDrawnBox(null);
         p.setActiveBulkPopover(null);
-      } else if (!p.canEdit && ["p", "u", "x", "a", "b", "[", "]", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"].includes(key)) {
+      } else if (!p.canEdit && ["p", "u", "x", "a", "[", "]", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"].includes(key)) {
         return;
       } else if (key === "p" && hasSelection) {
         e.preventDefault();

@@ -38,6 +38,16 @@ export function useAppKeys(lib: LibraryState) {
       if (isEditableTarget(e.target)) return;
       const { lib: l, isBlockingModalOpen: blocked, canEdit } = extraKeysRef.current;
 
+      // Ctrl+A selects every photo shown (the grid's own text can't be selected, so nothing else would happen)
+      if (mod && key === "a" && !e.shiftKey && !e.altKey) {
+        if (blocked) return;
+        e.preventDefault();
+        const shown = l.visiblePhotos;
+        if (shown.length === 0) return;
+        l.setSelectedHashes(new Set(shown.map((p) => p.hash)));
+        if (!l.activeHash || !shown.some((p) => p.hash === l.activeHash)) l.setActiveHash(shown[0].hash);
+        return;
+      }
       if (mod && key === "z" && !e.shiftKey) {
         // Undo/redo would change photos behind an open dialog (Face Review has its own Ctrl+Z)
         if (blocked || !canEdit) return;

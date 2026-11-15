@@ -47,6 +47,10 @@ pub fn open_in_default_app(path: String) -> Result<(), String> {
 #[tauri::command]
 pub fn reveal_in_file_manager(path: String) -> Result<(), String> {
     let p = Path::new(&path);
+    // Explorer opens Documents without a word for a path that isn't there (a server's photo, a drive unplugged)
+    if !p.exists() {
+        return Err(format!("{path} isn't on this computer"));
+    }
     #[cfg(target_os = "windows")]
     {
         if p.is_dir() {
@@ -86,6 +90,9 @@ pub fn create_library_subfolder(root_folder: String, relative_path: String) -> R
     let clean_rel = relative_path.trim().replace('\\', "/");
     if clean_rel.is_empty() {
         return Err("Folder name cannot be empty".into());
+    }
+    if clean_rel.split('/').any(|part| part.trim() == "..") {
+        return Err("A new folder goes inside the library: \"..\" isn't allowed".into());
     }
     let mut target = PathBuf::from(&root_folder);
     for part in clean_rel.split('/').map(|s| s.trim()).filter(|s| !s.is_empty()) {

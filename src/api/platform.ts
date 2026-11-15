@@ -27,6 +27,8 @@ export const platform = {
   get localFiles() {
     return openLibraryIsLocal();
   },
+  // Export and web galleries: written on this computer, from any library (a server's originals are fetched first)
+  exports: inDesktopApp && !onAndroid,
   // Updates through the built-in updater (a server updates with its image; Android installs a new APK)
   updater: inDesktopApp && !onAndroid,
   // The library's background work runs in this app (face scans and their upgrades, eyes and focus, the smart

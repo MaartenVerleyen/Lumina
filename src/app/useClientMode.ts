@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { openLibraryIsAll, openLibraryServer, callLocal, subscribeLocal } from "../api";
+import { openLibraryIsAll, openLibraryServer, callLocal, subscribeLocal, originalsOf, allPhotosSources, serversHolding } from "../api";
 import { open, pictureDir, join, platform } from "../api/platform";
 import { confirmDialog } from "../confirm";
 import type { LibraryState } from "../hooks/useLibraryState";
@@ -53,7 +53,8 @@ export function useClientMode(lib: LibraryState, access: Access) {
   serverRef.current = server;
   useEffect(() => {
     const off = subscribeLocal<{ server: string }>("remote-signed-out", (e) => {
-      if (e.payload.server === serverRef.current)
+      // The open library's server, or one of All photos' (its photos leave the view)
+      if (e.payload.server === serverRef.current || openLibraryIsAll())
         lib.setError(`Signed out of ${e.payload.server} (the password changed, or the account was removed). Sign in again in Settings → Servers.`);
     });
     return () => {
@@ -98,39 +99,66 @@ export function useClientMode(lib: LibraryState, access: Access) {
     return lib.visiblePhotos.filter((p) => lib.selectedHashes.has(p.hash)).map((p) => ({ hash: p.hash, name: p.name }));
   }
 
+  // The originals of the selected photos into a folder on this computer: from the open server library, or in
+  // All photos from the server each photo is on (photos already on this computer are left as they are)
   async function downloadSelection() {
-    if (!server) return;
     const photos = selectedPhotos();
     if (photos.length === 0) return;
+    const { local, byServer } = originalsOf(photos.map((p) => p.hash));
+    const onServers = [...byServer.values()].reduce((n, list) => n + list.length, 0);
+    if (onServers === 0) {
+      lib.setAutoMatchNotice(`${local.length === 1 ? "This photo is" : "These photos are"} on this PC already.`);
+      return;
+    }
     let defaultPath: string | undefined;
     try {
-      defaultPath = await join(await pictureDir(), "Lumina", label);
+      defaultPath = await join(await pictureDir(), "Lumina", server ? label : "Downloads");
     } catch {
       // no Pictures folder: the picker starts where it likes
     }
-    const folder = await open({ directory: true, multiple: false, title: `Download ${plural(photos.length, "original")} to…`, defaultPath });
+    const folder = await open({ directory: true, multiple: false, title: `Download ${plural(onServers, "original")} to…`, defaultPath });
     if (!folder || Array.isArray(folder)) return;
+    const names = new Map(photos.map((p) => [p.hash, p.name]));
     try {
-      const queued = await downloadOriginals(server, photos, folder);
-      lib.setAutoMatchNotice(`Downloading ${queued} original${queued === 1 ? "" : "s"} to ${folder}.`);
+      let queued = 0;
+      for (const [from, hashes] of byServer) {
+        queued += await downloadOriginals(from, hashes.map((hash) => ({ hash, name: names.get(hash) ?? hash })), folder);
+      }
+      const here = local.length > 0 ? ` (${plural(local.length, "photo")} on this PC already left out)` : "";
+      lib.setAutoMatchNotice(`Downloading ${queued} original${queued === 1 ? "" : "s"} to ${folder}${here}.`);
     } catch (e) {
       lib.setError(String(e));
     }
   }
 
+  // The downloaded copies on this PC of photos a server has go to the Recycle Bin (in All photos, per server)
   async function removeLocalSelection() {
-    if (!server) return;
     const hashes = selectedPhotos().map((p) => p.hash);
+    const byServer = serversHolding(hashes);
+    if (byServer.size === 0) {
+      lib.setAutoMatchNotice("None of these photos is on a server, so there is no copy to remove: they are only on this PC.");
+      return;
+    }
+    const where = server ? label : "the server";
     const ok = await confirmDialog(
-      `The copies on this PC of the ${plural(hashes.length, "selected photo", "selected photos")} go to the Recycle Bin, but only for photos ${label} has. The server's photos stay as they are.`,
+      `The copies on this PC of the ${plural(hashes.length, "selected photo", "selected photos")} go to the Recycle Bin, but only for photos ${where} has. The server's photos stay as they are.`,
       { title: "Remove from this PC?", kind: "warning", okLabel: "Remove from this PC", cancelLabel: "Keep" }
     );
     if (!ok) return;
     try {
-      const r = await callLocal<{ removed: number; kept_not_on_server: number; in_library: number; failed: string[] }>("remove_local_copies", {
-        server,
-        hashes,
-      });
+      type Removed = { removed: number; kept_not_on_server: number; in_library: number; failed: string[] };
+      const parts = await Promise.all(
+        [...byServer].map(([from, list]) => callLocal<Removed>("remove_local_copies", { server: from, hashes: list }))
+      );
+      const r = parts.reduce<Removed>(
+        (acc, p) => ({
+          removed: acc.removed + p.removed,
+          kept_not_on_server: acc.kept_not_on_server + p.kept_not_on_server,
+          in_library: acc.in_library + p.in_library,
+          failed: [...acc.failed, ...p.failed],
+        }),
+        { removed: 0, kept_not_on_server: hashes.length - [...byServer.values()].reduce((n, l) => n + l.length, 0), in_library: 0, failed: [] }
+      );
       const notes = [
         `${r.removed} cop${r.removed === 1 ? "y" : "ies"} moved to the Recycle Bin`,
         r.kept_not_on_server > 0 ? `${r.kept_not_on_server} kept: the server doesn't have them` : "",
@@ -149,8 +177,8 @@ export function useClientMode(lib: LibraryState, access: Access) {
     serverLabel: label,
     onDropPaths,
     pickAndUpload: server && access.upload ? pickAndUpload : undefined,
-    downloadSelection: server ? downloadSelection : undefined,
-    removeLocalSelection: server ? removeLocalSelection : undefined,
+    downloadSelection: server || (openLibraryIsAll() && [...allPhotosSources().values()].some((s) => s.server !== null)) ? downloadSelection : undefined,
+    removeLocalSelection: server || (openLibraryIsAll() && [...allPhotosSources().values()].some((s) => s.server !== null)) ? removeLocalSelection : undefined,
     jobs: transferJobs(transfers),
   };
 }

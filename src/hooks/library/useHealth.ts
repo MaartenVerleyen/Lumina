@@ -54,8 +54,19 @@ export function useHealth(core: LibraryCore) {
   // left on no photo
   async function handleForgetMissing() {
     if (!folder || !healthStats) return;
-    const n = healthStats.missing_count;
-    const people = healthStats.unused_people;
+    // A file moved or renamed inside the library is found again by a scan, and keeps its row: only what a scan
+    // doesn't find is gone (the watcher may not have seen a renamed folder yet)
+    let stats = healthStats;
+    try {
+      await call("scan_folder", { folderPath: folder, forceReprocess: false });
+      stats = await call<LibraryHealthStats>("get_library_health_stats", { rootFolder: folder });
+      setHealthStats(stats);
+    } catch (err) {
+      setError(`Couldn't check the folder first, so nothing was forgotten: ${err}`);
+      return;
+    }
+    const n = stats.missing_count;
+    const people = stats.unused_people;
     if (n === 0 && people === 0) return;
     const parts = [
       n > 0 &&

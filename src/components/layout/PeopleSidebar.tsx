@@ -287,9 +287,8 @@ export default function PeopleSidebar({
   const onlyLooking = parts.length > 0 && parts.every((x) => !x.editable);
   const namesAction = (run: () => Promise<void>) => () => {
     setMenu(null);
-    run()
-      .then(() => onNamesChanged?.())
-      .catch((e) => console.error(e));
+    // A failure shows in the window (App's unhandled-error note)
+    void run().then(() => onNamesChanged?.());
   };
   const menuItem = "w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-zinc-800 text-zinc-200";
   const hiddenCollapsed = collapsedSections.includes("people-hidden");
@@ -419,9 +418,7 @@ export default function PeopleSidebar({
                     className="px-2 py-0.5 rounded bg-sky-600 hover:bg-sky-500 text-white"
                     title={`Show ${sg.from.name} as ${sg.to.name} (for you only, when on a server)`}
                     onClick={() =>
-                      acceptNameSuggestion(sg)
-                        .then(() => onNamesChanged?.())
-                        .catch((e) => console.error(e))
+                      void acceptNameSuggestion(sg).then(() => onNamesChanged?.())
                     }
                   >
                     Same person

@@ -95,7 +95,7 @@ export function buildPaletteActions({
     { id: "rotate-left", group: "Triage", label: "Rotate left", shortcut: "[", enabled: hasSelection, run: () => lib.handleRotateSelection(-90) },
     { id: "rotate-right", group: "Triage", label: "Rotate right", shortcut: "]", enabled: hasSelection, run: () => lib.handleRotateSelection(90) },
     { id: "basket", group: "Triage", label: "Pin or unpin", shortcut: "B", enabled: hasSelection, run: () => lib.handleToggleBasketSelection() },
-    { id: "select-all", group: "Select", label: "Select all visible photos", keywords: "everything", enabled: lib.visiblePhotos.length > 0, run: () => lib.setSelectedHashes(new Set(lib.visiblePhotos.map((p) => p.hash))) },
+    { id: "select-all", group: "Select", label: "Select all visible photos", shortcut: "Ctrl+A", keywords: "everything", enabled: lib.visiblePhotos.length > 0, run: () => lib.setSelectedHashes(new Set(lib.visiblePhotos.map((p) => p.hash))) },
     { id: "select-none", group: "Select", label: "Clear selection", enabled: hasSelection, run: () => lib.setSelectedHashes(new Set()) },
     { id: "clear-filters", group: "Select", label: "Clear all filters", keywords: "reset show everything", enabled: hasPhotos, run: lib.clearAllFilters },
     { id: "save-search", group: "Albums", label: "Save this search as a smart album", enabled: lib.searchQuery.trim() !== "", run: () => setSaveSearchName("") },
@@ -173,13 +173,16 @@ export function buildPaletteActions({
   ];
   const allowed = paletteActions.filter((a) => (access.edit || !needsEdit(a.id)) && (access.admin || !NEEDS_ADMIN.has(a.id)));
   if (platform.localFiles) return allowed;
-  return allowed.filter((a) => !NEEDS_THIS_COMPUTER.has(a.id) && !a.id.startsWith("recent-"));
+  // Export and galleries work from any library in the desktop app; Explorer and the default app need a file here
+  return allowed.filter(
+    (a) => (!NEEDS_THIS_COMPUTER.has(a.id) || (platform.exports && EXPORTS.has(a.id))) && !a.id.startsWith("recent-")
+  );
 }
 
 // Actions that change photos, people or albums (editor and up on a server)
 const NEEDS_EDIT = new Set([
   "auto-stage", "duplicates", "keep-sharpest", "pick", "reject", "unflag", "label-clear", "rotate-left", "rotate-right",
-  "basket", "save-search", "album-new", "album-remove", "review-faces", "who", "detect-one", "ai-one", "exif", "undo", "redo",
+  "save-search", "album-new", "album-remove", "review-faces", "who", "detect-one", "ai-one", "exif", "undo", "redo",
 ]);
 function needsEdit(id: string): boolean {
   return NEEDS_EDIT.has(id) || id.startsWith("rate-") || id.startsWith("label-") || id.startsWith("album-add-");
@@ -192,4 +195,5 @@ const NEEDS_ADMIN = new Set([
 ]);
 
 // Actions on this computer's folders, files and updater: not in the web client
-const NEEDS_THIS_COMPUTER = new Set(["open-folder", "import", "backup", "restore", "csv", "gallery", "export", "updates"]);
+const NEEDS_THIS_COMPUTER = new Set(["open-folder", "import", "backup", "restore", "csv", "gallery", "export", "updates", "reveal", "external"]);
+const EXPORTS = new Set(["gallery", "export"]);
