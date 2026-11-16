@@ -229,6 +229,33 @@ Checked on a running server with the test library: a rating changed was "1 photo
 the kept list was byte for byte the list made from scratch. An existing database (the test server's) took
 the new column and triggers at its next start.
 
+## Fewer and faster rebuilds, as built (branch `speed/phase-2`)
+
+The cases above where the whole list was still made, and what became of them:
+
+- **A, kept ready in the background** (`listing::keep_ready`): a thread brings every served library's list up
+  to date 2 s after something changed, and makes them when the server starts. A window that opens a
+  library finds its list ready; nobody waits for a rebuild that a scan or a pass caused.
+- **B, a scan no longer means a rebuild:** after a scan (and when a list is 30 minutes old) each folder is
+  listed once for files that went (`LibraryList::missing_files`, 64 ms for 50,000 photos); new files have
+  rows, and so revisions. A list made anew that is the same as before keeps its tag.
+- **C, a faster rebuild** (`scan::Folders`, `scan::Disk`): one listing per folder where every file was asked
+  about, and on Windows one listing of the thumbnails folder. 3.9 s became 2.2 s for 50,000 photos.
+- **D, photos that come and go** (`lumina-core/src/library_list.rs`): the kept list takes a new photo in
+  its sorted place and drops one that went, and works the links between photos out again only when something
+  they come from changed (also after a smart search pass). A photo with a new name is sent to clients as
+  one that went and came. Measured on 50,000 photos: a photo that came 0.34 s, one that went 0.28 s, the
+  links alone 0.21 s, a rating 16 ms.
+
+The whole list is now made anew only at the server's start, for an event this server doesn't know, when a
+library was added or removed, when more than 5,000 photos changed at once, and once a day, all in the
+background. The server holds each library's photos twice (as the engine's photos and as JSON): about 150 MB
+for 50,000 photos.
+
+Checked on a running server with the test library: the lists were made at start, a rating was followed 3 s
+later with nobody asking, and the kept list was byte for byte the list made from scratch. In the tests a
+kept list equals the list made anew after a rating, a photo that came, a file that went and a row that went.
+
 ## The plan
 
 Each phase is one branch and can be one release. Effort: S is under an hour of work, M a few hours, L a day

@@ -136,6 +136,8 @@ async fn serve(config: &Config, host: Arc<ServerHost>) -> Result<(), String> {
     start_web_server(config, host.clone()).await?;
     // Shared dynamic albums follow the library as it changes
     dynamic::keep_up(host.clone());
+    // Each library's list is made now and kept up to date, so no window waits for it
+    listing::keep_ready(host.clone());
 
     let mut changes = host.take_watched().ok_or("The pipeline runs once per server")?;
     let mut jobs = host.jobs.take_receiver().ok_or("The pipeline runs once per server")?;

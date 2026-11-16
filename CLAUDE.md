@@ -84,8 +84,10 @@ with a final `done: true`.
 - `photos.faces_engine`: the face engine that last scanned the photo (the server's backlog skips those).
 - `photos.rev`: a revision that goes up when something a listing shows about the photo changes (its row, tags,
   people, faces), kept by triggers (`revision.rs`; the counter is the one-row table `revision`). A new column
-  a listing shows must be added to `PHOTO_COLUMNS` there. The server's kept list of a library
-  (`lumina-server/src/listing.rs`) reads only the photos with a newer revision again.
+  a listing shows must be added to `PHOTO_COLUMNS` there. The server keeps each library's list ready
+  (`lumina-server/src/listing.rs`, `lumina-core/src/library_list.rs`): it reads only the photos with a newer
+  revision again, in the background, and sends apps that name their list only what differs. Something new
+  that the links between photos come from (`scan::link_library`) belongs in `library_list::links_from`.
 - Migrations live in `db::migrate` (`PRAGMA user_version`: 1 screenshots fix, 2 libraries); they must be
   safe to run on every open and keep every count (see the ignored test `migrate_db_copy`).
 

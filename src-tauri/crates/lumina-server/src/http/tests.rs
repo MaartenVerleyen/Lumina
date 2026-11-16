@@ -1489,9 +1489,28 @@ async fn a_librarys_list_is_kept_until_something_changes() {
     let (_, third, photos) = ask(None).await;
     assert_ne!(third, second);
     assert_eq!((&photos[0]["ai_caption"], &photos[0]["rating"]), (&json!("a rocket"), &json!(4)));
-    // Files that came or went: the whole list is made anew
+    // A scan that found nothing new leaves the list as it is
     s.host.emit_value("scan-progress", json!({"completed": 2, "total": 2, "done": true}));
-    assert_ne!(ask(None).await.1, third);
+    assert_eq!(ask(None).await.1, third);
+    // A photo that came (an upload) is put in its place
+    let second_photo = std::path::Path::new(&root).join("0.jpg");
+    std::fs::write(&second_photo, vec![9u8; 4000]).unwrap();
+    let conn = db::open_global_db(&*s.host).unwrap();
+    conn.execute("INSERT INTO photos (hash, current_path) VALUES ('def456', ?1)", [second_photo.to_string_lossy().to_string()]).unwrap();
+    drop(conn);
+    s.host.emit_value("photos-changed", json!({"hashes": ["def456"]}));
+    let (_, fourth, photos) = ask(None).await;
+    assert_eq!(photos.as_array().unwrap().iter().map(|p| p["hash"].as_str().unwrap()).collect::<Vec<_>>(), ["def456", "abc123"]);
+    // A file deleted on the disk goes from the list with the next scan; its row stays
+    std::fs::remove_file(&second_photo).unwrap();
+    assert_eq!(ask(None).await.1, fourth, "nobody said something changed");
+    s.host.library_indexed(&root);
+    let (_, fifth, photos) = ask(None).await;
+    assert_ne!(fifth, fourth);
+    assert_eq!(photos.as_array().unwrap().iter().map(|p| p["hash"].as_str().unwrap()).collect::<Vec<_>>(), ["abc123"]);
+    // An event this server doesn't know: the list is made anew, and being the same keeps its tag
+    s.host.emit_value("something-new", json!({}));
+    assert_eq!(ask(None).await.1, fifth);
 
     // Someone who sees only part of the server never gets the kept list
     let conn = db::open_global_db(&*s.host).unwrap();

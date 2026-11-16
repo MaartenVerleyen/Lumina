@@ -87,7 +87,7 @@ impl ServerHost {
     // The pipeline indexed a library: open windows list it again. Not a change for the serve loop to act on.
     pub fn library_indexed(&self, root: &str) {
         let payload = serde_json::json!(root);
-        self.listings.changed_wholly();
+        self.listings.changed_files();
         self.log("library-files-changed", &payload);
         let _ = self.events.send(("library-files-changed".to_string(), payload));
     }

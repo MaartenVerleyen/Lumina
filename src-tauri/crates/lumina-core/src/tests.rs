@@ -2755,24 +2755,51 @@ fn a_new_file_is_indexed_alone_and_found_by_content() {
     let rev = crate::revision::current(&conn).unwrap();
     rt.block_on(scan::scan_folder(host.clone(), root.clone(), None)).unwrap();
     assert_eq!(crate::revision::current(&conn).unwrap(), rev);
-    // Photos read again on their own are the listing's, once they have its links back; a rating changes
-    // none of what the links come from, a new name does
-    let listed = scan::list_library_photos(&*host, &root).unwrap();
-    let hashes: Vec<String> = listed.iter().map(|p| p.hash.clone()).collect();
-    let alone = scan::library_photos_by_hash(&*host, &root, &hashes).unwrap();
-    assert_eq!(alone.len(), listed.len());
-    for p in alone {
-        let old = serde_json::to_value(listed.iter().find(|l| l.hash == p.hash).unwrap()).unwrap();
-        let mut new = serde_json::to_value(&p).unwrap();
-        assert!(scan::keep_links(&old, &mut new));
-        assert_eq!(new, old);
-        new["rating"] = serde_json::json!(5);
-        assert!(scan::keep_links(&old, &mut new));
-        new["name"] = serde_json::json!("other.jpg");
-        assert!(!scan::keep_links(&old, &mut new));
-    }
     assert_eq!(scan::library_rows(&conn, &root).unwrap(), 2);
+    let hashes: Vec<String> = scan::list_library_photos(&*host, &root).unwrap().iter().map(|p| p.hash.clone()).collect();
     assert!(scan::library_photos_by_hash(&*host, &base.join("Elsewhere").to_string_lossy(), &hashes).unwrap().is_empty());
+
+    // A kept list brought up to date is the list made anew, whatever happened in between
+    // (thumbnails are made in a thread of their own, and a listing says whether each is there)
+    while thumbs::thumbnail_passes_running() {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let mut kept = crate::library_list::LibraryList::make(&*host, &root).unwrap();
+    let same = |kept: &crate::library_list::LibraryList, what: &str| {
+        let anew = scan::list_library_photos(&*host, &root).unwrap();
+        assert_eq!(serde_json::to_value(kept.photos()).unwrap(), serde_json::to_value(&anew).unwrap(), "{what}");
+    };
+    let since = |rev: i64| crate::revision::changed_since(&conn, rev, 100).unwrap().unwrap();
+    // A rating: that photo, nothing else
+    let rev = crate::revision::current(&conn).unwrap();
+    conn.execute("UPDATE photos SET rating = 4 WHERE hash = ?1", [&original]).unwrap();
+    let followed = kept.follow(&*host, &since(rev), false, false).unwrap();
+    assert_eq!((followed.touched.as_slice(), followed.moved.len(), followed.removed.len()), ([original.clone()].as_slice(), 0, 0));
+    same(&kept, "a rating");
+    // A photo that came, sorted in before the others ("0.jpg")
+    let rev = crate::revision::current(&conn).unwrap();
+    let third = library.join("0.jpg");
+    image::RgbImage::from_fn(64, 48, |x, y| image::Rgb([9, (x * 2) as u8, (y * 3) as u8])).save(&third).unwrap();
+    let third = scan::index_new_file(host.clone(), &root, &third).unwrap().hash;
+    while thumbs::thumbnail_passes_running() {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let followed = kept.follow(&*host, &since(rev), false, false).unwrap();
+    assert!(followed.touched.contains(&third) && followed.removed.is_empty());
+    assert_eq!(kept.photos()[0].hash, third);
+    same(&kept, "a photo that came");
+    // A file a scan no longer finds: its row stays, the list drops it
+    fs::remove_file(library.join("0.jpg")).unwrap();
+    let followed = kept.follow(&*host, &[third.clone()], false, false).unwrap();
+    assert_eq!(followed.removed, vec![third.clone()]);
+    same(&kept, "a file that went");
+    // A row that went, which only the count of rows shows
+    conn.execute("DELETE FROM photos WHERE hash = ?1", [&photo.hash]).unwrap();
+    let followed = kept.follow(&*host, &[], true, false).unwrap();
+    assert_eq!(followed.removed, vec![photo.hash.clone()]);
+    same(&kept, "a row that went");
+    // Nothing happened
+    assert_eq!(kept.follow(&*host, &[], true, true).unwrap(), Default::default());
     drop(conn);
 
     // The same photo again: its own row, found by the original's content hash
@@ -3364,6 +3391,26 @@ fn timing_of_a_large_library() {
         let changed = crate::revision::changed_since(&conn, rev, 5000).unwrap().unwrap();
         let again = scan::library_photos_by_hash(&*host, &root, &changed).unwrap();
         step(&format!("after a change: the changed photos found and read again ({} of {})", again.len(), changed.len()), t);
+        // A kept list (library_list.rs): the same change, files that went, and a photo that went
+        let mut kept = crate::library_list::LibraryList::make(&*host, &root).unwrap();
+        let t = Instant::now();
+        let followed = kept.follow(&*host, &changed, false, false).unwrap();
+        step(&format!("kept list: 20 rated photos followed ({} touched)", followed.touched.len()), t);
+        let t = Instant::now();
+        let missing = kept.missing_files();
+        step(&format!("kept list: looking at the folders for files that went ({})", missing.len()), t);
+        let t = Instant::now();
+        let followed = kept.follow(&*host, &[], false, true).unwrap();
+        step(&format!("kept list: the links worked out again ({} touched)", followed.touched.len()), t);
+        let (gone, path): (String, String) = conn.query_row("SELECT hash, current_path FROM photos LIMIT 1 OFFSET 777", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        conn.execute("DELETE FROM photos WHERE hash = ?1", [&gone]).unwrap();
+        let t = Instant::now();
+        let followed = kept.follow(&*host, &[], true, false).unwrap();
+        step(&format!("kept list: a photo that went ({} removed, {} touched)", followed.removed.len(), followed.touched.len()), t);
+        conn.execute("INSERT INTO photos (hash, current_path, captured_at) VALUES (?1, ?2, '2020-01-01 10:00:00')", [&gone, &path]).unwrap();
+        let t = Instant::now();
+        let followed = kept.follow(&*host, &[gone.clone()], false, false).unwrap();
+        step(&format!("kept list: a photo that came ({} touched)", followed.touched.len()), t);
         let t = Instant::now();
         let suggestions = face_review::compute_face_suggestions(&*host, &conn, Some(&root)).unwrap();
         step(&format!("face suggestions for every person ({} people with some)", suggestions.len()), t);

@@ -671,36 +671,105 @@ pub fn list_library_photos<H: Host + ?Sized>(app: &H, root: &str) -> Result<Vec<
     let root_path = PathBuf::from(libraries::normalize_root(root));
     let conn = open_global_db(app)?;
     let index = load_library_index(&conn, &make_folder_prefix(Some(&root_path.to_string_lossy())))?;
-    let app_dir = get_app_storage_dir(app);
-    let (thumbs_dir, previews_dir) = (app_dir.join("thumbnails"), app_dir.join("previews"));
+    let disk = Disk::listed(app);
+    let mut folders = Folders::default();
     // A file that is gone keeps its row (its ratings and names come back with it), but isn't listed, as a
     // scan of the folder wouldn't find it either
     let mut photos: Vec<PhotoItem> = index
         .cache
         .iter()
-        .filter(|(path, _)| Path::new(path.as_str()).exists())
-        .map(|(path, c)| photo_item(&root_path, path, c, &index, &thumbs_dir, &previews_dir))
+        .filter(|(path, _)| folders.has(Path::new(path.as_str())))
+        .map(|(path, c)| photo_item(&root_path, path, c, &index, &disk))
         .collect();
-    photos.sort_by(|a, b| a.subfolder.cmp(&b.subfolder).then(a.name.cmp(&b.name)));
-    pair_raw_jpegs(&mut photos);
-    link_live_photos(&mut photos);
-    let hashes: Vec<String> = photos.iter().map(|p| p.hash.clone()).collect();
-    assign_duplicate_groups(&mut photos, &clip::clip_vectors(&conn, &hashes));
+    sort_library(&mut photos);
+    link_library(&conn, &mut photos);
     Ok(photos)
+}
+
+// A listing's order
+pub(crate) fn sort_library(photos: &mut [PhotoItem]) {
+    photos.sort_by(|a, b| a.subfolder.cmp(&b.subfolder).then(a.name.cmp(&b.name)));
+}
+
+// The links between a library's photos: a JPEG and its RAW, a Live Photo and its clip, near duplicates.
+// Worked out from every photo's name, folder, date, type, length, dhash, camera and "screenshot" tag, and
+// from the smart search vectors (library_list.rs knows this list: links_from).
+pub(crate) fn link_library(conn: &Connection, photos: &mut [PhotoItem]) {
+    pair_raw_jpegs(photos);
+    link_live_photos(photos);
+    let hashes: Vec<String> = photos.iter().map(|p| p.hash.clone()).collect();
+    assign_duplicate_groups(photos, &clip::clip_vectors(conn, &hashes));
+}
+
+// Which files are there, a folder's listing at a time: for a whole library that is one question per folder
+// where asking about every file is one per photo (1.3 s for 50,000 photos on Windows)
+#[derive(Default)]
+pub(crate) struct Folders(HashMap<PathBuf, HashSet<std::ffi::OsString>>);
+
+impl Folders {
+    pub(crate) fn has(&mut self, file: &Path) -> bool {
+        let (Some(folder), Some(name)) = (file.parent(), file.file_name()) else { return file.exists() };
+        let names = self.0.entry(folder.to_path_buf()).or_insert_with(|| fs::read_dir(folder).map(|d| d.flatten().map(|e| e.file_name()).collect()).unwrap_or_default());
+        // Not under this spelling: the disk may still know it (capitals on Windows, accents on a Mac)
+        names.contains(name) || file.exists()
+    }
+}
+
+// The thumbnails and previews a listing looks for. For a whole library they are read as two folder listings
+// (`listed`); for a few photos the disk is asked about each.
+pub(crate) struct Disk {
+    thumbs_dir: PathBuf,
+    previews_dir: PathBuf,
+    // File name to size; on Windows only, where a folder's listing has the sizes (elsewhere each is a look
+    // at the file again, as asking is)
+    thumbs: Option<HashMap<std::ffi::OsString, u64>>,
+    previews: Option<HashSet<std::ffi::OsString>>,
+}
+
+impl Disk {
+    pub(crate) fn asked<H: Host + ?Sized>(app: &H) -> Disk {
+        let app_dir = get_app_storage_dir(app);
+        Disk { thumbs_dir: app_dir.join("thumbnails"), previews_dir: app_dir.join("previews"), thumbs: None, previews: None }
+    }
+
+    pub(crate) fn listed<H: Host + ?Sized>(app: &H) -> Disk {
+        let mut disk = Disk::asked(app);
+        if cfg!(windows) {
+            disk.thumbs = fs::read_dir(&disk.thumbs_dir).ok().map(|d| d.flatten().filter_map(|e| Some((e.file_name(), e.metadata().ok()?.len()))).collect());
+        }
+        disk.previews = fs::read_dir(&disk.previews_dir).ok().map(|d| d.flatten().map(|e| e.file_name()).collect());
+        disk
+    }
+
+    // A thumbnail that was written whole (a failed one leaves a stub)
+    fn thumb_ready(&self, name: &str, file: &Path) -> bool {
+        match &self.thumbs {
+            Some(sizes) => sizes.get(std::ffi::OsStr::new(name)).is_some_and(|len| *len > 256),
+            None => file.metadata().map(|m| m.len() > 256).unwrap_or(false),
+        }
+    }
+
+    fn has_preview(&self, name: &str, file: &Path) -> bool {
+        match &self.previews {
+            Some(names) => names.contains(std::ffi::OsStr::new(name)),
+            None => file.exists(),
+        }
+    }
 }
 
 // One photo as a listing shows it, from its database row (library-wide links, such as burst groups, RAW
 // pairs and Live Photos, are added by the caller)
-fn photo_item(root_path: &Path, path: &str, c: &CachedRow, index: &LibraryIndex, thumbs_dir: &Path, previews_dir: &Path) -> PhotoItem {
+pub(crate) fn photo_item(root_path: &Path, path: &str, c: &CachedRow, index: &LibraryIndex, disk: &Disk) -> PhotoItem {
     let file_path = Path::new(path);
     let ext = file_path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
     let is_raw_heic = is_raw_or_heic_ext(&ext);
-    let thumb_file = thumbs_dir.join(format!("{}.jpg", c.hash));
-    let preview_file = previews_dir.join(format!("{}_preview.jpg", c.hash));
+    let (thumb_name, preview_name) = (format!("{}.jpg", c.hash), format!("{}_preview.jpg", c.hash));
+    let thumb_file = disk.thumbs_dir.join(&thumb_name);
+    let preview_file = disk.previews_dir.join(&preview_name);
     // As in scan_folder: RAW and HEIC show their 1920 px preview, or the thumbnail until it exists
     let display_path = if !is_raw_heic {
         path.to_string()
-    } else if preview_file.exists() {
+    } else if disk.has_preview(&preview_name, &preview_file) {
         preview_file.to_string_lossy().to_string()
     } else {
         thumb_file.to_string_lossy().to_string()
@@ -714,7 +783,7 @@ fn photo_item(root_path: &Path, path: &str, c: &CachedRow, index: &LibraryIndex,
         size_kb: c.size / 1024,
         width: c.width,
         height: c.height,
-        thumb_ready: thumb_file.metadata().map(|m| m.len() > 256).unwrap_or(false),
+        thumb_ready: disk.thumb_ready(&thumb_name, &thumb_file),
         rating: c.rating,
         flag: c.flag.clone(),
         color_label: c.color_label.clone(),
@@ -762,12 +831,11 @@ pub fn photos_by_hash<H: Host + ?Sized>(app: &H, hashes: &[String]) -> Result<Ve
         libraries::list(&conn)?.into_iter().map(|l| PathBuf::from(libraries::normalize_root(&l.root))).collect();
     // The deepest root first, should one library sit inside another
     roots.sort_by_key(|r| std::cmp::Reverse(r.as_os_str().len()));
-    let app_dir = get_app_storage_dir(app);
-    let (thumbs_dir, previews_dir) = (app_dir.join("thumbnails"), app_dir.join("previews"));
+    let disk = Disk::asked(app);
     let mut photos = Vec::new();
     for (path, c) in &index.cache {
         if let Some(root) = roots.iter().find(|r| Path::new(path).starts_with(r)) {
-            photos.push(photo_item(root, path, c, &index, &thumbs_dir, &previews_dir));
+            photos.push(photo_item(root, path, c, &index, &disk));
         }
     }
     let order: HashMap<&str, usize> = hashes.iter().enumerate().map(|(i, h)| (h.as_str(), i)).collect();
@@ -776,7 +844,7 @@ pub fn photos_by_hash<H: Host + ?Sized>(app: &H, hashes: &[String]) -> Result<Ve
 }
 
 // The photos of the library at `root` among these, as its listing shows them but without the library-wide
-// links (see keep_links). A photo of another library, or whose file is gone, is left out, as in the listing.
+// links (link_library). A photo of another library, or whose file is gone, is left out, as in the listing.
 pub fn library_photos_by_hash<H: Host + ?Sized>(app: &H, root: &str, hashes: &[String]) -> Result<Vec<PhotoItem>, String> {
     if hashes.is_empty() {
         return Ok(Vec::new());
@@ -785,14 +853,21 @@ pub fn library_photos_by_hash<H: Host + ?Sized>(app: &H, root: &str, hashes: &[S
     let conn = open_global_db(app)?;
     let wanted = serde_json::to_string(hashes).map_err(|e| e.to_string())?;
     let index = load_index(&conn, "p.hash IN (SELECT value FROM json_each(?1))", &wanted)?;
-    let app_dir = get_app_storage_dir(app);
-    let (thumbs_dir, previews_dir) = (app_dir.join("thumbnails"), app_dir.join("previews"));
+    let disk = Disk::asked(app);
     Ok(index
         .cache
         .iter()
         .filter(|(path, _)| Path::new(path.as_str()).starts_with(&root_path) && Path::new(path.as_str()).exists())
-        .map(|(path, c)| photo_item(&root_path, path, c, &index, &thumbs_dir, &previews_dir))
+        .map(|(path, c)| photo_item(&root_path, path, c, &index, &disk))
         .collect())
+}
+
+// The ids of every row of the library at `root`, files there or not
+pub fn library_hashes(conn: &Connection, root: &str) -> Result<HashSet<String>, String> {
+    let prefix = make_folder_prefix(Some(&libraries::normalize_root(root)));
+    let mut stmt = conn.prepare("SELECT hash FROM photos WHERE current_path LIKE ?1 ESCAPE '!'").map_err(|e| e.to_string())?;
+    let rows = stmt.query_map(params![prefix], |r| r.get::<_, String>(0)).map_err(|e| e.to_string())?;
+    rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
 }
 
 // How many rows the library at `root` has, files there or not: a listing kept up to date photo by photo
@@ -800,29 +875,6 @@ pub fn library_photos_by_hash<H: Host + ?Sized>(app: &H, root: &str, hashes: &[S
 pub fn library_rows(conn: &Connection, root: &str) -> Result<i64, String> {
     let prefix = make_folder_prefix(Some(&libraries::normalize_root(root)));
     conn.query_row("SELECT COUNT(*) FROM photos WHERE current_path LIKE ?1 ESCAPE '!'", params![prefix], |r| r.get(0)).map_err(|e| e.to_string())
-}
-
-// What the library-wide links are worked out from (pair_raw_jpegs, link_live_photos, assign_duplicate_groups,
-// which also looks at the "screenshot" tag and the smart search vectors), and what they set
-const LINKS_FROM: &[&str] = &["hash", "name", "subfolder", "captured_at", "media_type", "duration_ms", "dhash", "camera_model"];
-const LINKS: &[&str] = &["duplicate_group", "live_video_hash", "live_video_path", "live_photo_hash"];
-
-// A photo read again on its own (library_photos_by_hash, as JSON) takes the links its listing gave it (`old`),
-// when nothing they are worked out from changed. False when something did: the links of the whole library
-// have to be worked out again.
-pub fn keep_links(old: &serde_json::Value, new: &mut serde_json::Value) -> bool {
-    let screenshot = |p: &serde_json::Value| p["tags"].as_array().is_some_and(|tags| tags.iter().any(|t| t == "screenshot"));
-    if LINKS_FROM.iter().any(|key| old[key] != new[key]) || screenshot(old) != screenshot(new) {
-        return false;
-    }
-    for key in LINKS {
-        new[key] = old[key].clone();
-    }
-    // A RAW or HEIC names itself here; a JPEG its RAW, which the pairing gave it
-    if new["pair_raw_path"].is_null() {
-        new["pair_raw_path"] = old["pair_raw_path"].clone();
-    }
-    true
 }
 
 // Whether the library holds a file with this content hash and size: under that hash, or as a copy that got

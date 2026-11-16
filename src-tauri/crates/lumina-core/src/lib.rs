@@ -44,6 +44,7 @@ pub mod import;
 pub mod libraries;
 pub mod list_changes;
 pub mod library;
+pub mod library_list;
 pub mod people;
 pub mod photo_meta;
 pub mod perf;
