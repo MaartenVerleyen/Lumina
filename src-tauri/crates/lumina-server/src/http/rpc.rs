@@ -11,6 +11,7 @@ use lumina_core::host::Host;
 use axum::{Extension, Json};
 use super::lookup;
 use crate::host::ServerHost;
+use crate::listing::Answer;
 use super::access::{self, Target};
 use crate::scope::{self, Scope};
 use crate::dynamic;
@@ -790,9 +791,13 @@ pub async fn call(
     Ok(Json(value).into_response())
 }
 
+const DIFFERENCES: &str = "x-lumina-differences";
+
 // scan_folder for someone who sees the whole server, from the kept list (listing.rs): the list as it was
-// gzipped when made, or "304 Not Modified" for a client whose own copy is that list (If-None-Match). None:
-// answered the usual way (a client that takes no gzip, someone who sees only part of the library).
+// gzipped when made, or "304 Not Modified" for a client whose own copy is that list (If-None-Match). A client
+// that says it can (X-Lumina-Differences: 1) is sent only what differs from its copy, when the server can
+// tell; the answer then names the list it starts from in the same header. None: answered the usual way (a
+// client that takes no gzip, someone who sees only part of the library).
 async fn kept_listing(host: &Arc<ServerHost>, scope: &Arc<Scope>, args: &JsonValue, headers: &HeaderMap) -> Result<Option<Response>, ApiError> {
     let header = |name: &str| headers.get(name).and_then(|v| v.to_str().ok()).unwrap_or("");
     let takes_gzip = header("accept-encoding").split(',').any(|e| e.trim().split(';').next() == Some("gzip"));
@@ -802,21 +807,23 @@ async fn kept_listing(host: &Arc<ServerHost>, scope: &Arc<Scope>, args: &JsonVal
     }
     check(host, scope, Role::Viewer, Some(Target::Root(folder.to_string()))).await?;
     let (host, folder) = (host.clone(), folder.to_string());
+    let have: Vec<String> = header("if-none-match").split(',').map(|tag| tag.trim().to_string()).filter(|tag| !tag.is_empty()).collect();
+    let differences = header(DIFFERENCES) == "1";
     let listing = tokio::task::spawn_blocking(move || -> Result<_, ApiError> {
         let root = lookup::library_root(&*host, &folder)?;
-        host.listings.of(&host, &root).map_err(ApiError::from)
+        let have: Vec<&str> = have.iter().map(String::as_str).collect();
+        host.listings.answer(&host, &root, &have, differences).map_err(ApiError::from)
     })
     .await
     .map_err(|e| ApiError::from(e.to_string()))??;
-    let same = header("if-none-match").split(',').any(|tag| tag.trim() == listing.etag);
-    let answer = Response::builder().header("etag", &listing.etag).header("vary", "accept-encoding");
-    let answer = if same {
-        answer.status(StatusCode::NOT_MODIFIED).body(axum::body::Body::empty())
-    } else {
-        answer
-            .header("content-type", "application/json")
-            .header("content-encoding", "gzip")
-            .body(axum::body::Body::from(listing.gzipped.clone()))
+    let answer = Response::builder().header("vary", format!("accept-encoding, if-none-match, {DIFFERENCES}"));
+    let gzipped = |answer: axum::http::response::Builder, body: axum::body::Bytes| {
+        answer.header("content-type", "application/json").header("content-encoding", "gzip").body(axum::body::Body::from(body))
+    };
+    let answer = match listing {
+        Answer::Same(etag) => answer.header("etag", etag).status(StatusCode::NOT_MODIFIED).body(axum::body::Body::empty()),
+        Answer::Differences { etag, base, gzipped: body } => gzipped(answer.header("etag", etag).header(DIFFERENCES, base), body),
+        Answer::Whole(listing) => gzipped(answer.header("etag", &listing.etag), listing.gzipped.clone()),
     };
     answer.map(Some).map_err(|e| ApiError::from(e.to_string()))
 }

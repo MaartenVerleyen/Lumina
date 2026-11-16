@@ -175,6 +175,31 @@ Not done: the web client. A browser would have to hold the list's text (tens of 
 answer a 304 from; that waits for phase 4. Not checked in the running apps yet: the kept list on the
 desktop and the phone (its parts are tested, the server side was checked with curl).
 
+## Phase 4 as built (branch `speed/phase-2`)
+
+Built without the revision column the plan below describes: nothing in the database changed, and nothing in
+the window.
+
+- **The server tells lists apart** (`listing.rs`, `Track`): each list it makes is compared with the one
+  before, photo by photo (a fingerprint of each photo's JSON). It holds the JSON of photos that changed
+  since, up to 32 MB per library.
+- **A client names its list and says it takes differences** (`If-None-Match` with `X-Lumina-Differences: 1`):
+  the answer is `{"changed": [{"after", "photo"}], "removed": [...]}` with the tag of the list it starts
+  from in `X-Lumina-Differences`. Older apps and the web client don't send the header and get the whole list.
+- **The app works them into its kept list** (`lumina-core/src/list_changes.rs`, `remote.rs` `rpc_text`) and
+  hands the window the result: 52 ms for a 72 MB list with 200 changed photos (release build). When they
+  don't fit, it asks for the whole list.
+- **The whole list is sent** after a server restart, when photos changed places (a date edit that reorders
+  the list), when more than 32 MB changed (a pass over every photo), and when the differences are over half
+  the list's size.
+
+What this leaves: the server still makes the whole list after every change (about 4 s for 50,000 photos,
+once, for all clients). A revision per photo in the database would remove that too; it is the larger change
+and can still be done behind the same protocol.
+
+Checked on a running server with the test library: one rating changed gave 1 KB of differences in place of
+the 32 KB list. Not checked in the running apps.
+
 ## The plan
 
 Each phase is one branch and can be one release. Effort: S is under an hour of work, M a few hours, L a day

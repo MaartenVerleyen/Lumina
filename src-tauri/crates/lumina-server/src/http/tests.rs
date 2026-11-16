@@ -1492,3 +1492,54 @@ async fn a_librarys_list_is_kept_until_something_changes() {
     assert!(resp.headers().get(header::ETAG).is_none());
     assert_ne!(resp.status(), StatusCode::OK, "a guest with nothing shared sees no library");
 }
+
+// A client that names the list it has and can take differences gets only those, and its list with them
+// worked in is the server's new list
+#[tokio::test]
+async fn a_client_with_a_list_is_sent_what_differs() {
+    use std::io::Read;
+    let s = server("differences");
+    let (root, _) = add_library(&s);
+    let viewer = login(&s.app, "vera").await;
+    let editor = login(&s.app, "ed").await;
+    let ask = |tag: Option<String>, differences: bool| {
+        let mut req = post("/api/rpc/scan_folder", json!({"folderPath": root}), Some(&viewer));
+        req.headers_mut().insert(header::ACCEPT_ENCODING, "gzip".parse().unwrap());
+        if let Some(tag) = tag {
+            req.headers_mut().insert(header::IF_NONE_MATCH, tag.parse().unwrap());
+        }
+        if differences {
+            req.headers_mut().insert("x-lumina-differences", "1".parse().unwrap());
+        }
+        let app = s.app.clone();
+        async move {
+            let resp = app.oneshot(req).await.unwrap();
+            assert_eq!(resp.status(), StatusCode::OK);
+            let headers = resp.headers().clone();
+            let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+            let mut text = String::new();
+            flate2::read::GzDecoder::new(&bytes[..]).read_to_string(&mut text).unwrap();
+            let header = |name: &str| headers.get(name).map(|v| v.to_str().unwrap().to_string());
+            (header("etag").unwrap(), header("x-lumina-differences"), text)
+        }
+    };
+
+    let (first, base, list) = ask(None, true).await;
+    assert_eq!(base, None, "a client without a list gets the whole one");
+
+    let (status, _, _) = send(&s.app, post("/api/rpc/set_photos_rating", json!({"hashes": ["abc123"], "rating": 5}), Some(&editor))).await;
+    assert_eq!(status, StatusCode::OK);
+    let (second, base, differences) = ask(Some(first.clone()), true).await;
+    assert_eq!(base.as_deref(), Some(first.as_str()));
+    let d: Value = serde_json::from_str(&differences).unwrap();
+    assert_eq!((d["changed"].as_array().unwrap().len(), d["changed"][0]["photo"]["rating"].as_i64(), d["removed"].as_array().unwrap().len()), (1, Some(5), 0));
+    let (again, base, whole) = ask(None, true).await;
+    assert_eq!((again.as_str(), base), (second.as_str(), None));
+    assert_eq!(lumina_core::list_changes::apply(&list, &differences).unwrap(), whole);
+
+    // A client that didn't ask for differences, and one whose list is from another run of the server
+    let (_, base, text) = ask(Some(first.clone()), false).await;
+    assert_eq!((base, text.as_str()), (None, whole.as_str()));
+    let (_, base, text) = ask(Some("\"1-1-00000000\"".to_string()), true).await;
+    assert_eq!((base, text.as_str()), (None, whole.as_str()));
+}

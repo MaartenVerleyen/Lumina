@@ -25,6 +25,9 @@ const DEFAULT_CACHE_MB: u64 = 2048;
 // Media kinds a server serves (the frontend's MediaRef kinds); thumbnails and faces are cached
 const MEDIA_KINDS: &[&str] = &["thumb", "original", "preview", "face"];
 const CACHED_KINDS: &[&str] = &["thumb", "face"];
+// With a list's tag: this app can take only what differs from that list. On the answer: the tag of the list
+// the differences start from (lumina-server's rpc.rs).
+const DIFFERENCES: &str = "x-lumina-differences";
 // How often a cached file's "last used" date is written
 const CACHE_USED_EVERY: Duration = Duration::from_secs(24 * 3600);
 // A video asks for "the rest of the file"; it gets it in pieces of this size
@@ -424,8 +427,9 @@ async fn rpc_text(app: &AppHandle, server: &str, command: &str, args: Option<Val
             if let Some(c) = client {
                 req = req.header("X-Lumina-Client", c);
             }
+            // The list this app has: the server then says "still that one", or sends only what differs
             if let Some(tag) = tag {
-                req = req.header("If-None-Match", tag);
+                req = req.header("If-None-Match", tag).header(DIFFERENCES, "1");
             }
             // Listing a large library or a long job can take a while; nothing waits forever
             req.timeout(Duration::from_secs(600)).json(args).send().await.map_err(unreachable)
@@ -433,12 +437,15 @@ async fn rpc_text(app: &AppHandle, server: &str, command: &str, args: Option<Val
     };
     // A library's list is kept on disk as the server sent it (offline.rs), with the tag the server gave it.
     // The tag goes along with the next request: a server whose list is still that one says so in a few
-    // bytes, and the kept list is the answer.
+    // bytes, and the kept list is the answer. After a change the server sends what differs from the kept
+    // list (it names the list it started from), and the kept one is brought up to date with it.
     let list = if command == "scan_folder" { args["folderPath"].as_str().map(|root| crate::offline::KeptList::of(app, server, root)) } else { None };
     let Some(list) = list else {
         return check(app, server, send(None).await?).await?.text().await.map_err(|e| e.to_string());
     };
-    let mut resp = send(list.tag()).await?;
+    let had = list.tag();
+    let mut resp = send(had.clone()).await?;
+    let header = |resp: &reqwest::Response, name: &str| resp.headers().get(name).and_then(|v| v.to_str().ok()).map(str::to_string);
     if resp.status() == reqwest::StatusCode::NOT_MODIFIED {
         let kept = list.clone();
         match tauri::async_runtime::spawn_blocking(move || kept.read()).await.ok().flatten() {
@@ -446,9 +453,28 @@ async fn rpc_text(app: &AppHandle, server: &str, command: &str, args: Option<Val
             // The kept list went away meanwhile: asked for whole
             None => resp = send(None).await?,
         }
+    } else if resp.status().is_success() && had.is_some() && header(&resp, DIFFERENCES) == had {
+        let tag = header(&resp, "etag");
+        let differences = resp.text().await.map_err(|e| e.to_string())?;
+        let kept = list.clone();
+        let brought = tauri::async_runtime::spawn_blocking(move || {
+            let text = lumina_core::list_changes::apply(&kept.read().ok_or("The kept list is gone")?, &differences)?;
+            kept.write(&text, tag.as_deref());
+            Ok::<_, String>(text)
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+        match brought {
+            Ok(text) => return Ok(text),
+            // They didn't fit the kept list: asked for whole
+            Err(e) => {
+                eprintln!("[remote] {server}: {e}");
+                resp = send(None).await?;
+            }
+        }
     }
     let resp = check(app, server, resp).await?;
-    let tag = resp.headers().get("etag").and_then(|v| v.to_str().ok()).map(str::to_string);
+    let tag = header(&resp, "etag");
     let text = resp.text().await.map_err(|e| e.to_string())?;
     tauri::async_runtime::spawn_blocking(move || {
         list.write(&text, tag.as_deref());
