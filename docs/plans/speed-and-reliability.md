@@ -300,8 +300,24 @@ The Kotlin changes are not compiled here (no Gradle build was run) and nothing w
 
 ### Still open
 
-- **P9** (the window works everything out again on every change): needs measuring in the real window with a
-  large library before changing it.
+- **P9** (the window works everything out again on every change), measured outside the window: the same
+  work in Node, with the app's own helpers, on generated photos, after one rating changed. Drawing the grid
+  again is not in these numbers.
+
+  | Worked out again | 50,000 photos | 175,000 photos |
+  | :--- | ---: | ---: |
+  | Filter (none set) and sort by date | 27 ms | 119 ms |
+  | Grid layout | 9 ms | 47 ms |
+  | Timeline buckets | 8 ms | 36 ms |
+  | Photo-by-id map | 7 ms | 36 ms |
+  | Counts and best of each burst | 6 ms | 14 ms |
+  | Burst stacking | 6 ms | 24 ms |
+  | Folder tree | 5 ms | 22 ms |
+  | All tags | 5 ms | 13 ms |
+  | Together | 72 ms | 311 ms |
+
+  The sort is the largest part, and a rating changes nothing it sorts by (unless sorted by rating). Not
+  changed yet.
 - A followed photo is marked as taken when it is queued, not when it lands: one whose download fails for
   good and is cleared from the list is never asked for again (`follows.rs` `sync`).
 - Not read: the scan loop itself, most of `LuminaPlugin.kt`, `VirtualPhotoGrid.tsx`. Read and nothing found:
