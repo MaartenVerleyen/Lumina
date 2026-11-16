@@ -516,10 +516,7 @@ pub fn ensure_high_res_preview(host: &dyn Host, hash: &str, source_path: &str) -
     } else {
         img
     };
-    scaled
-        .to_rgb8()
-        .save(&preview_file)
-        .map_err(|e| e.to_string())?;
+    thumbs::save_jpeg_whole(&scaled.to_rgb8(), &preview_file)?;
 
     let ext = src
         .extension()

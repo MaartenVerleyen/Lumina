@@ -4,7 +4,7 @@ import { callLocal, mediaUrl } from "../../api";
 import { useServers } from "../../hooks/useServers";
 import { formatBytes } from "../../utils/photoHelpers";
 import { Button, Page, Section, Switch, T, Toggle } from "./PhoneParts";
-import { refreshBackup, setBackupSettings, usePhoneBackup, type BackupProgress, type BackupStatus } from "./usePhoneBackup";
+import { refreshBackup, setBackupSettings, showBackupServer, usePhoneBackup, type BackupProgress, type BackupStatus } from "./usePhoneBackup";
 import { usePhoneFolders, type PhoneFolder } from "./usePhoneFolders";
 import { freeUpScan, moveToTrash, type FreeUp } from "./freeUp";
 
@@ -209,13 +209,14 @@ function FreeUpSection({ onRemoved }: { onRemoved: () => void }) {
 function BackupSection() {
   const { servers } = useServers();
   const signedIn = servers.filter((s) => s.signed_in);
-  const { settings, status } = usePhoneBackup();
+  const { settings, status, error: statusError } = usePhoneBackup();
   const [anyNetwork, setAnyNetwork] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const server = settings?.server ?? signedIn[0]?.id ?? null;
+  useEffect(() => showBackupServer(server), [server]);
   const serverLabel = servers.find((s) => s.id === server)?.label ?? server ?? "";
 
-  if (!settings) return <Section title="">{error ?? <div className={`py-2 ${T.secondary}`}>Loading…</div>}</Section>;
+  if (!settings) return <Section title="">{error ?? statusError ?? <div className={`py-2 ${T.secondary}`}>Loading…</div>}</Section>;
   if (!server) {
     return (
       <Section title="">
@@ -276,6 +277,8 @@ function BackupSection() {
             {status.last ? <div>Last backup {when(status.last.at)}</div> : <div>Not backed up yet</div>}
             {status.last && <LastOutcome last={status.last} label={serverLabel} />}
           </>
+        ) : statusError ? (
+          <div className="text-red-300">Couldn't count the photos on this phone: {statusError}</div>
         ) : (
           <div className="flex items-center gap-2">
             <Loader2 className="w-4 h-4 animate-spin" />

@@ -16,12 +16,18 @@ pub struct Pipeline {
 }
 
 // Waits for `event` with a payload that `finished` accepts (events from before the subscription are missed,
-// so subscribe before starting the step)
-async fn wait_for(rx: &mut Receiver<(String, JsonValue)>, event: &str, finished: impl Fn(&JsonValue) -> bool) {
+// so subscribe before starting the step). The channel drops the oldest events when this end falls behind, and
+// the one waited for can be among them: then `running` says whether the work is still going, so a lost event
+// never leaves the pipeline waiting for good.
+async fn wait_for(rx: &mut Receiver<(String, JsonValue)>, event: &str, finished: impl Fn(&JsonValue) -> bool, running: impl Fn() -> bool) {
     loop {
         match rx.recv().await {
             Ok((name, payload)) if name == event && finished(&payload) => return,
             Err(RecvError::Closed) => return,
+            Err(RecvError::Lagged(missed)) if !running() => {
+                println!("[library] missed {missed} events, {event} among them: the work is done, carrying on");
+                return;
+            }
             _ => {}
         }
     }
@@ -176,7 +182,7 @@ impl Pipeline {
         let photos = scan::scan_folder(self.shared(), root.to_string(), None).await?;
         // The watcher's event went out before the new files were indexed: windows that listed the library
         // then list it again now (the serve loop takes no notice of what an update sends)
-        self.host.emit_value("library-files-changed", serde_json::json!(root));
+        self.host.library_indexed(root);
         while thumbs::thumbnail_passes_running() {
             tokio::time::sleep(Duration::from_millis(250)).await;
         }
@@ -226,12 +232,12 @@ impl Pipeline {
             println!("[library] {root}: faces in {} photos and videos", unscanned.len());
             let mut rx = self.host.subscribe();
             face_scan::scan_library_faces_batch(self.shared(), unscanned).await?;
-            wait_for(&mut rx, "face-scan-progress", done).await;
+            wait_for(&mut rx, "face-scan-progress", done, || self.host.working_on("face-scan-progress")).await;
         }
 
         let mut rx = self.host.subscribe();
         if face_quality::measure_face_quality(self.shared(), root.to_string()).await? > 0 {
-            wait_for(&mut rx, "face-quality-progress", done).await;
+            wait_for(&mut rx, "face-quality-progress", done, || self.host.working_on("face-quality-progress")).await;
         }
         Ok(())
     }
@@ -239,7 +245,7 @@ impl Pipeline {
     async fn smart_search(&self, root: &str) -> Result<(), String> {
         let mut rx = self.host.subscribe();
         if clip::start_semantic_index(self.shared(), root.to_string()).await? > 0 {
-            wait_for(&mut rx, "semantic-progress", |p| done(p) && p["stage"] == "index").await;
+            wait_for(&mut rx, "semantic-progress", |p| done(p) && p["stage"] == "index", clip::semantic_index_running).await;
         }
         Ok(())
     }

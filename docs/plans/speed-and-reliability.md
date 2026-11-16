@@ -1,0 +1,206 @@
+# Speed and reliability: review and plan
+
+A review of the engine, the server, the desktop client and the phone app for speed, reliability and bugs
+(2026-11-16, on 6.2.2), with a plan in phases. Nothing here is implemented yet.
+
+## What the review covered, and what it didn't
+
+Read closely: the database setup (`db.rs`, `libraries.rs`), listing a library (`scan.rs` `load_index`,
+`list_library_photos`), people and face suggestions (`people.rs`, `face_review.rs`, `face_engine.rs`), smart
+search (`clip.rs`), the edit commands (`library.rs`), the whole server HTTP layer (`http/mod.rs`, `rpc.rs`,
+`media.rs`, `events.rs`, `upload.rs`, `scope.rs`, `host.rs`), the pipeline and serve loop (`pipeline.rs`,
+`main.rs`), the watcher, the phone backup (`phone_backup.rs`), the server media cache (`remote.rs`), live
+updates and the offline lists.
+
+Only skimmed or not read: the scan's main loop and thumbnails (`scan.rs` 1010–1460, `thumbs.rs`, `decode.rs`),
+moves and trash (`files.rs`), import, captions (`ai.rs`), the transfer queues (`transfers.rs`, `follows.rs`),
+the Kotlin plugin, and most desktop UI components. Phase 5 covers them.
+
+Nothing was measured: every speed finding comes from reading the code. The only numbers are from cachy's log
+and file listing: `get_people` took 2.1 s, `library.db` is 1.19 GB, and the service held 8.5 GB of memory
+(14 GB at its peak; this may include file cache). Phase 0 gets real numbers before anything is changed.
+
+## Findings
+
+### Reliability and bugs
+
+| # | What happens | Where | Weight |
+| :-- | :--- | :--- | :--- |
+| R1 | **The server forgets file changes that arrive during an update.** After each update pass and each job the serve loop throws away every waiting watcher event (`changes.resubscribe()`), to skip its own. Files copied in, or uploads that land, while a long pass runs (captions can take hours) get indexed by the upload itself but get no faces, smart search or captions until something else changes. | `lumina-server/src/main.rs:174,183` | High |
+| R2 | **"The server already has it" is answered from the database row, not the file.** A row is kept when its file is gone (on purpose, so ratings come back). The upload check counts such a row as present, so a photo whose file was lost on the server is never backed up again, and the phone shows it as backed up. | `scan.rs:780` `find_by_content`, `upload.rs` `check` | High |
+| R3 | **The phone trusts its own "backed up" list forever.** Once a hash is in `phone_backup` it is never asked about again, so a server restored from an older backup, or a deleted file, is not noticed. | `phone_backup.rs:207-226` | Medium |
+| R4 | **Uploads are not flushed to disk before they count as done.** `file.flush()` on a file does nothing; there is no `sync_all` before the file moves into the library and the phone marks it backed up. A power cut right after can leave a short or empty file. | `upload.rs:320`, `finish` | Medium |
+| R5 | **Two chunks at the same offset both get written.** The offset check and the append are not locked together: a retry that overlaps the first try doubles the chunk. BLAKE3 catches it at the end, and the whole upload starts over. | `upload.rs:312-320` | Low |
+| R6 | **Edits answer "done" when the write failed.** Flag, colour, rotation, basket, place, time shift and others ignore the errors of their transaction and commit (`let _ = tx.commit()`, 16 places). When the database is busy for more than 5 s (a scan writing), the window shows the change and the database doesn't have it. | `library.rs:87-339`, also `face_review.rs:578,646`, `files.rs:1057` | Medium |
+| R7 | **The pipeline can wait forever.** Each step waits for a "done" event on a channel of 1,024 events. If that event is missed (the receiver fell behind) the server's pipeline stops for good, with no jobs until a restart. Unlikely, but nothing guards against it. | `pipeline.rs:20` `wait_for` | Medium |
+| R8 | **A slow client loses change events without knowing.** When a socket falls behind, events are dropped silently, so that window keeps old ratings and names. On the client, a failed `get_photos` also drops the photos it was fetching. | `events.rs:184`, `useLiveUpdates.ts:23` | Medium |
+| R9 | **The phone's Backup page can say "Counting the photos on this phone…" forever.** Every error of the status call is swallowed and the page has no error or permission state. This matches what happened on the fresh install. | `usePhoneBackup.ts:75`, `BackupScreen.tsx:282` | Medium |
+| R10 | **Cache files are written in place.** A thumbnail from a server, the phone's backup state files, RAW previews and face crops are written directly; an app killed mid-write (Android does this) leaves a half file that is then shown or read as if whole. | `remote.rs:640,666`, `phone_backup.rs:122,352,795`, `decode.rs:521`, `face_scan.rs:296` | Low–medium |
+| R11 | **The server only handles Ctrl+C.** `systemctl stop` sends SIGTERM, which ends the process at once, mid-write. SQLite survives this; half-made files don't (R10). During an update pass Ctrl+C isn't seen either. | `main.rs:156` | Low |
+| R12 | A failed index after an upload leaves the file in the library with no row and no upload record; a retry uploads it again as "name (2).jpg". | `upload.rs` `finish` | Low |
+
+### Speed: opening a library from a server
+
+This is what a phone or browser waits for (the "no pictures for a long time" report). For each open of a
+51,000-photo library the server does all of this, with nothing kept between requests:
+
+| # | What happens | Where |
+| :-- | :--- | :--- |
+| S1 | `list_libraries` checks on disk whether every file of every library exists, only to count them. | `rpc.rs:215`, `libraries.rs:173` |
+| S2 | The listing reads the photos table four times with `current_path LIKE … ESCAPE`, which can't use the path index (the column isn't NOCASE), then checks on disk for every photo: the file, its thumbnail, and for RAW its preview. | `scan.rs:491-660`, `681`, `703`, `717` |
+| S3 | It copies every photo's smart search vector (about 100 MB for 51,000 photos) to work out duplicate groups again. | `scan.rs:688`, `clip.rs:631` |
+| S4 | The answer becomes a JSON tree in memory, is walked to shorten paths, then written out and gzipped: several copies of tens of megabytes. | `rpc.rs:78,774`, `host.rs` `hide_data_dir` |
+| S5 | The client downloads and parses all of it every time, also when nothing changed. | `useFolder.ts`, `offline.rs` |
+
+### Speed: every request
+
+| # | What happens | Where |
+| :-- | :--- | :--- |
+| S6 | Each request opens two or three new database connections (session check, scope, the command), each setting its pragmas and starting with an empty cache. | `db.rs:12`, `http/mod.rs:171`, `rpc.rs:741` |
+| S7 | Each thumbnail request loads the user's whole scope; for a guest that reads every photo of every album shared with them. A screen of 300 thumbnails does that 300 times. | `media.rs:30`, `scope.rs:95` |
+| S8 | Thumbnails are cached by the browser for an hour only, then asked for again one by one. | `media.rs:44` |
+| S9 | `get_people` took 2.1 s on cachy. There is no index on `photo_people(person_name)` or `photo_faces(person_name)`, and the query filters by path. | `people.rs:9`, `db.rs:197` |
+| S10 | The upload check scans the whole photos table once per file it doesn't find by hash (no index on `file_size`): 500 new photos are 500 scans. | `scan.rs:789` |
+| S11 | Face suggestions are worked out again for every person after every confirm or reject ("seconds of every core", as the code says). This is the wait in the phone's face review. | `face_review.rs:98-270` |
+| S12 | An open event socket checks its session in the database up to once a second during a scan. | `events.rs:141` |
+
+### Speed: desktop and phone
+
+| # | What happens | Where |
+| :-- | :--- | :--- |
+| C1 | A server thumbnail from the app's cache has no `Cache-Control`, so the web view asks again each time it scrolls back; each hit also rewrites the file's date. | `remote.rs:598-610` |
+| C2 | While the server works (thumbnails, faces, captions) the window refetches photos every 250 ms and rebuilds its whole photo list each time. | `useLiveUpdates.ts:15-22` |
+| C3 | The offline copy of a library goes between the web view and Rust as one JSON value of tens of megabytes, parsed and written out again on both sides. | `offline.rs:21-45` |
+| C4 | The phone backup asks the database twice per photo for its content id (once to count, once to use it), and the status poll runs two counting queries every 1–2 s while the page shows. | `phone_backup.rs:185,192`, `usePhoneBackup.ts` |
+
+## Measured (phase 0, 2026-11-16)
+
+The ignored engine test `timing_of_a_large_library` makes a library of 50,000 made-up photos (100,000 faces,
+50,000 smart search vectors, a 676 MB database, one-byte files) and times what the server does per window.
+Release build, on the Windows PC, files in the system's cache (a cold disk or a busy server is slower):
+
+| What | Time |
+| :--- | ---: |
+| Listing the library (S2, S3), all of it | 3.8–4.1 s |
+| of which the four queries | 0.8–0.9 s |
+| of which "is each file there" | 1.3 s |
+| of which thumbnail checks, building and sorting the photos | about 1.5 s |
+| of which duplicate groups | 0.2 s |
+| of which copying the vectors | 0.05 s |
+| The answer as a JSON tree, then as text: 77 MB (S4) | 0.6 s |
+| The answer as text directly | 0.2 s |
+| `list_libraries`: counting the files that are there (S1) | 1.4–1.5 s |
+| `get_people` (S9) | 0.1 s |
+| Upload check, 100 photos the server lacks (S10) | 0.2 s |
+| Face suggestions for every person (S11) | 1.2–1.7 s |
+| 300 new database connections with one small query each (S6) | 0.2 s |
+
+What this changes:
+
+- **Opening a library costs the server about 6 s** before gzip and the network (listing, JSON, and
+  `list_libraries`), and nearly half of it is asking the disk about files (S1, S2). A kept listing removes
+  all of it; counting from the database removes 1.4 s on its own.
+- **S3 (copying vectors), S6 (connections) and S10 (upload check) are small.** They drop to "only if
+  convenient".
+- **`get_people` is fast here** but took 2.1 s on cachy, so that was load or a cold cache, not the query
+  alone. The indexes still help; measure on cachy before and after.
+- 77 MB per open is what the phone downloads (about a tenth gzipped) and parses: phase 3's "nothing changed"
+  answer matters as much as the server's time.
+
+## Phase 1 as built (branch `fix/6.2.3`)
+
+Done: R1 (the watcher's changes have a channel of their own, `ServerHost::take_watched`; the watcher also
+leaves Lumina's own cache folders alone), R2 (`scan::holds_file`; this also guards the phone's Free up space,
+which asks the same question), R3 (a full check once a week), R4 and R5, R6 (the edit commands in `library.rs`
+and naming or un-naming faces), R7, R8 (the socket sends `events-reconnected`, which every client already acts
+on, at most once a minute), R9, R10.
+
+- **R9 was not a permission problem.** On a new install no server is saved in the backup's settings yet; the
+  page shows the first server signed in to, but the counts were only asked for a saved one. So "Counting…"
+  stayed for good. The counts are now asked for the server the page shows, and errors are shown.
+- **R11 dropped.** While a pass runs the serve loop can't see a signal, so catching SIGTERM would make
+  `systemctl stop` wait 90 s instead of stopping at once. With R10 a sudden stop leaves no half files.
+- **R12 not done** (rare, and the next scan indexes the file).
+- Not checked on a device yet: R3 and R9 (they compile for Android).
+
+## The plan
+
+Each phase is one branch and can be one release. Effort: S is under an hour of work, M a few hours, L a day
+or more.
+
+### Phase 0: measure first (no change in behaviour)
+
+- A large test database: either a generated one (50,000 photos, 100,000 faces, vectors; a script next to
+  `scripts/test-library/`), or a copy of cachy's made with `.backup`. **The copy needs your OK** (the rule
+  about real libraries); the generated one doesn't.
+- A timing test for opening a library, split per step (queries, disk checks, duplicates, JSON, gzip), and
+  `EXPLAIN QUERY PLAN` for `get_people` and the listing queries.
+- On cachy, with your OK: request times per command from the log, and the server's own memory against file
+  cache, to see whether 8.5 GB is a problem at all.
+- Result: the tables above with numbers, and phases 2–3 reordered by what actually costs time.
+
+### Phase 1: reliability (candidate for 6.2.3, with the AppImage fix that is waiting)
+
+| Item | Change | Effort |
+| :-- | :--- | :--- |
+| R1 | Tell the pipeline's own "files changed" event from the watcher's (a flag in the payload), and keep watcher events that arrive during a pass as pending. | S |
+| R2 | The upload check also looks for the file on disk; a row without a file counts as missing, and the upload takes over that row. | S |
+| R4, R5 | `sync_all` on the last chunk and before the move; one lock per upload id around check and append. | S |
+| R6 | The edit commands return their errors; the window already shows errors from `call`. | M |
+| R7 | `wait_for` gets the step's "running" flag as a second way out, and logs when it leaves by that way. | S |
+| R8 | The socket sends a `resync` event after it fell behind (the window then lists the library again); `useLiveUpdates` puts failed hashes back. | S |
+| R9 | The Backup page shows the error and, without the media permission, a button to give it. First reproduce on the phone. | S–M |
+| R10 | Write to a temporary file and rename, in the five places. | S |
+| R11 | Handle SIGTERM like Ctrl+C. | S |
+| R3 | A full check against the server once a week (one `content_hashes` round), dropping what the server no longer has. | M |
+
+Tests: a server test for R1 (a file added during a pass gets its faces), R2 (row without file is "missing"),
+R5 (two chunks at one offset); an engine test for R6 on a locked database.
+
+### Phase 2: the server answers faster (no change to what clients send)
+
+| Item | Change | Effort |
+| :-- | :--- | :--- |
+| S1 | Count from the database. Missing files are found by the scan, which already runs on every change. | S |
+| S9, S10 | Indexes: `photo_people(person_name, hash)`, `photo_faces(person_name)`, `photos(file_size)`, `photos(library_id, hash)`. **This adds to the database layout, so it needs your OK**; indexes are safe to add on open and change no counts. | S |
+| S2 | Library queries by `library_id` when the folder is a library root (it nearly always is). | M |
+| S2–S4 | Keep each library's listing in memory on the server, as finished gzipped JSON with a version number, and drop it when anything in that library changes (the server already knows: `Changed`, the pipeline's events). Guests keep the filtered path. Sends an `ETag`. | L |
+| S6 | Reuse connections: a small pool of read connections and one for the session check. | M |
+| S7, S12 | Keep each user's scope in memory until an album, share or role changes (those events exist: `SCOPE_EVENTS`). | M |
+| S8 | Thumbnails: `Cache-Control` of a day, plus `ETag` so the check after that is cheap. | S |
+| S11 | Keep each person's profile between runs and score only the people whose faces changed. | L |
+
+### Phase 3: desktop and phone
+
+| Item | Change | Effort |
+| :-- | :--- | :--- |
+| S5 | The client sends the listing's `ETag` back; "nothing changed" is one small answer and the kept list opens at once. Depends on phase 2's listing cache. | M |
+| C1 | `Cache-Control` on cached server thumbnails; touch the file's date at most once a day. | S |
+| C2 | Collect changes for longer while the server reports work in progress (1–2 s), and patch the list by index instead of mapping all of it. | M |
+| C3 | Keep offline lists as text: the web view hands over and gets back a string, not a parsed value. | S |
+| C4 | Read the phone's known ids once into a map; poll the counts only when something changed. | S |
+
+### Phase 4: only what changed (architecture: needs your decision first)
+
+Phases 2–3 make an unchanged library open at once. A changed one is still fetched whole. The step after that:
+a revision number per photo (a new column, bumped on every change), and a command "what changed since
+revision N" so clients fetch a few rows instead of 51,000. This changes the database layout and how clients
+talk to the server, and old clients must keep working. Worth doing only if phase 0 and phase 3 show that
+whole fetches still hurt (they will on mobile data).
+
+### Phase 5: the rest of the review
+
+The same reading for what wasn't covered: the scan loop and thumbnails, moves and trash, import, captions,
+the transfer queues and follows, the Kotlin plugin (work constraints, what Android does when it stops the
+worker), and the desktop grid with a large library (render cost, filter cost per keystroke).
+
+## Order and releases
+
+1. Phase 0 and phase 1 together: phase 1 doesn't depend on the numbers, and fixes the two backup holes
+   (R1, R2).
+2. Phase 2, starting with S1 and the indexes (small, likely the biggest gain per line), then the listing
+   cache.
+3. Phase 3, then a decision on phase 4 with numbers in hand.
+
+Each phase ends with `cargo test --workspace --lib`, `cargo test -p lumina-server`, `npm test`,
+`npx tsc --noEmit -p .`, and a pass by hand on the test library; cachy is upgraded only when you say so.

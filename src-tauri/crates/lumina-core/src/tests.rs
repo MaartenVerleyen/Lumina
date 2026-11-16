@@ -2763,12 +2763,20 @@ fn a_new_file_is_indexed_alone_and_found_by_content() {
     assert_eq!(scan::find_by_content(&conn, &original, size).unwrap(), Some(copied.hash.clone()), "the salted copy counts as present");
     assert_eq!(scan::find_by_content(&conn, "0000000000000000", size).unwrap(), None);
     assert!(scan::index_new_file(host.clone(), &root, &library.join("notes.txt")).is_err());
-    drop(conn);
     drop(rt);
     // The thumbnail pass for the new files runs in a thread of its own
     while thumbs::thumbnail_passes_running() {
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
+    // A row outlives its file: the server holds the photo only while the file is there. With the whole folder
+    // gone the disk may not be connected, and nothing is asked for again.
+    assert!(scan::holds_file(&conn, &original, size).unwrap());
+    fs::remove_file(&copy).unwrap();
+    assert!(scan::find_by_content(&conn, &original, size).unwrap().is_some());
+    assert!(!scan::holds_file(&conn, &original, size).unwrap(), "a row without its file must be uploaded again");
+    fs::remove_dir_all(library.join("uploads")).unwrap();
+    assert!(scan::holds_file(&conn, &original, size).unwrap());
+    drop(conn);
     let _ = fs::remove_dir_all(&base);
 }
 
@@ -3194,5 +3202,141 @@ fn renaming_a_folder_keeps_its_photos_values_and_empty_folders_are_listed() {
     assert!(folders::delete_empty_library_folder(&root, "Full").is_err(), "a folder with a photo stays");
     folders::delete_empty_library_folder(&root, "Empty").unwrap();
     assert!(!library.join("Empty").exists() && library.join("Full").join("b.jpg").exists());
+    let _ = fs::remove_dir_all(&base);
+}
+// How long the things a server does for every window take on a large library (docs/plans/speed-and-reliability.md,
+// phase 0). Builds a library of made-up rows and one-byte files, so it says nothing about decoding or models:
+// only the database, the disk checks and the JSON.
+//   cargo test -p lumina-core --lib timing_of_a_large_library -- --ignored --nocapture
+// LUMINA_TIMING_PHOTOS sets the size (default 50000).
+#[test]
+#[ignore]
+fn timing_of_a_large_library() {
+    let photos: usize = std::env::var("LUMINA_TIMING_PHOTOS").ok().and_then(|v| v.parse().ok()).unwrap_or(50_000);
+    let base = std::env::temp_dir().join(format!("lumina_timing_{}", std::process::id()));
+    let (data, library) = (base.join("data"), base.join("library"));
+    fs::create_dir_all(&data).unwrap();
+    let host: SharedHost = Arc::new(DirHost(data.clone()));
+    let root = library.to_string_lossy().to_string();
+    let vector = |seed: usize| -> Vec<u8> {
+        let mut v: Vec<f32> = (0..512).map(|i| (((seed * 31 + i * 17) % 1000) as f32 / 500.0) - 1.0).collect();
+        let norm = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+        v.iter_mut().for_each(|x| *x /= norm);
+        face_engine::embedding_to_blob(&v)
+    };
+    let step = |label: &str, started: Instant| eprintln!("{:>9.1} ms  {label}", started.elapsed().as_secs_f64() * 1000.0);
+
+    let t = Instant::now();
+    {
+        let mut conn = open_global_db(&*host).unwrap();
+        db::migrate(&conn).unwrap();
+        libraries::open(&conn, &root).unwrap();
+        let tx = conn.transaction().unwrap();
+        for n in 0..40 {
+            tx.execute("INSERT INTO people (name) VALUES (?1)", params![format!("Person {n}")]).unwrap();
+        }
+        for i in 0..photos {
+            let folder = library.join(format!("{}", 2000 + i % 25)).join(format!("{:02}", i % 12 + 1));
+            if i < 300 {
+                fs::create_dir_all(&folder).unwrap();
+            }
+            let path = folder.join(format!("IMG_{i:06}.jpg"));
+            fs::write(&path, b"x").unwrap();
+            let hash = format!("{i:016x}");
+            tx.execute(
+                "INSERT INTO photos (hash, current_path, subfolder, file_size, modified_time, width, height, ai_caption, captured_at, camera_model, dhash, exif_checked)
+                 VALUES (?1, ?2, ?3, ?4, 1700000000, 4000, 3000, ?5, ?6, 'Pixel 9', ?7, 2)",
+                params![
+                    hash,
+                    path.to_string_lossy(),
+                    format!("{}/{:02}", 2000 + i % 25, i % 12 + 1),
+                    1_000_000 + i as i64,
+                    "A made-up caption of about the length the caption model writes for a photo of people outside.",
+                    format!("{}-{:02}-{:02} 12:{:02}:00", 2000 + i % 25, i % 12 + 1, i % 28 + 1, i % 60),
+                    format!("{:016x}", (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)),
+                ],
+            )
+            .unwrap();
+            for tag in ["outside", "people", "summer"] {
+                tx.execute("INSERT INTO photo_tags (hash, tag) VALUES (?1, ?2)", params![hash, tag]).unwrap();
+            }
+            tx.execute("INSERT INTO photo_clip (hash, embedding, model) VALUES (?1, ?2, ?3)", params![hash, vector(i), clip::CLIP_MODEL_ID]).unwrap();
+            for f in 0..2 {
+                // Three faces in four have a name
+                let name = ((i + f) % 4 != 0).then(|| format!("Person {}", (i + f * 7) % 40));
+                tx.execute(
+                    "INSERT INTO photo_faces (face_id, hash, bbox_x, bbox_y, bbox_w, bbox_h, person_name, face_thumb, embedding, embedding_blob, engine)
+                     VALUES (?1, ?2, 0.2, 0.2, 0.1, 0.1, ?3, ?4, '[]', ?5, ?6)",
+                    params![format!("{hash}_{f}"), hash, name, format!("faces/{hash}_{f}.jpg"), vector(i * 2 + f), face_engine::FACE_ENGINE_V2],
+                )
+                .unwrap();
+                if let Some(name) = name {
+                    tx.execute("INSERT OR IGNORE INTO photo_people (hash, person_name) VALUES (?1, ?2)", params![hash, name]).unwrap();
+                }
+            }
+        }
+        tx.commit().unwrap();
+    }
+    step(&format!("made a library of {photos} photos"), t);
+    eprintln!("database: {:.0} MB", fs::metadata(data.join("library.db")).unwrap().len() as f64 / 1e6);
+
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    for round in ["first", "again"] {
+        eprintln!("--- {round}");
+        let conn = open_global_db(&*host).unwrap();
+        let prefix = make_folder_prefix(Some(&root));
+
+        let t = Instant::now();
+        let listed = scan::list_library_photos(&*host, &root).unwrap();
+        step(&format!("list_library_photos ({} photos): what opening a library costs the server", listed.len()), t);
+
+        let t = Instant::now();
+        let index = scan::load_library_index(&conn, &prefix).unwrap();
+        step("  of which: the four queries (load_library_index)", t);
+        let t = Instant::now();
+        let there = index.cache.keys().filter(|p| Path::new(p.as_str()).exists()).count();
+        step(&format!("  of which: is each file there ({there})"), t);
+        let t = Instant::now();
+        let hashes: Vec<String> = listed.iter().map(|p| p.hash.clone()).collect();
+        let vectors = clip::clip_vectors(&conn, &hashes);
+        step(&format!("  of which: copying {} smart search vectors", vectors.len()), t);
+        let t = Instant::now();
+        let mut again = listed.clone();
+        scan::assign_duplicate_groups(&mut again, &vectors);
+        step("  of which: duplicate groups", t);
+
+        let t = Instant::now();
+        let value = serde_json::to_value(&listed).unwrap();
+        step("the answer as a JSON tree (rpc.rs answer)", t);
+        let t = Instant::now();
+        let text = serde_json::to_string(&value).unwrap();
+        step(&format!("the tree as text ({:.0} MB)", text.len() as f64 / 1e6), t);
+        let t = Instant::now();
+        let direct = serde_json::to_string(&listed).unwrap();
+        step(&format!("the answer as text directly ({:.0} MB)", direct.len() as f64 / 1e6), t);
+
+        let t = Instant::now();
+        let library = libraries::list(&conn).unwrap().remove(0);
+        let present = libraries::present_photos(&conn, library.id).unwrap().len();
+        step(&format!("list_libraries: counting the files that are there ({present})"), t);
+        let t = Instant::now();
+        let people = rt.block_on(people::get_people(host.clone(), Some(root.clone()))).unwrap();
+        step(&format!("get_people ({})", people.len()), t);
+        let t = Instant::now();
+        for i in 0..100 {
+            assert!(scan::find_by_content(&conn, &format!("f{i:015x}"), 999).unwrap().is_none());
+        }
+        step("upload check: 100 photos the server doesn't have", t);
+        let t = Instant::now();
+        let suggestions = face_review::compute_face_suggestions(&*host, &conn, Some(&root)).unwrap();
+        step(&format!("face suggestions for every person ({} people with some)", suggestions.len()), t);
+        let t = Instant::now();
+        for _ in 0..300 {
+            let c = open_global_db(&*host).unwrap();
+            let _: i64 = c.query_row("SELECT COUNT(*) FROM libraries", [], |r| r.get(0)).unwrap();
+        }
+        step("300 connections opened for one small query each (a screen of thumbnails)", t);
+    }
+    drop(rt);
     let _ = fs::remove_dir_all(&base);
 }

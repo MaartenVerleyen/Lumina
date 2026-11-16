@@ -293,7 +293,7 @@ fn run_face_scan(app_clone: &dyn Host, hashes: Vec<String>, models: Arc<FaceMode
                                 (by * 100.0).round() as i32
                             );
                             let face_thumb_path = faces_dir.join(format!("{}.jpg", face_id));
-                            let _ = face_thumbnail(&img, face.detection.bbox).save(&face_thumb_path);
+                            let _ = thumbs::save_jpeg_whole(&face_thumbnail(&img, face.detection.bbox), &face_thumb_path);
                             writes.push(PendingFaceWrite {
                                 face: FaceInstance {
                                     face_id,
@@ -536,7 +536,7 @@ pub(crate) fn video_faces(models: &FaceModels, hash: &str, frames_dir: &Path, fa
         let (bx, by, bw, bh) = face.detection.bbox;
         let face_id = video_frames::face_frame_id(hash, n, face.detection.bbox);
         let face_thumb_path = faces_dir.join(format!("{face_id}.jpg"));
-        let _ = face_thumbnail(img, face.detection.bbox).save(&face_thumb_path);
+        let _ = thumbs::save_jpeg_whole(&face_thumbnail(img, face.detection.bbox), &face_thumb_path);
         kept.push((n, face.embedding.clone(), face.detection.bbox));
         writes.push(PendingFaceWrite {
             face: FaceInstance {

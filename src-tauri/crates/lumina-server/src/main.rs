@@ -136,7 +136,7 @@ async fn serve(config: &Config, host: Arc<ServerHost>) -> Result<(), String> {
     // Shared dynamic albums follow the library as it changes
     dynamic::keep_up(host.clone());
 
-    let mut changes = host.subscribe();
+    let mut changes = host.take_watched().ok_or("The pipeline runs once per server")?;
     let mut jobs = host.jobs.take_receiver().ok_or("The pipeline runs once per server")?;
     let pipeline = pipeline(config, host.clone());
     for root in &roots {
@@ -144,8 +144,6 @@ async fn serve(config: &Config, host: Arc<ServerHost>) -> Result<(), String> {
             eprintln!("[library] {root}: {e}");
         }
     }
-    // What the first updates sent is not a change to the libraries
-    changes = changes.resubscribe();
     watch::watch_libraries(host.clone(), roots.clone())?;
     println!("Watching {} for changes (Ctrl+C stops)", roots.join(", "));
 
@@ -158,12 +156,9 @@ async fn serve(config: &Config, host: Arc<ServerHost>) -> Result<(), String> {
                 return Ok(());
             }
             event = changes.recv() => {
-                if let Ok((name, payload)) = event {
-                    if name == "library-files-changed" {
-                        if let Some(root) = payload.as_str() {
-                            pending.insert(root.to_string());
-                        }
-                    }
+                // Changes that come while a pass or a job runs wait here, and start the next pass
+                if let Some(root) = event {
+                    pending.insert(root);
                 }
             }
             Some(job) = jobs.recv() => {
@@ -171,7 +166,6 @@ async fn serve(config: &Config, host: Arc<ServerHost>) -> Result<(), String> {
                 if let Err(e) = pipeline.run(job).await {
                     eprintln!("[job] {e}");
                 }
-                changes = changes.resubscribe();
             }
             _ = tokio::time::sleep(Duration::from_secs(5)), if !pending.is_empty() => {
                 for root in std::mem::take(&mut pending) {
@@ -179,8 +173,6 @@ async fn serve(config: &Config, host: Arc<ServerHost>) -> Result<(), String> {
                         eprintln!("[library] {root}: {e}");
                     }
                 }
-                // What the updates themselves stirred up is not a change to the library
-                changes = changes.resubscribe();
             }
         }
     }

@@ -104,6 +104,23 @@ mod imp {
         let _ = conn.execute("INSERT OR IGNORE INTO phone_backup (server, hash, at) VALUES (?1, ?2, ?3)", params![server, hash, now()]);
     }
 
+    // What the phone remembers as backed up is asked about again once a week: a file lost on the server, or a
+    // server put back from an older backup, would otherwise never be noticed, and the photo never sent again
+    const RECHECK_EVERY: i64 = 7 * 24 * 3600;
+    const CHECKED: &str = "phone-backup-checked";
+
+    // The file holds the server and when everything was last asked about (seconds since 1970), on two lines
+    fn recheck_due(dir: &Path, server: &str) -> bool {
+        let kept = fs::read_to_string(dir.join(CHECKED)).unwrap_or_default();
+        let mut lines = kept.lines();
+        let (kept_server, at) = (lines.next().unwrap_or(""), lines.next().and_then(|l| l.parse::<i64>().ok()).unwrap_or(0));
+        kept_server != server || now() - at >= RECHECK_EVERY
+    }
+
+    fn forget(conn: &rusqlite::Connection, server: &str, hash: &str) {
+        let _ = conn.execute("DELETE FROM phone_backup WHERE server = ?1 AND hash = ?2", params![server, hash]);
+    }
+
     // One run of the background worker: the backup (`backup`; `selection`: a Back up for chosen photos, which with
     // none left to do does nothing, never a whole backup), then the followed albums (`follows`)
     #[allow(clippy::too_many_arguments)]
@@ -119,7 +136,7 @@ mod imp {
             let p = STATE.lock().unwrap().clone();
             let last = Last { at: now(), server: server.to_string(), uploaded: p.done, failed: p.failed, outcome: outcome.clone() };
             if let Ok(bytes) = serde_json::to_vec(&last) {
-                let _ = fs::write(dir.join("phone-backup.json"), bytes);
+                let _ = write_whole(&dir.join("phone-backup.json"), &bytes);
             }
         }
         if follows && !CANCEL.load(Ordering::SeqCst) {
@@ -212,6 +229,8 @@ mod imp {
             let rows = stmt.query_map([server], |r| r.get::<_, String>(0)).map_err(|e| format!("error: {e}"))?;
             rows.filter_map(Result::ok).collect()
         };
+        // A whole backup, a week after the last full check: every photo is asked about, also those remembered
+        let recheck = only.is_none() && recheck_due(dir, server);
         // Back up for a selection: only those photos this time (phone-backup-only.json, phone_backup_selected), in
         // whatever folder; else the folders chosen
         let mut seen = HashSet::new();
@@ -222,7 +241,7 @@ mod imp {
                     Some(o) => o.contains(h),
                     None => folders.iter().any(|f| *f == m.folder),
                 };
-                wanted && !backed.contains(h) && seen.insert(h.clone())
+                wanted && (recheck || !backed.contains(h)) && seen.insert(h.clone())
             })
             .collect();
         if todo.is_empty() {
@@ -236,7 +255,7 @@ mod imp {
         let conn_server = Conn { http: remote.http.clone(), base: entry.url.clone(), token };
         let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|e| format!("error: {e}"))?;
         let label = crate::remote::label_of(server);
-        let outcome = runtime.block_on(send(&conn, &conn_server, server, &label, todo));
+        let outcome = runtime.block_on(send(&conn, &conn_server, server, &label, todo, recheck.then_some(dir)));
         if outcome.as_deref() == Ok("done") {
             forget_only(dir, only.as_ref());
         }
@@ -343,17 +362,24 @@ mod imp {
 
     // A selection done: those photos leave the list; ones chosen meanwhile (a second selection) stay for the
     // next pass
+    // A small state file, whole or not at all (Android may stop the worker at any moment)
+    pub fn write_whole(file: &Path, bytes: &[u8]) -> std::io::Result<()> {
+        let tmp = file.with_extension("part");
+        fs::write(&tmp, bytes).and_then(|_| fs::rename(&tmp, file))
+    }
+
     fn forget_only(dir: &Path, done: Option<&HashSet<String>>) {
         let Some(done) = done else { return };
         let left: Vec<String> = read_only(dir).unwrap_or_default().into_iter().filter(|h| !done.contains(h)).collect();
         if left.is_empty() {
             let _ = fs::remove_file(dir.join(ONLY));
         } else if let Ok(bytes) = serde_json::to_vec(&left) {
-            let _ = fs::write(dir.join(ONLY), bytes);
+            let _ = write_whole(&dir.join(ONLY), &bytes);
         }
     }
 
-    async fn send(db: &rusqlite::Connection, c: &Conn, server: &str, label: &str, todo: Vec<(PhoneMedia, String)>) -> Result<String, String> {
+    // `rechecked`: this run asks about every photo (see RECHECK_EVERY); the folder to note it in once all are asked
+    async fn send(db: &rusqlite::Connection, c: &Conn, server: &str, label: &str, todo: Vec<(PhoneMedia, String)>, rechecked: Option<&Path>) -> Result<String, String> {
         // 3. Ask the server which of them it lacks; what it has is remembered
         let mut missing_all = Vec::new();
         for batch in todo.chunks(500) {
@@ -365,11 +391,17 @@ mod imp {
             let missing: HashSet<String> = transfer::check_missing(c, &files).await.map_err(failure)?.into_iter().collect();
             for (m, hash) in batch {
                 if missing.contains(hash) {
+                    // Remembered as backed up, and the server no longer has it: it goes again
+                    forget(db, server, hash);
                     missing_all.push((m.clone(), hash.clone()));
                 } else {
                     remember(db, server, hash);
                 }
             }
+        }
+        if let Some(dir) = rechecked {
+            let _ = write_whole(&dir.join(CHECKED), format!("{server}
+{}", now()).as_bytes());
         }
         if missing_all.is_empty() {
             return Ok("done".into());
@@ -792,7 +824,7 @@ pub fn phone_backup_selected(app: AppHandle, hashes: Vec<String>) -> Result<(), 
         let mut all = imp::read_only(&dir).unwrap_or_default();
         all.extend(hashes);
         let bytes = serde_json::to_vec(&all).map_err(|e| e.to_string())?;
-        fs::write(dir.join(imp::ONLY), bytes).map_err(|e| e.to_string())?;
+        imp::write_whole(&dir.join(imp::ONLY), &bytes).map_err(|e| e.to_string())?;
         crate::android::call(&app, "backupNow", serde_json::json!({ "anyNetwork": false, "selection": true })).map(|_| ())
     }
     #[cfg(not(target_os = "android"))]

@@ -674,7 +674,7 @@ pub fn record_face_v2(
     let faces_dir = get_app_storage_dir(app).join("faces");
     let _ = fs::create_dir_all(&faces_dir);
     let face_thumb_path = faces_dir.join(format!("{}.jpg", face_id));
-    let _ = face_thumbnail(img, bbox).save(&face_thumb_path);
+    let _ = thumbs::save_jpeg_whole(&face_thumbnail(img, bbox), &face_thumb_path);
     let face_thumb_str = face_thumb_path.to_string_lossy().to_string();
 
     let _ = conn.execute(

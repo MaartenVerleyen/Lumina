@@ -559,23 +559,24 @@ pub async fn unassign_faces_batch(app: SharedHost, face_ids: Vec<String>, person
         let mut conn = open_global_db(&app)?;
         let mut affected_hashes: Vec<String> = Vec::new();
 
-        if let Ok(tx) = conn.transaction() {
+        {
+            let tx = conn.transaction().map_err(|e| e.to_string())?;
             for fid in &face_ids {
                 if let Ok(h) = tx.query_row(
                     "SELECT hash FROM photo_faces WHERE face_id = ?1",
                     params![fid],
                     |r| r.get::<_, String>(0),
                 ) {
-                    let _ = tx.execute(
+                    tx.execute(
                         "UPDATE photo_faces SET person_name = NULL WHERE face_id = ?1",
                         params![fid],
-                    );
+                    ).map_err(|e| e.to_string())?;
                     if !affected_hashes.contains(&h) {
                         affected_hashes.push(h);
                     }
                 }
             }
-            let _ = tx.commit();
+            tx.commit().map_err(|e| e.to_string())?;
         }
 
         let mut updated_faces_map: HashMap<String, Vec<FaceInstance>> = HashMap::new();
@@ -610,40 +611,41 @@ pub async fn assign_faces_to_person_batch(app: SharedHost, face_ids: Vec<String>
         let mut updated_hashes = Vec::new();
         let mut old_names_by_hash: Vec<(String, Option<String>)> = Vec::new();
 
-        if let Ok(tx) = conn.transaction() {
-            let _ = tx.execute(
+        {
+            let tx = conn.transaction().map_err(|e| e.to_string())?;
+            tx.execute(
                 "INSERT OR IGNORE INTO people (name) VALUES (?1)",
                 params![clean],
-            );
+            ).map_err(|e| e.to_string())?;
             for fid in &face_ids {
                 if let Ok((h, thumb, old_person)) = tx.query_row(
                     "SELECT hash, face_thumb, person_name FROM photo_faces WHERE face_id = ?1",
                     params![fid],
                     |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?)),
                 ) {
-                    let _ = tx.execute(
+                    tx.execute(
                         "UPDATE photo_faces SET person_name = ?1 WHERE face_id = ?2",
                         params![clean, fid],
-                    );
-                    let _ = tx.execute(
+                    ).map_err(|e| e.to_string())?;
+                    tx.execute(
                         "DELETE FROM face_rejections WHERE face_id = ?1 AND (lower(person_name) = lower(?2) OR person_name = ?3)",
                         params![fid, clean, IGNORED_FACE],
-                    );
-                    let _ = tx.execute(
+                    ).map_err(|e| e.to_string())?;
+                    tx.execute(
                         "INSERT OR IGNORE INTO photo_people (hash, person_name) VALUES (?1, ?2)",
                         params![h, clean],
-                    );
-                    let _ = tx.execute(
+                    ).map_err(|e| e.to_string())?;
+                    tx.execute(
                         "UPDATE people SET cover_face_thumb = ?1 WHERE name = ?2 AND (cover_face_thumb IS NULL OR cover_face_thumb = '')",
                         params![thumb, clean],
-                    );
+                    ).map_err(|e| e.to_string())?;
                     old_names_by_hash.push((h.clone(), old_person));
                     if !updated_hashes.contains(&h) {
                         updated_hashes.push(h);
                     }
                 }
             }
-            let _ = tx.commit();
+            tx.commit().map_err(|e| e.to_string())?;
         }
 
         if let Ok(mut g) = PENDING_CANDIDATES_CACHE.lock() {

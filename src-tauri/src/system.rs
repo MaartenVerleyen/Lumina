@@ -12,6 +12,21 @@ pub fn linux_webkit_workarounds() {
         // SAFETY: called first thing in main, while the process has a single thread
         unsafe { std::env::set_var(var, "1") };
     }
+
+    // The AppImage carries GStreamer's core but looks for its plugins only inside itself, so video and sound
+    // fail ("GStreamer element appsink not found") although the system has them: point it at the system's
+    // plugins (Arch's folder, then Debian and Ubuntu's). Only when run from an AppImage; the user's own setting wins.
+    let plugins = "GST_PLUGIN_SYSTEM_PATH";
+    if std::env::var_os("APPIMAGE").is_some() && std::env::var_os(plugins).is_none() {
+        let found: Vec<&str> = ["/usr/lib/gstreamer-1.0", "/usr/lib/x86_64-linux-gnu/gstreamer-1.0", "/usr/lib64/gstreamer-1.0"]
+            .into_iter()
+            .filter(|dir| Path::new(dir).is_dir())
+            .collect();
+        if !found.is_empty() {
+            // SAFETY: as above, before any other thread exists
+            unsafe { std::env::set_var(plugins, found.join(":")) };
+        }
+    }
 }
 
 #[tauri::command]

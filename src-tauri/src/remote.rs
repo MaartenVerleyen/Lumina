@@ -637,12 +637,24 @@ pub async fn serve_media(app: AppHandle, request: tauri::http::Request<Vec<u8>>)
         if let Some(dir) = cache_file.parent() {
             let _ = fs::create_dir_all(dir);
         }
-        if fs::write(&cache_file, &bytes).is_ok() && r.cache_writes.fetch_add(1, Ordering::Relaxed) % 200 == 0 {
+        if write_whole(&cache_file, &bytes).is_ok() && r.cache_writes.fetch_add(1, Ordering::Relaxed) % 200 == 0 {
             let (root, limit) = (r.cache_root(), r.cache_limit());
             std::thread::spawn(move || trim_cache(&root, limit));
         }
     }
     builder.body(bytes).unwrap()
+}
+
+// A file of the cache, whole or not at all: an app stopped halfway through a plain write (Android does that)
+// would leave half a thumbnail that is then shown as the photo for good
+fn write_whole(file: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    let tmp = file.with_extension(format!("{}.part", NEXT.fetch_add(1, Ordering::Relaxed)));
+    let written = fs::write(&tmp, bytes).and_then(|_| fs::rename(&tmp, file));
+    if written.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    written
 }
 
 // A server's thumbnail into the cache, unless it is there (Keep all thumbnails, offline.rs); true when fetched
@@ -663,7 +675,7 @@ pub async fn cache_thumb(app: &AppHandle, server: &str, id: &str) -> Result<bool
     if let Some(dir) = file.parent() {
         fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
-    fs::write(&file, &bytes).map_err(|e| e.to_string())?;
+    write_whole(&file, &bytes).map_err(|e| e.to_string())?;
     Ok(true)
 }
 

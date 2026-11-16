@@ -174,7 +174,7 @@ pub async fn check(State(state): State<Shared>, Extension(user): Extension<User>
         let (conn, _) = may_upload(&state, &user)?;
         let mut missing = Vec::new();
         for f in body.files {
-            if scan::find_by_content(&conn, &f.hash, f.size)?.is_none() {
+            if !scan::holds_file(&conn, &f.hash, f.size)? {
                 missing.push(f.hash);
             }
         }
@@ -191,6 +191,15 @@ pub struct StartBody {
     full_hash: String,
     // Seconds since 1970: the file's modification time, put back at the end
     modified: i64,
+}
+
+// One writer per upload: a chunk sent again while its first try is still being written would otherwise pass
+// the same offset check and land twice
+static WRITERS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<std::sync::Mutex<()>>>>> =
+    std::sync::LazyLock::new(Default::default);
+
+fn writer(id: &str) -> std::sync::Arc<std::sync::Mutex<()>> {
+    WRITERS.lock().unwrap_or_else(|e| e.into_inner()).entry(id.to_string()).or_default().clone()
 }
 
 fn received(host: &ServerHost, id: &str) -> u64 {
@@ -307,6 +316,8 @@ pub async fn chunk(
     blocking(move || {
         let (conn, _) = may_upload(&state, &user)?;
         let upload = find(&conn, &user, &id)?;
+        let turn = writer(&id);
+        let _turn = turn.lock().unwrap_or_else(|e| e.into_inner());
         let have = received(&state.host, &id);
         // Not where the file stands: tell the client where to carry on
         if offset != have {
@@ -317,7 +328,6 @@ pub async fn chunk(
         }
         let mut file = std::fs::OpenOptions::new().append(true).open(part_path(&state.host, &id)).map_err(|e| ApiError::from(e.to_string()))?;
         file.write_all(&body).map_err(|e| ApiError::from(format!("Couldn't save the chunk: {e}")))?;
-        file.flush().map_err(|e| ApiError::from(e.to_string()))?;
         Ok(Json(json!({ "received": have + body.len() as u64 })).into_response())
     })
     .await
@@ -336,7 +346,16 @@ fn move_file(from: &Path, to: &Path) -> Result<(), String> {
         return Ok(());
     }
     std::fs::copy(from, to).map_err(|e| format!("Couldn't put the file in the library: {e}"))?;
+    // On the library's disk for good before the copy it came from goes
+    std::fs::OpenOptions::new().write(true).open(to).and_then(|f| f.sync_all()).map_err(|e| format!("Couldn't put the file in the library: {e}"))?;
     std::fs::remove_file(from).map_err(|e| e.to_string())
+}
+
+// A folder's new entry on disk for good (Linux; Windows can't open a folder this way and needs no such step)
+fn sync_dir(dir: &Path) {
+    if let Ok(d) = std::fs::File::open(dir) {
+        let _ = d.sync_all();
+    }
 }
 
 pub async fn finish(
@@ -353,6 +372,8 @@ pub async fn finish(
         let upload = find(&conn, &user2, &id)?;
         let host = &state2.host;
         let part = part_path(host, &id);
+        let turn = writer(&id);
+        let _turn = turn.lock().unwrap_or_else(|e| e.into_inner());
         let have = received(host, &id);
         if have != upload.size {
             return Err(ApiError::new(StatusCode::CONFLICT, format!("Only {have} of {} bytes have arrived", upload.size)));
@@ -360,7 +381,11 @@ pub async fn finish(
         let forget = || {
             let _ = std::fs::remove_file(&part);
             let _ = conn.execute("DELETE FROM uploads WHERE id = ?1", [&id]);
+            WRITERS.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
         };
+        // The client takes "finished" as "safe on the server" (a phone then counts the photo as backed up): the
+        // bytes are on disk before that is said, not only in the system's cache
+        std::fs::OpenOptions::new().append(true).open(&part).and_then(|f| f.sync_all()).map_err(|e| ApiError::from(format!("Couldn't save the file: {e}")))?;
         if file_blake3(&part)? != upload.full_hash {
             forget();
             return Err(ApiError::new(
@@ -372,7 +397,9 @@ pub async fn finish(
         std::fs::create_dir_all(&dir).map_err(|e| ApiError::from(e.to_string()))?;
         let dest = free_name(&dir, &upload.name);
         move_file(&part, &dest)?;
+        sync_dir(&dir);
         let _ = conn.execute("DELETE FROM uploads WHERE id = ?1", [&id]);
+        WRITERS.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
         if let Ok(f) = std::fs::OpenOptions::new().write(true).open(&dest) {
             let _ = f.set_modified(UNIX_EPOCH + Duration::from_secs(upload.modified.max(0) as u64));
         }

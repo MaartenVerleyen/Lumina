@@ -73,9 +73,10 @@ pub fn set_manual_location(app: SharedHost, hashes: Vec<String>, location: Strin
     // an empty name clears both
     let keep_coordinates = final_lat.is_none() && final_lon.is_none() && !final_loc.is_empty();
 
-    if let Ok(tx) = conn.transaction() {
+    {
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
         for h in hashes {
-            let _ = if keep_coordinates {
+            let written = if keep_coordinates {
                 tx.execute("UPDATE photos SET location = ?1 WHERE hash = ?2", params![final_loc, h])
             } else {
                 tx.execute(
@@ -83,8 +84,9 @@ pub fn set_manual_location(app: SharedHost, hashes: Vec<String>, location: Strin
                     params![final_loc, final_lat, final_lon, h],
                 )
             };
+            written.map_err(|e| e.to_string())?;
         }
-        let _ = tx.commit();
+        tx.commit().map_err(|e| e.to_string())?;
     }
 
     // The resolved place name (reverse-geocoded when only coordinates were given), so the UI can update in place
@@ -95,28 +97,30 @@ pub fn set_manual_location(app: SharedHost, hashes: Vec<String>, location: Strin
 
 pub fn set_photo_flag(app: SharedHost, hashes: Vec<String>, flag: Option<String>) -> Result<(), String> {
     let mut conn = open_global_db(&app)?;
-    if let Ok(tx) = conn.transaction() {
+    {
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
         for h in hashes {
-            let _ = tx.execute(
+            tx.execute(
                 "UPDATE photos SET flag = ?1 WHERE hash = ?2",
                 params![flag, h],
-            );
+            ).map_err(|e| e.to_string())?;
         }
-        let _ = tx.commit();
+        tx.commit().map_err(|e| e.to_string())?;
     }
     Ok(())
 }
 
 pub fn set_photo_color_label(app: SharedHost, hashes: Vec<String>, color: Option<String>) -> Result<(), String> {
     let mut conn = open_global_db(&app)?;
-    if let Ok(tx) = conn.transaction() {
+    {
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
         for h in hashes {
-            let _ = tx.execute(
+            tx.execute(
                 "UPDATE photos SET color_label = ?1 WHERE hash = ?2",
                 params![color, h],
-            );
+            ).map_err(|e| e.to_string())?;
         }
-        let _ = tx.commit();
+        tx.commit().map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -125,16 +129,17 @@ pub fn set_photo_rotation(app: SharedHost, hashes: Vec<String>, delta_degrees: i
     let mut conn = open_global_db(&app)?;
     let mut out = HashMap::new();
 
-    if let Ok(tx) = conn.transaction() {
+    {
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
         for h in hashes {
             let cur: i32 = tx
                 .query_row("SELECT COALESCE(rotation, 0) FROM photos WHERE hash = ?1", params![h], |r| r.get(0))
                 .unwrap_or(0);
             let next = (cur + delta_degrees).rem_euclid(360);
-            let _ = tx.execute("UPDATE photos SET rotation = ?1 WHERE hash = ?2", params![next, h]);
+            tx.execute("UPDATE photos SET rotation = ?1 WHERE hash = ?2", params![next, h]).map_err(|e| e.to_string())?;
             out.insert(h, next);
         }
-        let _ = tx.commit();
+        tx.commit().map_err(|e| e.to_string())?;
     }
 
     Ok(out)
@@ -157,7 +162,7 @@ pub fn set_photos_rotation_exact(app: SharedHost, ops: Vec<RotationResetInput>) 
             .prepare("UPDATE photos SET rotation = ?1 WHERE hash = ?2")
             .map_err(|e| e.to_string())?;
         for op in &ops {
-            let _ = stmt.execute(params![op.rotation.rem_euclid(360), op.hash]);
+            stmt.execute(params![op.rotation.rem_euclid(360), op.hash]).map_err(|e| e.to_string())?;
         }
     }
     tx.commit().map_err(|e| e.to_string())?;
@@ -193,7 +198,7 @@ pub fn stage_photos_move(app: SharedHost, ops: Vec<StagedMoveInput>) -> Result<u
             .prepare("UPDATE photos SET staged_target = ?1 WHERE hash = ?2")
             .map_err(|e| e.to_string())?;
         for op in &ops {
-            let _ = stmt.execute(params![op.target_subfolder, op.hash]);
+            stmt.execute(params![op.target_subfolder, op.hash]).map_err(|e| e.to_string())?;
         }
     }
     tx.commit().map_err(|e| e.to_string())?;
@@ -240,14 +245,15 @@ pub fn get_staged_operations(app: SharedHost, root_folder: Option<String>) -> Re
 pub fn set_photo_basket(app: SharedHost, hashes: Vec<String>, in_basket: bool) -> Result<(), String> {
     let mut conn = open_global_db(&app)?;
     let val = if in_basket { 1 } else { 0 };
-    if let Ok(tx) = conn.transaction() {
+    {
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
         for h in hashes {
-            let _ = tx.execute(
+            tx.execute(
                 "UPDATE photos SET in_basket = ?1 WHERE hash = ?2",
                 params![val, h],
-            );
+            ).map_err(|e| e.to_string())?;
         }
-        let _ = tx.commit();
+        tx.commit().map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -315,7 +321,8 @@ pub fn shift_capture_timestamps(app: SharedHost, hashes: Vec<String>, offset_min
     let mut conn = open_global_db(&app)?;
     let mut out = Vec::new();
 
-    if let Ok(tx) = conn.transaction() {
+    {
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
         for h in hashes {
             let cur_dt: String = tx
                 .query_row(
@@ -326,17 +333,17 @@ pub fn shift_capture_timestamps(app: SharedHost, hashes: Vec<String>, offset_min
                 .unwrap_or_default();
 
             if let Some(shifted) = shift_exif_datetime_str(&cur_dt, offset_minutes) {
-                let _ = tx.execute(
+                tx.execute(
                     "UPDATE photos SET captured_at = ?1 WHERE hash = ?2",
                     params![shifted, h],
-                );
+                ).map_err(|e| e.to_string())?;
                 out.push(TimestampShiftResult {
                     hash: h,
                     captured_at: shifted,
                 });
             }
         }
-        let _ = tx.commit();
+        tx.commit().map_err(|e| e.to_string())?;
     }
 
     Ok(out)
@@ -355,7 +362,7 @@ pub fn set_photos_rating(app: SharedHost, hashes: Vec<String>, rating: i32) -> R
             .prepare("UPDATE photos SET rating = ?1 WHERE hash = ?2")
             .map_err(|e| e.to_string())?;
         for h in &hashes {
-            let _ = stmt.execute(params![rating, h]);
+            stmt.execute(params![rating, h]).map_err(|e| e.to_string())?;
         }
     }
     tx.commit().map_err(|e| e.to_string())?;
@@ -377,7 +384,7 @@ pub fn add_tag_batch(app: SharedHost, hashes: Vec<String>, tag: String) -> Resul
             .prepare("INSERT OR IGNORE INTO photo_tags (hash, tag) VALUES (?1, ?2)")
             .map_err(|e| e.to_string())?;
         for h in &hashes {
-            let _ = stmt.execute(params![h, clean_tag]);
+            stmt.execute(params![h, clean_tag]).map_err(|e| e.to_string())?;
         }
     }
     tx.commit().map_err(|e| e.to_string())?;

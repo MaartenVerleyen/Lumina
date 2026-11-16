@@ -800,6 +800,20 @@ pub fn find_by_content(conn: &Connection, hash: &str, size: u64) -> Result<Optio
     Ok(None)
 }
 
+// Whether the library still holds the file itself, for "does the server have this photo?" before an upload or a
+// backup. A row outlives its file (the ratings and names come back with it), so the row alone says nothing:
+// a photo whose file was lost must be sent again. Only a file missing from a folder that is still there counts
+// as lost; when the folder is gone too the disk may just not be connected, and nothing is asked for again.
+pub fn holds_file(conn: &Connection, hash: &str, size: u64) -> Result<bool, String> {
+    let Some(row) = find_by_content(conn, hash, size)? else { return Ok(false) };
+    let path: Option<String> = conn
+        .query_row("SELECT current_path FROM photos WHERE hash = ?1", [&row], |r| r.get(0))
+        .map_err(|e| e.to_string())?;
+    let Some(path) = path.filter(|p| !p.is_empty()) else { return Ok(false) };
+    let path = Path::new(&path);
+    Ok(path.is_file() || !path.parent().is_some_and(Path::is_dir))
+}
+
 // One file just put into a library (an upload), indexed on its own: no walk of the library, and no new scan
 // generation, so a scan or pipeline pass that runs isn't superseded. Its thumbnail (and a video's frames)
 // follow in a pass of their own. Answers the photo as a listing shows it.

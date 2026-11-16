@@ -40,9 +40,14 @@ interface State {
   settings: BackupSettings | null;
   status: BackupStatus | null;
   uploading: Set<string>;
+  // Why the counts couldn't be read, when they couldn't
+  error: string | null;
 }
 
-let state: State = { settings: null, status: null, uploading: new Set() };
+let state: State = { settings: null, status: null, uploading: new Set(), error: null };
+// The server the Backup page shows before one is saved in the settings (a new install: the first one signed in
+// to). Without it nothing was ever counted, and the page said "Counting…" for good.
+let shownServer: string | null = null;
 const listeners = new Set<() => void>();
 let timer: number | null = null;
 let polling = false;
@@ -65,15 +70,17 @@ async function poll() {
   try {
     const settings = state.settings ?? (await callLocal<BackupSettings>("phone_backup_settings"));
     let status: BackupStatus | null = null;
-    if (settings.server) {
-      status = await callLocal<BackupStatus>("phone_backup_status", { server: settings.server, videos: settings.videos, folders: settings.folders });
+    const server = settings.server ?? shownServer;
+    if (server) {
+      status = await callLocal<BackupStatus>("phone_backup_status", { server, videos: settings.videos, folders: settings.folders });
     }
     const uploading = status?.progress.running ? new Set(status.progress.uploading) : new Set<string>();
     // The same set while nothing changed, so the grid doesn't draw again every second
     const same = uploading.size === state.uploading.size && [...uploading].every((h) => state.uploading.has(h));
-    set({ settings, status, uploading: same ? state.uploading : uploading });
-  } catch {
-    // The next look tries again
+    set({ settings, status, uploading: same ? state.uploading : uploading, error: null });
+  } catch (e) {
+    // The next look tries again; the page says why meanwhile
+    if (state.error !== String(e)) set({ error: String(e) });
   }
   polling = false;
   // Looking on while anything shows it (the loop starts and stops with its listeners)
@@ -90,6 +97,13 @@ async function poll() {
 // After Backup's settings changed: shown at once, and the counts asked again
 export function setBackupSettings(settings: BackupSettings) {
   set({ settings });
+  refreshBackup();
+}
+
+// The server the Backup page is showing (see shownServer)
+export function showBackupServer(server: string | null) {
+  if (server === shownServer) return;
+  shownServer = server;
   refreshBackup();
 }
 

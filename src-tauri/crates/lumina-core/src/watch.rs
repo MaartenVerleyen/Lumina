@@ -33,6 +33,17 @@ pub fn is_change(kind: &EventKind) -> bool {
     !matches!(kind, EventKind::Access(AccessKind::Open(_) | AccessKind::Close(AccessMode::Read) | AccessKind::Read))
 }
 
+// Lumina's own files in its data folder (thumbnails, previews, face crops, video frames, uploads on their way):
+// when the data folder sits inside a library, making them is not a change to the library
+const OWN_FOLDERS: &[&str] = &["thumbnails", "previews", "faces", "frames", "transcodes", "incoming", "exports", "models"];
+
+pub fn is_own_file(data_dir: &Path, path: &Path) -> bool {
+    path.strip_prefix(data_dir)
+        .ok()
+        .and_then(|rest| rest.components().next())
+        .is_some_and(|first| OWN_FOLDERS.iter().any(|f| first.as_os_str() == *f))
+}
+
 // Starts watching `root` (stopping the previous watch); None just stops
 pub fn watch_library(app: SharedHost, root: Option<String>) -> Result<(), String> {
     watch_libraries(app, root.into_iter().collect())
@@ -48,11 +59,12 @@ pub fn watch_libraries(app: SharedHost, roots: Vec<String>) -> Result<(), String
     for root in roots {
         let folder = root.clone();
         let host = app.clone();
+        let data_dir = app.data_dir();
         let mut debouncer = new_debouncer(Duration::from_secs(2), None, move |res: DebounceEventResult| {
             if let Ok(events) = res {
                 if events
                     .iter()
-                    .any(|e| is_change(&e.kind) && e.paths.iter().any(|p| is_library_photo(p) || is_folder_change(&e.kind, p)))
+                    .any(|e| is_change(&e.kind) && e.paths.iter().any(|p| !is_own_file(&data_dir, p) && (is_library_photo(p) || is_folder_change(&e.kind, p))))
                 {
                     let _ = emit_to(&host, "library-files-changed", folder.clone());
                 }

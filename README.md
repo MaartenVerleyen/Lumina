@@ -188,9 +188,11 @@ Videos: MP4, MOV, M4V, 3GP, AVI, MTS, M2TS and MPG.
 ### Linux and Mac
 
 - **Linux:** each release has an AppImage (updates itself) and a .deb for Debian and Ubuntu. Lumina uses the
-  system's ffmpeg for video frames and HEIC, and GStreamer's "good" plugins to play videos (the .deb installs
-  both; with the AppImage, install `ffmpeg` and `gst-plugins-good` yourself). Built on Ubuntu 24.04, so it
-  needs a system at least that recent.
+  system's ffmpeg for video frames and HEIC, and GStreamer's plugins to play videos (the .deb installs both).
+  With the AppImage, install them yourself; on Arch and CachyOS:
+  `sudo pacman -S --needed fuse2 ffmpeg gst-plugins-base gst-plugins-good gst-plugins-bad gst-libav`.
+  To get Lumina in the app menu with its icon, open the AppImage with Gear Lever (Flathub) or AppImageLauncher.
+  Built on Ubuntu 24.04, so it needs a system at least that recent.
 - **Mac (Apple Silicon, macOS 13.4 or later):** the .dmg works with the photo libraries on a Lumina server for now; opening folders
   on the Mac itself comes later. The app isn't signed by Apple yet: the first time, right-click Lumina in
   Applications and choose **Open**, then **Open** again. Intel Macs aren't supported.

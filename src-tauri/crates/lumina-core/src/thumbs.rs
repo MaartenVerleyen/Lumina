@@ -488,6 +488,19 @@ fn process_video(video: &PhotoItem, frames_dir: &Path, ffmpeg: Option<&Path>, fo
     item
 }
 
+// A JPEG the app keeps (a preview, a face crop): written next to its place and renamed, so a process stopped
+// halfway never leaves half a picture where a whole one is expected. The name in between is one of a kind,
+// for two threads that make the same picture at once.
+pub fn save_jpeg_whole(img: &image::RgbImage, target: &Path) -> Result<(), String> {
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    let tmp = target.with_extension(format!("{}-{}.tmp.jpg", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+    let saved = img.save(&tmp).map_err(|e| e.to_string()).and_then(|_| fs::rename(&tmp, target).map_err(|e| e.to_string()));
+    if saved.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    saved
+}
+
 // Written next to the target and renamed, so the grid never loads a half-written file while an older
 // thumbnail is being replaced
 fn write_thumbnail(img: &DynamicImage, target: &Path) -> bool {

@@ -21,7 +21,9 @@ export function useLiveUpdates(core: LibraryCore) {
         const byHash = new Map(fresh.map((p) => [p.hash, p]));
         setPhotos((prev) => prev.map((p) => (byHash.has(p.hash) ? mergeFreshPhoto(p, byHash.get(p.hash)!) : p)));
       } catch {
-        // The next change fetches them again
+        // Not fetched (the server out of reach for a moment): they go with the next change, or the next look
+        // after the connection is back
+        for (const h of hashes) pending.add(h);
       }
     };
     const off = subscribe<{ hashes: string[]; origin?: string }>("photos-changed", (e) => {

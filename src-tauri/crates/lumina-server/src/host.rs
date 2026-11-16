@@ -16,6 +16,11 @@ pub struct ServerHost {
     last_logged: Mutex<HashMap<String, Instant>>,
     // The latest progress of each kind of work running now, for the admin page and the tray
     progress: Mutex<HashMap<String, Progress>>,
+    // Files changed in a library, as the watcher saw it: the serve loop takes the receiving end. Kept apart from
+    // the events, where the pipeline says the same after its own indexing, so a pass never mistakes its own
+    // word for a change, and never loses a real one that came while it ran
+    watched: tokio::sync::mpsc::UnboundedSender<String>,
+    watched_receiver: Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<String>>>,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -56,13 +61,28 @@ const LOGGED: &[&str] = &[
 impl ServerHost {
     pub fn new(data_dir: PathBuf) -> ServerHost {
         let _ = std::fs::create_dir_all(&data_dir);
+        let (watched, watched_receiver) = tokio::sync::mpsc::unbounded_channel();
         ServerHost {
+            watched,
+            watched_receiver: Mutex::new(Some(watched_receiver)),
             jobs: Default::default(),
             data_dir,
             events: broadcast::channel(1024).0,
             last_logged: Mutex::new(HashMap::new()),
             progress: Mutex::new(HashMap::new()),
         }
+    }
+
+    // The serve loop takes the watcher's changes once
+    pub fn take_watched(&self) -> Option<tokio::sync::mpsc::UnboundedReceiver<String>> {
+        self.watched_receiver.lock().unwrap().take()
+    }
+
+    // The pipeline indexed a library: open windows list it again. Not a change for the serve loop to act on.
+    pub fn library_indexed(&self, root: &str) {
+        let payload = serde_json::json!(root);
+        self.log("library-files-changed", &payload);
+        let _ = self.events.send(("library-files-changed".to_string(), payload));
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<(String, JsonValue)> {
@@ -90,6 +110,11 @@ impl ServerHost {
             .collect();
         list.sort_by(|a, b| b.seconds.total_cmp(&a.seconds));
         list
+    }
+
+    // Whether work of this kind (by its progress event) has reported progress and not yet that it is done
+    pub fn working_on(&self, event: &str) -> bool {
+        self.progress.lock().unwrap().contains_key(event)
     }
 
     fn note_progress(&self, event: &str, p: &JsonValue) {
@@ -188,6 +213,12 @@ impl Host for ServerHost {
     fn emit_value(&self, event: &str, payload: JsonValue) {
         self.log(event, &payload);
         self.note_progress(event, &payload);
+        // Only the watcher sends this through the engine's host
+        if event == "library-files-changed" {
+            if let Some(root) = payload.as_str() {
+                let _ = self.watched.send(root.to_string());
+            }
+        }
         let finished = finished_photos(event, &payload);
         let _ = self.events.send((event.to_string(), payload));
         if !finished.is_empty() {
@@ -215,4 +246,40 @@ pub(crate) fn finished_photos(event: &str, payload: &JsonValue) -> Vec<String> {
 // server already get in full (the socket leaves those out for them, except for captions)
 fn analysed(event: &str, hashes: Vec<String>) -> JsonValue {
     serde_json::json!({ "hashes": hashes, "by": "server", "origin": "server", "after": event })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // The serve loop acts on what the watcher saw, also when it comes while a pass runs, and never on the
+    // pipeline's own "this library was indexed", which goes to the windows only
+    #[test]
+    fn the_watchers_changes_are_kept_apart_from_the_pipelines_own() {
+        let dir = std::env::temp_dir().join(format!("lumina_host_test_{}", std::process::id()));
+        let host = ServerHost::new(dir.clone());
+        let mut watched = host.take_watched().unwrap();
+        assert!(host.take_watched().is_none());
+        let mut events = host.subscribe();
+
+        host.library_indexed("/photos");
+        assert!(watched.try_recv().is_err(), "the pipeline's own word is not a change");
+        assert_eq!(events.try_recv().unwrap().0, "library-files-changed");
+
+        // Nobody is reading while a pass runs: the changes wait
+        host.emit_value("library-files-changed", serde_json::json!("/photos"));
+        host.emit_value("library-files-changed", serde_json::json!("/more"));
+        host.emit_value("photos-changed", serde_json::json!({ "hashes": [] }));
+        assert_eq!(watched.try_recv().unwrap(), "/photos");
+        assert_eq!(watched.try_recv().unwrap(), "/more");
+        assert!(watched.try_recv().is_err());
+        assert_eq!(events.try_recv().unwrap().0, "library-files-changed");
+
+        assert!(!host.working_on("face-scan-progress"));
+        host.emit_value("face-scan-progress", serde_json::json!({ "completed": 1, "total": 5, "done": false }));
+        assert!(host.working_on("face-scan-progress"));
+        host.emit_value("face-scan-progress", serde_json::json!({ "completed": 5, "total": 5, "done": true }));
+        assert!(!host.working_on("face-scan-progress"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

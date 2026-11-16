@@ -44,6 +44,11 @@ const REFRESH_EVENTS: &[&str] = &["people-changed", "albums-changed", "shares-ch
 // The ones after which what a user may see can differ: the session and scope are looked at again first
 const SCOPE_EVENTS: &[&str] = &["albums-changed", "shares-changed", "roles-changed"];
 const SESSION_RECHECK: Duration = Duration::from_secs(1);
+// A client that fell behind lost events (the channel drops the oldest): it is told to look again, with the
+// event it already acts on after a dropped connection. At most this often, so a phone on a slow line during
+// a long scan isn't made to list its library over and over.
+const RESYNC_EVENT: &str = "events-reconnected";
+const RESYNC_EVERY: Duration = Duration::from_secs(60);
 // Progress events whose per-photo results the grid applies by itself (thumbnails, faces)
 const ALREADY_SENT: &[&str] = &["thumb-batch-ready", "face-scan-progress"];
 
@@ -163,7 +168,17 @@ async fn forward(
     };
     // A ping now and then keeps proxies (tailscale serve) from closing a quiet connection
     let mut ping = tokio::time::interval(Duration::from_secs(25));
+    let mut missed = false;
+    let mut resynced: Option<Instant> = None;
     loop {
+        if missed && resynced.is_none_or(|t| t.elapsed() >= RESYNC_EVERY) {
+            missed = false;
+            resynced = Some(Instant::now());
+            let text = serde_json::json!({ "event": RESYNC_EVENT, "payload": null }).to_string();
+            if socket.send(Message::Text(text.into())).await.is_err() {
+                return;
+            }
+        }
         tokio::select! {
             event = rx.recv() => match event {
                 Ok((name, payload)) => match listener.event(&name, payload).await {
@@ -180,8 +195,8 @@ async fn forward(
                         return;
                     }
                 },
-                // A slow client misses some progress events; the next ones still come
-                Err(RecvError::Lagged(_)) => {}
+                // A slow client misses events, changes by others among them: it is told to look again
+                Err(RecvError::Lagged(_)) => missed = true,
                 Err(RecvError::Closed) => return,
             },
             incoming = socket.recv() => match incoming {
