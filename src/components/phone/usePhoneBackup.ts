@@ -91,7 +91,8 @@ async function poll() {
     return;
   }
   const busy = state.status?.progress.running || state.status?.waiting;
-  timer = window.setTimeout(poll, busy ? 1000 : 2000);
+  // With nothing going on the counts change only when a backup starts by itself, which may show a little later
+  timer = window.setTimeout(poll, busy ? 1000 : 5000);
 }
 
 // After Backup's settings changed: shown at once, and the counts asked again

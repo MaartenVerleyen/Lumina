@@ -25,6 +25,8 @@ const DEFAULT_CACHE_MB: u64 = 2048;
 // Media kinds a server serves (the frontend's MediaRef kinds); thumbnails and faces are cached
 const MEDIA_KINDS: &[&str] = &["thumb", "original", "preview", "face"];
 const CACHED_KINDS: &[&str] = &["thumb", "face"];
+// How often a cached file's "last used" date is written
+const CACHE_USED_EVERY: Duration = Duration::from_secs(24 * 3600);
 // A video asks for "the rest of the file"; it gets it in pieces of this size
 const MEDIA_RANGE_STEP: u64 = 8 * 1024 * 1024;
 
@@ -412,14 +414,48 @@ async fn rpc_text(app: &AppHandle, server: &str, command: &str, args: Option<Val
         return Err(format!("Not a command: {command}"));
     }
     let r = remote(app);
-    let mut req = r.request(server, reqwest::Method::POST, &format!("/api/rpc/{command}"))?;
-    // The window that made a change names itself, so it can skip the server's echo of it
-    if let Some(c) = client {
-        req = req.header("X-Lumina-Client", c);
+    let args = args.unwrap_or_else(|| json!({}));
+    let send = |tag: Option<String>| {
+        let req = r.request(server, reqwest::Method::POST, &format!("/api/rpc/{command}"));
+        let (args, client) = (&args, &client);
+        async move {
+            let mut req = req?;
+            // The window that made a change names itself, so it can skip the server's echo of it
+            if let Some(c) = client {
+                req = req.header("X-Lumina-Client", c);
+            }
+            if let Some(tag) = tag {
+                req = req.header("If-None-Match", tag);
+            }
+            // Listing a large library or a long job can take a while; nothing waits forever
+            req.timeout(Duration::from_secs(600)).json(args).send().await.map_err(unreachable)
+        }
+    };
+    // A library's list is kept on disk as the server sent it (offline.rs), with the tag the server gave it.
+    // The tag goes along with the next request: a server whose list is still that one says so in a few
+    // bytes, and the kept list is the answer.
+    let list = if command == "scan_folder" { args["folderPath"].as_str().map(|root| crate::offline::KeptList::of(app, server, root)) } else { None };
+    let Some(list) = list else {
+        return check(app, server, send(None).await?).await?.text().await.map_err(|e| e.to_string());
+    };
+    let mut resp = send(list.tag()).await?;
+    if resp.status() == reqwest::StatusCode::NOT_MODIFIED {
+        let kept = list.clone();
+        match tauri::async_runtime::spawn_blocking(move || kept.read()).await.ok().flatten() {
+            Some(text) => return Ok(text),
+            // The kept list went away meanwhile: asked for whole
+            None => resp = send(None).await?,
+        }
     }
-    // Listing a large library or a long job can take a while; nothing waits forever
-    let resp = req.timeout(Duration::from_secs(600)).json(&args.unwrap_or_else(|| json!({}))).send().await.map_err(unreachable)?;
-    check(app, server, resp).await?.text().await.map_err(|e| e.to_string())
+    let resp = check(app, server, resp).await?;
+    let tag = resp.headers().get("etag").and_then(|v| v.to_str().ok()).map(str::to_string);
+    let text = resp.text().await.map_err(|e| e.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        list.write(&text, tag.as_deref());
+        text
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 // Events: one WebSocket per signed-in server, again after a pause (1 s, 2 s, ... 30 s) when it closes.
@@ -599,13 +635,20 @@ pub async fn serve_media(app: AppHandle, request: tauri::http::Request<Vec<u8>>)
     let cache_file = r.cache_file(server, kind, id);
     if cached {
         if let Ok(bytes) = fs::read(&cache_file) {
-            // Recently used: the cache trims the files used longest ago first
-            if let Ok(f) = fs::OpenOptions::new().write(true).open(&cache_file) {
-                let _ = f.set_modified(SystemTime::now());
+            // Recently used: the cache trims the files used longest ago first. A day is exact enough for that,
+            // and saves a write for every thumbnail the grid scrolls past.
+            let age = fs::metadata(&cache_file).and_then(|m| m.modified()).ok().and_then(|at| at.elapsed().ok());
+            if age.is_none_or(|age| age > CACHE_USED_EVERY) {
+                if let Ok(f) = fs::OpenOptions::new().write(true).open(&cache_file) {
+                    let _ = f.set_modified(SystemTime::now());
+                }
             }
             return tauri::http::Response::builder()
                 .header("Content-Type", sniff(&bytes))
                 .header("Access-Control-Allow-Origin", "*")
+                // The web view keeps it too, so scrolling back doesn't ask here again (a changed thumbnail
+                // has another address: thumb_rev)
+                .header("Cache-Control", "private, max-age=86400")
                 .body(bytes)
                 .unwrap();
         }

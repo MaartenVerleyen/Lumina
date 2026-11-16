@@ -588,6 +588,9 @@ async function kept<T>(key: string): Promise<T | null> {
 }
 
 function keep(key: string, value: unknown) {
+  // A library's photos are kept by the app itself, as the server's answer came (remote.rs, offline.rs):
+  // sending tens of megabytes back from the window only to write them down took seconds
+  if (key.startsWith("photos:")) return;
   if (inDesktopApp) void callLocal("offline_save", { key, value }).catch(() => {});
 }
 

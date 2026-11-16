@@ -199,14 +199,22 @@ mod imp {
         ensure_table(&conn).map_err(|e| format!("error: {e}"))?;
 
         // 1. The content id of each photo (read once, for photos new since the app last saw them)
-        let unknown = media.iter().filter(|m| phone::known_id(&conn, m).is_none()).count();
+        // Looked up once each: the count of new ones and the loop below share the answers
+        let media: Vec<(PhoneMedia, Option<String>)> = media
+            .into_iter()
+            .map(|m| {
+                let known = phone::known_id(&conn, &m);
+                (m, known)
+            })
+            .collect();
+        let unknown = media.iter().filter(|(_, known)| known.is_none()).count();
         let mut read = 0;
         let mut photos: Vec<(PhoneMedia, String)> = Vec::with_capacity(media.len());
-        for m in media {
+        for (m, known) in media {
             if CANCEL.load(Ordering::SeqCst) {
                 return Ok("done".into());
             }
-            let hash = match phone::known_id(&conn, &m) {
+            let hash = match known {
                 Some(hash) => hash,
                 None => {
                     read += 1;

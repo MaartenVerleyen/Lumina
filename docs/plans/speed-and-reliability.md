@@ -152,6 +152,29 @@ Left out on purpose: library queries by `library_id` (S2: the list is made once 
 server with one library the query reads the same rows either way) and connection reuse (S6: 0.7 ms per
 connection measured).
 
+Checked on a running server with the test library: the list is made once, a client with its tag gets 304, an
+editor's change makes a new list with a new tag, a refused edit leaves the kept one.
+
+## Phase 3 as built (branch `speed/phase-2`)
+
+- **S5, the app keeps a library's list with the server's tag** (`remote.rs` `rpc_text`, `offline.rs`
+  `KeptList`): the answer to `scan_folder` is written to the offline file as it came, with its `ETag` next to
+  it. The next request sends the tag; on 304 the kept file is the answer. The desktop app and the phone
+  both go through this. A guest's list has no tag and is fetched whole, as before.
+- **C3:** the window no longer sends a library's list back to be kept (the app has it already), and
+  `offline_load` hands the file over as text.
+- **C1:** cached server thumbnails carry `Cache-Control` for a day; the "last used" date is written at most
+  once a day per file.
+- **C2:** a single change still shows after 250 ms; changes that keep coming are fetched every 1.5 s. A
+  change to photos this window doesn't show no longer redraws it. Patching by index was left out: mapping
+  50,000 photos takes about a millisecond, the redraw is the cost.
+- **C4:** the phone backup looks up each photo's id once; the Backup page asks for the counts every 5 s
+  when nothing is running (1 s while it is).
+
+Not done: the web client. A browser would have to hold the list's text (tens of megabytes) in memory to
+answer a 304 from; that waits for phase 4. Not checked in the running apps yet: the kept list on the
+desktop and the phone (its parts are tested, the server side was checked with curl).
+
 ## The plan
 
 Each phase is one branch and can be one release. Effort: S is under an hour of work, M a few hours, L a day
