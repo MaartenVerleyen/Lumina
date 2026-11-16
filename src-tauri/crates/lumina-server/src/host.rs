@@ -11,6 +11,10 @@ use tokio::sync::broadcast;
 pub struct ServerHost {
     // Jobs asked for from the admin page, and what the pipeline is doing
     pub jobs: crate::pipeline::Jobs,
+    // Each library's photo list, kept ready until something changes (listing.rs)
+    pub listings: crate::listing::Listings,
+    // Each user's scope, kept between requests (scope.rs)
+    pub scopes: crate::scope::Scopes,
     data_dir: PathBuf,
     events: broadcast::Sender<(String, JsonValue)>,
     last_logged: Mutex<HashMap<String, Instant>>,
@@ -66,6 +70,8 @@ impl ServerHost {
             watched,
             watched_receiver: Mutex::new(Some(watched_receiver)),
             jobs: Default::default(),
+            listings: Default::default(),
+            scopes: Default::default(),
             data_dir,
             events: broadcast::channel(1024).0,
             last_logged: Mutex::new(HashMap::new()),
@@ -81,6 +87,7 @@ impl ServerHost {
     // The pipeline indexed a library: open windows list it again. Not a change for the serve loop to act on.
     pub fn library_indexed(&self, root: &str) {
         let payload = serde_json::json!(root);
+        self.listings.changed();
         self.log("library-files-changed", &payload);
         let _ = self.events.send(("library-files-changed".to_string(), payload));
     }
@@ -212,6 +219,8 @@ impl Host for ServerHost {
 
     fn emit_value(&self, event: &str, payload: JsonValue) {
         self.log(event, &payload);
+        self.listings.note_event(event, &payload);
+        self.scopes.note_event(event);
         self.note_progress(event, &payload);
         // Only the watcher sends this through the engine's host
         if event == "library-files-changed" {

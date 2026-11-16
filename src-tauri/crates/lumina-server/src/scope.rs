@@ -88,6 +88,49 @@ pub struct Scope {
     pub shared_albums: HashSet<i64>,
 }
 
+// Each user's scope, kept between requests: a grid asks for hundreds of thumbnails, and each one needs the
+// scope (the libraries with a count each, the roles, for a guest every photo shared with them). What a scope
+// is made from changes through editing and admin commands and is announced with the events below; both move
+// `version` on. A kept scope is also made again after half a minute, whatever happened.
+pub struct Scopes {
+    version: std::sync::atomic::AtomicU64,
+    kept: std::sync::Mutex<HashMap<i64, (u64, std::time::Instant, Role, std::sync::Arc<Scope>)>>,
+}
+
+impl Default for Scopes {
+    fn default() -> Scopes {
+        Scopes { version: Default::default(), kept: Default::default() }
+    }
+}
+
+const SCOPE_KEPT_FOR: std::time::Duration = std::time::Duration::from_secs(30);
+const SCOPE_EVENTS: &[&str] = &["albums-changed", "shares-changed", "roles-changed", "libraries-changed"];
+
+impl Scopes {
+    pub fn changed(&self) {
+        self.version.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    pub fn note_event(&self, event: &str) {
+        if SCOPE_EVENTS.contains(&event) {
+            self.changed();
+        }
+    }
+
+    pub fn of(&self, conn: &Connection, user: &User) -> Result<std::sync::Arc<Scope>, String> {
+        // Read before loading: a change that comes while it loads ends this scope too
+        let version = self.version.load(std::sync::atomic::Ordering::SeqCst);
+        if let Some((v, made, role, scope)) = self.kept.lock().unwrap_or_else(|e| e.into_inner()).get(&user.id) {
+            if *v == version && *role == user.role && made.elapsed() < SCOPE_KEPT_FOR {
+                return Ok(scope.clone());
+            }
+        }
+        let scope = std::sync::Arc::new(Scope::load(conn, user)?);
+        self.kept.lock().unwrap_or_else(|e| e.into_inner()).insert(user.id, (version, std::time::Instant::now(), user.role, scope.clone()));
+        Ok(scope)
+    }
+}
+
 impl Scope {
     pub fn load(conn: &Connection, user: &User) -> Result<Scope, String> {
         let own = if user.role == Role::Admin { HashMap::new() } else { library_roles_of(conn, user.id)? };

@@ -39,6 +39,7 @@ pub fn migrate(conn: &Connection) -> Result<(), String> {
     let _ = conn.execute("ALTER TABLE photos ADD COLUMN rel_path TEXT", []);
     conn.execute_batch(&format!(
         "CREATE INDEX IF NOT EXISTS idx_photos_library ON photos(library_id);
+         CREATE INDEX IF NOT EXISTS idx_photos_library_hash ON photos(library_id, hash);
          CREATE TRIGGER IF NOT EXISTS photos_library_insert AFTER INSERT ON photos BEGIN
              UPDATE photos SET (library_id, rel_path) = {new} WHERE hash = NEW.hash;
          END;

@@ -319,7 +319,7 @@ async fn media_is_served_by_id_through_the_database() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body, Value::String("thumbnail bytes".into()));
     assert_eq!(headers.get(header::CONTENT_TYPE).unwrap(), "image/jpeg");
-    assert_eq!(headers.get(header::CACHE_CONTROL).unwrap(), "private, max-age=3600");
+    assert_eq!(headers.get(header::CACHE_CONTROL).unwrap(), "private, max-age=86400", "a thumbnail is kept a day");
 
     let (status, _, body) = send(&s.app, get("/media/face/abc123_10_20.jpg", Some(&viewer))).await;
     assert_eq!((status, body), (StatusCode::OK, Value::String("face bytes".into())));
@@ -1421,4 +1421,74 @@ async fn rpc_answers_are_gzipped_when_asked() {
     assert_eq!(status, StatusCode::OK);
     assert!(headers.get(header::CONTENT_ENCODING).is_none());
     assert_eq!(body.as_array().unwrap().len(), 3);
+}
+
+// A library's photo list is made once and kept (listing.rs): the same list for the next window, "not modified"
+// for a client that kept it, and a new one after an edit or after the server's own work
+#[tokio::test]
+async fn a_librarys_list_is_kept_until_something_changes() {
+    use lumina_core::host::Host;
+    let s = server("listing");
+    let (root, _) = add_library(&s);
+    let viewer = login(&s.app, "vera").await;
+    let editor = login(&s.app, "ed").await;
+    let ask = |tag: Option<String>| {
+        let mut req = post("/api/rpc/scan_folder", json!({"folderPath": root}), Some(&viewer));
+        req.headers_mut().insert(header::ACCEPT_ENCODING, "gzip".parse().unwrap());
+        if let Some(tag) = tag {
+            req.headers_mut().insert(header::IF_NONE_MATCH, tag.parse().unwrap());
+        }
+        let app = s.app.clone();
+        async move {
+            let resp = app.oneshot(req).await.unwrap();
+            let (status, headers) = (resp.status(), resp.headers().clone());
+            let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+            let tag = headers.get(header::ETAG).map(|v| v.to_str().unwrap().to_string()).unwrap_or_default();
+            let photos: Value = if bytes.is_empty() {
+                Value::Null
+            } else {
+                assert_eq!(headers.get(header::CONTENT_ENCODING).map(|v| v.to_str().unwrap()), Some("gzip"));
+                serde_json::from_reader(flate2::read::GzDecoder::new(&bytes[..])).unwrap()
+            };
+            (status, tag, photos)
+        }
+    };
+
+    let (status, first, photos) = ask(None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(!first.is_empty());
+    // What a client that takes no gzip gets, worked out the usual way
+    let (_, _, plain) = send(&s.app, post("/api/rpc/scan_folder", json!({"folderPath": root}), Some(&viewer))).await;
+    assert_eq!(photos, plain);
+    assert_eq!(photos[0]["hash"], "abc123");
+
+    let (status, tag, photos) = ask(Some(first.clone())).await;
+    assert_eq!((status, tag.as_str(), &photos), (StatusCode::NOT_MODIFIED, first.as_str(), &Value::Null));
+    assert_eq!(ask(None).await.1, first, "the kept list again");
+    // Counting progress changes nothing
+    s.host.emit_value("scan-progress", json!({"completed": 1, "total": 2, "done": false}));
+    assert_eq!(ask(None).await.1, first);
+
+    // Someone's edit: a new list, with the edit in it
+    let (status, _, _) = send(&s.app, post("/api/rpc/set_photos_rating", json!({"hashes": ["abc123"], "rating": 4}), Some(&editor))).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, second, photos) = ask(Some(first.clone())).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_ne!(second, first);
+    assert_eq!(photos[0]["rating"], 4);
+
+    // The server's own work (a thumbnail made) ends the list too
+    s.host.emit_value("thumb-batch-ready", json!({"items": []}));
+    assert_ne!(ask(None).await.1, second);
+
+    // Someone who sees only part of the server never gets the kept list
+    let conn = db::open_global_db(&*s.host).unwrap();
+    accounts::create_user(&conn, "gus", Role::Guest, "long enough").unwrap();
+    drop(conn);
+    let guest = login(&s.app, "gus").await;
+    let mut req = post("/api/rpc/scan_folder", json!({"folderPath": root}), Some(&guest));
+    req.headers_mut().insert(header::ACCEPT_ENCODING, "gzip".parse().unwrap());
+    let resp = s.app.clone().oneshot(req).await.unwrap();
+    assert!(resp.headers().get(header::ETAG).is_none());
+    assert_ne!(resp.status(), StatusCode::OK, "a guest with nothing shared sees no library");
 }

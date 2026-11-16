@@ -3,7 +3,6 @@
 // it with its type, Range support (seeking in videos) and If-Modified-Since.
 use super::{blocking, lookup, ApiError, Shared};
 use crate::accounts::User;
-use crate::scope::Scope;
 use axum::body::Body;
 use axum::extract::{Extension, Path, Request, State};
 use axum::http::{HeaderValue, StatusCode};
@@ -27,11 +26,20 @@ fn check_id(id: &str) -> Result<(), ApiError> {
 
 // Only photos this user may see (their libraries, or albums shared with them): anything else is "no such
 // media", whether it exists or not
-fn may_see(conn: &rusqlite::Connection, user: &User, hash: &str) -> Result<bool, String> {
-    Scope::load(conn, user)?.can_see(conn, hash)
+fn may_see(host: &crate::host::ServerHost, conn: &rusqlite::Connection, user: &User, hash: &str) -> Result<bool, String> {
+    host.scopes.of(conn, user)?.can_see(conn, hash)
 }
 
 pub(super) async fn send_file(path: PathBuf, req: Request) -> Response {
+    send_file_kept(path, req, "private, max-age=3600").await
+}
+
+// Thumbnails and face crops: a grid asks for hundreds at a time, and each answer costs a session check and a
+// look in the database. They are named by content and change only when made again (a larger size), so the
+// browser keeps them a day and then asks whether its copy is still the one (If-Modified-Since).
+const SMALL_PICTURES: &str = "private, max-age=86400";
+
+async fn send_file_kept(path: PathBuf, req: Request, keep: &'static str) -> Response {
     if !path.is_file() {
         return not_found().into_response();
     }
@@ -39,7 +47,7 @@ pub(super) async fn send_file(path: PathBuf, req: Request) -> Response {
         Ok(resp) => {
             let mut resp = resp.map(Body::new);
             // Files change rarely (a thumbnail is remade, a rotation), and only this user's browser keeps them
-            resp.headers_mut().insert("cache-control", HeaderValue::from_static("private, max-age=3600"));
+            resp.headers_mut().insert("cache-control", HeaderValue::from_static(keep));
             resp
         }
         Err(e) => ApiError::from(e.to_string()).into_response(),
@@ -52,7 +60,7 @@ pub async fn thumb(State(state): State<Shared>, Extension(user): Extension<User>
         let host = state.host.clone();
         blocking(move || {
             let conn = db::open_global_db(&*host)?;
-            if !may_see(&conn, &user, &hash)? {
+            if !may_see(&host, &conn, &user, &hash)? {
                 return Ok(None);
             }
             Ok(lookup::photo_path(&conn, &hash).map_err(|e| e.1)?.map(|_| {
@@ -63,7 +71,7 @@ pub async fn thumb(State(state): State<Shared>, Extension(user): Extension<User>
         .ok_or_else(not_found)
     };
     match found.await {
-        Ok(path) => send_file(path, req).await,
+        Ok(path) => send_file_kept(path, req, SMALL_PICTURES).await,
         Err(e) => e.into_response(),
     }
 }
@@ -75,7 +83,7 @@ pub async fn original(State(state): State<Shared>, Extension(user): Extension<Us
         let host = state.host.clone();
         blocking(move || {
             let conn = db::open_global_db(&*host)?;
-            if !may_see(&conn, &user, &hash)? {
+            if !may_see(&host, &conn, &user, &hash)? {
                 return Ok(None);
             }
             let Some(path) = lookup::photo_path(&conn, &hash).map_err(|e| e.1)? else { return Ok(None) };
@@ -104,7 +112,7 @@ pub async fn preview(State(state): State<Shared>, Extension(user): Extension<Use
         let host = state.host.clone();
         blocking(move || {
             let conn = db::open_global_db(&*host)?;
-            if !may_see(&conn, &user, &hash)? || lookup::photo_path(&conn, &hash).map_err(|e| e.1)?.is_none() {
+            if !may_see(&host, &conn, &user, &hash)? || lookup::photo_path(&conn, &hash).map_err(|e| e.1)?.is_none() {
                 return Ok(None);
             }
             Ok(ffmpeg::existing_playable_copy(host, hash).map(PathBuf::from))
@@ -128,7 +136,7 @@ pub async fn face(State(state): State<Shared>, Extension(user): Extension<User>,
             let conn = db::open_global_db(&*host)?;
             // A face is shown to those who may see its photo
             let on = super::access::photos_of_faces(&conn, &[face_id.clone()]).map_err(|e| e.1)?;
-            if !on.iter().try_fold(false, |seen, h| may_see(&conn, &user, h).map(|s| seen || s))? {
+            if !on.iter().try_fold(false, |seen, h| may_see(&host, &conn, &user, h).map(|s| seen || s))? {
                 return Ok(None);
             }
             Ok(lookup::face_thumb(&conn, &face_id).map_err(|e| e.1)?.map(PathBuf::from))
@@ -137,7 +145,7 @@ pub async fn face(State(state): State<Shared>, Extension(user): Extension<User>,
         .ok_or_else(not_found)
     };
     match found.await {
-        Ok(path) => send_file(path, req).await,
+        Ok(path) => send_file_kept(path, req, SMALL_PICTURES).await,
         Err(e) => e.into_response(),
     }
 }
@@ -180,7 +188,7 @@ pub async fn download(State(state): State<Shared>, Extension(user): Extension<Us
         let host = state.host.clone();
         blocking(move || {
             let conn = db::open_global_db(&*host)?;
-            if !may_see(&conn, &user, &hash)? {
+            if !may_see(&host, &conn, &user, &hash)? {
                 return Ok(None);
             }
             let Some(path) = lookup::photo_path(&conn, &hash).map_err(|e| e.1)? else { return Ok(None) };

@@ -90,6 +90,44 @@ pub fn build_profile(refs: Vec<Vec<f32>>, negatives: Vec<Vec<f32>>) -> Option<Pe
     Some(PersonProfile { refs: select_diverse(refs, MAX_REFERENCES), centroid, negatives })
 }
 
+// A person's profile, kept while the faces it was made from are the same ones. Suggestions are worked out
+// again after every name given or refused, and making every person's profile anew each time (copying all
+// their faces, choosing the 50 that differ most) was a quarter of that work; a confirm changes one person's.
+type KeptProfile = (u64, Option<Arc<PersonProfile>>);
+static PROFILES: LazyLock<Mutex<HashMap<String, KeptProfile>>> = LazyLock::new(Default::default);
+
+// The faces by their ids, whatever their order
+fn faces_mark(ref_ids: &[String], negative_ids: &[String]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let sum = |ids: &[String], salt: u64| {
+        ids.iter().fold(ids.len() as u64 ^ salt, |acc, id| {
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            (salt, id).hash(&mut h);
+            acc.wrapping_add(h.finish())
+        })
+    };
+    sum(ref_ids, 1).rotate_left(17) ^ sum(negative_ids, 2)
+}
+
+// `vectors` fetches the embeddings of face ids; called only when the profile must be made
+pub fn kept_profile(person: &str, ref_ids: &[String], negative_ids: &[String], vectors: impl Fn(&[String]) -> Vec<Vec<f32>>) -> Option<Arc<PersonProfile>> {
+    let mark = faces_mark(ref_ids, negative_ids);
+    if let Some((kept_mark, profile)) = PROFILES.lock().unwrap_or_else(|e| e.into_inner()).get(person) {
+        if *kept_mark == mark {
+            return profile.clone();
+        }
+    }
+    let profile = build_profile(vectors(ref_ids), vectors(negative_ids)).map(Arc::new);
+    PROFILES.lock().unwrap_or_else(|e| e.into_inner()).insert(person.to_string(), (mark, profile.clone()));
+    profile
+}
+
+// A face's embedding was made again or the embeddings were loaded anew: the same ids no longer mean the same
+// faces
+pub fn forget_profiles() {
+    PROFILES.lock().unwrap_or_else(|e| e.into_inner()).clear();
+}
+
 pub fn profile_score(cand: &[f32], profile: &PersonProfile, method: ScoreMethod) -> f32 {
     let centroid_sim = dot(cand, &profile.centroid);
     match method {
@@ -120,9 +158,9 @@ pub struct Assignment {
 // Exclusive assignment: the candidate goes to its single best-scoring person, only when that score clears
 // `min_score`, beats the runner-up by `margin` (ambiguous faces are not suggested to anyone), and the face
 // doesn't look more like one of that person's rejected faces.
-pub fn assign_face(
+pub fn assign_face<P: std::borrow::Borrow<PersonProfile>>(
     cand: &[f32],
-    profiles: &[PersonProfile],
+    profiles: &[P],
     method: ScoreMethod,
     min_score: f32,
     margin: f32,
@@ -130,7 +168,7 @@ pub fn assign_face(
     let mut best: Option<(usize, f32)> = None;
     let mut second = f32::MIN;
     for (i, p) in profiles.iter().enumerate() {
-        let s = profile_score(cand, p, method);
+        let s = profile_score(cand, p.borrow(), method);
         match best {
             Some((_, b)) if s <= b => second = second.max(s),
             _ => {
@@ -142,7 +180,7 @@ pub fn assign_face(
         }
     }
     let (person, score) = best?;
-    if score < min_score || score - second < margin || looks_like_a_rejection(cand, &profiles[person], score) {
+    if score < min_score || score - second < margin || looks_like_a_rejection(cand, profiles[person].borrow(), score) {
         return None;
     }
     Some(Assignment { person, score })

@@ -194,6 +194,7 @@ fn run_face_scan(app_clone: &dyn Host, hashes: Vec<String>, models: Arc<FaceMode
         if let Ok(mut g) = FACE_EMBEDDING_CACHE.lock() {
             g.clear();
         }
+        face_match::forget_profiles();
         if let Ok(mut g) = PENDING_CANDIDATES_CACHE.lock() {
             g.clear();
         }
@@ -353,6 +354,7 @@ fn run_face_scan(app_clone: &dyn Host, hashes: Vec<String>, models: Arc<FaceMode
 
                                 if let Ok(mut guard) = FACE_EMBEDDING_CACHE.lock() {
                                     guard.insert(target_face_id.clone(), item.embedding.clone());
+                                    face_match::forget_profiles();
                                 }
                                 let target_thumb_str = if target_face_id != f.face_id {
                                     let existing_thumb = faces_dir.join(format!("{}.jpg", target_face_id));
@@ -424,6 +426,7 @@ fn run_face_scan(app_clone: &dyn Host, hashes: Vec<String>, models: Arc<FaceMode
                                 );
                                 if let Ok(mut guard) = FACE_EMBEDDING_CACHE.lock() {
                                     guard.insert(fid.clone(), embedding.clone());
+                                    face_match::forget_profiles();
                                 }
                             }
                         }

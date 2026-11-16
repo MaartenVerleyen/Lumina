@@ -3215,6 +3215,7 @@ dependencies = [
  "axum",
  "axum-extra",
  "blake3",
+ "flate2",
  "http-body-util",
  "image",
  "libc",

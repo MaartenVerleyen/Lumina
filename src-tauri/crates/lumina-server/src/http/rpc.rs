@@ -6,6 +6,7 @@ use crate::accounts::{Role, User};
 use axum::body::Bytes;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
+use axum::response::{IntoResponse, Response};
 use lumina_core::host::Host;
 use axum::{Extension, Json};
 use super::lookup;
@@ -212,10 +213,12 @@ fn libraries_for(host: &ServerHost, scope: &Scope) -> Result<JsonValue, ApiError
     let mut out = Vec::new();
     for l in crate::settings::served(libraries::list(&conn)?) {
         let role = scope.role_on(l.id);
-        let present = libraries::present_photos(&conn, l.id)?;
         let photos = if role >= Role::Viewer {
-            present.len()
+            // The kept list knows (and the window asks for that list next); counting meant a look on the disk for
+            // every file of every library, each time a window opened
+            host.listings.of(host, &l.root)?.photos
         } else {
+            let present = libraries::present_photos(&conn, l.id)?;
             let visible = access::visible_photos(&conn, scope, Some(l.id))?;
             present.iter().filter(|h| visible.contains(*h)).count()
         };
@@ -739,7 +742,7 @@ pub async fn call(
     Path(command): Path<String>,
     headers: HeaderMap,
     body: Bytes,
-) -> Result<Json<JsonValue>, ApiError> {
+) -> Result<Response, ApiError> {
     if NOT_ON_SERVER.contains(&command.as_str()) {
         return Err(ApiError::new(StatusCode::NOT_FOUND, format!("{command} isn't available on the server")));
     }
@@ -747,7 +750,7 @@ pub async fn call(
     let host = state.host.clone();
     let scope = {
         let (host, user) = (host.clone(), user.clone());
-        tokio::task::spawn_blocking(move || Scope::load(&db::open_global_db(&*host)?, &user))
+        tokio::task::spawn_blocking(move || host.scopes.of(&db::open_global_db(&*host)?, &user))
             .await
             .map_err(|e| ApiError::from(e.to_string()))??
     };
@@ -762,7 +765,19 @@ pub async fn call(
     } else {
         serde_json::from_slice(&body).map_err(|e| ApiError::new(StatusCode::BAD_REQUEST, format!("Bad JSON: {e}")))?
     };
-    let (mut value, changed) = (cmd.call)(host, Arc::new(scope), args).await.map_err(|e| {
+    if cmd.name == "scan_folder" {
+        if let Some(kept) = kept_listing(&host, &scope, &args, &headers).await? {
+            return Ok(kept);
+        }
+    }
+    let outcome = (cmd.call)(host, scope, args).await;
+    // An editing command may have changed what a library's list shows, whatever it says it changed, and also
+    // when it failed halfway: the kept lists are made again
+    if cmd.role > Role::Viewer {
+        state.host.listings.changed();
+        state.host.scopes.changed();
+    }
+    let (mut value, changed) = outcome.map_err(|e| {
         // "This needs the editor role" from the scope check, named after the command
         if e.0 == StatusCode::FORBIDDEN && e.1.starts_with("This needs") { ApiError(e.0, e.1.replacen("This", &command, 1)) } else { e }
     })?;
@@ -772,7 +787,38 @@ pub async fn call(
         announce(&state, &user, cmd.name, changed, origin).await;
     }
     state.host.hide_data_dir(&mut value);
-    Ok(Json(value))
+    Ok(Json(value).into_response())
+}
+
+// scan_folder for someone who sees the whole server, from the kept list (listing.rs): the list as it was
+// gzipped when made, or "304 Not Modified" for a client whose own copy is that list (If-None-Match). None:
+// answered the usual way (a client that takes no gzip, someone who sees only part of the library).
+async fn kept_listing(host: &Arc<ServerHost>, scope: &Arc<Scope>, args: &JsonValue, headers: &HeaderMap) -> Result<Option<Response>, ApiError> {
+    let header = |name: &str| headers.get(name).and_then(|v| v.to_str().ok()).unwrap_or("");
+    let takes_gzip = header("accept-encoding").split(',').any(|e| e.trim().split(';').next() == Some("gzip"));
+    let Some(folder) = args["folderPath"].as_str() else { return Ok(None) };
+    if !scope.sees_all() || !takes_gzip {
+        return Ok(None);
+    }
+    check(host, scope, Role::Viewer, Some(Target::Root(folder.to_string()))).await?;
+    let (host, folder) = (host.clone(), folder.to_string());
+    let listing = tokio::task::spawn_blocking(move || -> Result<_, ApiError> {
+        let root = lookup::library_root(&*host, &folder)?;
+        host.listings.of(&host, &root).map_err(ApiError::from)
+    })
+    .await
+    .map_err(|e| ApiError::from(e.to_string()))??;
+    let same = header("if-none-match").split(',').any(|tag| tag.trim() == listing.etag);
+    let answer = Response::builder().header("etag", &listing.etag).header("vary", "accept-encoding");
+    let answer = if same {
+        answer.status(StatusCode::NOT_MODIFIED).body(axum::body::Body::empty())
+    } else {
+        answer
+            .header("content-type", "application/json")
+            .header("content-encoding", "gzip")
+            .body(axum::body::Body::from(listing.gzipped.clone()))
+    };
+    answer.map(Some).map_err(|e| ApiError::from(e.to_string()))
 }
 
 // Writes who changed what, and tells every connected client which photos, people or albums to refresh

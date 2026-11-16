@@ -44,6 +44,7 @@ pub fn ensure_embedding_cache_loaded(conn: &Connection) {
             guard.entry(k).or_insert(v);
         }
     }
+    crate::face_match::forget_profiles();
     EMBEDDING_CACHE_WARMED.store(true, Ordering::Release);
 }
 

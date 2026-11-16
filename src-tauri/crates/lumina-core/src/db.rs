@@ -186,6 +186,14 @@ pub fn migrate(conn: &Connection) -> Result<(), String> {
          CREATE INDEX IF NOT EXISTS idx_faces_hash ON photo_faces(hash);
          CREATE INDEX IF NOT EXISTS idx_photos_media ON photos(media_type);",
     );
+    // By person (the people list, a person's photos and faces) and by file size (is this file here already,
+    // under another name?): each was a walk through its whole table. The one on faces holds all that "whose
+    // face is which" needs, so those questions never touch the rows themselves, which carry the embeddings.
+    let _ = conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_people_person ON photo_people(person_name, hash);
+         CREATE INDEX IF NOT EXISTS idx_faces_named ON photo_faces(person_name, engine, face_id, hash);
+         CREATE INDEX IF NOT EXISTS idx_photos_size ON photos(file_size);",
+    );
 
     // Library folders and each photo's path inside its library (Lumina 4.3)
     crate::libraries::migrate(conn)?;

@@ -205,24 +205,24 @@ pub fn compute_face_suggestions(
     }
 
     // Copy what we need out of the shared cache, then score without holding its lock
-    let (profiles, candidates): (Vec<Option<PersonProfile>>, Vec<Option<Vec<f32>>>) = {
+    let (profiles, candidates): (Vec<Option<Arc<PersonProfile>>>, Vec<Option<Vec<f32>>>) = {
         let cache = FACE_EMBEDDING_CACHE.lock().map_err(|e| e.to_string())?;
         let get = |ids: &[String]| -> Vec<Vec<f32>> { ids.iter().filter_map(|id| cache.get(id).cloned()).collect() };
         let profiles = person_names
             .iter()
             .enumerate()
-            .map(|(i, _)| build_profile(get(&person_ref_ids[i]), get(&negative_ids[i])))
+            .map(|(i, name)| kept_profile(&name.to_lowercase(), &person_ref_ids[i], &negative_ids[i], get))
             .collect();
         let candidates = unassigned.iter().map(|u| cache.get(&u.face_id).cloned()).collect();
         (profiles, candidates)
     };
     // Keep the index mapping: assign_face returns an index into the profiles that exist
-    let usable: Vec<(usize, PersonProfile)> = profiles
+    let usable: Vec<(usize, Arc<PersonProfile>)> = profiles
         .into_iter()
         .enumerate()
         .filter_map(|(i, p)| p.map(|p| (i, p)))
         .collect();
-    let (person_of_profile, profile_list): (Vec<usize>, Vec<PersonProfile>) = usable.into_iter().unzip();
+    let (person_of_profile, profile_list): (Vec<usize>, Vec<Arc<PersonProfile>>) = usable.into_iter().unzip();
     if profile_list.is_empty() {
         return Ok(HashMap::new());
     }

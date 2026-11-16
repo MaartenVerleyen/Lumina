@@ -714,6 +714,7 @@ pub fn record_face_v2(
     if let Ok(mut cache) = FACE_EMBEDDING_CACHE.lock() {
         cache.insert(face_id.clone(), embedding);
     }
+    face_match::forget_profiles();
 
     if let Some(ref p_name) = resolved_person_name {
         let clean = p_name.trim().to_string();

@@ -123,6 +123,35 @@ on, at most once a minute), R9, R10.
 - **R12 not done** (rare, and the next scan indexes the file).
 - Not checked on a device yet: R3 and R9 (they compile for Android).
 
+## Phase 2 as built so far (branch `speed/phase-2`)
+
+- **A kept list per library** (`lumina-server/src/listing.rs`, S2–S4): the answer to `scan_folder` is made
+  once, gzipped, and kept until something changes. Every event that passes the server's host ends it, except
+  a short list of ones that change nothing (and counting progress before its last event); so does every
+  command above the viewer role, whatever it says it changed, and an age of ten minutes. It has an `ETag`,
+  and a client that sends it back in `If-None-Match` gets "304 Not Modified" (no client does yet: phase 3).
+  Used for people who see the whole server and ask for gzip (browsers, the desktop app and the phone all
+  do); a guest's list is worked out as before.
+- **`list_libraries` counts from the kept list** (S1), so the disk is asked once per change, not twice per
+  window.
+- **Indexes** (S9, S10): `photo_people(person_name, hash)`, `photo_faces(person_name, engine, face_id, hash)`,
+  `photos(file_size)`, `photos(library_id, hash)`, added on open. Measured: the upload check for 100 new
+  photos went from 0.2 s to 1.5 ms; `get_people` stayed at 0.1 s.
+- **Face suggestions** (S11): measured first, half the time was the queries (reading face rows drags their
+  embeddings along) and a quarter was making every person's profile again. The index on faces now answers
+  "whose face is which" without the rows, and a profile is kept until that person's faces change
+  (`face_match::kept_profile`). Same results, 1.0 s to 0.47 s per run on the generated library. Scoring only
+  the people who changed was not done: a face goes to its single best person, so every person's score counts
+  for every face, and that rework would touch the matching itself.
+- **Each user's scope is kept** between requests (S7; `scope::Scopes`), ended by the album, share, role and
+  library events, by every command above the viewer role, and after 30 s. A role changed from the command
+  line while the server runs can so take up to 30 s to count.
+- **Thumbnails and face crops are kept a day** by the browser (S8), instead of an hour.
+
+Left out on purpose: library queries by `library_id` (S2: the list is made once per change now, and on a
+server with one library the query reads the same rows either way) and connection reuse (S6: 0.7 ms per
+connection measured).
+
 ## The plan
 
 Each phase is one branch and can be one release. Effort: S is under an hour of work, M a few hours, L a day
