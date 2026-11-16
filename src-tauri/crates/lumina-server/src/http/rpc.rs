@@ -217,7 +217,7 @@ fn libraries_for(host: &ServerHost, scope: &Scope) -> Result<JsonValue, ApiError
         let photos = if role >= Role::Viewer {
             // The kept list knows (and the window asks for that list next); counting meant a look on the disk for
             // every file of every library, each time a window opened
-            host.listings.of(host, &l.root)?.photos
+            host.listings.count_of(host, &l.root)?
         } else {
             let present = libraries::present_photos(&conn, l.id)?;
             let visible = access::visible_photos(&conn, scope, Some(l.id))?;
@@ -773,7 +773,7 @@ pub async fn call(
     }
     let outcome = (cmd.call)(host, scope, args).await;
     // An editing command may have changed what a library's list shows, whatever it says it changed, and also
-    // when it failed halfway: the kept lists are made again
+    // when it failed halfway: the kept lists look in the database for what changed
     if cmd.role > Role::Viewer {
         state.host.listings.changed();
         state.host.scopes.changed();
@@ -823,7 +823,7 @@ async fn kept_listing(host: &Arc<ServerHost>, scope: &Arc<Scope>, args: &JsonVal
     let answer = match listing {
         Answer::Same(etag) => answer.header("etag", etag).status(StatusCode::NOT_MODIFIED).body(axum::body::Body::empty()),
         Answer::Differences { etag, base, gzipped: body } => gzipped(answer.header("etag", etag).header(DIFFERENCES, base), body),
-        Answer::Whole(listing) => gzipped(answer.header("etag", &listing.etag), listing.gzipped.clone()),
+        Answer::Whole { etag, gzipped: body } => gzipped(answer.header("etag", etag), body),
     };
     answer.map(Some).map_err(|e| ApiError::from(e.to_string()))
 }

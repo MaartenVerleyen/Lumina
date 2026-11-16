@@ -1477,9 +1477,21 @@ async fn a_librarys_list_is_kept_until_something_changes() {
     assert_ne!(second, first);
     assert_eq!(photos[0]["rating"], 4);
 
-    // The server's own work (a thumbnail made) ends the list too
+    // The server's own work has the kept list look in the database: nothing changed there, so it stays
     s.host.emit_value("thumb-batch-ready", json!({"items": []}));
-    assert_ne!(ask(None).await.1, second);
+    assert_eq!(ask(None).await.1, second);
+    // A caption written by the server shows in the photo's revision, and so in the list
+    let conn = db::open_global_db(&*s.host).unwrap();
+    conn.execute("UPDATE photos SET ai_caption = 'a rocket' WHERE hash = 'abc123'", []).unwrap();
+    drop(conn);
+    assert_eq!(ask(None).await.1, second, "nobody said something changed");
+    s.host.emit_value("ai-batch-progress", json!({"completed": 1, "total": 1}));
+    let (_, third, photos) = ask(None).await;
+    assert_ne!(third, second);
+    assert_eq!((&photos[0]["ai_caption"], &photos[0]["rating"]), (&json!("a rocket"), &json!(4)));
+    // Files that came or went: the whole list is made anew
+    s.host.emit_value("scan-progress", json!({"completed": 2, "total": 2, "done": true}));
+    assert_ne!(ask(None).await.1, third);
 
     // Someone who sees only part of the server never gets the kept list
     let conn = db::open_global_db(&*s.host).unwrap();

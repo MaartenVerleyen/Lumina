@@ -2750,6 +2750,31 @@ fn a_new_file_is_indexed_alone_and_found_by_content() {
     assert!(photo.subfolder.contains("anna"), "{}", photo.subfolder);
     assert_eq!(scan::list_library_photos(&*host, &root).unwrap().len(), 2);
 
+    // A scan that finds nothing new moves no photo's revision
+    let conn = open_global_db(&*host).unwrap();
+    let rev = crate::revision::current(&conn).unwrap();
+    rt.block_on(scan::scan_folder(host.clone(), root.clone(), None)).unwrap();
+    assert_eq!(crate::revision::current(&conn).unwrap(), rev);
+    // Photos read again on their own are the listing's, once they have its links back; a rating changes
+    // none of what the links come from, a new name does
+    let listed = scan::list_library_photos(&*host, &root).unwrap();
+    let hashes: Vec<String> = listed.iter().map(|p| p.hash.clone()).collect();
+    let alone = scan::library_photos_by_hash(&*host, &root, &hashes).unwrap();
+    assert_eq!(alone.len(), listed.len());
+    for p in alone {
+        let old = serde_json::to_value(listed.iter().find(|l| l.hash == p.hash).unwrap()).unwrap();
+        let mut new = serde_json::to_value(&p).unwrap();
+        assert!(scan::keep_links(&old, &mut new));
+        assert_eq!(new, old);
+        new["rating"] = serde_json::json!(5);
+        assert!(scan::keep_links(&old, &mut new));
+        new["name"] = serde_json::json!("other.jpg");
+        assert!(!scan::keep_links(&old, &mut new));
+    }
+    assert_eq!(scan::library_rows(&conn, &root).unwrap(), 2);
+    assert!(scan::library_photos_by_hash(&*host, &base.join("Elsewhere").to_string_lossy(), &hashes).unwrap().is_empty());
+    drop(conn);
+
     // The same photo again: its own row, found by the original's content hash
     let copy = library.join("uploads").join("anna").join("a.jpg");
     fs::copy(library.join("a.jpg"), &copy).unwrap();
@@ -3327,6 +3352,18 @@ fn timing_of_a_large_library() {
             assert!(scan::find_by_content(&conn, &format!("f{i:015x}"), 999).unwrap().is_none());
         }
         step("upload check: 100 photos the server doesn't have", t);
+        // What a kept list does after a change: which photos have a newer revision, and those read again
+        let rev = crate::revision::current(&conn).unwrap();
+        let t = Instant::now();
+        conn.execute("UPDATE photos SET rating = (rating + 1) % 5 WHERE hash IN (SELECT hash FROM photos LIMIT 20)", []).unwrap();
+        step("20 photos rated (with their revisions)", t);
+        let t = Instant::now();
+        let rows = scan::library_rows(&conn, &root).unwrap();
+        step(&format!("after a change: counting the library's rows ({rows})"), t);
+        let t = Instant::now();
+        let changed = crate::revision::changed_since(&conn, rev, 5000).unwrap().unwrap();
+        let again = scan::library_photos_by_hash(&*host, &root, &changed).unwrap();
+        step(&format!("after a change: the changed photos found and read again ({} of {})", again.len(), changed.len()), t);
         let t = Instant::now();
         let suggestions = face_review::compute_face_suggestions(&*host, &conn, Some(&root)).unwrap();
         step(&format!("face suggestions for every person ({} people with some)", suggestions.len()), t);

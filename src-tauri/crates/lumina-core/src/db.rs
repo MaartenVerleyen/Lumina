@@ -207,6 +207,9 @@ pub fn migrate(conn: &Connection) -> Result<(), String> {
         );
     }
 
+    // A revision per photo, kept by triggers (after every column they name exists)
+    crate::revision::migrate(conn)?;
+
     Ok(())
 }
 

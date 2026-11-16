@@ -48,6 +48,7 @@ pub mod people;
 pub mod photo_meta;
 pub mod perf;
 pub mod recycle;
+pub mod revision;
 pub mod scan;
 pub mod search;
 pub mod storage;

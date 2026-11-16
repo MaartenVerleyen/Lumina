@@ -775,6 +775,56 @@ pub fn photos_by_hash<H: Host + ?Sized>(app: &H, hashes: &[String]) -> Result<Ve
     Ok(photos)
 }
 
+// The photos of the library at `root` among these, as its listing shows them but without the library-wide
+// links (see keep_links). A photo of another library, or whose file is gone, is left out, as in the listing.
+pub fn library_photos_by_hash<H: Host + ?Sized>(app: &H, root: &str, hashes: &[String]) -> Result<Vec<PhotoItem>, String> {
+    if hashes.is_empty() {
+        return Ok(Vec::new());
+    }
+    let root_path = PathBuf::from(libraries::normalize_root(root));
+    let conn = open_global_db(app)?;
+    let wanted = serde_json::to_string(hashes).map_err(|e| e.to_string())?;
+    let index = load_index(&conn, "p.hash IN (SELECT value FROM json_each(?1))", &wanted)?;
+    let app_dir = get_app_storage_dir(app);
+    let (thumbs_dir, previews_dir) = (app_dir.join("thumbnails"), app_dir.join("previews"));
+    Ok(index
+        .cache
+        .iter()
+        .filter(|(path, _)| Path::new(path.as_str()).starts_with(&root_path) && Path::new(path.as_str()).exists())
+        .map(|(path, c)| photo_item(&root_path, path, c, &index, &thumbs_dir, &previews_dir))
+        .collect())
+}
+
+// How many rows the library at `root` has, files there or not: a listing kept up to date photo by photo
+// can't see a row that went, so its keeper compares this
+pub fn library_rows(conn: &Connection, root: &str) -> Result<i64, String> {
+    let prefix = make_folder_prefix(Some(&libraries::normalize_root(root)));
+    conn.query_row("SELECT COUNT(*) FROM photos WHERE current_path LIKE ?1 ESCAPE '!'", params![prefix], |r| r.get(0)).map_err(|e| e.to_string())
+}
+
+// What the library-wide links are worked out from (pair_raw_jpegs, link_live_photos, assign_duplicate_groups,
+// which also looks at the "screenshot" tag and the smart search vectors), and what they set
+const LINKS_FROM: &[&str] = &["hash", "name", "subfolder", "captured_at", "media_type", "duration_ms", "dhash", "camera_model"];
+const LINKS: &[&str] = &["duplicate_group", "live_video_hash", "live_video_path", "live_photo_hash"];
+
+// A photo read again on its own (library_photos_by_hash, as JSON) takes the links its listing gave it (`old`),
+// when nothing they are worked out from changed. False when something did: the links of the whole library
+// have to be worked out again.
+pub fn keep_links(old: &serde_json::Value, new: &mut serde_json::Value) -> bool {
+    let screenshot = |p: &serde_json::Value| p["tags"].as_array().is_some_and(|tags| tags.iter().any(|t| t == "screenshot"));
+    if LINKS_FROM.iter().any(|key| old[key] != new[key]) || screenshot(old) != screenshot(new) {
+        return false;
+    }
+    for key in LINKS {
+        new[key] = old[key].clone();
+    }
+    // A RAW or HEIC names itself here; a JPEG its RAW, which the pairing gave it
+    if new["pair_raw_path"].is_null() {
+        new["pair_raw_path"] = old["pair_raw_path"].clone();
+    }
+    true
+}
+
 // Whether the library holds a file with this content hash and size: under that hash, or as a copy that got
 // a path-salted hash (the second copy of the same file in one database). Answers the row's hash.
 pub fn find_by_content(conn: &Connection, hash: &str, size: u64) -> Result<Option<String>, String> {

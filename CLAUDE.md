@@ -82,6 +82,10 @@ with a final `done: true`.
   a new root. Folder-scoped queries still use `current_path LIKE make_folder_prefix(root)`.
 - Videos are `photos` rows with `media_type = 'video'`. Video faces carry their frame in the id.
 - `photos.faces_engine`: the face engine that last scanned the photo (the server's backlog skips those).
+- `photos.rev`: a revision that goes up when something a listing shows about the photo changes (its row, tags,
+  people, faces), kept by triggers (`revision.rs`; the counter is the one-row table `revision`). A new column
+  a listing shows must be added to `PHOTO_COLUMNS` there. The server's kept list of a library
+  (`lumina-server/src/listing.rs`) reads only the photos with a newer revision again.
 - Migrations live in `db::migrate` (`PRAGMA user_version`: 1 screenshots fix, 2 libraries); they must be
   safe to run on every open and keep every count (see the ignored test `migrate_db_copy`).
 

@@ -200,6 +200,35 @@ and can still be done behind the same protocol.
 Checked on a running server with the test library: one rating changed gave 1 KB of differences in place of
 the 32 KB list. Not checked in the running apps.
 
+## A revision per photo, as built (branch `speed/phase-2`)
+
+What phase 4 left: the server made the whole list again after every change. Now it reads only the photos
+that changed.
+
+- **The database** (`lumina-core/src/revision.rs`, run by `db::migrate`): `photos.rev`, a counter in the
+  one-row table `revision`, an index on `rev`, and triggers on `photos`, `photo_tags`, `photo_people` and
+  `photo_faces` that give a photo the next revision when something a listing shows changes. Writing the
+  same values again (a scan that finds nothing new) moves nothing; neither does a face's embedding.
+- **The server's kept list** (`listing.rs`) holds each photo's JSON. After a change it asks for the photos
+  with a newer revision (`revision::changed_since`), reads them again (`scan::library_photos_by_hash`), gives
+  them back their library-wide links (`scan::keep_links`) and replaces them. A change that shows in no photo
+  leaves the list and its tag as they were. The whole list is gzipped only when a client needs all of it.
+- **The whole list is still made anew** when a photo came or went (the library's row count differs, or a
+  changed photo isn't in the list), when a changed photo's name, folder, date, type, dhash or camera changed
+  (the RAW pairs, Live Photos and duplicate groups come from those), after a scan or a smart search pass
+  ended, when more than 5,000 photos changed, and every 30 minutes.
+
+Measured on the generated library of 50,000 photos (release, Windows): after 20 photos were rated, counting
+the rows takes 13 ms and finding and reading the changed photos 8 ms, where making the list takes 3.8 s.
+Making the library itself (50,000 inserts with faces and tags) went from 30 s to 38 s with the triggers.
+
+Costs: the server holds each library's list as JSON in memory (about 77 MB for 50,000 photos, where it held
+9 MB gzipped), and every write to a listed column is followed by two small ones.
+
+Checked on a running server with the test library: a rating changed was "1 photos read again in 5 ms", and
+the kept list was byte for byte the list made from scratch. An existing database (the test server's) took
+the new column and triggers at its next start.
+
 ## The plan
 
 Each phase is one branch and can be one release. Effort: S is under an hour of work, M a few hours, L a day
