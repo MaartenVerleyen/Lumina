@@ -161,7 +161,8 @@ fn run_thumbnail_pass(
     let (videos, photos): (Vec<PhotoItem>, Vec<PhotoItem>) = items.iter().cloned().partition(|p| p.media_type == "video");
 
     // Collector: stream finished thumbnails to the DB and the UI in small batches
-    let mut conn = open_global_db(app).ok();
+    // Without the database the thumbnails are still made, but nothing about them is stored: said in the log
+    let mut conn = open_global_db(app).map_err(|e| eprintln!("[scan] thumbnails for {folder}: the library could not be opened ({e})")).ok();
     let mut batch: Vec<ThumbBatchItem> = Vec::with_capacity(UI_BATCH_SIZE);
     let mut last_flush = Instant::now();
     let mut completed = 0usize;

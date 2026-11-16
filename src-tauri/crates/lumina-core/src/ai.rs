@@ -734,7 +734,7 @@ pub async fn ai_analyze_photo(app: SharedHost, hash: String, image_path_for_ai: 
             .json(&payload)
             .send()
             .await
-            .map_err(|e| format!("Ollama unreachable: {e}"))?;
+            .map_err(|e| format!("{OLLAMA_UNREACHABLE}: {e}"))?;
         if !res.status().is_success() {
             let err = res.text().await.unwrap_or_default();
             return Err(format!("Ollama error: {err}"));
@@ -838,6 +838,10 @@ pub fn top_library_tags(conn: &Connection, max: usize) -> Vec<String> {
 // Captions, tags and text for `hashes`, one photo at a time (Ollama runs vision requests one by one), with the
 // next photo's image prepared while the current one is analysed and up to three attempts per photo.
 // Stop is `cancel_ai_analysis`. Videos and photos no longer in the library are skipped.
+// How a failed request to Ollama starts, and after how many photos in a row a batch gives up on it
+const OLLAMA_UNREACHABLE: &str = "Ollama unreachable";
+const UNREACHABLE_IN_A_ROW: usize = 3;
+
 pub async fn run_caption_batch(app: SharedHost, hashes: Vec<String>, model_name: String) -> Result<AiBatchSummary, String> {
     if AI_BATCH_RUNNING.swap(true, Ordering::AcqRel) {
         return Err("Batch AI is already running".to_string());
@@ -887,6 +891,7 @@ pub async fn run_caption_batch(app: SharedHost, hashes: Vec<String>, model_name:
         done,
     };
 
+    let mut unreachable = 0;
     for (i, target) in targets.iter().enumerate() {
         let (hash, path) = target;
         if cancelled() {
@@ -916,6 +921,7 @@ pub async fn run_caption_batch(app: SharedHost, hashes: Vec<String>, model_name:
             summary.stopped = true;
             break;
         }
+        unreachable = if outcome.as_ref().is_err_and(|e| e.contains(OLLAMA_UNREACHABLE)) { unreachable + 1 } else { 0 };
         match outcome {
             Ok(result) => {
                 summary.succeeded += 1;
@@ -928,6 +934,12 @@ pub async fn run_caption_batch(app: SharedHost, hashes: Vec<String>, model_name:
             }),
         }
         summary.completed += 1;
+        // Ollama is not there: the rest would fail the same way, three tries each
+        if unreachable >= UNREACHABLE_IN_A_ROW {
+            eprintln!("[ai] Ollama can't be reached: the batch stops after {} of {total} photos", summary.completed);
+            summary.stopped = true;
+            break;
+        }
         if last_flush.elapsed() >= AI_BATCH_FLUSH {
             emit_to(&app, "ai-batch-progress", progress(&summary, None, std::mem::take(&mut pending), false));
             last_flush = Instant::now();

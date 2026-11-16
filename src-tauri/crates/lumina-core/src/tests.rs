@@ -1779,6 +1779,52 @@ fn trash_sidecars_travel_and_orphans_are_found() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+// Emptying _Trash takes the photos whose move there was applied; one only staged for it stays where it is
+#[test]
+fn emptying_trash_leaves_photos_that_were_only_staged() {
+    let _turn = SCAN_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+    let base = std::env::temp_dir().join(format!("lumina-trash-staged-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let (library, data) = (base.join("Library"), base.join("Data"));
+    std::fs::create_dir_all(library.join("_Trash")).unwrap();
+    let (moved, staged) = (library.join("_Trash").join("gone.jpg"), library.join("keep.jpg"));
+    std::fs::write(&moved, b"moved to the trash").unwrap();
+    std::fs::write(&staged, b"only staged").unwrap();
+    let host: SharedHost = Arc::new(DirHost(data));
+    let conn = open_global_db(&*host).unwrap();
+    db::migrate(&conn).unwrap();
+    conn.execute("INSERT INTO photos (hash, current_path, subfolder) VALUES ('m1', ?1, '_Trash')", [moved.to_string_lossy().to_string()]).unwrap();
+    conn.execute("INSERT INTO photos (hash, current_path, subfolder, staged_target) VALUES ('s1', ?1, '', '_Trash')", [staged.to_string_lossy().to_string()]).unwrap();
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    let root = library.to_string_lossy().to_string();
+    assert_eq!(rt.block_on(crate::files::trash_summary(host.clone(), root.clone())).unwrap().photos, 1);
+    let result = rt.block_on(crate::files::empty_library_trash_to_os(host.clone(), root, Some(true))).unwrap();
+    assert_eq!((result.recycled, result.removed_hashes.as_slice()), (1, ["m1".to_string()].as_slice()));
+    assert!(!moved.exists() && staged.exists());
+    let left: Vec<String> = conn.prepare("SELECT hash FROM photos").unwrap().query_map([], |r| r.get(0)).unwrap().flatten().collect();
+    assert_eq!(left, vec!["s1".to_string()]);
+    drop(conn);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+// A copy stands in for its original only when all of it is the same
+#[test]
+fn a_copy_is_checked_whole_before_its_original_goes() {
+    let dir = std::env::temp_dir().join(format!("lumina-copy-safe-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let (original, copy) = (dir.join("a.jpg"), dir.join("b.jpg"));
+    let mut bytes = vec![5u8; 300_000];
+    std::fs::write(&original, &bytes).unwrap();
+    std::fs::write(&copy, &bytes).unwrap();
+    assert!(crate::files::copy_is_safe(&original, &copy).is_ok());
+    // The same size, the same first and last 64 KB, another middle
+    bytes[150_000] = 6;
+    std::fs::write(&copy, &bytes).unwrap();
+    assert!(crate::files::copy_is_safe(&original, &copy).is_err());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn takeout_and_folder_dates() {
     use crate::exif_meta::{fallback_photo_date, takeout_photo_date};
@@ -2298,6 +2344,7 @@ fn a_restore_moves_library_roots_with_the_photos() {
 
 #[test]
 fn an_export_zip_holds_jpegs_or_the_originals() {
+    let _turn = SCAN_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     let base = std::env::temp_dir().join(format!("lumina_export_zip_test_{}", std::process::id()));
     let _ = fs::remove_dir_all(&base);
     let (library, data) = (base.join("Library"), base.join("Data"));

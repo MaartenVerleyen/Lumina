@@ -185,7 +185,9 @@ async fn sync(app: &AppHandle) -> Result<(), String> {
         }
         // An unreachable server is looked at again next time
         let Ok(albums) = call(app, &f.server, "get_albums", json!({})).await else { continue };
-        let Some(album) = albums.as_array().and_then(|a| a.iter().find(|a| a["id"].as_i64() == Some(f.album_id))) else {
+        // An answer that is no list of albums says nothing about this one
+        let Some(albums) = albums.as_array() else { continue };
+        let Some(album) = albums.iter().find(|a| a["id"].as_i64() == Some(f.album_id)) else {
             // No longer shared with you: the follow ends, the photos stay
             unfollow_album(app.clone(), f.server.clone(), f.album_id)?;
             ended.push(f.album_name.clone());

@@ -285,12 +285,15 @@ pub async fn preview_import(app: SharedHost, source: String, pattern: String) ->
     .map_err(|e| e.to_string())?
 }
 
-// Copies to "<name>.part", checks size and content hash against the original, then gives it its real name
-fn copy_verified(src: &Path, dst: &Path, size: u64, hash: Option<&str>) -> Result<(), String> {
+// Copies to "<name>.part", checks size and content hash against the original, then gives it its real name.
+// `original_goes`: the original is removed afterwards, so the whole content is compared (the content hash
+// reads the first and last 64 KB only) and the copy is written through to the disk first.
+fn copy_verified(src: &Path, dst: &Path, size: u64, hash: Option<&str>, original_goes: bool) -> Result<(), String> {
     let part = dst.with_file_name(format!("{}.part", dst.file_name().unwrap_or_default().to_string_lossy()));
     fs::copy(src, &part).map_err(|e| format!("Could not copy: {e}"))?;
     let matches = fs::metadata(&part).map(|m| m.len() == size).unwrap_or(false)
-        && hash.map_or(true, |h| hash_and_read_head(&part, size).map(|(x, _)| x == h).unwrap_or(false));
+        && hash.map_or(true, |h| hash_and_read_head(&part, size).map(|(x, _)| x == h).unwrap_or(false))
+        && (!original_goes || crate::files::copy_is_safe(src, &part).is_ok());
     if !matches {
         let _ = fs::remove_file(&part);
         return Err("The copy did not match the original (card or disk error?)".into());
@@ -409,7 +412,7 @@ fn run_import(app: &dyn Host, options: &ImportOptions) -> Result<ImportResult, S
                 current: f.name.clone(),
                 done: false,
             });
-            match copy_verified(&f.src, &dst, f.size, f.hash.as_deref()) {
+            match copy_verified(&f.src, &dst, f.size, f.hash.as_deref(), options.delete_after) {
                 Ok(()) => {
                     if f.kind != FileKind::Sidecar {
                         result.copied += 1;

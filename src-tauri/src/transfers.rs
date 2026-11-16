@@ -72,6 +72,10 @@ struct Item {
     // Upload of a followed photo passing through this PC: the file goes once the server has it
     #[serde(default)]
     delete_after: bool,
+    // Download of a followed photo into a folder of this PC: it landed, and still has to become a photo of
+    // the library, with its tags and names (take_in). Saved, so an app closed in between does it next time.
+    #[serde(default)]
+    take_in: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -94,7 +98,12 @@ fn values_due(i: &Item) -> bool {
 
 // Something is left to do for this file
 fn unfinished(i: &Item) -> bool {
-    i.state == ItemState::Waiting || values_due(i)
+    i.state == ItemState::Waiting || values_due(i) || take_in_due(i)
+}
+
+// A followed photo that landed and isn't in the library yet
+fn take_in_due(i: &Item) -> bool {
+    i.take_in && i.state == ItemState::Done && i.path.is_some()
 }
 
 #[derive(Serialize, Clone, Default)]
@@ -291,6 +300,7 @@ fn start(app: &AppHandle, q: Arc<Queue>) {
     let app2 = app.clone();
     tauri::async_runtime::spawn(async move {
         let mut delay = Duration::from_secs(2);
+        let mut signed_out = false;
         loop {
             let outcome = match q.kind {
                 Kind::Upload => upload_pass(&app2, &q).await,
@@ -310,6 +320,7 @@ fn start(app: &AppHandle, q: Arc<Queue>) {
                 }
                 Pass::SignedOut(server) => {
                     q.set_stage(format!("Signed out of {server}: sign in again in Settings → Servers, and the rest follows"));
+                    signed_out = true;
                     break;
                 }
             }
@@ -319,7 +330,12 @@ fn start(app: &AppHandle, q: Arc<Queue>) {
             q.items.lock().unwrap().retain(|i| i.state != ItemState::Waiting);
         }
         q.dirty.store(true, Ordering::Relaxed);
+        let cancelled = q.cancel.load(Ordering::SeqCst);
         q.running.store(false, Ordering::SeqCst);
+        // Files added while this run was ending found it still running and started nothing: they go now
+        if !cancelled && !signed_out && q.items.lock().unwrap().iter().any(unfinished) {
+            start(&app2, q);
+        }
     });
 }
 
@@ -553,10 +569,9 @@ async fn download_pass(app: &AppHandle, q: &Arc<Queue>) -> Pass {
     q.set_stage("Downloading");
     let outcome: Mutex<Option<Pass>> = Mutex::new(None);
     // Followed photos that landed in a folder of this PC, to take into the library once the pass ends
-    let landed: Mutex<Vec<(PathBuf, Option<serde_json::Value>)>> = Mutex::new(Vec::new());
     futures_util::stream::iter(todo)
         .for_each_concurrent(2, |(i, item)| {
-            let (q, outcome, landed) = (q.clone(), &outcome, &landed);
+            let (q, outcome) = (q.clone(), &outcome);
             async move {
                 if q.cancel.load(Ordering::SeqCst) || outcome.lock().unwrap().is_some() {
                     return;
@@ -576,7 +591,8 @@ async fn download_pass(app: &AppHandle, q: &Arc<Queue>) -> Pass {
                         let _ = client_db::add_copy(app, &item.server, &hash, &path, size);
                         match &item.follow {
                             Some(FollowStep { values, upload_to: Some(target) }) => relay(app, target, &path, size, values.clone()),
-                            Some(FollowStep { values, upload_to: None }) => landed.lock().unwrap().push((path.clone(), values.clone())),
+                            // Taken into the library once the pass ends (below), by the mark on the item
+                            Some(FollowStep { upload_to: None, .. }) => {}
                             None => {}
                         }
                         q.update(i, |it| {
@@ -602,10 +618,24 @@ async fn download_pass(app: &AppHandle, q: &Arc<Queue>) -> Pass {
             }
         })
         .await;
-    let landed = landed.into_inner().unwrap();
+    // Also those of a run that ended before it got here (the app was closed)
+    let landed: Vec<(usize, PathBuf, Option<serde_json::Value>)> = q
+        .items
+        .lock()
+        .unwrap()
+        .iter()
+        .enumerate()
+        .filter(|(_, i)| take_in_due(i))
+        .filter_map(|(n, i)| Some((n, PathBuf::from(i.path.clone()?), i.follow.as_ref().and_then(|f| f.values.clone()))))
+        .collect();
     if !landed.is_empty() {
         let app2 = app.clone();
-        let _ = tauri::async_runtime::spawn_blocking(move || take_in(&app2, landed)).await;
+        let files = landed.iter().map(|(_, path, values)| (path.clone(), values.clone())).collect();
+        if tauri::async_runtime::spawn_blocking(move || take_in(&app2, files)).await.is_ok() {
+            for (n, _, _) in landed {
+                q.update(n, |it| it.take_in = false);
+            }
+        }
     }
     outcome.into_inner().unwrap().unwrap_or(Pass::Finished)
 }
@@ -676,6 +706,7 @@ fn relay(app: &AppHandle, server: &str, path: &Path, size: u64, values: Option<s
             values_sent: false,
             follow: None,
             delete_after: true,
+            take_in: false,
         });
     }
     q.save();
@@ -705,6 +736,7 @@ pub fn download_followed(app: &AppHandle, server: &str, photos: Vec<FollowedPhot
                 values_sent: false,
                 follow: Some(FollowStep { values: p.values, upload_to: upload_to.clone() }),
                 delete_after: false,
+                take_in: upload_to.is_none(),
             });
         }
     }
@@ -789,6 +821,7 @@ pub async fn upload_paths(app: AppHandle, server: String, paths: Vec<String>) ->
                 values_sent: false,
                 follow: None,
                 delete_after: false,
+                take_in: false,
             });
             queued += 1;
         }
@@ -856,6 +889,7 @@ pub async fn back_up(app: AppHandle, server: String, hashes: Vec<String>, with_v
                 values_sent: false,
                 follow: None,
                 delete_after: false,
+                take_in: false,
             });
             queued += 1;
         }
@@ -1006,6 +1040,7 @@ pub fn download_originals(app: AppHandle, server: String, photos: Vec<(String, S
             values_sent: false,
             follow: None,
             delete_after: false,
+            take_in: false,
         });
         queued += 1;
     }

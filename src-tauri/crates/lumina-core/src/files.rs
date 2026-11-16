@@ -14,16 +14,33 @@ pub struct CommitResult {
 
 // Moves a file, falling back to copy + size check + delete when a plain rename fails
 // (e.g. the target is on another drive). Never leaves two copies behind on failure.
+// A file's whole content as a BLAKE3 hash
+fn content_hash(path: &Path) -> Result<blake3::Hash, String> {
+    let mut file = fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut hasher = blake3::Hasher::new();
+    std::io::copy(&mut file, &mut hasher).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(hasher.finalize())
+}
+
+// Whether a copy can stand in for its original, which is about to be removed: the same content, all of it,
+// and written through to the disk (a copy still in the system's memory is lost with a power cut)
+pub fn copy_is_safe(original: &Path, copy: &Path) -> Result<(), String> {
+    if content_hash(original)? != content_hash(copy)? {
+        return Err("the copy is not the same as the original (disk error?)".to_string());
+    }
+    // Opened for writing: Windows flushes no file opened to read
+    fs::OpenOptions::new().append(true).open(copy).and_then(|f| f.sync_all()).map_err(|e| format!("the copy could not be written through to the disk: {e}"))
+}
+
 pub fn move_file(src: &Path, dest: &Path) -> Result<(), String> {
     if fs::rename(src, dest).is_ok() {
         return Ok(());
     }
-    let src_len = fs::metadata(src).map_err(|e| e.to_string())?.len();
+    // Another drive: a copy, and the original goes only once the copy is safe
     fs::copy(src, dest).map_err(|e| format!("copy failed: {e}"))?;
-    let dest_len = fs::metadata(dest).map(|m| m.len()).unwrap_or(0);
-    if dest_len != src_len {
+    if let Err(e) = copy_is_safe(src, dest) {
         let _ = fs::remove_file(dest);
-        return Err(format!("copy incomplete ({dest_len} of {src_len} bytes)"));
+        return Err(e);
     }
     if let Err(e) = fs::remove_file(src) {
         let _ = fs::remove_file(dest);
@@ -244,10 +261,17 @@ fn commit_staged_blocking(
 
         let new_path = dest.to_string_lossy().to_string();
         let new_sub = get_relative_subfolder(root, &dest);
-        let _ = conn.execute(
+        // The file is moved whatever happens here. Not written down, the row keeps the old path until a scan
+        // finds the file again (by its content, with its values): said, not passed over.
+        if let Err(e) = conn.execute(
             "UPDATE photos SET current_path = ?1, subfolder = ?2, staged_target = NULL WHERE hash = ?3",
             params![new_path, new_sub, hash],
-        );
+        ) {
+            result.failures.push(FileOpFailure {
+                file: new_path.clone(),
+                error: format!("moved, but the library could not note it ({e}): look for new photos to put that right"),
+            });
+        }
         if let Some(parent) = src.parent() {
             left_folders.insert(parent.to_path_buf());
         }
@@ -746,12 +770,14 @@ fn prune_orphaned_cache_blocking(app: &dyn Host) -> Result<usize, String> {
 
 
 // Library photos in _Trash, or staged to go there, under this root: (hash, path, size in bytes)
+// The photos in _Trash: those whose move there was applied. One only staged for _Trash is still in its own
+// folder and is not touched.
 fn trash_targets(conn: &Connection, root_folder: &str) -> Result<Vec<(String, String, u64)>, String> {
     let prefix = make_folder_prefix(Some(root_folder));
     let mut stmt = conn
         .prepare(
             "SELECT hash, current_path, COALESCE(file_size, 0) FROM photos
-             WHERE (subfolder = '_Trash' OR subfolder LIKE '\\_Trash / %' ESCAPE '\\' OR staged_target = '_Trash')
+             WHERE (subfolder = '_Trash' OR subfolder LIKE '\\_Trash / %' ESCAPE '\\')
                AND current_path LIKE ?1 ESCAPE '!'",
         )
         .map_err(|e| e.to_string())?;

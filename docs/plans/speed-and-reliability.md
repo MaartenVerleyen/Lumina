@@ -256,6 +256,57 @@ Checked on a running server with the test library: the lists were made at start,
 later with nobody asking, and the kept list was byte for byte the list made from scratch. In the tests a
 kept list equals the list made anew after a rating, a photo that came, a file that went and a row that went.
 
+## Phase 5: findings from the second reading
+
+Read: the phone's backup worker (`Backup.kt`) and its pass (`phone_backup.rs`), moves and trash (`files.rs`),
+the transfer queues (`transfers.rs`: how they save, run and take in downloads), the import's copy and
+delete (`import.rs`), the caption batch (`ai.rs`), the thumbnail pass (`thumbs.rs`, in part), and where
+the desktop window works on the whole photo list (`useLibraryView.ts`). Not read yet: the scan loop itself,
+`export.rs`, `backup.rs`, `follows.rs`, `LuminaPlugin.kt`, `PhoneStore.kt`, `VirtualPhotoGrid.tsx`.
+
+| # | Finding | Where | Effort |
+| :-- | :--- | :--- | :--- |
+| P1 | An import with "delete from the card" removes the original once the copy has the same size and the same first and last 64 KB. The middle of the file is never compared and the copy isn't flushed to disk first. | `import.rs` `copy_verified`, `run_import` | S |
+| P2 | A move across drives copies, compares only the length, and removes the original without flushing the copy: a power cut right after can leave neither. | `files.rs` `move_file` | S |
+| P3 | After a file is moved, a failed database update is ignored and the move is counted as done. The row keeps the old path and its staged move until a scan finds the file again. | `files.rs` `commit_staged_blocking` | S |
+| P4 | A queue that is just finishing doesn't start again for files added in that moment: they stay "waiting" until the next upload, download or restart. | `transfers.rs` `start` | S |
+| P5 | Followed photos are taken into the library after the whole download pass. If the app closes in between, the files are there but their tags and people names never arrive. | `transfers.rs` `download_pass`, `take_in` | M |
+| P6 | A phone backup that finds another one running answers "busy", which Android takes as done: a selection sent with Back up waits for the next hourly run. | `Backup.kt` `doWork`, `phone_backup.rs` `pass` | S |
+| P7 | With Ollama stopped, a caption batch tries every photo three times and reports each as failed, where it could stop after a few that couldn't connect. | `ai.rs` `run_caption_batch` | S |
+| P8 | The thumbnail pass goes on without a database connection when it can't open one: thumbnails are written, their dhash and size never stored. | `thumbs.rs` `run_thumbnail_pass` | S |
+| P9 | Every change to the photo list (one rating) works the timeline, the folder tree, the tag list, the filter and the sort out again over all photos. Not measured: needs the real window with a large library. | `useLibraryView.ts` | M |
+
+### Fixed (uncommitted on `speed/phase-2`)
+
+- **Trash** (Maarten's call): emptying `_Trash` takes only photos whose move there was applied. One only
+  staged for `_Trash` stays in its folder, and isn't counted beforehand (`trash_targets`).
+- **P1, P2:** before an original goes (an import that deletes from the card, a move to another drive) the
+  whole copy is compared with it and written through to the disk (`files::copy_is_safe`). Such an import
+  reads every file a second time.
+- **P3:** a move the database couldn't note is reported with the file, not passed over.
+- **P4:** a queue that was ending when files were added starts again for them.
+- **P5:** a followed photo that landed keeps a mark (`Item::take_in`) until it is in the library with its
+  tags and names; an app closed in between does it at the next run.
+- **P6:** a selection's backup that found another one running is tried again by Android.
+- **P7:** a caption batch stops after three photos in a row that couldn't reach Ollama.
+- **P8:** a thumbnail pass that can't open the library says so in the log.
+- **Found while fixing:** a follow no longer ends when the server's answer isn't a list of albums
+  (`follows.rs`); a photo saved to the phone's gallery that couldn't be written whole is removed, not left
+  empty and reported as saved (`PhoneStore.saveToGallery`); the phone looks each media column up once, not
+  per photo; an engine test that scanned without taking the scans' turn failed now and then.
+
+Tests: emptying the trash with one moved and one staged photo; a copy with another middle is refused.
+The Kotlin changes are not compiled here (no Gradle build was run) and nothing was tried on the phone.
+
+### Still open
+
+- **P9** (the window works everything out again on every change): needs measuring in the real window with a
+  large library before changing it.
+- A followed photo is marked as taken when it is queued, not when it lands: one whose download fails for
+  good and is cleared from the list is never asked for again (`follows.rs` `sync`).
+- Not read: the scan loop itself, most of `LuminaPlugin.kt`, `VirtualPhotoGrid.tsx`. Read and nothing found:
+  the restore (`backup.rs`), export's writes.
+
 ## The plan
 
 Each phase is one branch and can be one release. Effort: S is under an hour of work, M a few hours, L a day

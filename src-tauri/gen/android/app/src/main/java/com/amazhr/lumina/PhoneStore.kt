@@ -40,7 +40,9 @@ object PhoneStore {
       if (video) columns.add(MediaStore.Video.VideoColumns.DURATION)
       if (Build.VERSION.SDK_INT >= 29) columns.add(MediaStore.MediaColumns.RELATIVE_PATH)
       context.contentResolver.query(collection(video), columns.toTypedArray(), null, null, null)?.use { c ->
-        val col = { name: String -> c.getColumnIndex(name) }
+        // Each column's place looked up once, not for every photo
+        val places = HashMap<String, Int>()
+        val col = { name: String -> places.getOrPut(name) { c.getColumnIndex(name) } }
         while (c.moveToNext()) {
           val item = JSObject()
           item.put("id", c.getLong(col(MediaStore.MediaColumns._ID)))
@@ -102,7 +104,14 @@ object PhoneStore {
       }
       val resolver = context.contentResolver
       val uri = resolver.insert(collection(video), values) ?: return false
-      resolver.openOutputStream(uri)?.use { out -> file.inputStream().use { it.copyTo(out) } }
+      // Not written whole: the gallery keeps no empty or half photo (the follow pass tries again)
+      try {
+        val out = resolver.openOutputStream(uri) ?: throw java.io.IOException("the gallery gave no file to write")
+        out.use { file.inputStream().use { input -> input.copyTo(it) } }
+      } catch (e: Exception) {
+        resolver.delete(uri, null, null)
+        return false
+      }
       values.clear()
       values.put(MediaStore.MediaColumns.IS_PENDING, 0)
       resolver.update(uri, values, null, null)

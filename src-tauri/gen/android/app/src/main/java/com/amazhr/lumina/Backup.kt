@@ -166,6 +166,9 @@ class BackupWorker(context: Context, params: WorkerParameters) : Worker(context,
     }
     return when {
       outcome.startsWith("retry") -> Result.retry()
+      // Another backup was running: the photos chosen for this one go once it is through (the hourly run and
+      // Back up now have nothing of their own to wait for)
+      outcome == "busy" && selection -> Result.retry()
       else -> Result.success()
     }
   }
