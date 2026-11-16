@@ -37,6 +37,18 @@ export interface LayoutOptions {
   groupLabel?: (key: string) => string;
 }
 
+// Whether two lists of photos lay out the same: as many photos, each with the shape and the date (its month
+// makes the headers) of the one in its place. A list with a few photos replaced after an edit usually does.
+export function sameLayoutPhotos(a: readonly LayoutPhoto[], b: readonly LayoutPhoto[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const [p, q] = [a[i], b[i]];
+    if (p !== q && (p.width !== q.width || p.height !== q.height || p.rotation !== q.rotation || p.captured_at !== q.captured_at)) return false;
+  }
+  return true;
+}
+
 // Displayed aspect ratio (width / height), with quarter-turn rotations swapped. Unknown sizes are 3:2,
 // and extreme panoramas or slivers are clamped so one photo can't take a whole row or vanish.
 export function aspectOf(p: LayoutPhoto): number {

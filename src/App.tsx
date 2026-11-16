@@ -30,8 +30,11 @@ import {
   buildSquareLayout,
   monthKeyOf,
   monthLabel,
+  sameLayoutPhotos,
   verticalNeighbor,
+  type GridLayout,
 } from "./utils/gridLayout";
+import { sameDeps } from "./utils/photoChanges";
 import BulkActionDock from "./components/modals/BulkActionDock";
 import CommitModal from "./components/modals/CommitModal";
 import HealthXmpModal from "./components/modals/HealthXmpModal";
@@ -306,33 +309,49 @@ export default function App() {
   const gridGap = lib.gridStyle === "justified" ? 8 : 14;
   // Laying out every photo again for each frame of a divider drag is what made dragging stutter
   const layoutWidth = useThrottled(centerWidth, isDraggingPane, 120);
+  const keptLayout = useRef<{ photos: PhotoItem[]; deps: unknown[]; layout: GridLayout } | null>(null);
   const layout = useMemo(() => {
     const width = Math.max(320, layoutWidth);
     const photos = lib.visiblePhotos;
+    // A rating or a tag changes no photo's shape or month: the rows stay as they are
+    const deps = [lib.gridStyle, lib.zoomLevel, layoutWidth, isDateSorted, gridGap];
+    const kept = keptLayout.current;
+    if (kept && sameDeps(kept.deps, deps) && sameLayoutPhotos(kept.photos, photos)) {
+      keptLayout.current = { ...kept, photos };
+      return kept.layout;
+    }
+    const made = (layout: GridLayout) => {
+      keptLayout.current = { photos, deps, layout };
+      return layout;
+    };
     // Each photo's month worked out once (the layout asks for it more than once per photo)
     const months = isDateSorted ? photos.map((p) => monthKeyOf(p.captured_at)) : [];
     const grouping = isDateSorted ? { groupKey: (i: number) => months[i], groupLabel: monthLabel } : {};
     if (lib.gridStyle === "justified") {
-      return buildJustifiedLayout(photos, {
-        width,
-        gap: gridGap,
-        headerHeight: 44,
-        targetRowHeight: Math.round(110 + lib.zoomLevel * 300),
-        ...grouping,
-      });
+      return made(
+        buildJustifiedLayout(photos, {
+          width,
+          gap: gridGap,
+          headerHeight: 44,
+          targetRowHeight: Math.round(110 + lib.zoomLevel * 300),
+          ...grouping,
+        })
+      );
     }
     const targetCardW = 115 + lib.zoomLevel * 325;
     const columns = Math.max(1, Math.min(12, Math.floor(width / targetCardW)));
     const cardW = Math.floor((width - (columns - 1) * gridGap) / columns);
     const thumbH = Math.max(90, Math.min(380, Math.round(cardW * 0.74)));
-    return buildSquareLayout(photos.length, {
-      width,
-      gap: gridGap,
-      headerHeight: 44,
-      columns,
-      cardHeight: thumbH + SQUARE_FOOTER_HEIGHT,
-      ...grouping,
-    });
+    return made(
+      buildSquareLayout(photos.length, {
+        width,
+        gap: gridGap,
+        headerHeight: 44,
+        columns,
+        cardHeight: thumbH + SQUARE_FOOTER_HEIGHT,
+        ...grouping,
+      })
+    );
   }, [lib.visiblePhotos, lib.gridStyle, lib.zoomLevel, layoutWidth, isDateSorted, gridGap]);
 
   const rowVirtualizer = useVirtualizer({

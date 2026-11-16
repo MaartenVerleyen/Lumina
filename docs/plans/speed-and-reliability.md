@@ -316,8 +316,22 @@ The Kotlin changes are not compiled here (no Gradle build was run) and nothing w
   | All tags | 5 ms | 13 ms |
   | Together | 72 ms | 311 ms |
 
-  The sort is the largest part, and a rating changes nothing it sorts by (unless sorted by rating). Not
-  changed yet.
+  The sort is the largest part, and a rating changes nothing it sorts by (unless sorted by rating).
+
+  **Built** (`src/utils/photoChanges.ts`, `useLibraryView.ts`, the layout in `App.tsx`): the window asks
+  which photos differ between the list before and the new one (`changesBetween`), and each part keeps what
+  it had when none of them changed in what that part reads. The timeline, folder tree, tag list and counts
+  stay as they were; the sorted and the stacked list take the changed photos' new selves in their places
+  when each still passes the filters and sorts where it did; the layout stays while shapes and dates do. A
+  photo that came or went, a changed filter or sort, or more than 200 photos changed at once work
+  everything out as before.
+
+  The same measurement after: 6 ms for 50,000 photos (was 72) and about 57 ms for 175,000 (was 311). What
+  is left is the photo-by-id map (`core.ts`), made anew each time: other parts of the window are worked out
+  again when it is a new map, so it was left alone.
+
+  Not checked in the real window: the test follows a sorted, filtered list through 300 edits against the
+  list worked out anew, but drawing was not measured and nothing was clicked through.
 - A followed photo is marked as taken when it is queued, not when it lands: one whose download fails for
   good and is cleared from the list is never asked for again (`follows.rs` `sync`).
 - Not read: the scan loop itself, most of `LuminaPlugin.kt`, `VirtualPhotoGrid.tsx`. Read and nothing found:

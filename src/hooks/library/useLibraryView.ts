@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { call, foldersOnThisPc } from "../../api";
 import { PhotoItem, TimelineBucket } from "../../types/lumina";
 import { buildFolderTree, foldersOf } from "../../utils/photoHelpers";
@@ -10,12 +10,48 @@ import { cullScore, hasClosedEyes, isSoftFocus } from "../../utils/culling";
 import { isLiveClip, isVideo } from "../../utils/media";
 import { semanticCutoff, SEMANTIC_MAX_HITS } from "../../utils/semanticCutoff";
 import { cullingOf, useSettings } from "../../settings";
+import { changesBetween, replaced, sameDeps, sameList, stillHolds, useKeptWhile, type Change, type Kept } from "../../utils/photoChanges";
 import type { Collections } from "./useCollections";
 import type { SmartSearch } from "./useSmartSearch";
 import type { LibraryCore } from "./core";
 import type { FilterState } from "./useFilterState";
 
-// What the grid shows, derived from the photos and filters: visible photos, counts, bursts, compare set
+// The filtered, sorted photos. `from`: this list is an earlier one with a few photos replaced by their new
+// selves, nothing else, so what was worked out from that one can be brought up to date the same way.
+interface SortedView {
+  list: PhotoItem[];
+  stackBursts: boolean;
+  from?: { list: PhotoItem[]; changes: Change<PhotoItem>[] };
+}
+
+// Whether a changed photo leaves the counts and the best of each burst as they were: nothing they read
+// changed. A staged photo is in the list of staged photos itself, which must hold its new self.
+function countsUnaffected(before: PhotoItem, after: PhotoItem): boolean {
+  return (
+    !before.staged_target &&
+    !after.staged_target &&
+    before.flag === after.flag &&
+    before.in_basket === after.in_basket &&
+    before.latitude === after.latitude &&
+    before.longitude === after.longitude &&
+    before.duplicate_group === after.duplicate_group &&
+    before.subfolder === after.subfolder &&
+    before.live_photo_hash === after.live_photo_hash &&
+    before.media_type === after.media_type &&
+    before.name === after.name &&
+    sameCullScore(before, after) &&
+    sameList(before.tags, after.tags)
+  );
+}
+
+// What closed eyes, soft focus and the cull score are worked out from
+function sameCullScore(before: PhotoItem, after: PhotoItem): boolean {
+  return before.faces === after.faces && before.sharpness === after.sharpness && before.width === after.width && before.height === after.height;
+}
+
+// What the grid shows, derived from the photos and filters: visible photos, counts, bursts, compare set.
+// Every edit makes a new photo list; each part here is kept through changes that can't affect it
+// (utils/photoChanges.ts), as working all of it out again took a third of a second on 175,000 photos.
 export function useLibraryView(core: LibraryCore, filters: FilterState, collections: Collections, smart: SmartSearch) {
   const { photos, setPhotos, activeHash, setActiveHash, selectedHashes, setSelectedHashes, selectionAnchorHashRef, activePhoto, viewMode } = core;
   // The grid uses the deferred filters (see useFilterState): it catches up with the menus a moment later
@@ -65,7 +101,7 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
 
   // Photos per day for the timeline, counted from the loaded photos so it always matches the grid
   // (the database can still hold rows for files that were deleted outside Lumina)
-  const timelineBuckets = useMemo<TimelineBucket[]>(() => {
+  const timelineBuckets = useKeptWhile<PhotoItem, TimelineBucket[]>(photos, () => {
     const counts = new Map<string, number>();
     for (const p of photos) {
       const day = (p.captured_at || "").slice(0, 10).replace(/:/g, "-");
@@ -74,7 +110,7 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
     return Array.from(counts, ([period, count]) => ({ period, count })).sort((a, b) =>
       a.period < b.period ? -1 : a.period > b.period ? 1 : 0
     );
-  }, [photos]);
+  }, (before, after) => before.captured_at === after.captured_at, []);
 
   // Folders on disk without photos (just made, or emptied) show in the tree too. Asked again when the library or
   // its number of photos changes, and after a folder is renamed or removed (folderListVersion).
@@ -89,18 +125,23 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
       stale = true;
     };
   }, [core.folder, photos.length, folderListVersion]);
-  const folderTree = useMemo(() => buildFolderTree(photos, diskFolders), [photos, diskFolders]);
+  const folderTree = useKeptWhile(
+    photos,
+    () => buildFolderTree(photos, diskFolders),
+    (before, after) => before.subfolder === after.subfolder && sameList(before.also_in, after.also_in),
+    [diskFolders]
+  );
   useEffect(() => {
     if (folderTree.nodes.length > 0 && expandedFolders.size === 0) {
       setExpandedFolders(new Set(folderTree.nodes.map((n) => n.fullPath)));
     }
   }, [folderTree.nodes]);
 
-  const allLibraryTags = useMemo(() => {
+  const allLibraryTags = useKeptWhile(photos, () => {
     const s = new Set<string>();
     photos.forEach((p) => p.tags.forEach((t) => s.add(t)));
     return Array.from(s).sort();
-  }, [photos]);
+  }, (before, after) => sameList(before.tags, after.tags), []);
 
   const {
     stagedPhotos,
@@ -119,7 +160,7 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
     videosCount,
     stillsCount,
     shownCount,
-  } = useMemo(() => {
+  } = useKeptWhile(photos, () => {
     const staged: PhotoItem[] = [];
     let gps = 0;
     let screenshots = 0;
@@ -183,15 +224,38 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
       stillsCount: stills,
       shownCount: shown,
     };
-  }, [photos, culling, settings.showLiveClips]);
+  }, countsUnaffected, [culling, settings.showLiveClips]);
 
   // The filtered, sorted photos. Kept apart from the burst stacking below, so opening or collapsing bursts
   // doesn't filter and sort the whole library again (about a second at 175k photos)
-  const sortedView = useMemo((): { list: PhotoItem[]; stackBursts: boolean } => {
+  const keptSorted = useRef<Kept<PhotoItem, SortedView> | null>(null);
+  // Everything but the photos that the filtered, sorted list is worked out from
+  const sortedDeps = [
+    smartFilter,
+    orientationFilter,
+    selectedPeriodRange,
+    peopleFilter,
+    activeSubfolder,
+    activeEvent,
+    tripOfHash,
+    activeTag,
+    parsedSearch,
+    matchContext,
+    culling,
+    albumSets,
+    activeAlbumId,
+    hashFilter,
+    sortBy,
+    semanticScores,
+    semanticCut,
+    settings.showLiveClips,
+    mediaFilter,
+  ];
+  const sortedView = useMemo((): SortedView => {
     const q = semanticScores ? "" : parsedSearch.text.toLowerCase();
     const terms = parsedSearch.terms;
     const albumFilter = activeAlbumId !== null ? albumSets.get(activeAlbumId) ?? new Set<string>() : null;
-    const filtered = photos.filter((p) => {
+    const passes = (p: PhotoItem): boolean => {
       // A Live Photo's clip plays from its photo
       if (!settings.showLiveClips && isLiveClip(p)) return false;
       if (smartFilter === "PICKS" && p.flag !== "pick") return false;
@@ -253,21 +317,10 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
       if (hashFilter && !hashFilter.hashes.has(p.hash)) return false;
       if (semanticScores && !semanticScores.has(p.hash)) return false;
       return true;
-    });
+    };
 
-    // Smart search: best match first, every photo shown (no burst stacking). Text queries come back uncut:
-    // the "good enough" line is drawn among the photos the other filters kept
-    if (semanticScores) {
-      const ranked = filtered.sort((a, b) => (semanticScores.get(b.hash) ?? 0) - (semanticScores.get(a.hash) ?? 0));
-      if (semanticCut) {
-        const line = semanticCutoff(ranked.map((p) => semanticScores.get(p.hash) ?? 0));
-        return { list: ranked.filter((p) => (semanticScores.get(p.hash) ?? 0) >= line).slice(0, SEMANTIC_MAX_HITS), stackBursts: false };
-      }
-      return { list: ranked, stackBursts: false };
-    }
-
-    // `filtered` is already a fresh array: sort it in place
-    const sorted = filtered.sort((a, b) => {
+    // The order of two photos that pass
+    const order = (a: PhotoItem, b: PhotoItem): number => {
       if (smartFilter === "DUPLICATES") {
         return (a.duplicate_group || 0) - (b.duplicate_group || 0) || cullScore(b, culling) - cullScore(a, culling);
       }
@@ -306,40 +359,66 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
         default:
           return 0;
       }
-    });
+    };
 
-    return { list: sorted, stackBursts: true };
-  }, [
-    photos,
-    smartFilter,
-    orientationFilter,
-    selectedPeriodRange,
-    peopleFilter,
-    activeSubfolder,
-    activeEvent,
-    tripOfHash,
-    activeTag,
-    parsedSearch,
-    matchContext,
-    culling,
-    albumSets,
-    activeAlbumId,
-    hashFilter,
-    sortBy,
-    semanticScores,
-    semanticCut,
-    settings.showLiveClips,
-    mediaFilter,
-  ]);
+    // A few photos changed and nothing else: when each is shown or not as before, and sorts where it did
+    // (smart search ranks by the photo's id), the list is the one before with their new selves in it
+    const kept = stillHolds(keptSorted.current, photos, sortedDeps, (before, after) => {
+      const shown = passes(before);
+      return shown === passes(after) && (!shown || semanticScores != null || order(before, after) === 0);
+    });
+    const anew = (): SortedView => {
+      const filtered = photos.filter(passes);
+
+      // Smart search: best match first, every photo shown (no burst stacking). Text queries come back uncut:
+      // the "good enough" line is drawn among the photos the other filters kept
+      if (semanticScores) {
+        const ranked = filtered.sort((a, b) => (semanticScores.get(b.hash) ?? 0) - (semanticScores.get(a.hash) ?? 0));
+        if (semanticCut) {
+          const line = semanticCutoff(ranked.map((p) => semanticScores.get(p.hash) ?? 0));
+          return { list: ranked.filter((p) => (semanticScores.get(p.hash) ?? 0) >= line).slice(0, SEMANTIC_MAX_HITS), stackBursts: false };
+        }
+        return { list: ranked, stackBursts: false };
+      }
+
+      // `filtered` is already a fresh array: sort it in place
+      return { list: filtered.sort(order), stackBursts: true };
+    };
+    let value: SortedView;
+    if (kept) {
+      const changes = changesBetween(kept.photos, photos) ?? [];
+      const list = replaced(kept.value.list, changes);
+      value = list === kept.value.list ? kept.value : { list, stackBursts: kept.value.stackBursts, from: { list: kept.value.list, changes } };
+    } else {
+      value = anew();
+    }
+    keptSorted.current = { photos, deps: sortedDeps, value };
+    return value;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [photos, ...sortedDeps]);
 
   // The map shows every photo where it was taken. Only this boolean matters here, not the tab itself:
   // switching between other tabs mustn't filter, sort and lay out the whole library again.
   const isMapTab = viewMode === "map";
 
   // Bursts and near-duplicates stacked to their best photo, unless shown open
+  const keptVisible = useRef<{ sorted: PhotoItem[]; deps: unknown[]; value: PhotoItem[] } | null>(null);
   const visiblePhotos = useMemo(() => {
-    const { list: sorted, stackBursts } = sortedView;
-    if (!stackBursts || isMapTab) return sorted;
+    const { list: sorted, stackBursts, from } = sortedView;
+    if (!stackBursts || isMapTab) {
+      keptVisible.current = null;
+      return sorted;
+    }
+    // The sorted list is the one before with a few photos replaced: so is this one, when none of them
+    // changed in what the stacking reads
+    const deps = [culling, showAllBurstVersions, expandedBurstGroups];
+    const before = keptVisible.current;
+    const sameStacks = (a: PhotoItem, b: PhotoItem) => a.duplicate_group === b.duplicate_group && a.subfolder === b.subfolder && sameCullScore(a, b);
+    if (before && from && before.sorted === from.list && sameDeps(before.deps, deps) && from.changes.every(([a, b]) => sameStacks(a, b))) {
+      const value = replaced(before.value, from.changes);
+      keptVisible.current = { sorted, deps, value };
+      return value;
+    }
 
     const groupMembers = new Map<number, PhotoItem[]>();
     for (const p of sorted) {
@@ -376,6 +455,7 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
       }
     }
 
+    keptVisible.current = { sorted, deps, value: finalDisplay };
     return finalDisplay;
   }, [sortedView, isMapTab, culling, showAllBurstVersions, expandedBurstGroups]);
 
