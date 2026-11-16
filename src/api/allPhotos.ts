@@ -16,6 +16,8 @@ export interface Source {
   editable: boolean;
   // Photos sent there are backed up (uploader and up on a server)
   uploadable: boolean;
+  // A server library this account is admin of: its planned moves can be applied from here
+  admin?: boolean;
 }
 
 export const sourceKey = (s: Pick<Source, "server" | "root">) => `${s.server ?? ""}|${s.root}`;

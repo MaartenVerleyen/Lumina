@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import {
   ALL_PHOTOS,
+  allPhotosTrashLibraries,
   allPhotosIdOf,
   allPhotosKnows,
   allPhotosRegroup,
@@ -574,24 +575,50 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
 
   async function handleEmptyTrashToRecycleBin() {
     if (!folder) return;
-    let summary: TrashSummary;
+    if (!openLibraryIsAll()) {
+      const emptied = await emptyTrashOf(null, !platform.localFiles, (command, args) => call(command, { ...args, rootFolder: folder }));
+      if (emptied === "empty") setAutoMatchNotice("_Trash is empty: apply your changes first to move rejected photos there.");
+      return;
+    }
+    // All photos: each library's _Trash in turn, asked about on its own (one may have a Recycle Bin, a server has none)
+    let any = false;
+    for (const library of allPhotosTrashLibraries()) {
+      const emptied = await emptyTrashOf(library.label, library.server !== null, library.call);
+      if (emptied === "stopped") break;
+      if (emptied === "done") any = true;
+    }
+    if (!any) return;
+    // A photo may be gone from one library and still be in another: the list is made again
     try {
-      summary = await call<TrashSummary>("trash_summary", { rootFolder: folder });
+      setPhotos(await call<PhotoItem[]>("scan_folder", { folderPath: folder, forceReprocess: false }));
     } catch (err) {
       setError(String(err));
-      return;
     }
-    if (summary.photos === 0 && summary.orphan_sidecars === 0) {
-      setAutoMatchNotice("_Trash is empty: apply your changes first to move rejected photos there.");
-      return;
+  }
+
+  // Empties one library's _Trash after asking. `library`: its name in All photos (null: the open library).
+  // Answers "empty" when there was nothing, "stopped" when the user said no or it failed, else "done".
+  async function emptyTrashOf(
+    library: string | null,
+    onServer: boolean,
+    run: <T>(command: string, args?: Record<string, unknown>) => Promise<T>
+  ): Promise<"empty" | "stopped" | "done"> {
+    const inLibrary = library ? ` of ${library}` : "";
+    let summary: TrashSummary;
+    try {
+      summary = await run<TrashSummary>("trash_summary");
+    } catch (err) {
+      setError(String(err));
+      return "stopped";
     }
+    if (summary.photos === 0 && summary.orphan_sidecars === 0) return "empty";
     const { bin } = summary;
     const what =
       summary.photos > 0
-        ? `${plural(summary.photos, "photo")} in _Trash (${formatBytes(summary.bytes)}) and their sidecars`
-        : `${plural(summary.orphan_sidecars, "leftover sidecar file", "leftover sidecar files")} in _Trash`;
+        ? `${plural(summary.photos, "photo")} in _Trash${inLibrary} (${formatBytes(summary.bytes)}) and their sidecars`
+        : `${plural(summary.orphan_sidecars, "leftover sidecar file", "leftover sidecar files")} in _Trash${inLibrary}`;
     // Windows deletes for good what doesn't fit, so stay well under the limit
-    const fits = bin.supported && (bin.capacity === null || summary.bytes <= bin.capacity * 0.95);
+    const fits = !onServer && bin.supported && (bin.capacity === null || summary.bytes <= bin.capacity * 0.95);
     let permanent = false;
     if (fits) {
       const overflow = bin.capacity === null ? 0 : bin.used + summary.bytes - bin.capacity;
@@ -604,23 +631,23 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
         "Move to Recycle Bin",
         { title: "Empty _Trash", kind: "danger" }
       );
-      if (!ok) return;
+      if (!ok) return "stopped";
     } else {
-      const why = !platform.localFiles
+      const why = onServer
         ? "The server has no Recycle Bin."
         : !bin.supported
         ? `Drive ${bin.drive} has no Recycle Bin (a network or removable drive, or the Recycle Bin is switched off for it).`
         : `The Recycle Bin on ${bin.drive} holds at most ${formatBytes(bin.capacity ?? 0)}, so it can't keep these files.`;
       const ok = await confirmAction(
         `${why}\n\nDelete ${what} permanently? This can't be undone.${
-          platform.localFiles && bin.supported
+          !onServer && bin.supported
             ? `\n\nTo keep them recoverable, cancel and make the Recycle Bin bigger first (right-click the Recycle Bin › Properties › choose drive ${bin.drive}).`
             : ""
         }`,
         "Delete permanently",
         { title: "Empty _Trash", kind: "danger" }
       );
-      if (!ok) return;
+      if (!ok) return "stopped";
       permanent = true;
     }
 
@@ -628,9 +655,10 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
     watchQuietUntilRef.current = Number.POSITIVE_INFINITY;
     setProgressTitle("Emptying _Trash");
     try {
-      const result = await call<TrashResult>("empty_library_trash_to_os", { rootFolder: folder, permanent });
+      const result = await run<TrashResult>("empty_library_trash_to_os", { permanent });
       const removed = new Set(result.removed_hashes);
-      if (removed.size > 0) setPhotos((prev) => prev.filter((p) => !removed.has(p.hash)));
+      // (All photos lists again once every library is through)
+      if (removed.size > 0 && !library) setPhotos((prev) => prev.filter((p) => !removed.has(p.hash)));
       for (const f of result.failures) {
         addLog("DISK", `Could not ${permanent ? "delete" : "recycle"} ${f.file}`, f.error);
       }
@@ -648,8 +676,10 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
       const stopped = result.cancelled ? ` Stopped: ${plural(left, "photo")} are still in _Trash.` : "";
       setAutoMatchNotice(`${verb} ${plural(result.recycled, "photo")}${sidecars} ${where}.${stopped}`);
       addLog("DISK", `${verb} ${plural(result.recycled, "_Trash photo", "_Trash photos")}${sidecars} ${where}`);
+      return "done";
     } catch (err) {
       setError(String(err));
+      return "stopped";
     } finally {
       watchQuietUntilRef.current = Date.now() + 4000;
       setProgressTitle(null);

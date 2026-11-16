@@ -623,7 +623,7 @@ export async function allPhotosCandidates(useKept = false): Promise<Source[]> {
       const role: Role | undefined = hasRole(user ?? null, "admin") ? "admin" : l.role ?? user?.role;
       const at = (wanted: Role) => hasRole(role ? { role } : null, wanted);
       const name = l.name || lastSegment(l.root);
-      return { server, root: l.root, label: label ? `${label}: ${name}` : name, editable: at("editor"), uploadable: at("uploader") };
+      return { server, root: l.root, label: label ? `${label}: ${name}` : name, editable: at("editor"), uploadable: at("uploader"), admin: at("admin") };
     });
   if (serverTransport) {
     const list = await serverTransport.call<Listed[]>("list_libraries");
@@ -738,6 +738,26 @@ export function localJobRoots(): string[] {
 
 export function allPhotosHasLocal(): boolean {
   return [...all.sources.values()].some((s) => s.server === null);
+}
+
+// Whether planned moves can be applied from All photos: for this computer's folders, and for the libraries of
+// a server this account is admin of
+export function allPhotosCanApply(): boolean {
+  return [...all.sources.values()].some((s) => s.root !== PHONE_ROOT && (s.server === null || s.admin));
+}
+
+// The libraries of All photos whose _Trash can be emptied from here (as their planned moves can be applied):
+// this computer's folders, and the libraries of a server this account is admin of. `call` runs a command
+// about that library on its own engine; `trashFolder` is how the folder tree names its _Trash.
+export function allPhotosTrashLibraries(): { label: string; server: string | null; trashFolder: string; call: <T>(command: string, args?: Record<string, unknown>) => Promise<T> }[] {
+  return [...all.sources.values()]
+    .filter((s) => s.root !== PHONE_ROOT && (s.server === null || s.admin))
+    .map((s) => ({
+      label: s.label,
+      server: s.server,
+      trashFolder: `${s.label} / _Trash`,
+      call: <T>(command: string, args: Record<string, unknown> = {}) => engineTransport(engineOf(s)).call<T>(command, { ...args, rootFolder: s.root }),
+    }));
 }
 
 // Whether photos can be backed up from here: a server library this account may upload to is in the view
@@ -1363,10 +1383,11 @@ async function opsAll(command: string, args: Record<string, unknown>): Promise<{
 
 // A library-wide command in All photos, run in each library this account may change: numbers add up, lists join
 // (this computer's photo ids become All photos' ids), commit results merge. Applying planned moves on a server is
-// its admin's work, so only this computer's folders are applied here.
+// its admin's work: this computer's folders are applied here, and a server's libraries when this account is
+// that admin. (A photo on both has its home on the server, so its planned move is there.)
 async function perLibrary(command: string, args: Record<string, unknown>): Promise<unknown> {
   const libraries = [...all.sources.values()].filter(
-    (s) => s.editable && s.root !== PHONE_ROOT && (command !== "commit_staged_operations" || s.server === null)
+    (s) => s.editable && s.root !== PHONE_ROOT && (command !== "commit_staged_operations" || s.server === null || s.admin)
   );
   const answers = await Promise.all(
     libraries.map(async (s) => {

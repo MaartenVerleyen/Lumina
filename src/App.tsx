@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import { ALBUM_SKIPPED_EVENT, ALL_PHOTOS, allPhotosServerOf, call, callLocal, folderOnThisPc, inDesktopApp, openLibraryIsAll, openLibraryServer, MOVE_SKIPPED_EVENT, UNREACHABLE_EVENT, OPEN_ADMIN_EVENT, openLibraryIsLocal, READ_ONLY_EVENT, subscribeLocal } from "./api";
+import { ALBUM_SKIPPED_EVENT, ALL_PHOTOS, allPhotosServerOf, allPhotosTrashLibraries, call, callLocal, folderOnThisPc, inDesktopApp, openLibraryIsAll, openLibraryServer, MOVE_SKIPPED_EVENT, UNREACHABLE_EVENT, OPEN_ADMIN_EVENT, openLibraryIsLocal, READ_ONLY_EVENT, subscribeLocal } from "./api";
 import { join, pictureDir, platform } from "./api/platform";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useLibraryState } from "./hooks/useLibraryState";
@@ -592,6 +592,11 @@ export default function App() {
   const shownOnly = lib.isLoupeOpen && lib.activeHash ? [lib.activeHash] : undefined;
   const onShown = {
     setFlag: (flag: "pick" | "reject" | null) => lib.handleSetFlag(flag, shownOnly),
+    // Whether every photo the P key would change is a pick already (P then takes the pick off)
+    allPicked: () => {
+      const hashes = shownOnly ?? [...lib.selectedHashes];
+      return hashes.length > 0 && hashes.every((h) => lib.photoByHash.get(h)?.flag === "pick");
+    },
     stageMove: (target: string | null) => lib.handleBatchStageMove(target, shownOnly),
     reject: () => lib.handleRejectToTrash(shownOnly),
     rate: (rating: number) => lib.handleBatchRate(rating, shownOnly),
@@ -619,6 +624,7 @@ export default function App() {
     autoAdvance: lib.autoAdvance,
     searchInputRef,
     handleSetFlag: onShown.setFlag,
+    allPicked: onShown.allPicked,
     handleRejectToTrash: onShown.reject,
     handleBatchRate: onShown.rate,
     handleSetColorLabel: onShown.colorLabel,
@@ -766,7 +772,7 @@ export default function App() {
               folderTree={lib.folderTree}
               expandedFolders={lib.expandedFolders}
               setExpandedFolders={lib.setExpandedFolders}
-              handleEmptyTrashToRecycleBin={access.admin ? lib.handleEmptyTrashToRecycleBin : undefined}
+              handleEmptyTrashToRecycleBin={access.admin || (openLibraryIsAll() && allPhotosTrashLibraries().length > 0) ? lib.handleEmptyTrashToRecycleBin : undefined}
               onFolderContextMenu={handleFolderContextMenu}
               collapsedSections={collapsedSections}
               onToggleSection={(id) =>

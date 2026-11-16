@@ -23,7 +23,7 @@ import {
   Trash2,
   XCircle,
 } from "lucide-react";
-import { folderOnThisPc, openLibraryIsAll } from "../../api";
+import { allPhotosTrashLibraries, folderOnThisPc, openLibraryIsAll } from "../../api";
 import { recycleBin } from "../../api/platform";
 import { plural } from "../../utils/plural";
 
@@ -223,10 +223,12 @@ function LeftSidebar({
     let aiTagged = 0;
     let untagged = 0;
     let ocr = 0;
+    // In All photos each library has its own _Trash, named after the library; those that can be emptied from here count
+    const trashFolders = new Set(openLibraryIsAll() ? allPhotosTrashLibraries().map((l) => l.trashFolder) : ["_Trash"]);
     for (let i = 0; i < photos.length; i++) {
       const p = photos[i];
       // Only what is in the _Trash folder already: photos marked for it move there when the changes are applied
-      if (p.subfolder === "_Trash") trash++;
+      if (trashFolders.has(p.subfolder)) trash++;
       if (p.rating >= 4) favs++;
       if (p.tags.length > 0 || p.ai_caption.length > 0) aiTagged++;
       else untagged++;

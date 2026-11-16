@@ -29,6 +29,7 @@ interface UseKeyboardShortcutsParams {
   autoAdvance: boolean;
   searchInputRef: RefObject<HTMLInputElement | null>;
   handleSetFlag: (flag: "pick" | "reject" | null) => Promise<unknown>;
+  allPicked: () => boolean;
   handleRejectToTrash: () => Promise<unknown>;
   handleBatchRate: (rating: number) => Promise<void>;
   handleSetColorLabel: (color: "red" | "yellow" | "green" | "blue" | null) => Promise<void>;
@@ -126,8 +127,10 @@ export function useKeyboardShortcuts(params: UseKeyboardShortcutsParams) {
         return;
       } else if (key === "p" && hasSelection) {
         e.preventDefault();
-        p.handleSetFlag("pick");
-        if (p.autoAdvance) p.navigateByOffset(1, false);
+        // A second P takes the pick off, as the buttons do (and stays on the photo)
+        const clearing = p.allPicked();
+        p.handleSetFlag(clearing ? null : "pick");
+        if (p.autoAdvance && !clearing) p.navigateByOffset(1, false);
       } else if (key === "u" && hasSelection) {
         e.preventDefault();
         p.handleSetFlag(null);

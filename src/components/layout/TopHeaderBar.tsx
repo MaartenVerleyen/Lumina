@@ -7,7 +7,7 @@ import { useAccess } from "../auth/ServerGate";
 import { confirmDialog } from "../../confirm";
 import { useLocalLibraries } from "../../hooks/useLocalLibraries";
 import { dropRecent, renameRecent } from "../../utils/recentFolders";
-import { ALL_PHOTOS, allPhotosHasLocal, call, inDesktopApp, openLibraryIsAll } from "../../api";
+import { ALL_PHOTOS, allPhotosCanApply, call, inDesktopApp, openLibraryIsAll } from "../../api";
 import { libraryName } from "../../utils/photoHelpers";
 import luminaMark from "../../assets/lumina-mark.svg";
 import { completeTerm, termBeingTyped, TermKey } from "../../utils/searchQuery";
@@ -192,8 +192,8 @@ export default function TopHeaderBar({
 }: TopHeaderBarProps) {
   const access = useAccess();
   // Planned moves are applied by whoever may move the files: an admin, or in All photos this PC for its own folders
-  // (a server's are applied by its admin)
-  const canApply = access.admin || (openLibraryIsAll() && allPhotosHasLocal());
+  // and for the libraries of a server this account is admin of
+  const canApply = access.admin || (openLibraryIsAll() && allPhotosCanApply());
   const [isLibraryMenuOpen, setIsLibraryMenuOpen] = useState(false);
   // The folders opened on this PC (its libraries), by name so the list stays put; recent folders until known.
   // A library whose folder is gone (renamed, moved, a drive not connected) says so and can be located.
