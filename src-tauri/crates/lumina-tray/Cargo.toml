@@ -1,6 +1,6 @@
 [package]
 name = "lumina-tray"
-version = "6.3.2"
+version = "6.3.3"
 description = "A tray icon for the Lumina server on its own computer: is it running, what it is doing, the admin page"
 authors = ["Maarten"]
 edition = "2024"

@@ -14,6 +14,15 @@ export interface ReleaseNotes {
 // Newest first. Add an entry for every release that should greet updating users with "What's new".
 export const RELEASE_NOTES: ReleaseNotes[] = [
   {
+    version: "6.3.3",
+    items: [
+      { title: "Quicker phone app", text: "Opening the app no longer puts All photos together two more times when nothing changed, so People, a person and Photos now open at once instead of after a second or two. All photos also finds the same photo in two libraries 7 times faster." },
+      { title: "Faces to check without the wait", text: "The server keeps the face suggestions until faces, names or people change, instead of working them out again for every app that opens. On a large library that took 10 to 20 seconds each time." },
+      { title: "Who is this? without people you named", text: "Faces the server suggests for someone you named no longer show up as groups without a name. Before, only the first 300 suggestions per person were left out." },
+      { title: "Don't know, out of the way", text: "On the phone, the button to set a group aside is a small Don't know next to Name, so it isn't tapped by mistake." },
+    ],
+  },
+  {
     version: "6.3.2",
     items: [
       { title: "Who is this? opens at once", text: "The server keeps the groups of faces without a name ready instead of working them out each time, which took a long while in a large library. After a change you see them straight away, without the faces you named since; the server makes fresh groups behind it." },
