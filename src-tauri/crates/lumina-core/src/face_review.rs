@@ -292,8 +292,9 @@ fn every_face_suggestion(app: &dyn Host, conn: &Connection, root_folder: Option<
 // (so it holds every change made before), instead of starting their own.
 static SUGGESTIONS_TURN: Mutex<()> = Mutex::new(());
 type Suggestions = HashMap<String, Vec<SimilarFaceCandidate>>;
-// The folder, when the computation started, each person's first batch, and every face suggested for anyone
-type LastSuggestions = (Option<String>, std::time::Instant, Suggestions, Arc<HashSet<String>>);
+// The folder, when the computation started, what it was made from (clusters_mark), each person's first batch,
+// and every face suggested for anyone
+type LastSuggestions = (Option<String>, std::time::Instant, FacesMark, Suggestions, Arc<HashSet<String>>);
 static LAST_SUGGESTIONS: Mutex<Option<LastSuggestions>> = Mutex::new(None);
 
 fn refresh_suggestion_cache(
@@ -307,8 +308,12 @@ fn refresh_suggestion_cache(
 fn refresh_suggestions(app: &dyn Host, conn: &Connection, root_folder: Option<&str>) -> Result<(Suggestions, Arc<HashSet<String>>), String> {
     let asked = std::time::Instant::now();
     let _turn = SUGGESTIONS_TURN.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some((root, started, list, all)) = LAST_SUGGESTIONS.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
-        if *started >= asked && root.as_deref() == root_folder {
+    // The last suggestions still hold when nothing they are made from changed since (every app asks for the
+    // counts when it opens: on a large library each computation is seconds of every core), or when they were
+    // made after this ask came in
+    let mark = clusters_mark(conn);
+    if let Some((root, started, made_from, list, all)) = LAST_SUGGESTIONS.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+        if root.as_deref() == root_folder && (*started >= asked || *made_from == mark) {
             return Ok((list.clone(), all.clone()));
         }
     }
@@ -318,7 +323,7 @@ fn refresh_suggestions(app: &dyn Host, conn: &Connection, root_folder: Option<&s
     for list in suggestions.values_mut() {
         list.truncate(MAX_SUGGESTIONS_PER_PERSON);
     }
-    *LAST_SUGGESTIONS.lock().unwrap_or_else(|e| e.into_inner()) = Some((root_folder.map(str::to_string), started, suggestions.clone(), all.clone()));
+    *LAST_SUGGESTIONS.lock().unwrap_or_else(|e| e.into_inner()) = Some((root_folder.map(str::to_string), started, mark, suggestions.clone(), all.clone()));
     let keyed: HashMap<String, Vec<SimilarFaceCandidate>> = suggestions
         .iter()
         .map(|(name, list)| (pending_cache_key(name, root_folder), list.clone()))
@@ -756,8 +761,10 @@ const MIN_CLUSTER_FACE_CONFIDENCE: f64 = 0.6;
 // folder with a mark of what they were made from. Asked again with nothing changed, they are the answer at once.
 // After a change they are still the answer, without the faces that got a name or were set aside since, and new
 // groups are made behind it for the next ask.
+type FacesMark = (i64, i64, i64, i64, i64);
+
 struct KeptClusters {
-    mark: (i64, i64, i64),
+    mark: FacesMark,
     clusters: Vec<FaceCluster>,
 }
 static KEPT_CLUSTERS: LazyLock<Mutex<HashMap<Option<String>, KeptClusters>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
@@ -765,13 +772,16 @@ static KEPT_CLUSTERS: LazyLock<Mutex<HashMap<Option<String>, KeptClusters>>> = L
 static CLUSTERS_TURN: Mutex<()> = Mutex::new(());
 static CLUSTERS_BEHIND: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-// What the groups depend on: the faces and their names (the revision counter, revision.rs) and the turned-down
-// and set-aside faces
-fn clusters_mark(conn: &Connection) -> (i64, i64, i64) {
+// What suggestions and groups are made from: the faces and their names (the revision counter, revision.rs), the
+// turned-down and set-aside faces, and the people (hidden people get no suggestions)
+fn clusters_mark(conn: &Connection) -> FacesMark {
     let rejections = conn
         .query_row("SELECT COUNT(*), COALESCE(MAX(rowid), 0) FROM face_rejections", [], |r| Ok((r.get(0)?, r.get(1)?)))
         .unwrap_or((0, 0));
-    (crate::revision::current(conn).unwrap_or(0), rejections.0, rejections.1)
+    let people = conn
+        .query_row("SELECT COUNT(*), COALESCE(SUM(COALESCE(hidden, 0)), 0) FROM people", [], |r| Ok((r.get(0)?, r.get(1)?)))
+        .unwrap_or((0, 0));
+    (crate::revision::current(conn).unwrap_or(0), rejections.0, rejections.1, people.0, people.1)
 }
 
 // Kept groups without the faces that have a name now or were set aside

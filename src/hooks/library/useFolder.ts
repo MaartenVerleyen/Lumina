@@ -529,9 +529,11 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
     setBackgroundScanProgress({ stage: "Checking for new and changed photos", current_file: root, completed: 0, total: 0, percent: 0, done: false });
     try {
       // All photos checks every folder on this computer, one after the other
-      await call<PhotoItem[]>("scan_folder", all ? { folderPath: root, forceReprocess: false, reuseServers: true } : { folderPath: root, forceReprocess: false });
+      const scanned = await call<PhotoItem[]>("scan_folder", all ? { folderPath: root, forceReprocess: false, reuseServers: true } : { folderPath: root, forceReprocess: false });
       if (isSuperseded()) return;
-      const fresh = await listFromDatabase(root, all);
+      // On the phone nothing was scanned (Android lists its photos as they are now): what came back is the list,
+      // and listing everything again cost the phone seconds with the window frozen
+      const fresh = all && onAndroid ? scanned : await listFromDatabase(root, all);
       if (isSuperseded()) return;
       setPhotos(root === ALL_PHOTOS ? withEarlyThumbs(fresh) : fresh);
       const diff = fresh.length - shownCount;

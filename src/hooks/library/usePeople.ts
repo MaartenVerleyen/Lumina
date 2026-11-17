@@ -74,7 +74,51 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
   }, [addLog]);
 
   const pendingAskRef = useRef(0);
-  async function refreshPeople(currentFolder = folder, skipPendingScan = false) {
+  // One refresh at a time: asks while one runs (each All photos load, a change on the server, a face scan
+  // ending: four at once when the phone app opened) are answered by a single refresh after it, not one each
+  const running = useRef<Promise<void> | null>(null);
+  const again = useRef<{ folder: string; skipPendingScan: boolean } | null>(null);
+  function refreshPeople(currentFolder = folder, skipPendingScan = false): Promise<void> {
+    if (running.current) {
+      // A later ask that wants the counts wins over one that doesn't
+      again.current = { folder: currentFolder, skipPendingScan: skipPendingScan && (again.current?.skipPendingScan ?? true) };
+      return running.current;
+    }
+    const run = refreshPeopleNow(currentFolder, skipPendingScan).finally(() => {
+      running.current = null;
+      const next = again.current;
+      again.current = null;
+      if (next) void refreshPeople(next.folder, next.skipPendingScan);
+    });
+    running.current = run;
+    return run;
+  }
+
+  // Faces-to-check counts: the server works them out from every face, which takes long on a large library. One
+  // ask at a time; asks meanwhile are answered by one more after it.
+  const countsRunning = useRef(false);
+  const countsAgain = useRef<string | null>(null);
+  function askPendingCounts(currentFolder: string) {
+    if (countsRunning.current) {
+      countsAgain.current = currentFolder;
+      return;
+    }
+    countsRunning.current = true;
+    const asked = ++pendingAskRef.current;
+    timedAsync("people: faces to check", () => call<Record<string, number>>("get_pending_face_match_counts", { rootFolder: currentFolder || null }))
+      .then((pending) => {
+        if (asked === pendingAskRef.current) setPendingFaceCounts(pending || {});
+      })
+      .catch(() => {})
+      .finally(() => {
+        countsRunning.current = false;
+        const next = countsAgain.current;
+        countsAgain.current = null;
+        if (next !== null) askPendingCounts(next);
+      });
+  }
+
+  async function refreshPeopleNow(currentFolder: string, skipPendingScan: boolean) {
     try {
       // 1. Immediately load & render the Top People Carousel (<2ms) without waiting on biometric matching!
       const res = await timedAsync("people: list", () => call<PersonItem[]>("get_people", { rootFolder: currentFolder || null }));
@@ -85,15 +129,7 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
       // those who may accept them). All photos tells itself whether anything may be changed: right after it
       // loads, the window hasn't drawn the new rights yet.
       const mayEdit = openLibraryIsAll() ? [...allPhotosSources().values()].some((s) => s.editable) : access.edit;
-      if (!skipPendingScan && mayEdit) {
-        // Only the latest ask may set the badges: an older one can answer later, from before changes made since
-        const asked = ++pendingAskRef.current;
-        timedAsync("people: faces to check", () => call<Record<string, number>>("get_pending_face_match_counts", { rootFolder: currentFolder || null }))
-          .then((pending) => {
-            if (asked === pendingAskRef.current) setPendingFaceCounts(pending || {});
-          })
-          .catch(() => {});
-      }
+      if (!skipPendingScan && mayEdit) askPendingCounts(currentFolder);
     } catch {}
   }
 
