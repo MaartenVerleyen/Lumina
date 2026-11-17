@@ -75,6 +75,9 @@ pub enum FileKind {
 }
 
 pub fn file_kind(path: &Path) -> Option<FileKind> {
+    if crate::scan::is_mac_helper_file(path) {
+        return None;
+    }
     let ext = path.extension()?.to_str()?.to_lowercase();
     if PHOTO_EXTENSIONS.contains(&ext.as_str()) {
         Some(FileKind::Photo)

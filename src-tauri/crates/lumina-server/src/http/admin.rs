@@ -26,7 +26,13 @@ struct LibraryStatus {
     faces_pending: i64,
     smart_search_pending: i64,
     captions_pending: i64,
+    // Files that can't be read (cut off, or not what their name says): how many, and the first of them, as
+    // paths inside the library
+    damaged: i64,
+    damaged_files: Vec<String>,
 }
+
+const DAMAGED_SHOWN: usize = 200;
 
 fn count(conn: &rusqlite::Connection, sql: &str, library: i64) -> i64 {
     conn.query_row(sql, [library], |r| r.get(0)).unwrap_or(0)
@@ -43,9 +49,22 @@ pub async fn status(host: &ServerHost) -> Result<JsonValue, ApiError> {
             let rows = stmt.query_map([l.id], |r| r.get::<_, String>(0)).map_err(|e| ApiError::from(e.to_string()))?;
             rows.flatten().collect()
         };
+        let damaged_hashes: std::collections::HashSet<String> = {
+            let mut stmt = conn.prepare("SELECT hash FROM photos WHERE library_id = ?1 AND damaged = 1").map_err(|e| ApiError::from(e.to_string()))?;
+            let rows = stmt.query_map([l.id], |r| r.get::<_, String>(0)).map_err(|e| ApiError::from(e.to_string()))?;
+            rows.flatten().collect()
+        };
+        let damaged_files: Vec<String> = {
+            let mut stmt = conn
+                .prepare("SELECT COALESCE(rel_path, current_path) FROM photos WHERE library_id = ?1 AND damaged = 1 ORDER BY 1 LIMIT ?2")
+                .map_err(|e| ApiError::from(e.to_string()))?;
+            let rows = stmt.query_map(rusqlite::params![l.id, DAMAGED_SHOWN as i64], |r| r.get::<_, String>(0)).map_err(|e| ApiError::from(e.to_string()))?;
+            rows.flatten().collect()
+        };
+        // A damaged file's thumbnail isn't "to make": it was tried
         let thumbnails_missing = hashes
             .iter()
-            .filter(|h| !thumbs_dir.join(format!("{h}.jpg")).metadata().is_ok_and(|m| m.len() > 256))
+            .filter(|h| !damaged_hashes.contains(*h) && !thumbs_dir.join(format!("{h}.jpg")).metadata().is_ok_and(|m| m.len() > 256))
             .count();
         libs.push(LibraryStatus {
             videos: count(&conn, "SELECT COUNT(*) FROM photos WHERE library_id = ?1 AND media_type = 'video'", l.id),
@@ -71,6 +90,8 @@ pub async fn status(host: &ServerHost) -> Result<JsonValue, ApiError> {
             name: l.name,
             photos: libraries::present_photos(&conn, l.id)?.len(),
             thumbnails_missing,
+            damaged: damaged_hashes.len() as i64,
+            damaged_files,
         });
     }
     let board = host.jobs.board.lock().unwrap();

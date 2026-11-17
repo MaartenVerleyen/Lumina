@@ -26,6 +26,8 @@ interface LibraryStatus {
   faces_pending: number;
   smart_search_pending: number;
   captions_pending: number;
+  damaged?: number;
+  damaged_files?: string[];
 }
 
 interface ServerStatus {
@@ -258,6 +260,7 @@ function ServerSection() {
             <span className="font-mono text-[12px]">{l.root}</span>
           </Fact>
           <Backlog label="Thumbnails to make" count={l.thumbnails_missing} action="Rescan" onStart={() => start(l.root, "rescan")} hint="Walks the folders again and does what is missing" />
+          {(l.damaged ?? 0) > 0 && <DamagedFiles count={l.damaged ?? 0} files={l.damaged_files ?? []} />}
           <Backlog label="Photos and videos without a face scan" count={l.faces_pending} action="Scan faces" onStart={() => start(l.root, "faces")} />
           <Backlog label="Not in the smart search index" count={l.smart_search_pending} action="Index" onStart={() => start(l.root, "smart_search")} />
           <Backlog
@@ -308,6 +311,37 @@ function Fact({ label, children }: { label: string; children: ReactNode }) {
     <div className="flex items-start justify-between gap-6 px-4 py-2.5">
       <span className="text-zinc-400 shrink-0">{label}</span>
       <span className="text-zinc-100 text-right min-w-0 break-words">{children}</span>
+    </div>
+  );
+}
+
+// The files of a library that can't be read, for whoever looks after it: listed on request
+function DamagedFiles({ count, files }: { count: number; files: string[] }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="px-4 py-2.5">
+      <div className="flex items-center justify-between gap-6">
+        <div className="min-w-0">
+          <div className="text-zinc-200">Damaged files</div>
+          <div className="text-[12px] text-zinc-500">
+            Cut off or unreadable. They aren't tried again until the file changes or you rescan. In the app: search for is:damaged.
+          </div>
+        </div>
+        <div className="flex items-center gap-3 shrink-0">
+          <span className="font-mono text-amber-300">{count.toLocaleString()}</span>
+          <Button onClick={() => setOpen((o) => !o)}>{open ? "Hide" : "Show"}</Button>
+        </div>
+      </div>
+      {open && (
+        <div className="mt-2 max-h-64 overflow-y-auto rounded-lg border border-zinc-800 bg-black/20 px-3 py-2 font-mono text-[12px] text-zinc-300">
+          {files.map((f) => (
+            <div key={f} className="truncate" title={f}>
+              {f}
+            </div>
+          ))}
+          {count > files.length && <div className="text-zinc-500">…and {(count - files.length).toLocaleString()} more</div>}
+        </div>
+      )}
     </div>
   );
 }

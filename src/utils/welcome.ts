@@ -14,6 +14,20 @@ export interface ReleaseNotes {
 // Newest first. Add an entry for every release that should greet updating users with "What's new".
 export const RELEASE_NOTES: ReleaseNotes[] = [
   {
+    version: "6.3.0",
+    items: [
+      { title: "A server library opens at once", text: "The server keeps each library's list ready instead of making it for every window that opens. Lumina keeps its own copy and only asks what changed: after a new rating or a few uploads it gets those photos, not the whole library again. The server needs 6.3.0 too." },
+      { title: "Quicker in a large library", text: "Rating, flagging and tagging no longer make the window work the whole library out again. With 50,000 photos or more, each key answers right away." },
+      { title: "Empty _Trash takes only what is in it", text: "A photo that is marked for _Trash but not moved there yet stays where it is, and isn't counted. Apply changes first, then empty." },
+      { title: "All photos, with your own server", text: "In All photos, Apply changes and Empty _Trash now also work for a server you are the admin of. Each library is asked about on its own; a server has no Recycle Bin, and Lumina says so before it deletes." },
+      { title: "Copies checked before the original goes", text: "An import that deletes from the card, and a move to another drive, now compare the whole copy with the original and make sure it is on the disk before the original is removed. Such an import takes a little longer." },
+      { title: "Damaged files, found once", text: "A photo or video that can't be read is marked as damaged and no longer tried again at every scan. The server's admin page lists them per library; in the app, search for is:damaged. Helper files a Mac leaves on a drive (names starting with ._) are no longer taken for photos." },
+      { title: "P takes a pick off again", text: "Press P on a picked photo to take the pick off, as the button does." },
+      { title: "Fewer things that go wrong quietly", text: "Photos uploaded while the server was busy are picked up, a file the server lost is asked for again, a caption run stops when Ollama isn't there instead of failing every photo, and photos of an album you follow keep their tags and names when Lumina is closed halfway." },
+      { title: "Video in the Linux AppImage", text: "The AppImage finds the system's video support, so videos play." },
+    ],
+  },
+  {
     version: "6.2.2",
     items: [
       { title: "The phone app starts again", text: "Lumina 6.2.0 and 6.2.1 closed straight away on Android. This version opens as it should." },

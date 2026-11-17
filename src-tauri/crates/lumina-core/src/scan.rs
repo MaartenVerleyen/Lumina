@@ -922,11 +922,39 @@ pub fn holds_file(conn: &Connection, hash: &str, size: u64) -> Result<bool, Stri
     Ok(path.is_file() || !path.parent().is_some_and(Path::is_dir))
 }
 
+// A Mac's helper file next to a photo on a drive that isn't a Mac's ("._IMG_1234.jpg": the photo's extended
+// attributes, 4 KB). It has the photo's extension and is no photo: never indexed, imported or uploaded.
+pub fn is_mac_helper_file(path: &Path) -> bool {
+    path.file_name().is_some_and(|n| n.to_string_lossy().starts_with("._"))
+}
+
+// Rows such helper files got before Lumina knew them (each showed as a damaged photo, tried again at every
+// scan) are forgotten. Only files that really are one: the name, and the four bytes every such file starts with.
+fn forget_mac_helper_rows(conn: &mut Connection, folder_prefix: &str) -> usize {
+    let rows: Vec<(String, String)> = conn
+        .prepare("SELECT hash, current_path FROM photos WHERE current_path LIKE ?1 ESCAPE '!' AND current_path LIKE '%._%'")
+        .and_then(|mut stmt| stmt.query_map(params![folder_prefix], |r| Ok((r.get(0)?, r.get(1)?))).map(|rows| rows.flatten().collect()))
+        .unwrap_or_default();
+    let is_one = |path: &str| {
+        use std::io::Read;
+        let mut start = [0u8; 4];
+        is_mac_helper_file(Path::new(path)) && fs::File::open(path).and_then(|mut f| f.read_exact(&mut start)).is_ok() && start == [0x00, 0x05, 0x16, 0x07]
+    };
+    let hashes: Vec<String> = rows.into_iter().filter(|(_, path)| is_one(path)).map(|(hash, _)| hash).collect();
+    if hashes.is_empty() || crate::files::forget_photos(conn, &hashes).is_err() {
+        return 0;
+    }
+    hashes.len()
+}
+
 // One file just put into a library (an upload), indexed on its own: no walk of the library, and no new scan
 // generation, so a scan or pipeline pass that runs isn't superseded. Its thumbnail (and a video's frames)
 // follow in a pass of their own. Answers the photo as a listing shows it.
 pub fn index_new_file(app: SharedHost, root: &str, path: &Path) -> Result<PhotoItem, String> {
     let root_path = PathBuf::from(libraries::normalize_root(root));
+    if is_mac_helper_file(path) {
+        return Err("This is a Mac's helper file, not a photo".into());
+    }
     let metadata = fs::metadata(path).map_err(|e| e.to_string())?;
     let size_bytes = metadata.len();
     if size_bytes == 0 {
@@ -1059,6 +1087,10 @@ pub async fn scan_library(app: SharedHost, folder_path: String, force_reprocess:
         }
         libraries::open(&conn, &root_path.to_string_lossy())?;
         let folder_prefix = make_folder_prefix(Some(&root_path.to_string_lossy()));
+        let helpers = forget_mac_helper_rows(&mut conn, &folder_prefix);
+        if helpers > 0 {
+            eprintln!("[scan] {helpers} Mac helper files (._name) are no photos: taken out of the library's list");
+        }
 
         let LibraryIndex { cache: cache_map, tags: tags_map, people: people_map, faces: faces_map } =
             load_library_index(&conn, &folder_prefix)?;
@@ -1085,7 +1117,9 @@ pub async fn scan_library(app: SharedHost, folder_path: String, force_reprocess:
                 }
                 let p = entry.into_path();
                 let ext = p.extension()?.to_str()?.to_lowercase();
-                if PHOTO_EXTENSIONS.contains(&ext.as_str()) || video_meta::is_video_ext(&ext) {
+                if is_mac_helper_file(&p) {
+                    None
+                } else if PHOTO_EXTENSIONS.contains(&ext.as_str()) || video_meta::is_video_ext(&ext) {
                     Some(p)
                 } else {
                     None
@@ -1404,9 +1438,12 @@ pub async fn scan_library(app: SharedHost, folder_path: String, force_reprocess:
             clip::forget_frame_vectors();
             eprintln!("[scan] video frames from an older version removed; they are made again");
         }
+        // A file found damaged that hasn't changed since (`damaged` says both, see index_one) isn't tried again
+        // at every scan: it fails the same way. A forced rescan, or a new version of the file, tries it again.
         let incomplete = |p: &PhotoItem| {
-            !p.thumb_ready
-                || if p.media_type == "video" { !video_frames::frame_path(&frames_dir, &p.hash, 0).exists() } else { p.dhash.is_empty() }
+            !p.damaged
+                && (!p.thumb_ready
+                    || if p.media_type == "video" { !video_frames::frame_path(&frames_dir, &p.hash, 0).exists() } else { p.dhash.is_empty() })
         };
         // A large folder gets its thumbnails part by part, as each is saved, rather than after the whole index
         let multi_part = candidate_paths.len() > INDEX_CHUNK;

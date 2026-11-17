@@ -219,7 +219,7 @@ impl Pipeline {
         let unscanned: Vec<String> = {
             let conn = db::open_global_db(&*self.host)?;
             let mut stmt = conn
-                .prepare("SELECT hash FROM photos WHERE COALESCE(faces_engine, '') != ?1")
+                .prepare("SELECT hash FROM photos WHERE COALESCE(faces_engine, '') != ?1 AND COALESCE(damaged, 0) = 0")
                 .map_err(|e| e.to_string())?;
             let rows = stmt
                 .query_map([face_engine::FACE_ENGINE_V2], |r| r.get::<_, String>(0))

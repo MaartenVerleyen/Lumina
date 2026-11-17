@@ -483,6 +483,10 @@ fn process_video(video: &PhotoItem, frames_dir: &Path, ffmpeg: Option<&Path>, fo
             if item.duration_ms.is_none() && grabbed.duration_ms > 0 {
                 item.duration_ms = Some(grabbed.duration_ms);
             }
+        } else if ffmpeg.is_some() {
+            // Not one frame, also not with ffmpeg: the file is damaged (without ffmpeg it may only be a codec
+            // this computer lacks, which is no damage)
+            item.damaged = true;
         }
     }
     item.thumb_ok = thumb_file.exists();
