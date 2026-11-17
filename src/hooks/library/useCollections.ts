@@ -35,13 +35,20 @@ export function useCollections(core: LibraryCore, filters: FilterState) {
   useEffect(() => {
     call<Record<string, string>>("get_trip_names").then(setTripNames).catch(() => {});
   }, [folder, server]);
-  // Made from when and where photos were taken only: a new caption, rating or face leaves them as they were
-  // (worked out again for 110,000 photos at every caption the server wrote, the phone froze each time)
+  // Made from when and where photos were taken (and whether they are WhatsApp photos or screenshots): a new
+  // caption, rating or face leaves them as they were (worked out again for 110,000 photos at every caption the
+  // server wrote, the phone froze each time)
   const trips = useKeptWhile(
     photos,
     () => computeTrips(photos),
     (before, after) =>
-      before.captured_at === after.captured_at && before.location === after.location && before.latitude === after.latitude && before.longitude === after.longitude,
+      before.captured_at === after.captured_at &&
+      before.location === after.location &&
+      before.latitude === after.latitude &&
+      before.longitude === after.longitude &&
+      before.name === after.name &&
+      before.tags.includes("whatsapp") === after.tags.includes("whatsapp") &&
+      before.tags.includes("screenshot") === after.tags.includes("screenshot"),
     [],
     "trips"
   );
@@ -53,7 +60,7 @@ export function useCollections(core: LibraryCore, filters: FilterState) {
   const autoEvents = useMemo(
     () =>
       trips
-        .map((t) => ({ id: t.id, label: tripLabel(t, tripNames[t.id]), count: t.hashes.length, kind: t.kind }))
+        .map((t) => ({ id: t.id, label: tripLabel(t, tripNames[t.id]), count: t.count, kind: t.kind }))
         .reverse(),
     [trips, tripNames]
   );
