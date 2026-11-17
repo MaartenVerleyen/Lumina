@@ -137,10 +137,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "$RELEASE" "$RUNNER_TEMP"/out/* --clobber --repo "$GITHUB_REPOSITORY"
 
-  # Held back from releases until the phone app of this version is checked on a phone: a release without an APK
-  # offers phones no update (phone_update.rs). Run by hand it still builds. Remove the line to release it again.
   android:
-    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     env:
       REF: ${{ github.event.release.tag_name || inputs.ref }}
