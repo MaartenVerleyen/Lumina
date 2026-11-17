@@ -516,6 +516,23 @@ const lastSegment = (root: string) => root.split(/[\\/]/).filter(Boolean).pop() 
 // a connection, and sooner than a kept copy of it reads.
 let fromKept = false;
 let offlineServers: string[] = [];
+
+// What the last All photos load was made from, and what it made (loadAllNow: an unchanged load is answered with it)
+type LoadInputs = {
+  lists: { key: string; photos: PhotoItem[]; label: string; editable: boolean }[];
+  sameAs: string;
+  names: string;
+  offline: string;
+};
+let lastLoad: { inputs: LoadInputs; photos: PhotoItem[] } | null = null;
+
+// The same list: the very same array (a server list reused), or the same photos with the same values (the
+// phone's photos, listed again by Android each time)
+function samePhotoList(a: PhotoItem[], b: PhotoItem[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  return JSON.stringify(a) === JSON.stringify(b);
+}
 // The server library lists (`serverLists` keys) that came from the kept copy, not from the server
 const keptLists = new Set<string>();
 
@@ -888,6 +905,30 @@ async function loadAllNow(check?: string[], reuseServers = false): Promise<Photo
       })
     )
   );
+  // Nothing changed since the last load (the same server lists, the same photos here, the same names): what it
+  // made is the answer. The phone's check after opening found nothing new each time and still merged, grouped and
+  // drew 110,000 photos again, freezing the window for seconds.
+  const inputs = {
+    lists: lists.map((l) => ({ key: sourceKey(l.source), photos: l.photos, label: l.source.label, editable: l.source.editable })),
+    sameAs: JSON.stringify([...sameAs]),
+    names: JSON.stringify([...names].map(([s, m]) => [s, [...m]])),
+    offline: offlineServers.join("|"),
+  };
+  const last = lastLoad;
+  if (
+    last &&
+    last.inputs.sameAs === inputs.sameAs &&
+    last.inputs.names === inputs.names &&
+    last.inputs.offline === inputs.offline &&
+    last.inputs.lists.length === inputs.lists.length &&
+    last.inputs.lists.every((l, i) => {
+      const now = inputs.lists[i];
+      return l.key === now.key && l.label === now.label && l.editable === now.editable && samePhotoList(l.photos, now.photos);
+    })
+  ) {
+    note("All photos: unchanged, kept", performance.now() - loadStarted, true);
+    return last.photos;
+  }
   all = { ...all, sources: sourceMap, names };
   const named = lists.map((l) => (l.source.server === null ? l : { ...l, photos: l.photos.map((p) => withPeopleNamed(p, showOn(engineOf(l.source)))) }));
   const mergedSources = timed("All photos: merge", () => mergeSources(named, sameAs));
@@ -912,6 +953,7 @@ async function loadAllNow(check?: string[], reuseServers = false): Promise<Photo
   window.dispatchEvent(new Event(ALL_PHOTOS_LOADED));
   noteUnreachable();
   note(`All photos: loaded${useKept ? " from the kept lists" : ""}`, performance.now() - loadStarted, true);
+  lastLoad = { inputs, photos: merged.photos };
   return merged.photos;
 }
 
