@@ -32,7 +32,7 @@ pub fn ensure_tables(conn: &Connection) -> Result<(), String> {
              created_at INTEGER NOT NULL,
              PRIMARY KEY (server, album_id)
          );
-         -- The album's photos already taken (downloaded, queued, or here already)
+         -- The album's photos already taken (downloaded, or here already)
          CREATE TABLE IF NOT EXISTS follow_photos (
              server TEXT NOT NULL,
              album_id INTEGER NOT NULL,
@@ -41,6 +41,17 @@ pub fn ensure_tables(conn: &Connection) -> Result<(), String> {
          );",
     )
     .map_err(|e| e.to_string())
+}
+
+// A followed photo landed: it isn't asked for again. (Noted when it lands, not when it is queued: one whose
+// download failed for good, a full disk for one, is asked for again once it left the download list.)
+pub fn taken(app: &AppHandle, server: &str, album_id: i64, hash: &str) {
+    let noted = open(app).and_then(|conn| {
+        conn.execute("INSERT OR IGNORE INTO follow_photos (server, album_id, hash) VALUES (?1, ?2, ?3)", params![server, album_id, hash]).map_err(|e| e.to_string())
+    });
+    if let Err(e) = noted {
+        eprintln!("[follow] {hash} not noted as taken: {e}");
+    }
 }
 
 #[derive(Serialize, Clone)]
@@ -200,7 +211,8 @@ async fn sync(app: &AppHandle) -> Result<(), String> {
             let rows = stmt.query_map(params![f.server, f.album_id], |r| r.get::<_, String>(0)).map_err(|e| e.to_string())?;
             rows.flatten().collect()
         };
-        let mut new: Vec<String> = hashes.into_iter().filter(|h| !taken.contains(h)).collect();
+        let on_their_way = transfers::followed_in_list(app, &f.server);
+        let mut new: Vec<String> = hashes.into_iter().filter(|h| !taken.contains(h) && !on_their_way.contains(h)).collect();
         if f.upload_to.is_none() {
             // Photos your library has already aren't downloaded again
             let library = open_global_db(app)?;
@@ -237,11 +249,7 @@ async fn sync(app: &AppHandle) -> Result<(), String> {
             })
             .unwrap_or_default();
         println!("[follow] {}: {} new photo(s)", f.album_name, items.len());
-        for item in &items {
-            conn.execute("INSERT OR IGNORE INTO follow_photos (server, album_id, hash) VALUES (?1, ?2, ?3)", params![f.server, f.album_id, item.hash])
-                .map_err(|e| e.to_string())?;
-        }
-        transfers::download_followed(app, &f.server, items, &f.folder, f.upload_to.clone())?;
+        transfers::download_followed(app, &f.server, f.album_id, items, &f.folder, f.upload_to.clone())?;
     }
     if !ended.is_empty() {
         let _ = app.emit("follows-ended", json!({ "albums": ended }));

@@ -332,10 +332,28 @@ The Kotlin changes are not compiled here (no Gradle build was run) and nothing w
 
   Not checked in the real window: the test follows a sorted, filtered list through 300 edits against the
   list worked out anew, but drawing was not measured and nothing was clicked through.
-- A followed photo is marked as taken when it is queued, not when it lands: one whose download fails for
-  good and is cleared from the list is never asked for again (`follows.rs` `sync`).
-- Not read: the scan loop itself, most of `LuminaPlugin.kt`, `VirtualPhotoGrid.tsx`. Read and nothing found:
-  the restore (`backup.rs`), export's writes.
+
+### The rest of the reading (uncommitted on `speed/phase-2`)
+
+Read now: the scan's saving and its events, `LuminaPlugin.kt`, `VirtualPhotoGrid.tsx`, the window's close.
+
+- **Followed photos** are noted as taken when they land, not when they are queued (`follows::taken`). One
+  whose download failed for good (a full disk) is asked for again once it left the download list.
+- **Events that made the server's lists anew for nothing** (`listing.rs`): an export's progress (many times
+  a second, for every zip a web user asks for), ffmpeg's download and transcoding. They are known as
+  changing nothing now; a saved part of a long first index and the end of face matching are known as
+  changes in the database.
+- **A scan whose rows could not be saved** (the database busy for too long) says so in the log; before, it
+  listed the files as indexed and their thumbnails had no row to go with until the next scan.
+- **The phone's photo list** always answers: an error while listing left the window waiting for good.
+
+Looked at and left: the grid component (its per-scroll work is a few thousand comparisons; drawing needs
+the real window to measure); the app staying alive after its window closes is the tray setting. Known and
+not changed: the phone keeps a thumbnail per media id, so a photo edited in place on the phone keeps its
+old thumbnail.
+
+Found by Maarten in the test build, fixed and committed: P took no pick off; in All photos, Apply changes
+and Empty _Trash did nothing for a server's library (a photo on both has its home on the server).
 
 ## The plan
 

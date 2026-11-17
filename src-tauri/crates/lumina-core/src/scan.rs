@@ -454,7 +454,13 @@ fn save_indexed(
                 let _ = tx.execute("INSERT OR IGNORE INTO photo_tags (hash, tag) VALUES (?1, ?2)", params![p.hash, tag]);
             }
         }
-        let _ = tx.commit();
+        // Not saved (the database busy for too long): the next scan finds these files new again. Said, as
+        // until then their thumbnails and faces have no row to go with.
+        if let Err(e) = tx.commit() {
+            eprintln!("[scan] {upsert_count} indexed files could not be saved: {e}");
+        }
+    } else {
+        eprintln!("[scan] {upsert_count} indexed files could not be saved: the database gave no transaction");
     }
     for i in moved_in {
         let (p, ..) = &mut indexed[i];

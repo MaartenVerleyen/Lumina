@@ -220,12 +220,21 @@ class LuminaPlugin(private val activity: Activity) : Plugin(activity) {
       requestPermissionForAlias("location", invoke, "locationPermission")
       return
     }
-    pool.execute { invoke.resolve(JSObject().put("items", PhoneStore.list(activity))) }
+    pool.execute { resolveList(invoke) }
+  }
+
+  // The list, or why there is none: an error here must still answer, or the window waits for it for good
+  private fun resolveList(invoke: Invoke) {
+    try {
+      invoke.resolve(JSObject().put("items", PhoneStore.list(activity)))
+    } catch (e: Exception) {
+      invoke.reject("This phone's photos could not be listed: ${e.message}")
+    }
   }
 
   @PermissionCallback
   fun locationPermission(invoke: Invoke) {
-    pool.execute { invoke.resolve(JSObject().put("items", PhoneStore.list(activity))) }
+    pool.execute { resolveList(invoke) }
   }
 
   @PermissionCallback

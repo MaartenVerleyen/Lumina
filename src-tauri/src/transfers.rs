@@ -82,6 +82,9 @@ struct Item {
 struct FollowStep {
     values: Option<serde_json::Value>,
     upload_to: Option<String>,
+    // The followed album it is of: noted as taken once it has landed (follows::taken)
+    #[serde(default)]
+    album: Option<i64>,
 }
 
 // A photo of a followed album to download (follows.rs)
@@ -589,8 +592,11 @@ async fn download_pass(app: &AppHandle, q: &Arc<Queue>) -> Pass {
                 match result {
                     Ok((path, size)) => {
                         let _ = client_db::add_copy(app, &item.server, &hash, &path, size);
+                        if let Some(album) = item.follow.as_ref().and_then(|f| f.album) {
+                            crate::follows::taken(app, &item.server, album, &hash);
+                        }
                         match &item.follow {
-                            Some(FollowStep { values, upload_to: Some(target) }) => relay(app, target, &path, size, values.clone()),
+                            Some(FollowStep { values, upload_to: Some(target), .. }) => relay(app, target, &path, size, values.clone()),
                             // Taken into the library once the pass ends (below), by the mark on the item
                             Some(FollowStep { upload_to: None, .. }) => {}
                             None => {}
@@ -714,7 +720,14 @@ fn relay(app: &AppHandle, server: &str, path: &Path, size: u64, values: Option<s
 }
 
 // The new photos of a followed album, into `folder` (and on to `upload_to`)
-pub fn download_followed(app: &AppHandle, server: &str, photos: Vec<FollowedPhoto>, folder: &str, upload_to: Option<String>) -> Result<(), String> {
+// The followed photos of a server in the download list, in whatever state: on their way, landed, or failed and
+// not cleared yet (those are asked for again once they left the list)
+pub fn followed_in_list(app: &AppHandle, server: &str) -> HashSet<String> {
+    let items = transfers(app).downloads.items.lock().unwrap();
+    items.iter().filter(|i| i.server == server && i.follow.is_some()).filter_map(|i| i.hash.clone()).collect()
+}
+
+pub fn download_followed(app: &AppHandle, server: &str, album: i64, photos: Vec<FollowedPhoto>, folder: &str, upload_to: Option<String>) -> Result<(), String> {
     let q = transfers(app).downloads.clone();
     {
         let mut items = q.items.lock().unwrap();
@@ -734,7 +747,7 @@ pub fn download_followed(app: &AppHandle, server: &str, photos: Vec<FollowedPhot
                 error: None,
                 values: None,
                 values_sent: false,
-                follow: Some(FollowStep { values: p.values, upload_to: upload_to.clone() }),
+                follow: Some(FollowStep { values: p.values, upload_to: upload_to.clone(), album: Some(album) }),
                 delete_after: false,
                 take_in: upload_to.is_none(),
             });

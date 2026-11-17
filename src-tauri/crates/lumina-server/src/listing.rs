@@ -219,9 +219,19 @@ impl Default for Listings {
 }
 
 // Events that change nothing a list shows
-const UNCHANGING: &[&str] = &["perf-log", "face-model-download", "clip-model-download", "ollama-pull-progress"];
+// (an export's progress comes many times a second, for every zip someone asks for)
+const UNCHANGING: &[&str] = &[
+    "perf-log",
+    "face-model-download",
+    "clip-model-download",
+    "ollama-pull-progress",
+    "ffmpeg-download",
+    "export-progress",
+    "transcode-progress",
+    "removable-drive-arrived",
+];
 // Progress that only counts until its last event
-const COUNTING: &[&str] = &["scan-progress", "semantic-progress", "face-quality-progress"];
+const COUNTING: &[&str] = &["scan-progress", "semantic-progress", "face-quality-progress", "import-progress"];
 // Events whose changes are all in the database, where each changed photo has a new revision
 const IN_THE_DATABASE: &[&str] = &[
     "photos-changed",
@@ -232,10 +242,13 @@ const IN_THE_DATABASE: &[&str] = &[
     "thumb-batch-ready",
     "face-scan-progress",
     "face-quality-progress",
+    "face-automatch-complete",
     "ai-batch-progress",
+    // Part of a long first index was saved: the new rows have revisions
+    "library-indexed",
 ];
 // Events after which files may have come or gone
-const FILES: &[&str] = &["scan-progress", "library-files-changed"];
+const FILES: &[&str] = &["scan-progress", "library-files-changed", "import-progress"];
 
 fn gzip(bytes: &[u8]) -> Result<Vec<u8>, String> {
     let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
