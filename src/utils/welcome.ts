@@ -14,6 +14,14 @@ export interface ReleaseNotes {
 // Newest first. Add an entry for every release that should greet updating users with "What's new".
 export const RELEASE_NOTES: ReleaseNotes[] = [
   {
+    version: "6.3.4",
+    items: [
+      { title: "Trips that make sense", text: "Trips are now the times you were away: days 50 km or more from home, one trip per journey, named after the country when you went through many places. Days at home only show when there were 50 photos or more, like a birthday. Photos you received or downloaded (WhatsApp, saved images, screenshots) no longer make a trip." },
+      { title: "No more jolts while captions come in", text: "While the server writes captions, the app no longer works out every trip and the whole grid again for each new caption. Scrolling and tapping stay smooth." },
+      { title: "The phone app opens quicker", text: "The phone keeps All photos as it last showed it and opens from that, then only asks the server whether anything changed." },
+    ],
+  },
+  {
     version: "6.3.3",
     items: [
       { title: "Quicker phone app", text: "Opening the app no longer puts All photos together two more times when nothing changed, so People, a person and Photos now open at once instead of after a second or two. All photos also finds the same photo in two libraries 7 times faster." },
