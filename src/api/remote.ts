@@ -4,6 +4,7 @@
 //   subscribe  one shared WebSocket on /api/events for every event, reconnecting by itself
 //   mediaUrl   /media/{thumb|original|preview|face}/{id}: by id, so the client never needs the server's paths
 // No Tauri imports here: the browser loads this, and the tests run it under Node.
+import { applyDifferences, browserKeptLists, type KeptLists } from "./keptList.ts";
 import type { EngineEvent, MediaRef, Transport } from "./transport";
 
 export interface RemoteOptions {
@@ -15,7 +16,12 @@ export interface RemoteOptions {
   onUnauthorized?: () => void;
   // Fixed in tests; a random one per window otherwise
   clientId?: string;
+  // Where library lists are kept between visits (keptList.ts): the browser's IndexedDB unless given; null keeps none
+  keptLists?: KeptLists | null;
 }
+
+// Asks the server for only what differs from the list named in If-None-Match; on the answer, names that list
+const DIFFERENCES = "X-Lumina-Differences";
 
 // Sent by the client itself when its event socket connects again after a drop (the web client here, the
 // desktop app from src-tauri/src/remote.rs): events from while it was down are lost, so the open library,
@@ -85,24 +91,79 @@ export function createRemoteTransport(options: RemoteOptions = {}): Transport & 
   const doFetch = options.fetch ?? ((...args: Parameters<typeof fetch>) => fetch(...args));
   const Socket = options.WebSocket ?? (typeof WebSocket === "undefined" ? undefined : WebSocket);
 
-  async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
-    let resp: Response;
+  const kept = options.keptLists === undefined ? browserKeptLists() : options.keptLists;
+
+  async function send(command: string, args: Record<string, unknown> | undefined, tag?: string): Promise<Response> {
     try {
-      resp = await doFetch(`${base}/api/rpc/${segment(command)}`, {
+      return await doFetch(`${base}/api/rpc/${segment(command)}`, {
         method: "POST",
         credentials: "same-origin",
-        headers,
+        headers: tag ? { ...headers, "If-None-Match": tag, [DIFFERENCES]: "1" } : headers,
         body: JSON.stringify(args ?? {}),
       });
     } catch (e) {
-      return Promise.reject(`Can't reach the server (${String(e)})`);
+      throw `Can't reach the server (${String(e)})`;
     }
+  }
+
+  async function answer<T>(resp: Response): Promise<T> {
     if (!resp.ok) {
-      if (resp.status === 401) options.onUnauthorized?.();
-      return Promise.reject(await errorText(resp));
+      if (resp.status === 401) {
+        void kept?.clear();
+        options.onUnauthorized?.();
+      }
+      throw await errorText(resp);
     }
     const text = await resp.text();
     return (text ? JSON.parse(text) : null) as T;
+  }
+
+  // A library's list (scan_folder), with the copy this browser kept: the server says "still that one" (304) or
+  // sends what differs from it. The server gives a tag only to whoever sees the whole library; without one
+  // nothing is kept, and a copy that doesn't fit is replaced by the whole list.
+  async function libraryList<T>(key: string, args: Record<string, unknown>, kept: KeptLists): Promise<T> {
+    const had = await kept.tag(key);
+    let resp = await send("scan_folder", args, had ?? undefined);
+    if (had && resp.status === 304) {
+      try {
+        return JSON.parse((await kept.text(key))!) as T;
+      } catch {
+        resp = await send("scan_folder", args);
+      }
+    } else if (had && resp.ok && resp.headers.get(DIFFERENCES) === had) {
+      const tag = resp.headers.get("etag");
+      let list: unknown[] | null = null;
+      try {
+        const [text, differences] = await Promise.all([kept.text(key), resp.text()]);
+        list = applyDifferences(JSON.parse(text!), JSON.parse(differences));
+      } catch {
+        list = null;
+      }
+      if (list && tag) {
+        void kept.put(key, { tag, text: JSON.stringify(list) });
+        return list as T;
+      }
+      console.warn("The server's changes didn't fit the list kept in this browser: asking for the whole list");
+      resp = await send("scan_folder", args);
+    } else if (resp.status === 304) {
+      resp = await send("scan_folder", args);
+    }
+    if (!resp.ok) return answer<T>(resp);
+    const tag = resp.headers.get("etag");
+    const text = await resp.text();
+    if (tag) void kept.put(key, { tag, text });
+    return (text ? JSON.parse(text) : null) as T;
+  }
+
+  async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+    try {
+      if (kept && command === "scan_folder" && typeof args?.folderPath === "string") {
+        return await libraryList<T>(`${base}|${args.folderPath}`, args, kept);
+      }
+      return await answer<T>(await send(command, args));
+    } catch (e) {
+      return Promise.reject(e);
+    }
   }
 
   // One WebSocket for every subscription. It opens with the first subscriber, reconnects with a growing
@@ -216,9 +277,12 @@ export function createRemoteAuth(options: Pick<RemoteOptions, "base" | "fetch"> 
         body: JSON.stringify({ name, password }),
       });
       if (!resp.ok) throw new Error(await errorText(resp));
+      // Lists kept in this browser were someone's who signed in before: not shown to whoever signs in now
+      await browserKeptLists()?.clear();
       return resp.json();
     },
     async logout(): Promise<void> {
+      await browserKeptLists()?.clear();
       await doFetch(`${base}/api/auth/logout`, { method: "POST", credentials: "same-origin", headers: HEADERS });
     },
   };

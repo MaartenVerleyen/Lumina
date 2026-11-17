@@ -14,6 +14,12 @@ export interface ReleaseNotes {
 // Newest first. Add an entry for every release that should greet updating users with "What's new".
 export const RELEASE_NOTES: ReleaseNotes[] = [
   {
+    version: "6.3.1",
+    items: [
+      { title: "A server library opens at once in the browser too", text: "The web client now keeps each library's list in the browser, as the app does. Opening a library again, or reloading the page, asks the server only what changed instead of fetching the whole library. Signing out clears it." },
+    ],
+  },
+  {
     version: "6.3.0",
     items: [
       { title: "A server library opens at once", text: "The server keeps each library's list ready instead of making it for every window that opens. Lumina keeps its own copy and only asks what changed: after a new rating or a few uploads it gets those photos, not the whole library again. The server needs 6.3.0 too." },
