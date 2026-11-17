@@ -14,6 +14,12 @@ export interface ReleaseNotes {
 // Newest first. Add an entry for every release that should greet updating users with "What's new".
 export const RELEASE_NOTES: ReleaseNotes[] = [
   {
+    version: "6.3.5",
+    items: [
+      { title: "The phone app no longer closes by itself", text: "6.3.4 saved all of All photos in one go about ten seconds after opening, which on a large library needed more memory than Android gives an app, and Android closed it. It no longer does that, and opens quicker again." },
+    ],
+  },
+  {
     version: "6.3.4",
     items: [
       { title: "Trips that make sense", text: "Trips are now the times you were away: days 50 km or more from home, one trip per journey, named after the country when you went through many places. Days at home only show when there were 50 photos or more, like a birthday. Photos you received or downloaded (WhatsApp, saved images, screenshots) no longer make a trip." },

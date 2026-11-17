@@ -14,7 +14,7 @@ import {
   type RemoteEventMessage,
   type ServerInfo,
 } from "./desktopRemote.ts";
-import { note, setTimingSink, timed, timedAsync, watchFreezes } from "./timings.ts";
+import { note, setTimingSink, timed, watchFreezes } from "./timings.ts";
 import { createRemoteAuth, createRemoteTransport, exportZipUrl, hasRole, makeExportZip, RECONNECTED, uploadBackup, type RemoteUser, type Role } from "./remote.ts";
 import {
   copyDownEdits,
@@ -844,24 +844,6 @@ async function loadAllNow(check?: string[], reuseServers = false): Promise<Photo
   offlineServers = [];
   unreachable = new Set();
   const sources = includedSources(await allPhotosCandidates(useKept), excludedSources());
-  // The phone app opens from All photos as it last showed it: one kept list, instead of every library's list put
-  // together again
-  if (onAndroid && useKept) {
-    const opened = await timedAsync("All photos: finished list read", () => openFinished(sources));
-    if (opened) {
-      note("All photos: loaded from the finished list", performance.now() - loadStarted, true);
-      return opened;
-    }
-  }
-  // Opened from it: while every server says its list is still the one it was made from, and the phone's photos
-  // are the same, it stays (a few bytes per server instead of tens of megabytes to read)
-  if (finishedInUse && reuseServers) {
-    if (await timedAsync("All photos: finished list checked", () => finishedStillHolds(sources))) {
-      note("All photos: unchanged, finished list kept", performance.now() - loadStarted, true);
-      return finishedInUse.photos;
-    }
-    finishedInUse = null;
-  }
   let localTurn: Promise<unknown> = Promise.resolve();
   const scanHere = (root: string) => {
     const scan = localTurn.then(() => callLocal<PhotoItem[]>("scan_folder", { folderPath: root, forceReprocess: false, keepOthers: true }));
@@ -947,7 +929,6 @@ async function loadAllNow(check?: string[], reuseServers = false): Promise<Photo
     note("All photos: unchanged, kept", performance.now() - loadStarted, true);
     return last.photos;
   }
-  finishedInUse = null;
   all = { ...all, sources: sourceMap, names };
   const named = lists.map((l) => (l.source.server === null ? l : { ...l, photos: l.photos.map((p) => withPeopleNamed(p, showOn(engineOf(l.source)))) }));
   const mergedSources = timed("All photos: merge", () => mergeSources(named, sameAs));
@@ -964,7 +945,6 @@ async function loadAllNow(check?: string[], reuseServers = false): Promise<Photo
   noteUnreachable();
   note(`All photos: loaded${useKept ? " from the kept lists" : ""}`, performance.now() - loadStarted, true);
   lastLoad = { inputs, photos: merged.photos };
-  if (onAndroid) keepFinished(sources, lists, merged);
   return merged.photos;
 }
 
@@ -985,101 +965,18 @@ function install(sourceMap: Map<string, Source>, names: AllState["names"], merge
   all = { ...all, sources: sourceMap, names, copies: merged.copies, localValues: merged.localValues, placed, faces, localIds: merged.localIds, fromLocal, people };
 }
 
-// The phone app's finished All photos (keepFinished, openFinished): the photos as shown, where each one's copies
-// are (by source number), and what it was made from: each server list's tag and the phone's photos
-const FINISHED_KEY = "allphotos:finished";
-interface Finished {
-  version: 1;
-  sources: string[];
-  tags: Record<string, string>;
-  phone: string;
-  names: [string, [string, PersonName][]][];
-  copies: [string, number[], number, number][];
-  localValues: [string, LocalValues][];
-  localIds: [string, string[]][];
-  photos: PhotoItem[];
-}
-let finishedInUse: { tags: Record<string, string>; phone: string; photos: PhotoItem[] } | null = null;
-let keepTimer: ReturnType<typeof setTimeout> | null = null;
-
-const phoneSignature = (photos: PhotoItem[]) => photos.map((p) => p.hash).join(",");
-
-// Written once the window has settled (writing it out is a second of work on a phone), and only for a list made
-// from server lists the app has kept with their tags
-function keepFinished(sources: Source[], lists: { source: Source; photos: PhotoItem[] }[], merged: MergedLists) {
-  if (keepTimer) clearTimeout(keepTimer);
-  keepTimer = setTimeout(async () => {
-    keepTimer = null;
-    try {
-      const keys = sources.map(sourceKey);
-      const index = new Map(keys.map((k, i) => [k, i]));
-      const tags: Record<string, string> = {};
-      for (const s of sources) {
-        if (s.server === null) continue;
-        const tag = await callLocal<string | null>("kept_list_tag", { server: s.server, root: s.root });
-        if (!tag) return;
-        tags[sourceKey(s)] = tag;
-      }
-      const phone = lists.find((l) => l.source.root === PHONE_ROOT)?.photos ?? [];
-      const finished: Finished = {
-        version: 1,
-        sources: keys,
-        tags,
-        phone: phoneSignature(phone),
-        names: [...all.names].map(([server, m]): [string, [string, PersonName][]] => [server, [...m]]),
-        copies: [...merged.copies].map(([hash, c]): [string, number[], number, number] => [
-          hash,
-          c.copies.map((k) => index.get(k) ?? -1),
-          c.home === null ? -1 : index.get(c.home) ?? -1,
-          index.get(c.shown) ?? -1,
-        ]),
-        localValues: [...merged.localValues],
-        localIds: [...merged.localIds],
-        photos: merged.photos,
-      };
-      const text = timed("All photos: finished list written out", () => JSON.stringify(finished));
-      await callLocal("offline_save_text", { key: FINISHED_KEY, text });
-    } catch (err) {
-      console.error("All photos: could not keep the finished list", err);
-    }
-  }, 10_000);
-}
-
-// The kept finished list, when it was made from the same libraries; installed as the window's All photos
-async function openFinished(sources: Source[]): Promise<PhotoItem[] | null> {
-  const finished = await kept<Finished>(FINISHED_KEY);
-  const keys = sources.map(sourceKey);
-  const sameSources = !!finished && finished.sources.length === keys.length && finished.sources.every((k, i) => k === keys[i]);
-  if (!finished || finished.version !== 1 || !sameSources) return null;
-  const sourceMap = new Map(sources.map((s) => [sourceKey(s), s]));
-  const copies = new Map<string, Copies>(
-    finished.copies.map(([hash, at, home, shown]): [string, Copies] => [hash, { copies: at.map((i) => keys[i]), home: home < 0 ? null : keys[home], shown: keys[shown] }])
-  );
-  const names = new Map(finished.names.map(([server, list]): [string, Map<string, PersonName>] => [server, new Map(list)]));
-  install(sourceMap, names, { photos: finished.photos, copies, localValues: new Map(finished.localValues), localIds: new Map(finished.localIds) });
-  accessChanged();
-  finishedInUse = { tags: finished.tags, phone: finished.phone, photos: finished.photos };
-  lastLoad = null;
-  window.dispatchEvent(new Event(ALL_PHOTOS_LOADED));
-  return finished.photos;
-}
-
-// Every server's list is still the one the finished list was made from, and the phone has the same photos
-async function finishedStillHolds(sources: Source[]): Promise<boolean> {
-  const inUse = finishedInUse;
-  if (!inUse) return false;
+// 6.3.4 kept All photos as the phone last showed it (one list of every photo, 150 MB on a large library). Writing
+// it out needed more memory than many phones have (the app was closed by Android about 10 s after opening) and
+// reading it was slower than the libraries' own lists. What it saved is emptied once, so it takes no space.
+if (onAndroid) {
   try {
-    const answers = await Promise.all(
-      sources.map(async (s) => {
-        if (s.server === null) return s.root !== PHONE_ROOT || phoneSignature(await phonePhotos()) === inUse.phone;
-        const tag = inUse.tags[sourceKey(s)];
-        return !!tag && (await callLocal<boolean>("server_list_same", { server: s.server, root: s.root, tag }));
-      })
-    );
-    return answers.every(Boolean);
+    if (localStorage.getItem("lumina_finished_list_emptied") !== "1") {
+      void invoke("offline_save_text", { key: "allphotos:finished", text: "null" })
+        .then(() => localStorage.setItem("lumina_finished_list_emptied", "1"))
+        .catch(() => {});
+    }
   } catch {
-    // A server out of reach: the usual load, which knows what to do then
-    return false;
+    // no storage: tried again at the next start
   }
 }
 
