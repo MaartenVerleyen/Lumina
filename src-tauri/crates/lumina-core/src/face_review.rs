@@ -95,11 +95,22 @@ pub fn format_display_photo_path(
 // runner-up by FACE_ASSIGN_MARGIN, and doesn't look more like a face the user rejected for that person.
 // A person is suggested at most once per photo (the best-scoring face), and never on a photo they are
 // already confirmed in. The badge counts and the review modal both come from this, so they always agree.
+// Each person's list is cut to the best MAX_SUGGESTIONS_PER_PERSON (the batch a review shows)
 pub fn compute_face_suggestions(
     app: &dyn Host,
     conn: &Connection,
     root_folder: Option<&str>,
 ) -> Result<HashMap<String, Vec<SimilarFaceCandidate>>, String> {
+    let mut out = every_face_suggestion(app, conn, root_folder)?;
+    for list in out.values_mut() {
+        list.truncate(MAX_SUGGESTIONS_PER_PERSON);
+    }
+    Ok(out)
+}
+
+// The same, every suggestion: "Who is this?" leaves out every face that is someone's suggestion, also past the
+// first batch (a person with 2,000 likely faces had 1,700 of them grouped as unknown)
+fn every_face_suggestion(app: &dyn Host, conn: &Connection, root_folder: Option<&str>) -> Result<HashMap<String, Vec<SimilarFaceCandidate>>, String> {
     ensure_embedding_cache_loaded(conn);
     let prefix = make_folder_prefix(root_folder);
     let thumbs_dir = get_app_storage_dir(app).join("thumbnails");
@@ -271,7 +282,6 @@ pub fn compute_face_suggestions(
     }
     for list in out.values_mut() {
         list.sort_by(|a, b| b.similarity.partial_cmp(&a.similarity).unwrap_or(std::cmp::Ordering::Equal));
-        list.truncate(MAX_SUGGESTIONS_PER_PERSON);
     }
     Ok(out)
 }
@@ -282,29 +292,39 @@ pub fn compute_face_suggestions(
 // (so it holds every change made before), instead of starting their own.
 static SUGGESTIONS_TURN: Mutex<()> = Mutex::new(());
 type Suggestions = HashMap<String, Vec<SimilarFaceCandidate>>;
-static LAST_SUGGESTIONS: Mutex<Option<(Option<String>, std::time::Instant, Suggestions)>> = Mutex::new(None);
+// The folder, when the computation started, each person's first batch, and every face suggested for anyone
+type LastSuggestions = (Option<String>, std::time::Instant, Suggestions, Arc<HashSet<String>>);
+static LAST_SUGGESTIONS: Mutex<Option<LastSuggestions>> = Mutex::new(None);
 
 fn refresh_suggestion_cache(
     app: &dyn Host,
     conn: &Connection,
     root_folder: Option<&str>,
 ) -> Result<HashMap<String, Vec<SimilarFaceCandidate>>, String> {
+    refresh_suggestions(app, conn, root_folder).map(|(suggestions, _)| suggestions)
+}
+
+fn refresh_suggestions(app: &dyn Host, conn: &Connection, root_folder: Option<&str>) -> Result<(Suggestions, Arc<HashSet<String>>), String> {
     let asked = std::time::Instant::now();
     let _turn = SUGGESTIONS_TURN.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some((root, started, list)) = LAST_SUGGESTIONS.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+    if let Some((root, started, list, all)) = LAST_SUGGESTIONS.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
         if *started >= asked && root.as_deref() == root_folder {
-            return Ok(list.clone());
+            return Ok((list.clone(), all.clone()));
         }
     }
     let started = std::time::Instant::now();
-    let suggestions = compute_face_suggestions(app, conn, root_folder)?;
-    *LAST_SUGGESTIONS.lock().unwrap_or_else(|e| e.into_inner()) = Some((root_folder.map(str::to_string), started, suggestions.clone()));
+    let mut suggestions = every_face_suggestion(app, conn, root_folder)?;
+    let all: Arc<HashSet<String>> = Arc::new(suggestions.values().flatten().map(|c| c.face_id.clone()).collect());
+    for list in suggestions.values_mut() {
+        list.truncate(MAX_SUGGESTIONS_PER_PERSON);
+    }
+    *LAST_SUGGESTIONS.lock().unwrap_or_else(|e| e.into_inner()) = Some((root_folder.map(str::to_string), started, suggestions.clone(), all.clone()));
     let keyed: HashMap<String, Vec<SimilarFaceCandidate>> = suggestions
         .iter()
         .map(|(name, list)| (pending_cache_key(name, root_folder), list.clone()))
         .collect();
     replace_pending_for_folder(root_folder, keyed);
-    Ok(suggestions)
+    Ok((suggestions, all))
 }
 
 pub async fn find_similar_faces(app: SharedHost, person_name: String, root_folder: Option<String>, force_refresh: Option<bool>) -> Result<Vec<SimilarFaceCandidate>, String> {
@@ -836,9 +856,8 @@ pub async fn get_unknown_face_clusters(app: SharedHost, root_folder: Option<Stri
 
 fn make_unknown_face_clusters(app: &dyn Host, conn: &Connection, root_folder: Option<&str>) -> Result<Vec<FaceCluster>, String> {
     {
-        let suggestions = refresh_suggestion_cache(app, conn, root_folder)?;
-        let mut suggested: std::collections::HashSet<String> =
-            suggestions.values().flatten().map(|c| c.face_id.clone()).collect();
+        let (_, every) = refresh_suggestions(app, conn, root_folder)?;
+        let mut suggested: HashSet<String> = (*every).clone();
         suggested.extend(ignored_face_ids(conn));
         let prefix = make_folder_prefix(root_folder);
         let thumbs_dir = get_app_storage_dir(app).join("thumbnails");

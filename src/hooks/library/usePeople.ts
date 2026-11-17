@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { timedAsync } from "../../api/timings";
 import { useAccess } from "../../components/auth/ServerGate";
 import { ALL_PHOTOS, ALL_PHOTOS_LOADED, allPhotosSources, call, callLocal, isOwnChange, localJobRoots, openLibraryIsAll, RECONNECTED, subscribe } from "../../api";
 import { PhotoItem, PersonItem, FaceScanProgress, FaceMatchEvent, FaceInstance, FaceModelDownloadProgress, FaceQualityProgress } from "../../types/lumina";
@@ -76,9 +77,7 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
   async function refreshPeople(currentFolder = folder, skipPendingScan = false) {
     try {
       // 1. Immediately load & render the Top People Carousel (<2ms) without waiting on biometric matching!
-      const res = await call<PersonItem[]>("get_people", {
-        rootFolder: currentFolder || null,
-      });
+      const res = await timedAsync("people: list", () => call<PersonItem[]>("get_people", { rootFolder: currentFolder || null }));
       // The same list again keeps its identity, so what is drawn from it (centroids, counts) isn't asked again
       setPeople((prev) => (JSON.stringify(prev) === JSON.stringify(res) ? prev : res));
 
@@ -89,9 +88,7 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
       if (!skipPendingScan && mayEdit) {
         // Only the latest ask may set the badges: an older one can answer later, from before changes made since
         const asked = ++pendingAskRef.current;
-        call<Record<string, number>>("get_pending_face_match_counts", {
-          rootFolder: currentFolder || null,
-        })
+        timedAsync("people: faces to check", () => call<Record<string, number>>("get_pending_face_match_counts", { rootFolder: currentFolder || null }))
           .then((pending) => {
             if (asked === pendingAskRef.current) setPendingFaceCounts(pending || {});
           })

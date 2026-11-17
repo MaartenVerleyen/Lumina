@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { untilDrawn } from "../../api/timings";
 
 // The phone app's screens as one stack, kept in step with the web view's history: Android's back button (or
 // swipe) goes back through the web view's history, so every screen opened is an entry and back closes the top
@@ -37,6 +38,9 @@ export function useScreens() {
   const update = (next: Screen[]) => {
     current.current = next;
     setStack(next);
+    // How long a tap takes to show its screen (timings.ts: in Android's log)
+    const top = next[next.length - 1];
+    untilDrawn(`screen: ${top ? (top.kind === "tab" ? top.tab : top.kind === "grid" ? "grid of a " + Object.keys(top.scope ?? {})[0] : top.kind) : "photos"} shown`);
   };
 
   useEffect(() => {

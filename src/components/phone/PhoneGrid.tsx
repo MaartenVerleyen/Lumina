@@ -1,4 +1,5 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { timed } from "../../api/timings";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Check, CloudOff, Eye, Loader2, Play, RefreshCw } from "lucide-react";
 import type { PhotoItem } from "../../types/lumina";
@@ -92,7 +93,7 @@ export default function PhoneGrid({
   const cell = width > 0 ? (width - GAP * (columns - 1)) / columns : 0;
   const byMonth = columns > 5;
 
-  const rows = useMemo(() => {
+  const rows = useMemo(() => timed("grid: rows", () => {
     const out: Row[] = [];
     let row: number[] = [];
     let group: string | null = null;
@@ -118,7 +119,7 @@ export default function PhoneGrid({
     if (row.length) out.push({ kind: "photos", items: row });
     if (head) (head as Row & { kind: "head" }).end = photos.length;
     return out;
-  }, [photos, byDate, byMonth, columns]);
+  }), [photos, byDate, byMonth, columns]);
 
   // Where each row starts (the sizes are known: no measuring), for pinching around a photo and the scroller
   const offsets = useMemo(() => {

@@ -14,6 +14,7 @@ import {
   type RemoteEventMessage,
   type ServerInfo,
 } from "./desktopRemote.ts";
+import { note, setTimingSink, timed, watchFreezes } from "./timings.ts";
 import { createRemoteAuth, createRemoteTransport, exportZipUrl, hasRole, makeExportZip, RECONNECTED, uploadBackup, type RemoteUser, type Role } from "./remote.ts";
 import {
   copyDownEdits,
@@ -56,6 +57,11 @@ export const inDesktopApp = typeof window !== "undefined" && "__TAURI_INTERNALS_
 // The app on an Android phone (docs/plans/android.md): the same app as the desktop's, a client of a server,
 // in the phone layout
 export const onAndroid = inDesktopApp && typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent);
+// The phone's timings go to Android's log (timings.ts)
+if (onAndroid) {
+  setTimingSink((line) => void invoke("phone_log", { message: line }).catch(() => {}));
+  watchFreezes();
+}
 
 // Sent when the server says the session has ended; the login screen listens for it
 export const LOGGED_OUT_EVENT = "lumina-logged-out";
@@ -815,6 +821,7 @@ export function forgetServerLists(server: string) {
 }
 
 async function loadAllNow(check?: string[], reuseServers = false): Promise<PhotoItem[]> {
+  const loadStarted = performance.now();
   const useKept = fromKept;
   fromKept = false;
   offlineServers = [];
@@ -828,6 +835,7 @@ async function loadAllNow(check?: string[], reuseServers = false): Promise<Photo
   };
   const lists = await Promise.all(
     sources.map(async (source) => {
+      const listStarted = performance.now();
       try {
         const checked = !check || check.some((root) => sameRoot(root, source.root));
         const server = source.server;
@@ -856,6 +864,7 @@ async function loadAllNow(check?: string[], reuseServers = false): Promise<Photo
               : checked
               ? await scanHere(source.root)
               : await callLocal<PhotoItem[]>("list_local_library", { root: source.root });
+        note(`All photos: list of ${source.label}${useKept ? " (kept)" : ""}, ${photos.length} photos`, performance.now() - listStarted, true);
         return { source, photos };
       } catch (err) {
         console.error(`All photos: ${source.label} could not be listed`, err);
@@ -881,9 +890,12 @@ async function loadAllNow(check?: string[], reuseServers = false): Promise<Photo
   );
   all = { ...all, sources: sourceMap, names };
   const named = lists.map((l) => (l.source.server === null ? l : { ...l, photos: l.photos.map((p) => withPeopleNamed(p, showOn(engineOf(l.source)))) }));
-  const mergedSources = mergeSources(named, sameAs);
+  const mergedSources = timed("All photos: merge", () => mergeSources(named, sameAs));
   // Near-duplicates of two libraries share a burst group too
-  const merged = { ...mergedSources, photos: groupAcrossSources(mergedSources.photos, (p) => mergedSources.copies.get(p.hash)?.shown ?? "") };
+  const merged = {
+    ...mergedSources,
+    photos: timed("All photos: same photo across libraries", () => groupAcrossSources(mergedSources.photos, (p) => mergedSources.copies.get(p.hash)?.shown ?? "")),
+  };
   const placed = new Map<string, Placed>();
   const faces = new Map<string, string>();
   for (const p of merged.photos) {
@@ -899,6 +911,7 @@ async function loadAllNow(check?: string[], reuseServers = false): Promise<Photo
   await copyDown(merged.photos);
   window.dispatchEvent(new Event(ALL_PHOTOS_LOADED));
   noteUnreachable();
+  note(`All photos: loaded${useKept ? " from the kept lists" : ""}`, performance.now() - loadStarted, true);
   return merged.photos;
 }
 

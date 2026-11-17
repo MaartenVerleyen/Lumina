@@ -244,6 +244,7 @@ pub fn run() {
             transfers::open_with,
             phone::phone_photos,
             phone::phone_haptic,
+            phone::phone_log,
             phone_backup::phone_backup_selected,
             phone_backup::phone_folders,
             phone_backup::phone_free_up_scan,

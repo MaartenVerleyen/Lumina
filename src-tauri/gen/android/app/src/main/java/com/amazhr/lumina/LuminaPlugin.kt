@@ -31,6 +31,11 @@ import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 
 @InvokeArg
+class LogArgs {
+  var message: String = ""
+}
+
+@InvokeArg
 class BackupArgs {
   var enabled: Boolean = false
   var server: String? = null
@@ -192,6 +197,13 @@ class LuminaPlugin(private val activity: Activity) : Plugin(activity) {
       .setDataAndType(uri, "application/vnd.android.package-archive")
       .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
     activity.startActivity(install)
+    invoke.resolve()
+  }
+
+  // A line in Android's log (tag Lumina, adb logcat -s Lumina): how long the app's steps take on a phone
+  @Command
+  fun log(invoke: Invoke) {
+    android.util.Log.i("Lumina", invoke.parseArgs(LogArgs::class.java).message)
     invoke.resolve()
   }
 

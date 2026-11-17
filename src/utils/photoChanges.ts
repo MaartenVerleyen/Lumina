@@ -2,6 +2,7 @@
 // (a rating, a tag), and the window works a lot out from the list: the sort, the layout, the timeline, the
 // folder tree. With the changed photos known, whatever they can't have changed is kept as it was.
 import { useMemo, useRef } from "react";
+import { timed } from "../api/timings.ts";
 
 // A photo before and after
 export type Change<T> = readonly [before: T, after: T];
@@ -88,11 +89,17 @@ export function stillHolds<T extends { hash: string }, V>(
 
 // useMemo over the photo list that keeps its value through changes that can't affect it: `unaffected` says so
 // for one changed photo. `deps` is everything else the value is worked out from.
-export function useKeptWhile<T extends { hash: string }, V>(photos: readonly T[], compute: () => V, unaffected: (before: T, after: T) => boolean, deps: readonly unknown[]): V {
+export function useKeptWhile<T extends { hash: string }, V>(
+  photos: readonly T[],
+  compute: () => V,
+  unaffected: (before: T, after: T) => boolean,
+  deps: readonly unknown[],
+  label = "kept step"
+): V {
   const kept = useRef<Kept<T, V> | null>(null);
   return useMemo(() => {
     const holds = stillHolds(kept.current, photos, deps, unaffected);
-    const value = holds ? holds.value : compute();
+    const value = holds ? holds.value : timed(`view: ${label}`, compute);
     kept.current = { photos, deps, value };
     return value;
     // eslint-disable-next-line react-hooks/exhaustive-deps

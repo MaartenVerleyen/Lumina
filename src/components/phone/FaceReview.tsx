@@ -350,10 +350,11 @@ export function UnnamedGroups({ lib, onBack }: { lib: LibraryState; onBack: () =
             <button onClick={() => setLarge(g)} className="flex-1 text-left text-xs text-zinc-400 active:text-zinc-200">
               {g.size.toLocaleString()} {g.size === 1 ? "face" : "faces"} · <span className="text-emerald-400">Larger</span>
             </button>
-            <button onClick={() => void ignore(g)} className="px-3 py-1.5 rounded-full border border-zinc-700 text-xs text-zinc-300 active:bg-white/5">
-              Not someone I know
+            {/* Setting a group aside is the rare answer: quiet, and away from Name… */}
+            <button onClick={() => void ignore(g)} className="px-2 py-1.5 text-xs text-zinc-500 active:text-zinc-300">
+              Don't know
             </button>
-            <button disabled={shown(g).length === 0} onClick={() => setNaming(g)} className="disabled:opacity-40 px-3 py-1.5 rounded-full bg-emerald-600 text-xs font-medium text-white active:bg-emerald-700">
+            <button disabled={shown(g).length === 0} onClick={() => setNaming(g)} className="disabled:opacity-40 ml-2 px-4 py-1.5 rounded-full bg-emerald-600 text-xs font-medium text-white active:bg-emerald-700">
               Name…
             </button>
           </div>
@@ -393,7 +394,7 @@ export function UnnamedGroups({ lib, onBack }: { lib: LibraryState; onBack: () =
   );
 }
 
-// The faces marked "Not someone I know", the last first: tap the ones to bring back, and they are grouped and
+// The faces marked "Don't know", the last first: tap the ones to bring back, and they are grouped and
 // suggested again
 function IgnoredFacesPage({ onBack }: { onBack: (broughtBack: boolean) => void }) {
   const [faces, setFaces] = useState<SimilarFaceCandidate[] | null>(null);
@@ -444,10 +445,10 @@ function IgnoredFacesPage({ onBack }: { onBack: (broughtBack: boolean) => void }
     <Page title="Ignored faces" onBack={close}>
       <p className="px-4 pt-4 text-[15px] text-zinc-300">
         {faces === null
-          ? "Loading the faces you marked as not someone you know…"
+          ? "Loading the faces you don't know…"
           : all.length === 0
             ? "No ignored faces."
-            : `${all.length.toLocaleString()} ${all.length === 1 ? "face" : "faces"} marked as not someone you know. They aren't grouped or suggested. Tap the ones to bring back.`}
+            : `${all.length.toLocaleString()} ${all.length === 1 ? "face" : "faces"} marked as someone you don't know. They aren't grouped or suggested. Tap the ones to bring back.`}
       </p>
       {faces === null && !error && (
         <div className="flex justify-center py-10">

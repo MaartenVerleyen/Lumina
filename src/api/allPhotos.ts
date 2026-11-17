@@ -360,11 +360,6 @@ const popcount32 = (n: number) => {
   return (((n + (n >>> 4)) & 0x0f0f0f0f) * 0x01010101) >>> 24;
 };
 
-function dhashBits(a: string, b: string): number {
-  const half = (h: string, i: number) => parseInt(h.slice(i * 8, i * 8 + 8), 16) >>> 0;
-  return popcount32((half(a, 0) ^ half(b, 0)) >>> 0) + popcount32((half(a, 1) ^ half(b, 1)) >>> 0);
-}
-
 // Each library groups its own near-duplicates (with smart search to confirm); across libraries photos whose
 // fingerprints are at most 8 bits apart join a group too, as the engine does without smart search. Compared in
 // capture order, each with the next 300 of another library. Groups are numbered again from 1.
@@ -385,15 +380,30 @@ export function groupAcrossSources(photos: PhotoItem[], shownIn: (p: PhotoItem) 
     .map((_, i) => i)
     .filter((i) => /^[0-9a-f]{16}$/i.test(photos[i].dhash))
     .sort((a, b) => photos[a].captured_at.localeCompare(photos[b].captured_at) || photos[a].name.localeCompare(photos[b].name));
+  // Tens of millions of comparisons in a large library: each fingerprint and library read once, into numbers
+  // (reading them from text on every comparison took seconds on a phone, with the window frozen)
+  const n = order.length;
+  const high = new Uint32Array(n);
+  const low = new Uint32Array(n);
+  const library = new Int32Array(n);
+  const libraries = new Map<string, number>();
+  for (let x = 0; x < n; x++) {
+    const p = photos[order[x]];
+    high[x] = parseInt(p.dhash.slice(0, 8), 16) >>> 0;
+    low[x] = parseInt(p.dhash.slice(8, 16), 16) >>> 0;
+    const where = shownIn(p);
+    let id = libraries.get(where);
+    if (id === undefined) libraries.set(where, (id = libraries.size));
+    library[x] = id;
+  }
   const joined = new Set<number>();
-  for (let x = 0; x < order.length; x++) {
-    const a = order[x];
-    for (let y = x + 1; y < Math.min(order.length, x + 300); y++) {
-      const b = order[y];
-      if (shownIn(photos[a]) === shownIn(photos[b])) continue;
-      if (dhashBits(photos[a].dhash, photos[b].dhash) <= 8) {
-        join(a, b);
-        joined.add(a).add(b);
+  for (let x = 0; x < n; x++) {
+    const end = Math.min(n, x + 300);
+    for (let y = x + 1; y < end; y++) {
+      if (library[x] === library[y]) continue;
+      if (popcount32((high[x] ^ high[y]) >>> 0) + popcount32((low[x] ^ low[y]) >>> 0) <= 8) {
+        join(order[x], order[y]);
+        joined.add(order[x]).add(order[y]);
       }
     }
   }

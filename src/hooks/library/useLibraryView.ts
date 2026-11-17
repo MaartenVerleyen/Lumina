@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from "react";
+import { timed } from "../../api/timings";
 import { call, foldersOnThisPc } from "../../api";
 import { PhotoItem, TimelineBucket } from "../../types/lumina";
 import { buildFolderTree, foldersOf } from "../../utils/photoHelpers";
@@ -129,7 +130,8 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
     photos,
     () => buildFolderTree(photos, diskFolders),
     (before, after) => before.subfolder === after.subfolder && sameList(before.also_in, after.also_in),
-    [diskFolders]
+    [diskFolders],
+    "folder tree"
   );
   useEffect(() => {
     if (folderTree.nodes.length > 0 && expandedFolders.size === 0) {
@@ -141,7 +143,7 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
     const s = new Set<string>();
     photos.forEach((p) => p.tags.forEach((t) => s.add(t)));
     return Array.from(s).sort();
-  }, (before, after) => sameList(before.tags, after.tags), []);
+  }, (before, after) => sameList(before.tags, after.tags), [], "tags");
 
   const {
     stagedPhotos,
@@ -224,7 +226,7 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
       stillsCount: stills,
       shownCount: shown,
     };
-  }, countsUnaffected, [culling, settings.showLiveClips]);
+  }, countsUnaffected, [culling, settings.showLiveClips], "counts");
 
   // The filtered, sorted photos. Kept apart from the burst stacking below, so opening or collapsing bursts
   // doesn't filter and sort the whole library again (about a second at 175k photos)
@@ -251,7 +253,7 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
     settings.showLiveClips,
     mediaFilter,
   ];
-  const sortedView = useMemo((): SortedView => {
+  const sortedView = useMemo((): SortedView => timed("view: filter and sort", (): SortedView => {
     const q = semanticScores ? "" : parsedSearch.text.toLowerCase();
     const terms = parsedSearch.terms;
     const albumFilter = activeAlbumId !== null ? albumSets.get(activeAlbumId) ?? new Set<string>() : null;
@@ -395,7 +397,7 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
     keptSorted.current = { photos, deps: sortedDeps, value };
     return value;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [photos, ...sortedDeps]);
+  }), [photos, ...sortedDeps]);
 
   // The map shows every photo where it was taken. Only this boolean matters here, not the tab itself:
   // switching between other tabs mustn't filter, sort and lay out the whole library again.
@@ -403,7 +405,7 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
 
   // Bursts and near-duplicates stacked to their best photo, unless shown open
   const keptVisible = useRef<{ sorted: PhotoItem[]; deps: unknown[]; value: PhotoItem[] } | null>(null);
-  const visiblePhotos = useMemo(() => {
+  const visiblePhotos = useMemo(() => timed("view: stacks", () => {
     const { list: sorted, stackBursts, from } = sortedView;
     if (!stackBursts || isMapTab) {
       keptVisible.current = null;
@@ -457,7 +459,7 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
 
     keptVisible.current = { sorted, deps, value: finalDisplay };
     return finalDisplay;
-  }, [sortedView, isMapTab, culling, showAllBurstVersions, expandedBurstGroups]);
+  }), [sortedView, isMapTab, culling, showAllBurstVersions, expandedBurstGroups]);
 
   // Photos that qualify for Compare before the 4-photo cap (Compare shows "+N more")
   const compareCandidateCount = useMemo(() => {

@@ -40,6 +40,11 @@ pub fn open_with(app: &AppHandle, file: Option<&std::path::PathBuf>, media: Opti
     call(app, "openWith", serde_json::json!({ "files": files, "media": media, "mime": mime })).map(|_| ())
 }
 
+// A line in Android's log, tag Lumina
+pub fn log(app: &AppHandle, message: &str) {
+    let _ = call(app, "log", serde_json::json!({ "message": message }));
+}
+
 // A short vibration
 pub fn haptic(app: &AppHandle) {
     let _ = call(app, "haptic", serde_json::json!({}));

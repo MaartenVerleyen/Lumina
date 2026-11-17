@@ -421,6 +421,15 @@ pub fn clear_phone_thumbs(app: AppHandle) -> Result<(), String> {
     }
 }
 
+// A line in Android's log (the phone app's timings: adb logcat -s Lumina); elsewhere nothing
+#[tauri::command]
+pub fn phone_log(app: AppHandle, message: String) {
+    #[cfg(target_os = "android")]
+    crate::android::log(&app, &message);
+    #[cfg(not(target_os = "android"))]
+    let _ = (app, message);
+}
+
 // A short vibration (the phone app: a long-press selecting a photo)
 #[tauri::command]
 pub fn phone_haptic(app: AppHandle) {
