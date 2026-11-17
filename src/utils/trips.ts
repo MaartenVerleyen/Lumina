@@ -1,11 +1,13 @@
 // Trips and big days, from capture time and GPS.
-// 1. Days: photos in time order, split where there is a gap of 12+ hours or a jump of 100+ km.
+// 1. Days: photos in time order, split where there is a gap of 12+ hours, a jump of 100+ km, or where the
+//    photos cross the line 50 km around home (a morning at home and an afternoon at the coast are two parts).
 // 2. Each day is away (its GPS photos 50+ km from home, the library's densest GPS area), at home, or unknown
 //    (no GPS). A trip is the days away that follow each other with less than two days between them; days
 //    without GPS between two days away belong to it (a camera without GPS on the same journey).
 // 3. Days at home with many photos (a birthday, a party) are big days. Other days at home aren't listed.
-// WhatsApp photos and screenshots make no trip and join none: their date is when they arrived, and a screen is
-// no place. Copies of a photo (the same name and time, in two libraries) count once. Pure functions, unit-tested.
+// Only photos someone took make or join one: with a camera or a GPS position, and not WhatsApp or a screenshot.
+// Received, downloaded and edited images carry the date they arrived, and a screen is no place. Copies of a
+// photo (the same name and time, in two libraries) count once. Pure functions, unit-tested.
 
 export interface TripPhoto {
   hash: string;
@@ -15,6 +17,7 @@ export interface TripPhoto {
   longitude?: number | null;
   name?: string;
   tags?: string[];
+  camera_model?: string | null;
 }
 
 export interface Trip {
@@ -53,9 +56,11 @@ function impossible(t: number, now: number): boolean {
   return (firstHour && (d.getUTCFullYear() === 2000 || d.getUTCFullYear() === 1980)) || t > now + 24 * HOUR;
 }
 
-// Photos that tell where someone was: not received (WhatsApp) and not of a screen
+// Photos that tell where someone was: taken with a camera or with a position, not received (WhatsApp) and not of
+// a screen
 function tellsWhere(p: TripPhoto): boolean {
-  return !p.tags?.some((t) => t === "whatsapp" || t === "screenshot");
+  const taken = !!p.camera_model?.trim() || gpsOf(p) !== null;
+  return taken && !p.tags?.some((t) => t === "whatsapp" || t === "screenshot");
 }
 
 export function distanceKm(a: [number, number], b: [number, number]): number {
@@ -158,6 +163,7 @@ export function computeTrips(photos: TripPhoto[], now = Date.now()): Trip[] {
   timed.sort((a, b) => a.t - b.t);
   if (timed.length === 0) return [];
   const home = homeOf(timed.map((x) => x.p));
+  const isAway = (g: [number, number]) => !!home && distanceKm(home, g) > AWAY_KM;
 
   // 1. Days
   const days: { photos: Timed[]; where: Where }[] = [];
@@ -166,7 +172,7 @@ export function computeTrips(photos: TripPhoto[], now = Date.now()): Trip[] {
   let lastT = -Infinity;
   for (const x of timed) {
     const g = gpsOf(x.p);
-    const jumped = g && lastGps ? distanceKm(g, lastGps) >= JUMP_KM : false;
+    const jumped = g && lastGps ? distanceKm(g, lastGps) >= JUMP_KM || isAway(g) !== isAway(lastGps) : false;
     if (current.length > 0 && (x.t - lastT >= DAY_GAP || jumped)) {
       days.push({ photos: current, where: "unknown" });
       current = [];

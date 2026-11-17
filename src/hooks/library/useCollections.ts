@@ -47,6 +47,7 @@ export function useCollections(core: LibraryCore, filters: FilterState) {
       before.latitude === after.latitude &&
       before.longitude === after.longitude &&
       before.name === after.name &&
+      before.camera_model === after.camera_model &&
       before.tags.includes("whatsapp") === after.tags.includes("whatsapp") &&
       before.tags.includes("screenshot") === after.tags.includes("screenshot"),
     [],

@@ -17,6 +17,7 @@ function burst(day: string, hour: number, count: number, gps: [number, number] |
     latitude: gps ? gps[0] : null,
     longitude: gps ? gps[1] : null,
     tags: [],
+    camera_model: "Pixel 7",
     ...extra,
   }));
 }
@@ -109,6 +110,29 @@ test("a journey through many places is named after its country", () => {
   const trips = computeTrips(photos, NOW);
   assert.equal(trips.length, 1);
   assert.equal(trips[0].place, "France");
+});
+
+test("received and downloaded images (no camera, no GPS) make no trip and join none", () => {
+  n = 0;
+  const photos = [
+    ...homeBulk(),
+    ...burst("2024:04:30", 9, 60, null, "", { camera_model: null }),
+    ...burst("2024:06:12", 9, 6, PARIS, "Paris, FR"),
+    ...burst("2024:06:12", 15, 9, null, "", { camera_model: "" }),
+  ];
+  const trips = computeTrips(photos, NOW);
+  assert.equal(trips.length, 1);
+  assert.equal(trips[0].count, 6);
+});
+
+test("a day that starts at home and ends away is split at the line around home", () => {
+  n = 0;
+  const NEAR: [number, number] = [50.95, 4.36];
+  const photos = [...homeBulk(), ...burst("2024:08:29", 8, 20, NEAR, "Meise, BE"), ...burst("2024:08:29", 12, 6, PARIS, "Paris, FR")];
+  const trips = computeTrips(photos, NOW);
+  assert.equal(trips.length, 1);
+  assert.equal(trips[0].count, 6);
+  assert.equal(trips[0].place, "Paris");
 });
 
 test("a 100 km jump splits a day: only the part away is a trip", () => {

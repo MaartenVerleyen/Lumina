@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from "react";
-import { timed } from "../../api/timings";
+import { note, timed } from "../../api/timings";
 import { call, foldersOnThisPc } from "../../api";
 import { PhotoItem, TimelineBucket } from "../../types/lumina";
 import { buildFolderTree, foldersOf } from "../../utils/photoHelpers";
@@ -394,6 +394,15 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
       value = list === kept.value.list ? kept.value : { list, stackBursts: kept.value.stackBursts, from: { list: kept.value.list, changes } };
     } else {
       value = anew();
+      // Why the whole library was sorted again (timings.ts: the phone's log), to find what still does it
+      const before = keptSorted.current;
+      const changed = before ? sortedDeps.findIndex((d, i) => !Object.is(d, before.deps[i])) : -2;
+      const changes = before ? changesBetween(before.photos, photos) : null;
+      note(
+        `view: sorted again (${changed === -2 ? "first" : changed >= 0 ? `input ${changed}` : changes === null ? "list changed" : `${changes.length} photos changed`})`,
+        0,
+        true
+      );
     }
     keptSorted.current = { photos, deps: sortedDeps, value };
     return value;
