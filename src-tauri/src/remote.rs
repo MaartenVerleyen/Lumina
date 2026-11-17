@@ -413,6 +413,19 @@ pub async fn server_call_value(app: AppHandle, server: String, command: String, 
 }
 
 async fn rpc_text(app: &AppHandle, server: &str, command: &str, args: Option<Value>, client: Option<String>) -> Result<String, String> {
+    match rpc_listed(app, server, command, args, client, false).await? {
+        Listed::Text(text) => Ok(text),
+        Listed::Same => Err("The kept list is gone".to_string()),
+    }
+}
+
+// A server's answer, or for a library's list (with `same_is_enough`) only that the kept list is still it
+enum Listed {
+    Same,
+    Text(String),
+}
+
+async fn rpc_listed(app: &AppHandle, server: &str, command: &str, args: Option<Value>, client: Option<String>, same_is_enough: bool) -> Result<Listed, String> {
     if !plain(command) {
         return Err(format!("Not a command: {command}"));
     }
@@ -441,15 +454,18 @@ async fn rpc_text(app: &AppHandle, server: &str, command: &str, args: Option<Val
     // list (it names the list it started from), and the kept one is brought up to date with it.
     let list = if command == "scan_folder" { args["folderPath"].as_str().map(|root| crate::offline::KeptList::of(app, server, root)) } else { None };
     let Some(list) = list else {
-        return check(app, server, send(None).await?).await?.text().await.map_err(|e| e.to_string());
+        return check(app, server, send(None).await?).await?.text().await.map(Listed::Text).map_err(|e| e.to_string());
     };
     let had = list.tag();
     let mut resp = send(had.clone()).await?;
     let header = |resp: &reqwest::Response, name: &str| resp.headers().get(name).and_then(|v| v.to_str().ok()).map(str::to_string);
     if resp.status() == reqwest::StatusCode::NOT_MODIFIED {
+        if same_is_enough && list.tag().is_some() {
+            return Ok(Listed::Same);
+        }
         let kept = list.clone();
         match tauri::async_runtime::spawn_blocking(move || kept.read()).await.ok().flatten() {
-            Some(text) => return Ok(text),
+            Some(text) => return Ok(Listed::Text(text)),
             // The kept list went away meanwhile: asked for whole
             None => resp = send(None).await?,
         }
@@ -465,7 +481,7 @@ async fn rpc_text(app: &AppHandle, server: &str, command: &str, args: Option<Val
         .await
         .map_err(|e| e.to_string())?;
         match brought {
-            Ok(text) => return Ok(text),
+            Ok(text) => return Ok(Listed::Text(text)),
             // They didn't fit the kept list: asked for whole
             Err(e) => {
                 eprintln!("[remote] {server}: {e}");
@@ -478,10 +494,29 @@ async fn rpc_text(app: &AppHandle, server: &str, command: &str, args: Option<Val
     let text = resp.text().await.map_err(|e| e.to_string())?;
     tauri::async_runtime::spawn_blocking(move || {
         list.write(&text, tag.as_deref());
-        text
+        Listed::Text(text)
     })
     .await
     .map_err(|e| e.to_string())
+}
+
+// Whether a server library's list is still the kept one with this tag: a few bytes when it is, instead of the
+// list (tens of megabytes to read on a phone). A changed list is fetched and kept on the way, as rpc_text does,
+// so the load that follows has it.
+#[tauri::command]
+pub async fn server_list_same(app: AppHandle, server: String, root: String, tag: String) -> Result<bool, String> {
+    let list = crate::offline::KeptList::of(&app, &server, &root);
+    if list.tag().as_deref() != Some(tag.as_str()) {
+        return Ok(false);
+    }
+    let args = json!({ "folderPath": root, "forceReprocess": false });
+    Ok(matches!(rpc_listed(&app, &server, "scan_folder", Some(args), None, true).await?, Listed::Same))
+}
+
+// The tag of the kept list of a server library (the list the window was last given), if any
+#[tauri::command]
+pub fn kept_list_tag(app: AppHandle, server: String, root: String) -> Option<String> {
+    crate::offline::KeptList::of(&app, &server, &root).tag()
 }
 
 // Events: one WebSocket per signed-in server, again after a pause (1 s, 2 s, ... 30 s) when it closes.

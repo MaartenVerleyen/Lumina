@@ -80,6 +80,21 @@ pub async fn offline_save(app: AppHandle, key: String, value: serde_json::Value)
     .map_err(|e| e.to_string())?
 }
 
+// Text the window made itself kept as it is (All photos as the phone app last showed it: tens of megabytes, not
+// read into a value here only to be written out again)
+#[tauri::command]
+pub async fn offline_save_text(app: AppHandle, key: String, text: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let file = list_file(&app, &key);
+        fs::create_dir_all(lists_dir(&app)).map_err(|e| e.to_string())?;
+        let tmp = file.with_extension("tmp");
+        fs::write(&tmp, text).map_err(|e| e.to_string())?;
+        fs::rename(&tmp, &file).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 // The list as last kept, and when (seconds since 1970); null when there is none
 #[tauri::command]
 pub async fn offline_load(app: AppHandle, key: String) -> Result<tauri::ipc::Response, String> {
