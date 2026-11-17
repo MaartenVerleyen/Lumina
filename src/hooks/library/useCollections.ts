@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { ALL_PHOTOS_LOADED, call, isOwnChange, openLibraryIsAll, openLibraryServer, RECONNECTED, subscribe } from "../../api";
+import { useKeptWhile } from "../../utils/photoChanges";
 import { Album, SavedSearch } from "../../types/lumina";
 import { MatchContext } from "../../utils/searchQuery";
 import { computeTrips, tripLabel } from "../../utils/trips";
@@ -34,7 +35,16 @@ export function useCollections(core: LibraryCore, filters: FilterState) {
   useEffect(() => {
     call<Record<string, string>>("get_trip_names").then(setTripNames).catch(() => {});
   }, [folder, server]);
-  const trips = useMemo(() => computeTrips(photos), [photos]);
+  // Made from when and where photos were taken only: a new caption, rating or face leaves them as they were
+  // (worked out again for 110,000 photos at every caption the server wrote, the phone froze each time)
+  const trips = useKeptWhile(
+    photos,
+    () => computeTrips(photos),
+    (before, after) =>
+      before.captured_at === after.captured_at && before.location === after.location && before.latitude === after.latitude && before.longitude === after.longitude,
+    [],
+    "trips"
+  );
   const tripOfHash = useMemo(() => {
     const m = new Map<string, string>();
     for (const t of trips) for (const h of t.hashes) m.set(h, t.id);

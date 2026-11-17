@@ -239,7 +239,8 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
     peopleFilter,
     activeSubfolder,
     activeEvent,
-    tripOfHash,
+    // Only a chosen trip filters by it: new trips (photos taken somewhere new) don't sort the whole library again
+    activeEvent !== "ALL" ? tripOfHash : null,
     activeTag,
     parsedSearch,
     matchContext,
