@@ -14,6 +14,14 @@ export interface ReleaseNotes {
 // Newest first. Add an entry for every release that should greet updating users with "What's new".
 export const RELEASE_NOTES: ReleaseNotes[] = [
   {
+    version: "6.3.2",
+    items: [
+      { title: "Who is this? opens at once", text: "The server keeps the groups of faces without a name ready instead of working them out each time, which took a long while in a large library. After a change you see them straight away, without the faces you named since; the server makes fresh groups behind it." },
+      { title: "Ignored faces can come back", text: "Faces you marked as not someone you know (Ignore on the desktop, Not someone I know on the phone) now have a page of their own: Ignored faces in Who is this? on the desktop, Ignored on the phone. Select the ones to bring back and they are grouped and suggested again." },
+      { title: "Skip a face on the phone", text: "Checking faces one by one, swipe down (or tap Skip) to leave a face for later without an answer. At the end you can go through the skipped ones again." },
+    ],
+  },
+  {
     version: "6.3.1",
     items: [
       { title: "A server library opens at once in the browser too", text: "The web client now keeps each library's list in the browser, as the app does. Opening a library again, or reloading the page, asks the server only what changed instead of fetching the whole library. Signing out clears it." },

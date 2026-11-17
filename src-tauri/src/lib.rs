@@ -156,6 +156,7 @@ pub fn run() {
             engine_commands::reject_face_candidates_batch,
             engine_commands::unreject_face_candidates_batch,
             engine_commands::ignore_faces,
+            engine_commands::get_ignored_faces,
             engine_commands::get_pending_face_match_counts,
             engine_commands::detect_faces_in_photo,
             engine_commands::scan_library_faces_batch,

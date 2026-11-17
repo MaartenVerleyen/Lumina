@@ -426,6 +426,10 @@ commands! {
         let root = optional_root(&host, root_folder)?;
         face_review::get_pending_face_match_counts(host, root).await.map_err(ApiError::from)
     };
+    Editor [Target::OptRoot(root_folder.clone())] async get_ignored_faces(root_folder: Option<String>) |host, scope| {
+        let root = optional_root(&host, root_folder)?;
+        face_review::get_ignored_faces(host, root).await.map_err(ApiError::from)
+    };
     Editor [Target::OptRoot(root_folder.clone())] async get_unknown_face_clusters(root_folder: Option<String>) |host, scope| {
         let root = optional_root(&host, root_folder)?;
         face_review::get_unknown_face_clusters(host, root).await.map_err(ApiError::from)

@@ -281,15 +281,19 @@ export function UnnamedGroups({ lib, onBack }: { lib: LibraryState; onBack: () =
       return next;
     });
 
+  // The ignored faces on a page of their own; faces brought back there: the groups are asked for again
+  const [ignored, setIgnored] = useState(false);
+  const [asked, setAsked] = useState(0);
   useEffect(() => {
     let live = true;
+    setGroups(null);
     call<FaceCluster[]>("get_unknown_face_clusters", { rootFolder: null })
       .then((found) => live && setGroups(found))
       .catch((e) => live && setError(String(e)));
     return () => {
       live = false;
     };
-  }, []);
+  }, [asked]);
 
   const done = (group: FaceCluster) => setGroups((prev) => (prev ?? []).filter((g) => g !== group));
 
@@ -306,7 +310,15 @@ export function UnnamedGroups({ lib, onBack }: { lib: LibraryState; onBack: () =
   useRefreshOnLeave(lib);
 
   return (
-    <Page title="Without a name" onBack={onBack}>
+    <Page
+      title="Without a name"
+      onBack={onBack}
+      action={
+        <button onClick={() => setIgnored(true)} className="px-3 py-2 rounded-full text-sm text-emerald-400 active:bg-white/10">
+          Ignored
+        </button>
+      }
+    >
       <p className="px-4 pt-4 text-[15px] text-zinc-300">
         {groups === null
           ? "Grouping the faces without a name… This can take a minute when the server is busy."
@@ -354,6 +366,14 @@ export function UnnamedGroups({ lib, onBack }: { lib: LibraryState; onBack: () =
         </p>
       )}
       {large && <LargeGroup group={large} left={left} onToggle={toggleLeft} onBack={() => setLarge(null)} />}
+      {ignored && (
+        <IgnoredFacesPage
+          onBack={(broughtBack) => {
+            setIgnored(false);
+            if (broughtBack) setAsked((n) => n + 1);
+          }}
+        />
+      )}
       {naming && (
         <FaceSheet
           faceIds={shown(naming)}
@@ -368,6 +388,108 @@ export function UnnamedGroups({ lib, onBack }: { lib: LibraryState; onBack: () =
             setNaming(null);
           }}
         />
+      )}
+    </Page>
+  );
+}
+
+// The faces marked "Not someone I know", the last first: tap the ones to bring back, and they are grouped and
+// suggested again
+function IgnoredFacesPage({ onBack }: { onBack: (broughtBack: boolean) => void }) {
+  const [faces, setFaces] = useState<SimilarFaceCandidate[] | null>(null);
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const broughtBack = useRef(false);
+  const close = () => onBack(broughtBack.current);
+  useBackCloses(close);
+
+  useEffect(() => {
+    let live = true;
+    call<SimilarFaceCandidate[]>("get_ignored_faces", { rootFolder: null })
+      .then((found) => live && setFaces(found))
+      .catch((e) => live && setError(String(e)));
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  const toggle = (id: string) =>
+    setPicked((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  async function bringBack() {
+    const ids = [...picked];
+    setBusy(true);
+    setError(null);
+    try {
+      await call("ignore_faces", { faceIds: ids, ignore: false });
+      const back = new Set(ids);
+      setFaces((prev) => (prev ?? []).filter((f) => !back.has(f.face_id)));
+      setPicked(new Set());
+      broughtBack.current = true;
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const all = faces ?? [];
+  return (
+    <Page title="Ignored faces" onBack={close}>
+      <p className="px-4 pt-4 text-[15px] text-zinc-300">
+        {faces === null
+          ? "Loading the faces you marked as not someone you know…"
+          : all.length === 0
+            ? "No ignored faces."
+            : `${all.length.toLocaleString()} ${all.length === 1 ? "face" : "faces"} marked as not someone you know. They aren't grouped or suggested. Tap the ones to bring back.`}
+      </p>
+      {faces === null && !error && (
+        <div className="flex justify-center py-10">
+          <Loader2 className="w-6 h-6 animate-spin text-zinc-500" />
+        </div>
+      )}
+      {error && <p className="px-4 pt-4 text-xs text-red-300">{error}</p>}
+      <div className="grid grid-cols-4 gap-2 p-4 pb-28">
+        {all.map((f) => {
+          const on = picked.has(f.face_id);
+          return (
+            <button key={f.face_id} onClick={() => toggle(f.face_id)} aria-pressed={on} className="relative aspect-square">
+              <img
+                src={mediaUrl({ kind: "face", path: f.face_thumb })}
+                alt=""
+                loading="lazy"
+                className={`w-full h-full rounded-2xl object-cover bg-zinc-800 border-2 ${on ? "border-emerald-400" : "border-transparent opacity-70"}`}
+              />
+              {on && <Check className="absolute top-1 right-1 w-5 h-5 p-0.5 rounded-full bg-emerald-500 text-white" />}
+            </button>
+          );
+        })}
+      </div>
+      {all.length > 0 && (
+        <div
+          className="fixed inset-x-0 bottom-0 z-50 flex gap-2 px-4 pt-3 bg-panel border-t border-zinc-800"
+          style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 0.75rem)" }}
+        >
+          <button
+            onClick={() => setPicked(picked.size === all.length ? new Set() : new Set(all.map((f) => f.face_id)))}
+            className="flex-1 min-h-[44px] rounded-xl bg-zinc-800 text-sm text-zinc-200 active:bg-zinc-700"
+          >
+            {picked.size === all.length ? "Select none" : "Select all"}
+          </button>
+          <button
+            onClick={() => void bringBack()}
+            disabled={picked.size === 0 || busy}
+            className="flex-1 min-h-[44px] rounded-xl bg-emerald-600 text-sm font-semibold text-white disabled:opacity-40 active:bg-emerald-700"
+          >
+            {busy ? "Bringing back…" : picked.size > 0 ? `Bring back ${picked.size.toLocaleString()}` : "Bring back"}
+          </button>
+        </div>
       )}
     </Page>
   );

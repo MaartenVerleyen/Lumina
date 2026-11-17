@@ -4,7 +4,7 @@
 use crate::host::ServerHost;
 use lumina_core::host::{Host, SharedHost};
 use lumina_core::types::PhotoItem;
-use lumina_core::{ai, clip, db, face_engine, face_ort, face_quality, face_scan, photo_meta, scan, thumbs};
+use lumina_core::{ai, clip, db, face_engine, face_ort, face_quality, face_review, face_scan, photo_meta, scan, thumbs};
 use serde_json::Value as JsonValue;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -239,6 +239,9 @@ impl Pipeline {
         if face_quality::measure_face_quality(self.shared(), root.to_string()).await? > 0 {
             wait_for(&mut rx, "face-quality-progress", done, || self.host.working_on("face-quality-progress")).await;
         }
+        // "Who is this?" ready before anyone asks (the phone asks for every library, the web client per library);
+        // a no-op when nothing changed since the groups were made
+        face_review::keep_unknown_face_clusters_ready(self.shared(), vec![None, Some(root.to_string())]);
         Ok(())
     }
 

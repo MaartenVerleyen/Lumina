@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
-import { Check, Loader2, Undo2, UserPen, X } from "lucide-react";
+import { Check, ChevronsDown, Loader2, Undo2, UserPen, X } from "lucide-react";
 import { call, callLocal, mediaUrl, onAndroid } from "../../api";
 import type { LibraryState } from "../../hooks/useLibraryState";
 import type { FaceInstance, SimilarFaceCandidate } from "../../types/lumina";
@@ -10,8 +10,9 @@ import { FaceSheet } from "./PhoneViewer";
 import { withFaces } from "./faces";
 
 // Checking faces one by one (docs/plans/android.md, "Checking faces one by one"): a card per face, the likeliest
-// first. Swipe right: it's them; left: it isn't; up: someone else (the name sheet). Each answer is saved at once;
-// Undo takes the answers back one by one. The grid in FaceReview.tsx does the same for many faces at once.
+// first. Swipe right: it's them; left: it isn't; up: someone else (the name sheet); down: skip, no answer (the
+// skipped ones can be gone through again at the end). Each answer is saved at once; Undo takes the answers back
+// one by one. The grid in FaceReview.tsx does the same for many faces at once.
 
 interface Answered {
   cand: SimilarFaceCandidate;
@@ -72,6 +73,20 @@ export default function FaceCards({
     return () => ahead.forEach((img) => (img.src = ""));
   }, [candidates.slice(1, 5).map((c) => c.face_id).join("|")]);
 
+  // Skipped: put aside, nothing saved; at the end they can be gone through again
+  const [skipped, setSkipped] = useState<SimilarFaceCandidate[]>([]);
+  function skip(cand: SimilarFaceCandidate) {
+    setCandidates((prev) => (prev ?? []).filter((c) => c.face_id !== cand.face_id));
+    setHistory((h) => [...h, { cand, answer: "skip" }]);
+    setSkipped((s) => [...s, cand]);
+  }
+  function againSkipped() {
+    const ids = new Set(skipped.map((c) => c.face_id));
+    setHistory((h) => h.filter((a) => !(a.answer === "skip" && ids.has(a.cand.face_id))));
+    setCandidates((prev) => [...skipped, ...(prev ?? [])]);
+    setSkipped([]);
+  }
+
   // An answer is saved at once; if the server refuses it, the card comes back with the reason
   async function save(cand: SimilarFaceCandidate, answer: "yes" | "no") {
     setCandidates((prev) => (prev ?? []).filter((c) => c.face_id !== cand.face_id));
@@ -108,7 +123,8 @@ export default function FaceCards({
     setTimeout(() => {
       setFlying(null);
       setDrag(null);
-      void save(cand, a);
+      if (a === "skip") skip(cand);
+      else void save(cand, a);
     }, FLY_MS);
   }
 
@@ -134,6 +150,12 @@ export default function FaceCards({
   async function undo() {
     const last = history[history.length - 1];
     if (!last || undoing) return;
+    if (last.answer === "skip") {
+      setHistory((h) => h.slice(0, -1));
+      setSkipped((s) => s.filter((c) => c.face_id !== last.cand.face_id));
+      setCandidates((prev) => [last.cand, ...(prev ?? []).filter((c) => c.face_id !== last.cand.face_id)]);
+      return;
+    }
     setUndoing(true);
     setError(null);
     try {
@@ -208,7 +230,7 @@ export default function FaceCards({
     else setDrag(null);
   }
 
-  const counts = { yes: 0, no: 0, else: 0 };
+  const counts = { yes: 0, no: 0, else: 0, skip: 0 };
   for (const a of history) counts[a.answer] += 1;
 
   if (!current) {
@@ -224,6 +246,7 @@ export default function FaceCards({
               counts.yes ? `${counts.yes} confirmed` : "",
               counts.no ? `${counts.no} turned down` : "",
               counts.else ? `${counts.else} named as someone else` : "",
+              counts.skip ? `${counts.skip} skipped` : "",
             ]
               .filter(Boolean)
               .join(" · ")}
@@ -239,6 +262,11 @@ export default function FaceCards({
             Done
           </button>
         </div>
+        {skipped.length > 0 && (
+          <button onClick={againSkipped} className="px-4 py-2 text-sm text-emerald-400 active:text-emerald-300">
+            Go through the {skipped.length.toLocaleString()} skipped
+          </button>
+        )}
       </div>
     );
   }
@@ -253,7 +281,9 @@ export default function FaceCards({
       ? `translate(${width * 1.4}px, ${dy}px) rotate(18deg)`
       : flying === "no"
         ? `translate(${-width * 1.4}px, ${dy}px) rotate(-18deg)`
-        : `translate(${dx}px, ${-height * 1.4}px)`
+        : flying === "skip"
+          ? `translate(${dx}px, ${height * 1.4}px)`
+          : `translate(${dx}px, ${-height * 1.4}px)`
     : `translate(${dx}px, ${dy}px) rotate(${swipeTilt(dx, width)}deg)`;
   const hintStyle =
     hint === "yes"
@@ -262,7 +292,9 @@ export default function FaceCards({
         ? { ring: "border-red-400", badge: "bg-red-600", text: `Not ${name}` }
         : hint === "else"
           ? { ring: "border-sky-400", badge: "bg-sky-600", text: "Someone else" }
-          : null;
+          : hint === "skip"
+            ? { ring: "border-zinc-400", badge: "bg-zinc-600", text: "Skip" }
+            : null;
   const label = current.current_person ? `Now ${current.current_person}` : current.similarity >= likely ? "Likely" : "Maybe";
 
   return (
@@ -334,7 +366,14 @@ export default function FaceCards({
           <Check className="w-7 h-7" />
         </RoundButton>
       </div>
-      <div className="shrink-0 flex justify-center pb-1">
+      <div className="shrink-0 flex justify-center gap-2 pb-1">
+        <button
+          onClick={() => answer("skip")}
+          className="flex items-center gap-1.5 px-4 py-2 rounded-full text-sm text-zinc-400 active:bg-white/5"
+        >
+          <ChevronsDown className="w-4 h-4" />
+          Skip
+        </button>
         <button
           onClick={() => void undo()}
           disabled={history.length === 0 || undoing}

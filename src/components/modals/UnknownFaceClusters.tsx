@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import SpotlightPhoto from "./SpotlightPhoto";
+import IgnoredFaces from "./IgnoredFaces";
 import { plural } from "../../utils/plural";
 import { call, mediaUrl } from "../../api";
 import { FaceCluster, FaceInstance, PhotoItem } from "../../types/lumina";
-import { Check, EyeOff, Loader2, Maximize2, RefreshCw, Undo2, Users, X } from "lucide-react";
+import { ArrowLeft, Check, EyeOff, Loader2, Maximize2, RefreshCw, Undo2, Users, X } from "lucide-react";
 
 interface UnknownFaceClustersProps {
   folder: string;
@@ -33,6 +34,9 @@ export default function UnknownFaceClusters({
   // Naming gives the name only to the faces shown (and not left out): the rest of a big group comes back as
   // suggestions for that person, to check one by one in the review
   const shown = (c: FaceCluster) => c.samples.map((f) => f.face_id).filter((id) => !left.has(id));
+  // The ignored faces instead of the groups; brought back: the groups are made again on the way back
+  const [ignoredView, setIgnoredView] = useState(false);
+  const [broughtBack, setBroughtBack] = useState(false);
   // A group opened in the larger view, and the face whose photo it shows
   const [large, setLarge] = useState<{ index: number; face: string } | null>(null);
   const toggleLeft = (id: string) =>
@@ -140,6 +144,28 @@ export default function UnknownFaceClusters({
     return () => window.removeEventListener("keydown", onKey, true);
   }, [large]);
 
+  if (ignoredView) {
+    return (
+      <div className="flex-1 flex flex-col min-h-0">
+        <div className="px-6 py-3 bg-card border-b border-zinc-800/80 flex items-center gap-3 text-xs shrink-0">
+          <button
+            onClick={() => {
+              setIgnoredView(false);
+              if (broughtBack) void load();
+              setBroughtBack(false);
+            }}
+            className="px-2.5 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 flex items-center gap-1.5"
+          >
+            <ArrowLeft className="w-3.5 h-3.5" />
+            <span>Groups</span>
+          </button>
+          <span className="font-semibold text-zinc-100">Ignored faces</span>
+        </div>
+        <IgnoredFaces folder={folder} onBroughtBack={() => setBroughtBack(true)} />
+      </div>
+    );
+  }
+
   const largeGroup = large ? clusters[large.index] : undefined;
   const largeFace = largeGroup ? largeGroup.samples.find((f) => f.face_id === large?.face) ?? largeGroup.samples[0] : undefined;
 
@@ -165,6 +191,17 @@ export default function UnknownFaceClusters({
               </span>
             </button>
           )}
+          <button
+            onClick={() => {
+              setLastIgnored(null);
+              setIgnoredView(true);
+            }}
+            title="The faces you ignored, to bring some back"
+            className="px-2.5 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 flex items-center gap-1.5"
+          >
+            <EyeOff className="w-3.5 h-3.5" />
+            <span>Ignored faces</span>
+          </button>
           <button
             onClick={load}
             disabled={isLoading}

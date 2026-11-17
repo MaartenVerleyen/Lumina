@@ -1253,6 +1253,20 @@ async function callAll<T>(command: string, args: Record<string, unknown>): Promi
     // The accounts an album can be shared with are its server's
     case "list_share_users":
       return albumCommand<T>(command, args, args.kind === "search" ? all.searches : all.albums);
+    // The ignored faces of every library this account may edit
+    case "get_ignored_faces": {
+      const lists = await Promise.all(
+        engines()
+          .filter(engineEditable)
+          .map(async (engine) => {
+            const faces = await engineTransport(engine)
+              .call<SimilarFaceCandidate[]>(command, { rootFolder: null })
+              .catch(() => [] as SimilarFaceCandidate[]);
+            return faces.map((f) => fromEngineFace(engine, f));
+          })
+      );
+      return lists.flat() as T;
+    }
     case "get_unknown_face_clusters": {
       const lists = await Promise.all(
         engines()

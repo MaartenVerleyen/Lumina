@@ -285,6 +285,11 @@ pub async fn ignore_faces(app: AppHandle, face_ids: Vec<String>, ignore: bool) -
 }
 
 #[tauri::command]
+pub async fn get_ignored_faces(app: AppHandle, root_folder: Option<String>) -> Result<Vec<SimilarFaceCandidate>, String> {
+    face_review::get_ignored_faces(Arc::new(app), root_folder).await
+}
+
+#[tauri::command]
 pub async fn unreject_face_candidates_batch(app: AppHandle, face_ids: Vec<String>, person_name: String) -> Result<usize, String> {
     face_review::unreject_face_candidates_batch(Arc::new(app), face_ids, person_name).await
 }

@@ -1,8 +1,8 @@
 // Checking faces one by one on the phone: what a drag of the card says when the finger lets go. Right is yes,
-// left is no, up is someone else. Far enough (a third of the width, a quarter of the height) or a quick flick
-// counts; anything less springs back. Down means nothing.
+// left is no, up is someone else, down skips (no answer, on to the next). Far enough (a third of the width, a
+// quarter of the height) or a quick flick counts; anything less springs back.
 
-export type SwipeAnswer = "yes" | "no" | "else";
+export type SwipeAnswer = "yes" | "no" | "else" | "skip";
 
 // How far the card was dragged (px) and how fast it was moving when let go (px per ms), in a card area of
 // width × height
@@ -13,6 +13,10 @@ export function swipeAnswer(dx: number, dy: number, vx: number, vy: number, widt
   const upwards = -dy > Math.abs(dx);
   if (upwards) {
     if (-dy > height / 4 || (vy < -FLICK && -dy > MOVED)) return "else";
+    return null;
+  }
+  if (dy > Math.abs(dx)) {
+    if (dy > height / 4 || (vy > FLICK && dy > MOVED)) return "skip";
     return null;
   }
   if (Math.abs(dx) <= Math.abs(dy)) return null;
@@ -31,6 +35,7 @@ export function swipeTilt(dx: number, width: number): number {
 export function swipeHint(dx: number, dy: number): SwipeAnswer | null {
   const SHOW = 24;
   if (-dy > Math.abs(dx) && -dy > SHOW) return "else";
+  if (dy > Math.abs(dx) && dy > SHOW) return "skip";
   if (dx > SHOW && dx > Math.abs(dy)) return "yes";
   if (-dx > SHOW && -dx > Math.abs(dy)) return "no";
   return null;

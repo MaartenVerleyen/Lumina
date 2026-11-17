@@ -527,6 +527,56 @@ pub async fn ignore_faces(app: SharedHost, face_ids: Vec<String>, ignore: bool) 
     .map_err(|e| e.to_string())?
 }
 
+// The faces set aside ("Not someone I know"), the last set aside first, so they can be looked at and taken back
+// (ignore_faces with ignore: false)
+const MAX_SET_ASIDE_SHOWN: i64 = 5_000;
+
+pub async fn get_ignored_faces(app: SharedHost, root_folder: Option<String>) -> Result<Vec<SimilarFaceCandidate>, String> {
+    tokio::task::spawn_blocking(move || {
+        let conn = open_global_db(&app)?;
+        let prefix = make_folder_prefix(root_folder.as_deref());
+        let thumbs_dir = get_app_storage_dir(&app).join("thumbnails");
+        let previews_dir = get_app_storage_dir(&app).join("previews");
+        let mut stmt = conn
+            .prepare(
+                "SELECT pf.face_id, pf.hash, pf.face_thumb, COALESCE(p.current_path, ''),
+                        pf.bbox_x, pf.bbox_y, pf.bbox_w, pf.bbox_h
+                 FROM face_rejections fr
+                 JOIN photo_faces pf ON pf.face_id = fr.face_id
+                 JOIN photos p ON p.hash = pf.hash
+                 WHERE fr.person_name = ?1 AND p.current_path LIKE ?2 ESCAPE '!'
+                 ORDER BY fr.rowid DESC
+                 LIMIT ?3",
+            )
+            .map_err(|e| e.to_string())?;
+        let faces = stmt
+            .query_map(params![IGNORED_FACE, prefix, MAX_SET_ASIDE_SHOWN], |r| {
+                let face_id: String = r.get(0)?;
+                let hash: String = r.get(1)?;
+                let (photo_name, photo_path) = format_display_photo_path(&face_id, r.get(3)?, &hash, &previews_dir, &thumbs_dir);
+                Ok(SimilarFaceCandidate {
+                    face_id,
+                    hash,
+                    face_thumb: r.get(2)?,
+                    photo_name,
+                    photo_path,
+                    bbox_x: r.get(4)?,
+                    bbox_y: r.get(5)?,
+                    bbox_w: r.get(6)?,
+                    bbox_h: r.get(7)?,
+                    current_person: None,
+                    similarity: 0.0,
+                })
+            })
+            .map_err(|e| e.to_string())?
+            .flatten()
+            .collect();
+        Ok(faces)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 pub async fn unreject_face_candidates_batch(app: SharedHost, face_ids: Vec<String>, person_name: String) -> Result<usize, String> {
     tokio::task::spawn_blocking(move || {
         let clean = person_name.trim().to_string();
@@ -681,17 +731,118 @@ const MAX_CLUSTERS: usize = 200;
 // Detections below this confidence are often partial or blurry faces: they would only add noise
 const MIN_CLUSTER_FACE_CONFIDENCE: f64 = 0.6;
 
+// Making the groups takes long in a large library (every person's suggestions, then every unnamed face against
+// every other: tens of seconds on a server that is also writing captions), so the last groups are kept per
+// folder with a mark of what they were made from. Asked again with nothing changed, they are the answer at once.
+// After a change they are still the answer, without the faces that got a name or were set aside since, and new
+// groups are made behind it for the next ask.
+struct KeptClusters {
+    mark: (i64, i64, i64),
+    clusters: Vec<FaceCluster>,
+}
+static KEPT_CLUSTERS: LazyLock<Mutex<HashMap<Option<String>, KeptClusters>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+// One making at a time: each takes every core
+static CLUSTERS_TURN: Mutex<()> = Mutex::new(());
+static CLUSTERS_BEHIND: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+// What the groups depend on: the faces and their names (the revision counter, revision.rs) and the turned-down
+// and set-aside faces
+fn clusters_mark(conn: &Connection) -> (i64, i64, i64) {
+    let rejections = conn
+        .query_row("SELECT COUNT(*), COALESCE(MAX(rowid), 0) FROM face_rejections", [], |r| Ok((r.get(0)?, r.get(1)?)))
+        .unwrap_or((0, 0));
+    (crate::revision::current(conn).unwrap_or(0), rejections.0, rejections.1)
+}
+
+// Kept groups without the faces that have a name now or were set aside
+fn still_unknown(conn: &Connection, clusters: &[FaceCluster]) -> Vec<FaceCluster> {
+    let unnamed: HashSet<String> = conn
+        .prepare("SELECT face_id FROM photo_faces WHERE COALESCE(person_name, '') = ''")
+        .and_then(|mut s| s.query_map([], |r| r.get::<_, String>(0)).map(|rows| rows.flatten().collect()))
+        .unwrap_or_default();
+    let ignored = ignored_face_ids(conn);
+    let open = |id: &String| unnamed.contains(id) && !ignored.contains(id);
+    clusters
+        .iter()
+        .filter_map(|c| {
+            let face_ids: Vec<String> = c.face_ids.iter().filter(|id| open(id)).cloned().collect();
+            let samples: Vec<SimilarFaceCandidate> = c.samples.iter().filter(|f| open(&f.face_id)).cloned().collect();
+            (face_ids.len() >= 2 && !samples.is_empty()).then(|| FaceCluster { size: face_ids.len(), face_ids, samples })
+        })
+        .collect()
+}
+
+fn make_and_keep(app: &dyn Host, root_folder: Option<&str>) -> Result<Vec<FaceCluster>, String> {
+    let _turn = CLUSTERS_TURN.lock().unwrap_or_else(|e| e.into_inner());
+    let conn = open_global_db(app)?;
+    let mark = clusters_mark(&conn);
+    let key = root_folder.map(str::to_string);
+    // Made meanwhile by whoever had the turn
+    if let Some(kept) = KEPT_CLUSTERS.lock().unwrap_or_else(|e| e.into_inner()).get(&key) {
+        if kept.mark == mark {
+            return Ok(kept.clusters.clone());
+        }
+    }
+    let clusters = make_unknown_face_clusters(app, &conn, root_folder)?;
+    KEPT_CLUSTERS.lock().unwrap_or_else(|e| e.into_inner()).insert(key, KeptClusters { mark, clusters: clusters.clone() });
+    Ok(clusters)
+}
+
+// New groups for these folders (None: every library) made behind, unless they are being made already
+pub fn keep_unknown_face_clusters_ready(app: SharedHost, roots: Vec<Option<String>>) {
+    if CLUSTERS_BEHIND.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    std::thread::spawn(move || {
+        for root in roots {
+            let started = std::time::Instant::now();
+            let fresh = KEPT_CLUSTERS.lock().unwrap_or_else(|e| e.into_inner()).get(&root).map(|k| k.mark);
+            match make_and_keep(&*app, root.as_deref()) {
+                Ok(c) => {
+                    let mark = KEPT_CLUSTERS.lock().unwrap_or_else(|e| e.into_inner()).get(&root).map(|k| k.mark);
+                    if mark != fresh {
+                        eprintln!("[faces] {}: {} groups of faces without a name ready in {:.1} s", root.as_deref().unwrap_or("every library"), c.len(), started.elapsed().as_secs_f64());
+                    }
+                }
+                Err(e) => eprintln!("[faces] couldn't group the faces without a name: {e}"),
+            }
+        }
+        CLUSTERS_BEHIND.store(false, std::sync::atomic::Ordering::SeqCst);
+    });
+}
+
 // Groups the folder's unnamed faces that aren't already suggested for someone, largest group first
 pub async fn get_unknown_face_clusters(app: SharedHost, root_folder: Option<String>) -> Result<Vec<FaceCluster>, String> {
     tokio::task::spawn_blocking(move || {
         let conn = open_global_db(&app)?;
-        let suggestions = refresh_suggestion_cache(&app, &conn, root_folder.as_deref())?;
+        let mark = clusters_mark(&conn);
+        let kept = KEPT_CLUSTERS.lock().unwrap_or_else(|e| e.into_inner()).get(&root_folder).map(|k| (k.mark == mark, k.clusters.clone()));
+        match kept {
+            Some((true, clusters)) => Ok(clusters),
+            Some((false, clusters)) => {
+                let clusters = still_unknown(&conn, &clusters);
+                keep_unknown_face_clusters_ready(app.clone(), vec![root_folder]);
+                Ok(clusters)
+            }
+            None => {
+                drop(conn);
+                make_and_keep(&*app, root_folder.as_deref())
+            }
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+fn make_unknown_face_clusters(app: &dyn Host, conn: &Connection, root_folder: Option<&str>) -> Result<Vec<FaceCluster>, String> {
+    {
+        let suggestions = refresh_suggestion_cache(app, conn, root_folder)?;
         let mut suggested: std::collections::HashSet<String> =
             suggestions.values().flatten().map(|c| c.face_id.clone()).collect();
-        suggested.extend(ignored_face_ids(&conn));
-        let prefix = make_folder_prefix(root_folder.as_deref());
-        let thumbs_dir = get_app_storage_dir(&app).join("thumbnails");
-        let previews_dir = get_app_storage_dir(&app).join("previews");
+        suggested.extend(ignored_face_ids(conn));
+        let prefix = make_folder_prefix(root_folder);
+        let thumbs_dir = get_app_storage_dir(app).join("thumbnails");
+        let previews_dir = get_app_storage_dir(app).join("previews");
 
         let mut stmt = conn
             .prepare(
@@ -767,9 +918,7 @@ pub async fn get_unknown_face_clusters(app: SharedHost, root_folder: Option<Stri
         clusters.sort_by(|a, b| b.size.cmp(&a.size));
         clusters.truncate(MAX_CLUSTERS);
         Ok(clusters)
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    }
 }
 
 // One person's face in short: the mean of their named faces' embeddings (normalized), in little-endian f32
@@ -810,4 +959,54 @@ pub fn person_centroids(conn: &Connection, visible: Option<&HashSet<String>>) ->
         .collect();
     out.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn face(id: &str) -> SimilarFaceCandidate {
+        SimilarFaceCandidate {
+            face_id: id.into(),
+            hash: "a".into(),
+            face_thumb: format!("{id}.jpg"),
+            photo_name: String::new(),
+            photo_path: String::new(),
+            bbox_x: 0.0,
+            bbox_y: 0.0,
+            bbox_w: 1.0,
+            bbox_h: 1.0,
+            current_person: None,
+            similarity: 0.0,
+        }
+    }
+
+    // Kept groups answer at once after a change, without the faces that got a name or were set aside since
+    #[test]
+    fn kept_groups_leave_out_faces_named_or_set_aside_since() {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::migrate(&conn).unwrap();
+        conn.execute_batch(
+            "INSERT INTO photos (hash, current_path) VALUES ('a', '/lib/a.jpg');
+             INSERT INTO photo_faces (face_id, hash, bbox_x, bbox_y, bbox_w, bbox_h, face_thumb, embedding) VALUES
+               ('f1', 'a', 0, 0, 1, 1, 'f1.jpg', ''), ('f2', 'a', 0, 0, 1, 1, 'f2.jpg', ''), ('f3', 'a', 0, 0, 1, 1, 'f3.jpg', ''),
+               ('g1', 'a', 0, 0, 1, 1, 'g1.jpg', ''), ('g2', 'a', 0, 0, 1, 1, 'g2.jpg', '');",
+        )
+        .unwrap();
+        let group = |ids: &[&str]| FaceCluster { size: ids.len(), face_ids: ids.iter().map(|s| s.to_string()).collect(), samples: ids.iter().map(|id| face(id)).collect() };
+        let kept = vec![group(&["f1", "f2", "f3"]), group(&["g1", "g2"])];
+        let mark = clusters_mark(&conn);
+        assert_eq!(still_unknown(&conn, &kept).len(), 2);
+
+        // f1 named, g1 set aside: the first group keeps two faces, the second is down to one and goes
+        conn.execute_batch("UPDATE photo_faces SET person_name = 'Anna' WHERE face_id = 'f1'").unwrap();
+        assert_ne!(clusters_mark(&conn), mark);
+        let mark = clusters_mark(&conn);
+        conn.execute("INSERT INTO face_rejections (face_id, person_name) VALUES ('g1', ?1)", [IGNORED_FACE]).unwrap();
+        assert_ne!(clusters_mark(&conn), mark);
+        let now = still_unknown(&conn, &kept);
+        assert_eq!(now.len(), 1);
+        assert_eq!((now[0].size, now[0].face_ids.clone()), (2, vec!["f2".to_string(), "f3".to_string()]));
+        assert_eq!(now[0].samples.iter().map(|f| f.face_id.as_str()).collect::<Vec<_>>(), ["f2", "f3"]);
+    }
 }
