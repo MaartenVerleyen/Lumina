@@ -64,6 +64,8 @@ function treePath(source: Source, subfolder: string): string {
   return subfolder === "Root" || !subfolder ? source.label : `${source.label} / ${subfolder}`;
 }
 
+const NUL = String.fromCharCode(0);
+
 // Burst and duplicate group numbers are per source: they get a range per source so they don't meet
 const GROUP_RANGE = 1_000_000;
 
@@ -102,7 +104,8 @@ export function mergeSources(lists: { source: Source; photos: PhotoItem[] }[], s
     }
     const keys = [...new Set(found.map((f) => sourceKey(f.source)))];
     const shownKey = sourceKey(shown.source);
-    const placeKey = JSON.stringify([keys, home, shownKey]);
+    // Joined with NUL, which no folder path holds: far cheaper than JSON for 100,000 photos
+    const placeKey = [...keys, home ?? "", shownKey].join(NUL);
     let place = places.get(placeKey);
     if (!place) places.set(placeKey, (place = { copies: keys, home, shown: shownKey }));
     copies.set(hash, place);
