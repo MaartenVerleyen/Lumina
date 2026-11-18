@@ -14,6 +14,12 @@ export interface ReleaseNotes {
 // Newest first. Add an entry for every release that should greet updating users with "What's new".
 export const RELEASE_NOTES: ReleaseNotes[] = [
   {
+    version: "6.3.8",
+    items: [
+      { title: "The phone app uses less memory", text: "All photos on the phone no longer keeps a second copy of every photo while it shows the phone's photos and the server's together. On a library of 120,000 photos that is about a fifth less memory." },
+    ],
+  },
+  {
     version: "6.3.7",
     items: [
       { title: "The phone app opens without waiting", text: "With access to the phone's photos, the app spent about 25 seconds at every start copying the server's tags onto the phone's own photos, which have nowhere to keep them. It no longer does, and opens in a few seconds." },
