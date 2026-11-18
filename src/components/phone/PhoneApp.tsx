@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertCircle, ArrowLeft, ChevronRight, CloudUpload, Download, Images, Loader2, Search, Share2, SquareLibrary, Trash2, UserRound, Users, X } from "lucide-react";
-import { ALL_PHOTOS, ALL_PHOTOS_LOADED, allPhotosOffline, startAllPhotosFromKept, callLocal, onAndroid, openLibraryIsAll, openLibraryServer, allPhotosCanBackUp, allPhotosSources } from "../../api";
-import { whereabouts } from "../../api/allPhotos";
+import { ALL_PHOTOS, ALL_PHOTOS_LOADED, allPhotosOffline, startAllPhotosFromKept, callLocal, onAndroid, openLibraryIsAll, openLibraryServer, allPhotosCanBackUp, allPhotosSources, allPhotosWhereabouts } from "../../api";
 import { refreshServers, useServers } from "../../hooks/useServers";
 import { useLibraryState, type LibraryState } from "../../hooks/useLibraryState";
 import type { MediaFilter, PhotoItem } from "../../types/lumina";
@@ -177,9 +176,8 @@ export default function PhoneApp() {
   // Smart search can't see into photos only on this phone (the server analyses what it has): say how many
   const notSearched = useMemo(() => {
     if (!onAndroid || !lib.smartSearch || !lib.searchQuery.trim() || !openLibraryIsAll()) return 0;
-    const sources = allPhotosSources();
     const canBackUp = allPhotosCanBackUp();
-    return lib.photos.filter((p) => whereabouts(p, sources, canBackUp) === "not-backed-up").length;
+    return lib.photos.filter((p) => allPhotosWhereabouts(p, canBackUp) === "not-backed-up").length;
   }, [lib.smartSearch, lib.searchQuery, lib.photos]);
 
   if (!lib.folder) {
@@ -402,10 +400,10 @@ function SelectionBar({
   const chosen = photos.filter((p) => selected.has(p.hash));
   const sources = openLibraryIsAll() ? allPhotosSources() : null;
   const canBackUp = allPhotosCanBackUp();
-  const onlyHere = onAndroid && sources ? chosen.filter((p) => whereabouts(p, sources, canBackUp) === "not-backed-up") : [];
-  const onlyServer = onAndroid && sources ? chosen.filter((p) => whereabouts(p, sources, canBackUp) === "server-only") : [];
+  const onlyHere = onAndroid && sources ? chosen.filter((p) => allPhotosWhereabouts(p, canBackUp) === "not-backed-up") : [];
+  const onlyServer = onAndroid && sources ? chosen.filter((p) => allPhotosWhereabouts(p, canBackUp) === "server-only") : [];
   // On the phone and on a server: they can leave the phone (Free up space for these)
-  const onBoth = onAndroid && sources && backupServer ? chosen.filter((p) => whereabouts(p, sources, canBackUp) === "both") : [];
+  const onBoth = onAndroid && sources && backupServer ? chosen.filter((p) => allPhotosWhereabouts(p, canBackUp) === "both") : [];
   const run = async (what: "share" | "backup" | "save" | "remove") => {
     setBusy(what);
     setMessage(null);

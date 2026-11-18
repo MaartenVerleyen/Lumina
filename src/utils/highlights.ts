@@ -60,7 +60,7 @@ function focusBonus(p: HighlightPhoto, focus: HighlightFocus): number {
 export function highlightScore(p: HighlightPhoto, culling: CullingSettings, focus?: HighlightFocus): number | null {
   // Highlights and Best of are photo collections
   if (p.media_type === "video") return null;
-  if (p.flag === "reject" || p.staged_target === "_Trash" || p.subfolder === "_Trash" || p.subfolder.startsWith("_Trash / "))
+  if (p.flag === "reject" || p.staged_target === "_Trash" || p.subfolder === "_Trash" || !!p.subfolder?.startsWith("_Trash / "))
     return null;
   if (p.damaged || p.tags.includes("screenshot")) return null;
   let score = p.rating * 0.6 + (p.flag === "pick" ? 1.2 : 0);

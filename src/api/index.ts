@@ -33,6 +33,7 @@ import {
   shownPersonName,
   withLocalIds,
   withPeopleNamed,
+  whereabouts,
   type PersonName,
   type PersonPart,
   mergeStatus,
@@ -44,7 +45,7 @@ import {
   type Source,
 } from "./allPhotos.ts";
 import type { FaceCluster, PersonItem, PhotoItem, SemanticHit, SemanticStatus, SimilarFaceCandidate } from "../types/lumina";
-import { leanListsOn, type PhotoDetails } from "./leanList.ts";
+import { fromLeanList, leanListsOn, type PhotoDetails } from "./leanList.ts";
 
 export type { EngineEvent, MediaRef, Transport, RemoteUser, Role, LibraryRef, ServerInfo, Source };
 export { libraryRefFromString, libraryRefToString };
@@ -609,7 +610,10 @@ export function allPhotosOffline(): string[] {
 
 async function kept<T>(key: string): Promise<T | null> {
   const found = await callLocal<{ value: T } | null>("offline_load", { key }).catch(() => null);
-  return found ? found.value : null;
+  if (!found) return null;
+  // A library's kept list is the server's answer as it came: a lean one's photos get their "not fetched yet" faces
+  // as the transports give them (leanList.ts)
+  return key.startsWith("photos:") ? fromLeanList("scan_folder", found.value) : found.value;
 }
 
 function keep(key: string, value: unknown) {
@@ -749,6 +753,18 @@ export async function foldersOnThisPc(): Promise<string[]> {
 // The libraries the view came from, by key (the grid's marks and the Where filter read them)
 export function allPhotosSources(): Map<string, Source> {
   return all.sources;
+}
+
+// Where a photo of All photos is (its copies, its home): on the photo, or for the phone layout's photos, which are
+// the libraries' own objects (mergeSources' `lean`), in All photos' table
+export function allPhotosPlace(p: Pick<PhotoItem, "hash" | "copies" | "home">): { copies?: string[]; home?: string | null } {
+  if (p.copies) return { copies: p.copies, home: p.home };
+  const c = all.copies.get(p.hash);
+  return c ? { copies: c.copies, home: c.home } : {};
+}
+
+export function allPhotosWhereabouts(p: Pick<PhotoItem, "hash" | "copies" | "home">, canBackUp: boolean, downloaded?: ReadonlySet<string>) {
+  return whereabouts({ hash: p.hash, copies: allPhotosPlace(p).copies }, all.sources, canBackUp, downloaded);
 }
 
 // Whether All photos holds a folder on this PC (the web client's never does): only then do "on the server"
@@ -933,7 +949,7 @@ async function loadAllNow(check?: string[], reuseServers = false): Promise<Photo
   }
   all = { ...all, sources: sourceMap, names };
   const named = lists.map((l) => (l.source.server === null ? l : { ...l, photos: l.photos.map((p) => withPeopleNamed(p, showOn(engineOf(l.source)))) }));
-  const mergedSources = timed("All photos: merge", () => mergeSources(named, sameAs));
+  const mergedSources = timed("All photos: merge", () => mergeSources(named, sameAs, leanListsOn()));
   // Near-duplicates of two libraries share a burst group too (not in the phone layout, which shows no groups and
   // has no fingerprints in its lean lists)
   const merged = leanListsOn()
@@ -961,7 +977,8 @@ function install(sourceMap: Map<string, Source>, names: AllState["names"], merge
   const placed = new Map<string, Placed>();
   const faces = new Map<string, string>();
   for (const p of merged.photos) {
-    placed.set(p.hash, { subfolder: p.subfolder, also_in: p.also_in, copies: p.copies, home: p.home });
+    // The phone layout's photos carry no placing of their own (mergeSources' `lean`)
+    if (p.copies) placed.set(p.hash, { subfolder: p.subfolder, also_in: p.also_in, copies: p.copies, home: p.home });
     const shown = sourceMap.get(merged.copies.get(p.hash)!.shown)!;
     for (const f of p.faces ?? []) if (f.face_thumb) faces.set(f.face_thumb, engineOf(shown));
   }
@@ -996,7 +1013,8 @@ async function copyDown(photos: PhotoItem[]) {
       return !!s && s.server === null && s.root !== PHONE_ROOT;
     });
   const homes = photos.filter((p) => {
-    const home = p.home ? all.sources.get(p.home) : undefined;
+    const at = allPhotosPlace(p).home;
+    const home = at ? all.sources.get(at) : undefined;
     return !!home && home.server !== null && all.localValues.has(p.hash) && inALibraryHere(p.hash);
   });
   for (const edit of copyDownEdits(homes, all.localValues)) {

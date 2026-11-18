@@ -3,8 +3,7 @@ import { timed } from "../../api/timings";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Check, CloudOff, Eye, Loader2, Play, RefreshCw } from "lucide-react";
 import type { PhotoItem } from "../../types/lumina";
-import { allPhotosCanBackUp, allPhotosHasLocal, allPhotosSources } from "../../api";
-import { whereabouts } from "../../api/allPhotos";
+import { allPhotosCanBackUp, allPhotosHasLocal, allPhotosPlace, allPhotosSources, allPhotosWhereabouts } from "../../api";
 import { thumbSrc } from "../../utils/photoHelpers";
 import { monthKeyOf, monthLabel } from "../../utils/gridLayout";
 import { formatDuration, isVideo } from "../../utils/media";
@@ -408,11 +407,12 @@ export default function PhoneGrid({
   const canBackUp = marks && allPhotosCanBackUp();
   const hasLocal = marks && allPhotosHasLocal();
   const markOf = (p: PhotoItem): Mark => {
-    if (!sources || !p.copies) return null;
-    const where = whereabouts(p, sources, canBackUp);
+    const place = sources ? allPhotosPlace(p) : null;
+    if (!sources || !place?.copies) return null;
+    const where = allPhotosWhereabouts(p, canBackUp);
     if (where === "not-backed-up") return "phone";
     if (where !== "server-only") return null;
-    if (!p.home) return "shared";
+    if (!place.home) return "shared";
     return hasLocal ? "server" : null;
   };
 

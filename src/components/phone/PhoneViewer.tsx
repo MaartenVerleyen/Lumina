@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ChevronLeft, Cloud, CloudOff, CloudUpload, Download, ExternalLink, FileImage, FolderOpen, Info, Loader2, MapPin, MoreVertical, Share2, Smartphone, UserRound, X } from "lucide-react";
-import { allPhotosCanBackUp, allPhotosSources, call, callLocal, canEditPhoto, mediaUrl, onAndroid, openLibraryIsAll } from "../../api";
+import { allPhotosCanBackUp, allPhotosPlace, allPhotosSources, allPhotosWhereabouts, call, callLocal, canEditPhoto, mediaUrl, onAndroid, openLibraryIsAll } from "../../api";
 import { whereabouts, type Source } from "../../api/allPhotos";
 import { needsDetails, withDetails, type PhotoDetails } from "../../api/leanList";
 import { useServers } from "../../hooks/useServers";
@@ -328,13 +328,14 @@ type Action = "share" | "save" | "backup" | "open" | "folder";
 
 // Where a photo is, as All photos knows it: on this phone, and which servers
 function whereOf(photo: PhotoItem): { phone: boolean; servers: string[]; where: ReturnType<typeof whereabouts> } | null {
-  if (!openLibraryIsAll() || !photo.copies) return null;
+  const copies = allPhotosPlace(photo).copies;
+  if (!openLibraryIsAll() || !copies) return null;
   const sources = allPhotosSources();
-  const found = photo.copies.map((k) => sources.get(k)).filter((x): x is Source => !!x);
+  const found = copies.map((k) => sources.get(k)).filter((x): x is Source => !!x);
   return {
     phone: found.some((x) => x.server === null),
     servers: [...new Set(found.filter((x) => x.server !== null).map((x) => x.server!))],
-    where: whereabouts(photo, sources, allPhotosCanBackUp()),
+    where: allPhotosWhereabouts(photo, allPhotosCanBackUp()),
   };
 }
 

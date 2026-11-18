@@ -348,3 +348,30 @@ test("planned moves in All photos go to each photo's own library", () => {
   const turned = splitOps([{ hash: "b", rotation: 90 }], copies, sources, localIds);
   assert.deepEqual(turned.byEngine.get("cachy"), [{ hash: "b", rotation: 90 }]);
 });
+
+// The phone layout keeps the libraries' own photo objects (no copy of each photo); where a photo is stays in the
+// table, and a photo whose people come from several copies is copied
+test("the phone layout's All photos is the libraries' own photos, with where they are in the table", () => {
+  const onServer = photo("a", { people: ["Emma"] });
+  const alsoHere = photo("a", { people: ["Emma"] });
+  const onlyHere = photo("b");
+  const sharedOne = photo("c", { people: ["Maarten"] });
+  const mine = photo("c", { people: ["Emma"] });
+  const merged = mergeSources(
+    [
+      { source: cachy, photos: [onServer] },
+      { source: pc, photos: [alsoHere, onlyHere, mine] },
+      { source: shared, photos: [sharedOne] },
+    ],
+    new Map(),
+    true
+  );
+  const byHash = new Map(merged.photos.map((p) => [p.hash, p]));
+  assert.equal(byHash.get("a"), onServer, "the home's own object, not a copy");
+  assert.equal(byHash.get("b"), onlyHere);
+  assert.notEqual(byHash.get("c"), mine, "people of two copies: a copy");
+  assert.deepEqual(byHash.get("c")!.people, ["Emma", "Maarten"]);
+  assert.equal(onServer.copies, undefined, "the library's photo is left as it was");
+  assert.deepEqual(merged.copies.get("a"), { copies: [sourceKey(cachy), sourceKey(pc)], home: sourceKey(cachy), shown: sourceKey(cachy) });
+  assert.equal(whereabouts({ hash: "a", copies: merged.copies.get("a")!.copies }, sources, true), "both");
+});

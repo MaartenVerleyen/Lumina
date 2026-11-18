@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { note, timed } from "../../api/timings";
 import { call, foldersOnThisPc } from "../../api";
+import { leanListsOn } from "../../api/leanList";
 import { PhotoItem, TimelineBucket } from "../../types/lumina";
 import { buildFolderTree, foldersOf } from "../../utils/photoHelpers";
 import { diskPathOf, RAW_OR_HEIC_NAME } from "../../utils/rawPairs";
@@ -126,9 +127,10 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
       stale = true;
     };
   }, [core.folder, photos.length, folderListVersion]);
+  // The phone layout shows no folder tree (and its lean lists have no folders)
   const folderTree = useKeptWhile(
     photos,
-    () => buildFolderTree(photos, diskFolders),
+    () => (leanListsOn() ? { rootCount: photos.length, nodes: [] } : buildFolderTree(photos, diskFolders)),
     (before, after) => before.subfolder === after.subfolder && sameList(before.also_in, after.also_in),
     [diskFolders],
     "folder tree"

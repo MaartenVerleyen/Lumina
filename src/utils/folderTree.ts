@@ -1,9 +1,11 @@
 // The folder tree beside the grid, built from the photos' folders (and folders on disk with none in them yet)
 import type { PhotoItem, FolderTreeNode } from "../types/lumina";
 
-// The folders a photo is in: its own, and in All photos those of its other copies
+// The folders a photo is in: its own, and in All photos those of its other copies. A photo of the phone layout's
+// lean lists has no folder (leanList.ts): it counts as in the library's root.
 export function foldersOf(p: Pick<PhotoItem, "subfolder" | "also_in">): string[] {
-  return p.also_in && p.also_in.length > 0 ? [p.subfolder, ...p.also_in] : [p.subfolder];
+  const own = p.subfolder ?? "Root";
+  return p.also_in && p.also_in.length > 0 ? [own, ...p.also_in] : [own];
 }
 
 // `emptyFolders`: folders on disk (tree paths) that show even with no photo in them

@@ -68,8 +68,11 @@ function treePath(source: Source, subfolder: string): string {
 const GROUP_RANGE = 1_000_000;
 
 // `sameAs`: a copy on this computer that is a server's photo under another id (a second copy of a file here
-// gets an id of its own; the upload queue recorded which server photo it is), by its id here
-export function mergeSources(lists: { source: Source; photos: PhotoItem[] }[], sameAs: Map<string, string> = new Map()): Merged {
+// gets an id of its own; the upload queue recorded which server photo it is), by its id here.
+// `lean` (the phone layout): a photo is the library's own object, not a copy with All photos' fields (its folder
+// in the tree, its copies, its home: those are in `copies`), unless its id or its people differ. A copy of each
+// photo was a second list's worth of memory on a phone, and the phone shows no folder tree or groups.
+export function mergeSources(lists: { source: Source; photos: PhotoItem[] }[], sameAs: Map<string, string> = new Map(), lean = false): Merged {
   const byHash = new Map<string, { source: Source; index: number; photo: PhotoItem }[]>();
   lists.forEach(({ source, photos }, index) => {
     for (const photo of photos) {
@@ -81,6 +84,9 @@ export function mergeSources(lists: { source: Source; photos: PhotoItem[] }[], s
   });
   const photos: PhotoItem[] = [];
   const copies = new Map<string, Copies>();
+  // Nearly every photo is in one of a few places ("only on cachy", "on this phone and on cachy"): one entry per
+  // place, shared by its photos, instead of one each (nothing changes an entry once made)
+  const places = new Map<string, Copies>();
   const localValues = new Map<string, LocalValues>();
   const localIds = new Map<string, string[]>();
   for (const [hash, found] of byHash) {
@@ -95,7 +101,11 @@ export function mergeSources(lists: { source: Source; photos: PhotoItem[] }[], s
       if (own.some((h) => h !== hash)) localIds.set(hash, own);
     }
     const keys = [...new Set(found.map((f) => sourceKey(f.source)))];
-    copies.set(hash, { copies: keys, home, shown: sourceKey(shown.source) });
+    const shownKey = sourceKey(shown.source);
+    const placeKey = JSON.stringify([keys, home, shownKey]);
+    let place = places.get(placeKey);
+    if (!place) places.set(placeKey, (place = { copies: keys, home, shown: shownKey }));
+    copies.set(hash, place);
     const group = shown.photo.duplicate_group;
     // People travel with a shared photo: who is in it shows also where your own copy is the home (Dad's copy
     // of a photo shared with him finds maarten's names)
@@ -103,6 +113,10 @@ export function mergeSources(lists: { source: Source; photos: PhotoItem[] }[], s
     for (const f of found) {
       if (f === shown || rank(f.source) < 2) continue;
       for (const n of f.photo.people) if (!people.some((x) => x.toLowerCase() === n.toLowerCase())) people.push(n);
+    }
+    if (lean) {
+      photos.push(hash === shown.photo.hash && people.length === shown.photo.people.length ? shown.photo : { ...shown.photo, hash, people });
+      continue;
     }
     photos.push({
       ...shown.photo,
