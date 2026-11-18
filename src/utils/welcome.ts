@@ -14,6 +14,15 @@ export interface ReleaseNotes {
 // Newest first. Add an entry for every release that should greet updating users with "What's new".
 export const RELEASE_NOTES: ReleaseNotes[] = [
   {
+    version: "6.3.6",
+    items: [
+      { title: "Phones download a quarter as much", text: "On a phone, a server's library now comes without what the phone only shows for one open photo, such as face boxes and camera settings, and better packed. A library of 90,000 photos is about 5 MB to download instead of 19 MB, and takes half the memory. A photo's faces load when you open it." },
+      { title: "The web app works on an iPhone again", text: "On a phone's browser the web app no longer keeps a second copy of a large library, which on an iPhone used more memory than Safari and Chrome allow, and the page closed while it loaded." },
+      { title: "Face counts come quicker", text: "The number of faces to check per person no longer takes half a minute while the server writes captions, and goes down at once when you confirm faces on the desktop." },
+      { title: "A simpler phone app", text: "Trips and events and the camera details are gone from the phone app: they are on the desktop. RAW and JPG copies of a shot still show as one." },
+    ],
+  },
+  {
     version: "6.3.5",
     items: [
       { title: "The phone app no longer closes by itself", text: "6.3.4 saved all of All photos in one go about ten seconds after opening, which on a large library needed more memory than Android gives an app, and Android closed it. It no longer does that, and opens quicker again." },
