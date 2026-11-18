@@ -101,4 +101,10 @@ Face review and the People tab already take their faces from the server (`find_s
    words go; the places in shared code the phone runs that read a left-out field are checked one by one. The
    phone's kept lists (`offline.rs`, IndexedDB) keep the lean form. Checked against the test library, then on the
    8T, the 13r and the iPhone.
-3. **The server keeps its list states across restarts** (step 4 above).
+3. **The server keeps its list states across restarts (done, 18 November):** per library, `listing-state/<mark>.json`
+   in the data folder holds each form's photos in order with a fingerprint of their JSON and the state they last
+   changed in (not the JSON: about 4 MB for 110,000 photos), written when a list is first made and then at most
+   once a minute; `listing-state/run` keeps the tags' run. After a restart the first list made marks only the
+   photos whose fingerprint differs as changed, and keeps the old tag when none does; states go on a million
+   above the last one written, so a tag handed out after that write is never given to another state. Test:
+   `a_restart_keeps_what_clients_have`.

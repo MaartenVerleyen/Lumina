@@ -14,6 +14,13 @@ export interface ReleaseNotes {
 // Newest first. Add an entry for every release that should greet updating users with "What's new".
 export const RELEASE_NOTES: ReleaseNotes[] = [
   {
+    version: "6.3.7",
+    items: [
+      { title: "The phone app opens without waiting", text: "With access to the phone's photos, the app spent about 25 seconds at every start copying the server's tags onto the phone's own photos, which have nowhere to keep them. It no longer does, and opens in a few seconds." },
+      { title: "No big download after a server upgrade", text: "The server now remembers which photo list each phone and browser has, also when it is restarted. After an upgrade a phone is sent only what changed, not the whole library again." },
+    ],
+  },
+  {
     version: "6.3.6",
     items: [
       { title: "Phones download a quarter as much", text: "On a phone, a server's library now comes without what the phone only shows for one open photo, such as face boxes and camera settings, and better packed. A library of 90,000 photos is about 5 MB to download instead of 19 MB, and takes half the memory. A photo's faces load when you open it." },

@@ -70,7 +70,7 @@ impl ServerHost {
             watched,
             watched_receiver: Mutex::new(Some(watched_receiver)),
             jobs: Default::default(),
-            listings: Default::default(),
+            listings: crate::listing::Listings::kept_in(&data_dir),
             scopes: Default::default(),
             data_dir,
             events: broadcast::channel(1024).0,

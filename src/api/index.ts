@@ -14,7 +14,7 @@ import {
   type RemoteEventMessage,
   type ServerInfo,
 } from "./desktopRemote.ts";
-import { note, setTimingSink, timed, watchFreezes } from "./timings.ts";
+import { note, setTimingSink, timed, timedAsync, watchFreezes } from "./timings.ts";
 import { createRemoteAuth, createRemoteTransport, exportZipUrl, hasRole, makeExportZip, RECONNECTED, uploadBackup, type RemoteUser, type Role } from "./remote.ts";
 import {
   copyDownEdits,
@@ -945,7 +945,7 @@ async function loadAllNow(check?: string[], reuseServers = false): Promise<Photo
   install(sourceMap, names, merged);
   accessChanged();
   if (watchAllPhotos) await watchAllPhotosFolders().catch((err) => console.error("All photos: could not watch this computer's folders", err));
-  await copyDown(merged.photos);
+  await timedAsync("All photos: copied down", () => copyDown(merged.photos));
   window.dispatchEvent(new Event(ALL_PHOTOS_LOADED));
   noteUnreachable();
   note(`All photos: loaded${useKept ? " from the kept lists" : ""}`, performance.now() - loadStarted, true);
@@ -986,11 +986,18 @@ if (onAndroid) {
 }
 
 // Copies on this computer of photos whose home is a server take the server's rating, flag, label and tags,
-// so a library opened on its own shows the same (best effort: the next load tries again)
+// so a library opened on its own shows the same (best effort: the next load tries again). Only copies in a library
+// of this computer's engine: the phone's own photos (its camera roll) have nowhere to keep them, and copying the
+// server's tags onto them was an engine call per tag at every load (4,000 on cachy: 25 s before the phone opened).
 async function copyDown(photos: PhotoItem[]) {
+  const inALibraryHere = (hash: string) =>
+    (all.copies.get(hash)?.copies ?? []).some((key) => {
+      const s = all.sources.get(key);
+      return !!s && s.server === null && s.root !== PHONE_ROOT;
+    });
   const homes = photos.filter((p) => {
     const home = p.home ? all.sources.get(p.home) : undefined;
-    return !!home && home.server !== null && all.localValues.has(p.hash);
+    return !!home && home.server !== null && all.localValues.has(p.hash) && inALibraryHere(p.hash);
   });
   for (const edit of copyDownEdits(homes, all.localValues)) {
     try {

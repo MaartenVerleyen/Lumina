@@ -16,7 +16,9 @@
 // window to open the library doesn't wait for it.
 //
 // Each state of a list has a tag. A client that names the list it has can be sent only what differs: the
-// photos that changed or came, and the ones that went. After a restart the client gets the whole list.
+// photos that changed or came, and the ones that went. What a list's states were is kept in the data folder
+// (listing-state/), a fingerprint per photo and not its JSON, so after a restart (an upgrade) a client is still
+// sent only what differs from the copy it has, instead of the whole list.
 //
 // Only the whole list is kept: someone who sees part of a library gets theirs worked out as before.
 use crate::host::ServerHost;
@@ -26,6 +28,7 @@ use lumina_core::{db, libraries, revision, scan};
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -38,6 +41,12 @@ const REMOVALS_KEPT: usize = 100_000;
 const SMALL_ANSWER: usize = 256 * 1024;
 // More changed photos than this are not read again one by one: the whole list is made
 const MOST_FOLLOWED: usize = 5000;
+// How often a list's states are written to the data folder at most (a server writing captions changes its lists
+// every few seconds); what changed after the last write is found by the fingerprints after a restart
+const SAVED_EVERY: Duration = Duration::from_secs(60);
+// After a restart the states go on this far above the last one written: a client may hold the tag of a state made
+// after that write, and a new state must never get its number
+const NUMBERS_SKIPPED: u64 = 1_000_000;
 
 // What a client that has a list (or none) is sent
 pub enum Answer {
@@ -71,7 +80,15 @@ impl Encoding {
 struct Tracked {
     // The state of the list (`Listings::made`) in which this photo came or last differed
     changed_at: u64,
+    // Its JSON's fingerprint, which is what is compared (and kept across restarts)
+    digest: u64,
+    // Empty for a photo read back from the data folder, until the list is made again
     json: Box<[u8]>,
+}
+
+fn digest(json: &[u8]) -> u64 {
+    let hash = blake3::hash(json);
+    u64::from_le_bytes(hash.as_bytes()[..8].try_into().unwrap_or_default())
 }
 
 // The photos of one library's list as JSON, and what earlier states of it had
@@ -109,9 +126,18 @@ impl Track {
             }
         }
         for (hash, json) in touched {
-            if moved.contains(hash.as_str()) || self.photos.get(&hash).is_none_or(|t| *t.json != *json) {
-                self.photos.insert(hash, Tracked { changed_at: made, json: json.into_boxed_slice() });
-                differs = true;
+            let d = digest(&json);
+            match self.photos.get_mut(&hash) {
+                Some(t) if t.digest == d && !moved.contains(hash.as_str()) => {
+                    // The same photo; read back from the data folder it has no JSON yet
+                    if t.json.is_empty() {
+                        t.json = json.into_boxed_slice();
+                    }
+                }
+                _ => {
+                    self.photos.insert(hash, Tracked { changed_at: made, digest: d, json: json.into_boxed_slice() });
+                    differs = true;
+                }
             }
         }
         drop((now, moved));
@@ -157,6 +183,20 @@ impl Track {
 
     fn bytes(&self) -> usize {
         self.photos.values().map(|t| t.json.len()).sum()
+    }
+
+    fn saved(&self) -> SavedTrack {
+        SavedTrack {
+            photos: self.order.iter().filter_map(|h| self.photos.get(h).map(|t| (h.clone(), t.digest, t.changed_at))).collect(),
+            removed: self.removed.clone(),
+            whole_before: self.whole_before,
+        }
+    }
+
+    fn from_saved(saved: SavedTrack) -> Track {
+        let order = saved.photos.iter().map(|(h, _, _)| h.clone()).collect();
+        let photos = saved.photos.into_iter().map(|(h, digest, changed_at)| (h, Tracked { changed_at, digest, json: Box::default() })).collect();
+        Track { order, photos, removed: saved.removed, whole_before: saved.whole_before }
     }
 
     // The whole list, compressed: the same text as the array of photos written at once
@@ -218,6 +258,30 @@ struct Slot {
     track: Track,
     // The same photos in their lean form (lean.rs), in the same states
     lean: Track,
+    // Read back from the data folder: the state the tracks were in, which the list keeps (and clients their
+    // copies) when the first list made after the restart is the same
+    restored: Option<u64>,
+    // When the states were last written to the data folder
+    saved: Option<Instant>,
+}
+
+// A track as written to the data folder: (photo, fingerprint, state it last changed in) in the list's order
+#[derive(serde::Serialize, serde::Deserialize)]
+struct SavedTrack {
+    photos: Vec<(String, u64, u64)>,
+    removed: Vec<(String, u64)>,
+    whole_before: u64,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct SavedSlot {
+    root: String,
+    run: u64,
+    // The newest state any list had when written, and this list's
+    made: u64,
+    number: u64,
+    full: SavedTrack,
+    lean: SavedTrack,
 }
 
 // What changed since a list was last brought up to date. Each number moves on with changes of its kind.
@@ -238,10 +302,13 @@ pub struct Listings {
     files: AtomicU64,
     links: AtomicU64,
     wholly: AtomicU64,
-    // Tells this run's tags from the last run's, whose states started at 1 too
+    // Tells the tags of lists whose states are known (this run's, and those kept in the data folder) from others,
+    // whose states started at 1 too
     run: u64,
     made: AtomicU64,
     kept: Mutex<HashMap<String, Arc<Mutex<Slot>>>>,
+    // Where the lists' states are kept (listing-state/ in the data folder); none: not kept (tests)
+    dir: Option<PathBuf>,
 }
 
 impl Default for Listings {
@@ -249,7 +316,72 @@ impl Default for Listings {
         let run = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
         let zero = || AtomicU64::new(0);
         // States from 1: none is "before" the first one
-        Listings { version: zero(), files: zero(), links: zero(), wholly: zero(), run, made: AtomicU64::new(1), kept: Default::default() }
+        Listings { version: zero(), files: zero(), links: zero(), wholly: zero(), run, made: AtomicU64::new(1), kept: Default::default(), dir: None }
+    }
+}
+
+impl Listings {
+    // Lists whose states are kept in `data_dir`, with the run of the states kept there (so their tags still name
+    // them)
+    pub fn kept_in(data_dir: &Path) -> Listings {
+        let dir = data_dir.join("listing-state");
+        let file = dir.join("run");
+        let fresh = Listings::default();
+        let run = match std::fs::read_to_string(&file).ok().and_then(|t| t.trim().parse::<u64>().ok()) {
+            Some(run) => run,
+            None => {
+                let _ = std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(&file, fresh.run.to_string()));
+                fresh.run
+            }
+        };
+        Listings { run, dir: Some(dir), ..fresh }
+    }
+
+    fn state_file(&self, root: &str) -> Option<PathBuf> {
+        self.dir.as_ref().map(|d| d.join(format!("{}.json", root_mark(root))))
+    }
+
+    // A slot as it was written to the data folder, for this run
+    fn restore(&self, root: &str) -> Option<Slot> {
+        let bytes = std::fs::read(self.state_file(root)?).ok()?;
+        let saved: SavedSlot = serde_json::from_slice(&bytes).ok()?;
+        if saved.root != root || saved.run != self.run {
+            return None;
+        }
+        self.made.fetch_max(saved.made + NUMBERS_SKIPPED, Ordering::SeqCst);
+        Some(Slot {
+            kept: None,
+            track: Track::from_saved(saved.full),
+            lean: Track::from_saved(saved.lean),
+            restored: Some(saved.number),
+            // Written again as soon as the first list is made: before any client has a tag of this run's numbers,
+            // so a second restart goes on above them
+            saved: None,
+        })
+    }
+
+    // Writes the slot's states to the data folder, at most every SAVED_EVERY (whole or not at all)
+    fn save(&self, slot: &mut Slot, root: &str) {
+        let (Some(file), Some(kept)) = (self.state_file(root), &slot.kept) else { return };
+        if slot.saved.is_some_and(|at| at.elapsed() < SAVED_EVERY) {
+            return;
+        }
+        slot.saved = Some(Instant::now());
+        let saved = SavedSlot {
+            root: root.to_string(),
+            run: self.run,
+            made: self.made.load(Ordering::SeqCst),
+            number: kept.number,
+            full: slot.track.saved(),
+            lean: slot.lean.saved(),
+        };
+        let written = serde_json::to_vec(&saved).map_err(|e| e.to_string()).and_then(|bytes| {
+            let tmp = file.with_extension("part");
+            std::fs::write(&tmp, bytes).and_then(|_| std::fs::rename(&tmp, &file)).map_err(|e| e.to_string())
+        });
+        if let Err(e) = written {
+            eprintln!("[listing] {root}: its states could not be kept in the data folder: {e}");
+        }
     }
 }
 
@@ -360,7 +492,13 @@ impl Listings {
     }
 
     fn slot(&self, root: &str) -> Arc<Mutex<Slot>> {
-        self.kept.lock().unwrap_or_else(|e| e.into_inner()).entry(root.to_string()).or_default().clone()
+        let mut kept = self.kept.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(slot) = kept.get(root) {
+            return slot.clone();
+        }
+        let slot = Arc::new(Mutex::new(self.restore(root).unwrap_or_default()));
+        kept.insert(root.to_string(), slot.clone());
+        slot
     }
 
     // Brings the slot's list up to date: nothing to do, the changed photos read again, or the whole list made
@@ -370,10 +508,15 @@ impl Listings {
         if let Some(kept) = &slot.kept {
             let quiet = kept.version == marks.version && kept.files_checked.elapsed() < FILES_CHECKED_EVERY;
             if kept.wholly == marks.wholly && kept.made.elapsed() < MADE_ANEW_EVERY && (quiet || self.follow(slot, host, root, marks)?) {
+                if !quiet {
+                    self.save(slot, root);
+                }
                 return Ok(());
             }
         }
-        self.make(slot, host, root, marks)
+        self.make(slot, host, root, marks)?;
+        self.save(slot, root);
+        Ok(())
     }
 
     // The whole list, made anew
@@ -398,8 +541,11 @@ impl Listings {
         let differs = slot.track.update(number, order, all, &[]);
         println!("[listing] {root}: {} photos, made in {:.1} s", list.photos().len(), started.elapsed().as_secs_f64());
         // Made anew and the same as before: the list keeps its tag, and clients their copies
-        let (number, etag, compressed) = match slot.kept.take() {
-            Some(old) if !differs => (old.number, old.etag, old.compressed),
+        // The first list after a restart that is the same as the one kept in the data folder keeps its state
+        let restored = slot.restored.take();
+        let (number, etag, compressed) = match (slot.kept.take(), restored) {
+            (Some(old), _) if !differs => (old.number, old.etag, old.compressed),
+            (None, Some(was)) if !differs => (was, self.tag(was, root, false), Vec::new()),
             _ => (number, self.tag(number, root, false), Vec::new()),
         };
         let now = Instant::now();
@@ -410,7 +556,7 @@ impl Listings {
 
     // The kept list brought up to date with what changed since. False when the whole list is to be made.
     fn follow(&self, slot: &mut Slot, host: &ServerHost, root: &str, marks: Marks) -> Result<bool, String> {
-        let Slot { kept: Some(kept), track, lean } = slot else { return Ok(false) };
+        let Slot { kept: Some(kept), track, lean, .. } = slot else { return Ok(false) };
         let started = Instant::now();
         let (rev, rows, mut look_at) = {
             let conn = db::open_global_db(host)?;
@@ -466,7 +612,7 @@ impl Listings {
         let slot = self.slot(root);
         let mut slot = slot.lock().unwrap_or_else(|e| e.into_inner());
         self.current(&mut slot, host, root)?;
-        let Slot { kept: Some(kept), track, lean: lean_track } = &mut *slot else { return Err("The list was not made".to_string()) };
+        let Slot { kept: Some(kept), track, lean: lean_track, .. } = &mut *slot else { return Err("The list was not made".to_string()) };
         let track = if lean { &*lean_track } else { &*track };
         let etag = if lean { self.tag(kept.number, root, true) } else { kept.etag.clone() };
         if have.iter().any(|tag| tag.trim() == etag) {

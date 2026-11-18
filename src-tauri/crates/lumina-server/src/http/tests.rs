@@ -1668,3 +1668,54 @@ async fn whole_lists_are_sent_in_brotli_when_the_client_takes_it() {
     assert_eq!((lists[0].0.as_str(), lists[1].0.as_str()), ("br", "gzip"));
     assert_eq!(lists[0].1, lists[1].1);
 }
+
+// After a restart (an upgrade) a client with a copy of the list is still sent only what differs from it, and "the
+// same" when nothing changed: the lists' states are kept in the data folder
+#[tokio::test]
+async fn a_restart_keeps_what_clients_have() {
+    use std::io::Read;
+    let s = server("restart");
+    let (root, _) = add_library(&s);
+    let viewer = login(&s.app, "vera").await;
+    let editor = login(&s.app, "ed").await;
+    let restarted = || {
+        let host = Arc::new(ServerHost::new(s.dir.clone()));
+        let state = Arc::new(AppState { host, web_dir: None, throttle: Default::default() });
+        router(state).layer(MockConnectInfo(SocketAddr::from(([127, 0, 0, 1], 50000))))
+    };
+    let ask = |app: Router, tag: Option<String>| {
+        let mut req = post("/api/rpc/scan_folder", json!({"folderPath": root, "lean": true}), Some(&viewer));
+        req.headers_mut().insert(header::ACCEPT_ENCODING, "gzip".parse().unwrap());
+        req.headers_mut().insert("x-lumina-differences", "1".parse().unwrap());
+        if let Some(tag) = tag {
+            req.headers_mut().insert(header::IF_NONE_MATCH, tag.parse().unwrap());
+        }
+        async move {
+            let resp = app.oneshot(req).await.unwrap();
+            let status = resp.status();
+            let headers = resp.headers().clone();
+            let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+            let mut text = String::new();
+            if !bytes.is_empty() {
+                flate2::read::GzDecoder::new(&bytes[..]).read_to_string(&mut text).unwrap();
+            }
+            let header = |name: &str| headers.get(name).map(|v| v.to_str().unwrap().to_string());
+            (status, header("etag").unwrap_or_default(), header("x-lumina-differences"), text)
+        }
+    };
+
+    let (_, first, _, _) = ask(s.app.clone(), None).await;
+    let (status, _, _) = send(&s.app, post("/api/rpc/set_photos_rating", json!({"hashes": ["abc123"], "rating": 5}), Some(&editor))).await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Restarted with a change the client hasn't seen: only that comes
+    let app = restarted();
+    let (status, now, base, differences) = ask(app.clone(), Some(first.clone())).await;
+    assert_eq!((status, base.as_deref()), (StatusCode::OK, Some(first.as_str())), "differences, not the whole list");
+    let d: Value = serde_json::from_str(&differences).unwrap();
+    assert_eq!(d["changed"][0]["photo"]["rating"], 5);
+
+    // Restarted again with nothing changed: the client's copy is still the list
+    let (status, again, _, _) = ask(restarted(), Some(now.clone())).await;
+    assert_eq!((status, again), (StatusCode::NOT_MODIFIED, now));
+}

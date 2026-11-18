@@ -171,38 +171,33 @@ scan means the models did not run.
 
 ## Lumina 5 plan and status
 
-- **Phase 0 (released as 4.3.0):** lumina-core crate + `Host`; libraries table + relative paths; batch AI
-  (`ai::run_caption_batch`) in the engine; frontend transport layer `src/api/`.
-- **Phase 1 (on `lumina-5`, partly untested):** Linux counterparts (table above), `lumina-server`,
-  `server/Dockerfile` + `docker-compose.yml`.
-- **Phase 2 (done on `lumina-5`; the brief with milestones and what was built is `docs/plans/phase-2-server.md`):**
-  HTTP API in the server (axum), HTTPS through `tailscale serve`, accounts from the start: `POST /api/rpc/{command}` with the existing command
-  names, WebSocket events, `/media/{thumb|original|preview|face}/…` (the kinds of `MediaRef` in
-  `src/api/transport.ts`), accounts with roles (viewer, uploader, editor, admin) and shared albums, a jobs
-  table, the web client served from `/`, restore of a `.luminabackup` in the admin UI.
-- **Phase 3 (on `lumina-5`; the brief is `docs/plans/phase-3-client.md`):** milestone 1 (the server's upload
-  and download routes) done on Linux; milestones 2–4 done on Windows: the desktop app connects to servers
-  (Settings → Servers, or the start screen) and opens their libraries next to local folders (the open library
-  is a root plus its server, `setOpenLibrary(root, server)`; calls, events and media follow it, commands about
-  this computer stay local, `LOCAL_COMMANDS`), uploads (drop on the window, or Library → Upload Photos; the web
-  client's Upload button), downloads (selection → Download) with BLAKE3 checks, and "On this PC" badges, filter
-  and "Remove from this PC". Checked on Windows against a lumina-server on 127.0.0.1; still to check over
-  Tailscale with two accounts, and on Linux (keyring needs D-Bus' Secret Service; whether WebKitGTK streams
-  server videos from lumina-remote:// as it can't from asset://). Milestone 5 (written, first run pending):
-  `.github/workflows/desktop.yml` builds Linux (AppImage, .deb) and Mac (Apple Silicon .dmg; ONNX Runtime
-  has no Intel Mac build; CoreML as the Mac's GPU) when a release is published, and on demand; the Mac app is
-  client-only for now (`platform.fullApp`). See docs/RELEASING.md.
-- **One view (on `lumina-5`; the brief is `docs/plans/one-view.md`):** All photos, this PC's folders and the
-  servers' libraries in one grid. Milestone 1 done on Windows and Linux (the merged grid with marks and the Where
-  filter, edits per home, the device's basket); milestone 2 done on Windows against a lumina-server on 127.0.0.1
-  (Back up now: uploads with their values, `apply_backup_values`, names waiting in `backup_faces` until the server
-  has found the faces); milestone 3 done on Windows (albums and people of every library in All photos,
-  names of your own per user on the server, `person_names`), milestone 4 (following shared albums,
-  `src-tauri/src/follows.rs`) and milestone 5 (suggested names from `person_centroids`, duplicates across
-  libraries) done on Windows; next: the phone app (phase 5) adds the camera roll as a source.
-- **Phase 4:** clients help with the server's AI backlog on request, and analyse photos before uploading.
-- **Phase 5, the Android app (branch `android`; the brief is `docs/plans/android.md`):** milestone 1 done on a
-  OnePlus 8T (sign in, browse and search the server, photos and videos, share); next: the phone's camera roll.
+Everything below is on `main` and released (6.x); the briefs in `docs/plans/` say what was built and checked.
+
+- **Phases 0–3, done:** lumina-core and `Host` (phase 0); Linux counterparts, `lumina-server` and its Docker files
+  (phase 1); the server's HTTP API, accounts with roles, shared albums, jobs, the web client and restore
+  (phase 2, `phase-2-server.md`); the desktop as a client of servers: their libraries next to local folders,
+  uploads, downloads with BLAKE3 checks, "On this PC" (phase 3, `phase-3-client.md`). Linux and Mac desktop builds
+  come from `.github/workflows/desktop.yml` on every release; the Mac app is client-only (`platform.fullApp`).
+  Still to check on Linux as a client: the keyring (D-Bus' Secret Service), server videos in WebKitGTK.
+- **One view, done (`one-view.md`):** All photos, this PC's folders, the phone's camera roll and the servers'
+  libraries in one grid; edits per home, the device's basket, Back up now with values, albums and people of every
+  library, names of your own per user, following shared albums, suggested names, duplicates across libraries.
+- **Phase 5, the Android app, done (`android.md`, `android-app-ui.md`):** milestones 1–6 (browse and search the
+  server, the camera roll as "This phone", backup in the background, free up space, offline, following albums, a
+  signed APK on every release with the update check in the app), checking faces one by one (`FaceCards.tsx`).
+  Used on a OnePlus 8T and a 13r. Still proposed: the polish pass (`android.md`, "Polish pass").
+- **Lean lists for phones, done (`lean-photo-list.md`, 6.3.6–6.3.7):** the phone layout (the Android app and the
+  web client in a phone's browser) asks `scan_folder` for the lean form (`lumina-server/src/lean.rs`; faces,
+  camera details and folders come per photo through `get_photo_details`), whole lists go out in brotli, and the
+  server keeps its lists' states across restarts (`listing-state/` in the data folder), so after an upgrade a
+  device is sent only what changed. Trips, camera details and near-duplicate groups are gone from the phone.
+- **Next:**
+  1. All photos on the phone without a copy of every photo: the merge (`allPhotos.ts` `mergeSources`) still
+     makes one per photo, which takes back much of the lean list's memory on the Android app, whose main view
+     it is.
+  2. Trips and big days made by the engine (`trips-in-the-engine.md`): waits for Maarten's agreement (new
+     tables), about 20 real examples and three choices.
+  3. Phase 4: clients help with the server's AI backlog on request, and analyse photos before uploading.
 
 ## First jobs on the Linux machine
 
