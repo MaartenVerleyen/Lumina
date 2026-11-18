@@ -154,8 +154,14 @@ export function usePeople(core: LibraryCore, filters: FilterState) {
     };
   }, []);
 
-  // After accepting or denying suggestions: the badge counts follow at once, without recomputing every match
+  // After accepting or denying suggestions: the badge counts follow at once, without recomputing every match.
+  // Counts asked before (a server's take seconds) would put the old number back when they come: they are
+  // dropped, and asked for again after them.
   function reducePendingCount(person: string, by: number) {
+    if (countsRunning.current) {
+      pendingAskRef.current++;
+      countsAgain.current = folder;
+    }
     setPendingFaceCounts((prev) => {
       const key = Object.keys(prev).find((k) => k.toLowerCase() === person.toLowerCase());
       return key ? { ...prev, [key]: Math.max(0, prev[key] - by) } : prev;

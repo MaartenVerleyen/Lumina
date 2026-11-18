@@ -6,16 +6,40 @@ use std::collections::HashMap;
 pub struct FaceInstance {
     pub face_id: String,
     pub hash: String,
+    // Sent with 4 decimals (a ten-thousandth of the photo), not the 17 a float has: the faces are a quarter of a
+    // large library's list
+    #[serde(serialize_with = "four_decimals")]
     pub bbox_x: f64,
+    #[serde(serialize_with = "four_decimals")]
     pub bbox_y: f64,
+    #[serde(serialize_with = "four_decimals")]
     pub bbox_w: f64,
+    #[serde(serialize_with = "four_decimals")]
     pub bbox_h: f64,
     pub person_name: Option<String>,
     pub face_thumb: String,
+    #[serde(serialize_with = "four_decimals")]
     pub confidence: f64,
     // Eye opening (about 0.3+ open, under 0.15 shut) and focus on the face; None for faces not measured yet
+    #[serde(serialize_with = "four_decimals_or_none")]
     pub eyes_open: Option<f64>,
+    #[serde(serialize_with = "four_decimals_or_none")]
     pub face_sharpness: Option<f64>,
+}
+
+fn rounded(x: f64) -> f64 {
+    if x.is_finite() { (x * 10_000.0).round() / 10_000.0 } else { x }
+}
+
+fn four_decimals<S: serde::Serializer>(x: &f64, s: S) -> Result<S::Ok, S::Error> {
+    s.serialize_f64(rounded(*x))
+}
+
+fn four_decimals_or_none<S: serde::Serializer>(x: &Option<f64>, s: S) -> Result<S::Ok, S::Error> {
+    match x {
+        Some(x) => s.serialize_some(&rounded(*x)),
+        None => s.serialize_none(),
+    }
 }
 
 #[derive(Serialize, Clone)]
