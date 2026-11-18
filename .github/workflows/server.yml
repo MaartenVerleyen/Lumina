@@ -39,11 +39,11 @@ jobs:
       REF: ${{ github.event.release.tag_name || inputs.ref }}
       RELEASE: ${{ github.event.release.tag_name || inputs.release_tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ env.REF }}
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -88,7 +88,7 @@ jobs:
           (cd "$out" && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
           ls -la "$out" "$dir/bin"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: lumina-server-linux-x86_64
           path: ${{ runner.temp }}/out/*
