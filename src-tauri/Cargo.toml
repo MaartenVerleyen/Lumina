@@ -38,14 +38,14 @@ walkdir = "2.5"
 
 # The desktop's TLS is the system's; Android has no OpenSSL to link and no credential store for keyring
 [target.'cfg(not(target_os = "android"))'.dependencies]
-reqwest = { version = "0.12", features = ["json", "stream", "gzip"] }
+reqwest = { version = "0.12", features = ["json", "stream", "gzip", "brotli"] }
 tokio-tungstenite = { version = "0.29", features = ["native-tls"] }
 keyring = { version = "3", features = ["windows-native", "apple-native", "sync-secret-service"] }
 # Starting Lumina again brings the running window back (also out of the tray) instead of a second copy
 tauri-plugin-single-instance = "2"
 
 [target.'cfg(target_os = "android")'.dependencies]
-reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "gzip"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "gzip", "brotli"] }
 tokio-tungstenite = { version = "0.29", features = ["rustls-tls-webpki-roots"] }
 # The background backup and the Keystore: Rust and the app's Kotlin call each other (android_jni.rs)
 jni = "0.21"

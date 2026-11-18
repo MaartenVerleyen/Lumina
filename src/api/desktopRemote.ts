@@ -8,6 +8,7 @@
 import type { EngineEvent, MediaRef, Transport } from "./transport";
 import { faceIdFromPath } from "./remote.ts";
 import { isVideoRef } from "../utils/media.ts";
+import { fromLeanList, leanArgs } from "./leanList.ts";
 
 // Commands the desktop always runs itself: they act on this computer (files, clipboard, a card reader, the
 // app's own windows), and a server refuses them (lumina-server's NOT_ON_SERVER). The client's own commands
@@ -61,7 +62,9 @@ export function createDesktopRemoteTransport(
   clientId: string
 ): Transport {
   return {
-    call: (command, args) => deps.invoke("server_call", { server, command, args: args ?? {}, client: clientId }),
+    // The phone layout asks for lean lists (leanList.ts)
+    call: async <T,>(command: string, args?: Record<string, unknown>) =>
+      fromLeanList(command, await deps.invoke<T>("server_call", { server, command, args: leanArgs(command, args) ?? {}, client: clientId })),
     subscribe: (event, handler) => events.subscribe(event, handler),
     mediaUrl: (ref) => {
       const key = remoteMediaKey(server, ref);

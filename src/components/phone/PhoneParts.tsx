@@ -103,9 +103,6 @@ export function SectionTitle({ children, onAll }: { children: React.ReactNode; o
   );
 }
 
-// Cards in a row that scrolls sideways: as wide as the cards of a two-column grid (16 px margins, 12 px apart)
-export const ROW_CARD = "w-[calc(50vw-22px)] shrink-0";
-
 // The one card for albums, trips, places, things and the phone's folders: a square picture, its name under it,
 // and a line (a count) under that
 export function Card({

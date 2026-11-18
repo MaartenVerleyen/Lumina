@@ -7,7 +7,7 @@ import { swipeAnswer, swipeHint, swipeTilt, type SwipeAnswer } from "../../utils
 import SpotlightPhoto from "../modals/SpotlightPhoto";
 import { useBackCloses } from "./navigation";
 import { FaceSheet } from "./PhoneViewer";
-import { withFaces } from "./faces";
+import { applyFaces } from "./faces";
 
 // Checking faces one by one (docs/plans/android.md, "Checking faces one by one"): a card per face, the likeliest
 // first. Swipe right: it's them; left: it isn't; up: someone else (the name sheet); down: skip, no answer (the
@@ -95,7 +95,7 @@ export default function FaceCards({
     try {
       if (answer === "yes") {
         const changed = await call<Record<string, FaceInstance[]>>("assign_faces_to_person_batch", { faceIds: [cand.face_id], personName: name });
-        lib.setPhotos((prev) => withFaces(prev, changed));
+        applyFaces(lib, changed);
       } else {
         await call("reject_face_candidates_batch", { faceIds: [cand.face_id], personName: name });
       }
@@ -132,7 +132,7 @@ export default function FaceCards({
   async function namedSomeoneElse(cand: SimilarFaceCandidate, changed: Record<string, FaceInstance[]>) {
     haptic();
     setNaming(null);
-    lib.setPhotos((prev) => withFaces(prev, changed));
+    applyFaces(lib, changed);
     const other = Object.values(changed)
       .flat()
       .find((f) => f.face_id === cand.face_id)?.person_name ?? undefined;
@@ -162,13 +162,13 @@ export default function FaceCards({
       const faceIds = [last.cand.face_id];
       if (last.answer === "yes") {
         const changed = await call<Record<string, FaceInstance[]>>("unassign_faces_batch", { faceIds, personName: name });
-        lib.setPhotos((prev) => withFaces(prev, changed));
+        applyFaces(lib, changed);
       } else if (last.answer === "no") {
         await call("unreject_face_candidates_batch", { faceIds, personName: name });
       } else {
         if (last.other) {
           const changed = await call<Record<string, FaceInstance[]>>("unassign_faces_batch", { faceIds, personName: last.other });
-          lib.setPhotos((prev) => withFaces(prev, changed));
+          applyFaces(lib, changed);
         }
         await call("unreject_face_candidates_batch", { faceIds, personName: name });
       }

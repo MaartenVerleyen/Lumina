@@ -24,8 +24,9 @@ rpassword = "7"
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
 blake3 = "1.5"
-# The kept photo lists are gzipped once, not per request
+# The kept photo lists are gzipped once, not per request; whole lists also in brotli (a quarter smaller)
 flate2 = "1"
+brotli = "8"
 # The cookie's Max-Age (the cookie crate uses time's Duration)
 time = "0.3"
 

@@ -5,6 +5,7 @@
 //   mediaUrl   /media/{thumb|original|preview|face}/{id}: by id, so the client never needs the server's paths
 // No Tauri imports here: the browser loads this, and the tests run it under Node.
 import { applyDifferences, browserKeptLists, type KeptLists } from "./keptList.ts";
+import { fromLeanList, leanArgs } from "./leanList.ts";
 import type { EngineEvent, MediaRef, Transport } from "./transport";
 
 export interface RemoteOptions {
@@ -155,12 +156,13 @@ export function createRemoteTransport(options: RemoteOptions = {}): Transport & 
     return (text ? JSON.parse(text) : null) as T;
   }
 
-  async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  async function call<T>(command: string, asked?: Record<string, unknown>): Promise<T> {
+    const args = leanArgs(command, asked);
     try {
       if (kept && command === "scan_folder" && typeof args?.folderPath === "string") {
-        return await libraryList<T>(`${base}|${args.folderPath}`, args, kept);
+        return fromLeanList(command, await libraryList<T>(`${base}|${args.folderPath}`, args, kept));
       }
-      return await answer<T>(await send(command, args));
+      return fromLeanList(command, await answer<T>(await send(command, args)));
     } catch (e) {
       return Promise.reject(e);
     }

@@ -6,7 +6,7 @@ import type { LibraryState } from "../../hooks/useLibraryState";
 import type { FaceCluster, FaceInstance, SimilarFaceCandidate } from "../../types/lumina";
 import { FaceSheet } from "./PhoneViewer";
 import { Page } from "./PhoneParts";
-import { withFaces } from "./faces";
+import { applyFaces } from "./faces";
 import { useBackCloses } from "./navigation";
 import SpotlightPhoto from "../modals/SpotlightPhoto";
 import FaceCards from "./FaceCards";
@@ -97,7 +97,7 @@ export function ReviewPerson({ lib, name, onBack }: { lib: LibraryState; name: s
     try {
       if (yes) {
         const changed = await call<Record<string, FaceInstance[]>>("assign_faces_to_person_batch", { faceIds: ids, personName: name });
-        lib.setPhotos((prev) => withFaces(prev, changed));
+        applyFaces(lib, changed);
       } else {
         await call("reject_face_candidates_batch", { faceIds: ids, personName: name });
       }
@@ -113,7 +113,7 @@ export function ReviewPerson({ lib, name, onBack }: { lib: LibraryState; name: s
 
   // Named as someone else: they're also turned down for this person, so they aren't suggested for them again
   const namedSomeoneElse = async (ids: string[], changed: Record<string, FaceInstance[]>) => {
-    lib.setPhotos((prev) => withFaces(prev, changed));
+    applyFaces(lib, changed);
     const named = new Set(ids);
     setCandidates((prev) => (prev ?? []).filter((c) => !named.has(c.face_id)));
     setTicked((prev) => new Set([...prev].filter((id) => !named.has(id))));
@@ -384,7 +384,7 @@ export function UnnamedGroups({ lib, onBack }: { lib: LibraryState; onBack: () =
           people={lib.people}
           onClose={() => setNaming(null)}
           onDone={(changed) => {
-            lib.setPhotos((prev) => withFaces(prev, changed));
+            applyFaces(lib, changed);
             done(naming);
             setNaming(null);
           }}

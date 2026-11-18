@@ -6,12 +6,12 @@ import { useServers } from "../../hooks/useServers";
 import type { PhotoItem } from "../../types/lumina";
 import { thumbSrc } from "../../utils/photoHelpers";
 import { orderFolders } from "./BackupScreen";
-import { Card as PhotoCard, photoCount, ROW_CARD, SectionTitle } from "./PhoneParts";
+import { Card as PhotoCard, photoCount, SectionTitle } from "./PhoneParts";
 import { setBackupSettings, usePhoneBackup } from "./usePhoneBackup";
 import { usePhoneFolders } from "./usePhoneFolders";
 import type { Scope } from "./navigation";
 
-// The phone app's Albums tab (docs/plans/android-app-ui.md): the server's albums, trips and events, and the
+// The phone app's Albums tab (docs/plans/android-app-ui.md): the server's albums, and the
 // phone's own folders with whether each is backed up
 
 export default function AlbumsScreen({ lib, onOpen }: { lib: LibraryState; onOpen: (title: string, scope: Scope) => void }) {
@@ -20,7 +20,6 @@ export default function AlbumsScreen({ lib, onOpen }: { lib: LibraryState; onOpe
   const folders = usePhoneFolders(settings?.server ?? null, status?.backed_up);
   const byHash = useMemo(() => new Map(lib.photos.map((p) => [p.hash, p])), [lib.photos]);
   const albums = lib.albums.filter((a) => (lib.albumCounts.get(a.id) ?? 0) > 0);
-  const trips = lib.autoEvents;
   // The albums under a heading per server ("On cachy")
   const byServer = [...new Set(albums.map((a) => a.engine ?? ""))].map((engine) => ({
     label: servers.find((x) => x.id === engine)?.label ?? (engine || "this phone"),
@@ -90,25 +89,6 @@ export default function AlbumsScreen({ lib, onOpen }: { lib: LibraryState; onOpe
           </div>
         </div>
       ))}
-      {trips.length > 0 && (
-        <>
-          <SectionTitle>Trips and events</SectionTitle>
-          <div className="flex gap-3 overflow-x-auto px-4 pb-1">
-            {trips.map((t) => (
-              <div key={t.id} className={ROW_CARD}>
-                <Card
-                  cover={undefined}
-                  coverHash={lib.trips.find((x) => x.id === t.id)?.hashes[0]}
-                  byHash={byHash}
-                  title={t.label}
-                  subtitle={photoCount(t.count)}
-                  onClick={() => onOpen(t.label, { event: t.id })}
-                />
-              </div>
-            ))}
-          </div>
-        </>
-      )}
       {onAndroid && folders && folders.length > 0 && settings && (
         <>
           <SectionTitle>On this phone</SectionTitle>
@@ -139,7 +119,7 @@ export default function AlbumsScreen({ lib, onOpen }: { lib: LibraryState; onOpe
           </div>
         </>
       )}
-      {albums.length === 0 && trips.length === 0 && !(folders && folders.length > 0) && (
+      {albums.length === 0 && !(folders && folders.length > 0) && (
         <div className="p-8 text-center text-[15px] text-zinc-400">No albums yet.</div>
       )}
     </div>

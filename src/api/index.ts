@@ -44,6 +44,7 @@ import {
   type Source,
 } from "./allPhotos.ts";
 import type { FaceCluster, PersonItem, PhotoItem, SemanticHit, SemanticStatus, SimilarFaceCandidate } from "../types/lumina";
+import { leanListsOn, type PhotoDetails } from "./leanList.ts";
 
 export type { EngineEvent, MediaRef, Transport, RemoteUser, Role, LibraryRef, ServerInfo, Source };
 export { libraryRefFromString, libraryRefToString };
@@ -274,7 +275,8 @@ async function setBasket(hashes: string[], inBasket: boolean): Promise<void> {
 async function withBasket(photos: PhotoItem[]): Promise<PhotoItem[]> {
   if (!Array.isArray(photos)) return photos;
   const b = await loadBasket();
-  return photos.map((p) => (p.in_basket === b.has(p.hash) ? p : { ...p, in_basket: b.has(p.hash) }));
+  // A photo of a lean list has no in_basket (leanList.ts): not in the basket is the same as false, not a copy
+  return photos.map((p) => ((p.in_basket ?? false) === b.has(p.hash) ? p : { ...p, in_basket: b.has(p.hash) }));
 }
 
 // ---------- All photos ----------
@@ -470,7 +472,7 @@ export function allPhotosKnows(hash: string): boolean {
 
 // Near-duplicates across libraries found again (after a thumbnail pass made new fingerprints)
 export function allPhotosRegroup(photos: PhotoItem[]): PhotoItem[] {
-  return groupAcrossSources(photos, (p) => all.copies.get(p.hash)?.shown ?? "");
+  return leanListsOn() ? photos : groupAcrossSources(photos, (p) => all.copies.get(p.hash)?.shown ?? "");
 }
 
 // The photo All photos shows for a copy this computer's engine names (its events use its own ids)
@@ -932,11 +934,14 @@ async function loadAllNow(check?: string[], reuseServers = false): Promise<Photo
   all = { ...all, sources: sourceMap, names };
   const named = lists.map((l) => (l.source.server === null ? l : { ...l, photos: l.photos.map((p) => withPeopleNamed(p, showOn(engineOf(l.source)))) }));
   const mergedSources = timed("All photos: merge", () => mergeSources(named, sameAs));
-  // Near-duplicates of two libraries share a burst group too
-  const merged = {
-    ...mergedSources,
-    photos: timed("All photos: same photo across libraries", () => groupAcrossSources(mergedSources.photos, (p) => mergedSources.copies.get(p.hash)?.shown ?? "")),
-  };
+  // Near-duplicates of two libraries share a burst group too (not in the phone layout, which shows no groups and
+  // has no fingerprints in its lean lists)
+  const merged = leanListsOn()
+    ? mergedSources
+    : {
+        ...mergedSources,
+        photos: timed("All photos: same photo across libraries", () => groupAcrossSources(mergedSources.photos, (p) => mergedSources.copies.get(p.hash)?.shown ?? "")),
+      };
   install(sourceMap, names, merged);
   accessChanged();
   if (watchAllPhotos) await watchAllPhotosFolders().catch((err) => console.error("All photos: could not watch this computer's folders", err));
@@ -1211,6 +1216,27 @@ async function callAll<T>(command: string, args: Record<string, unknown>): Promi
   switch (command) {
     case "scan_folder":
       return (await loadAll(args.check as string[] | undefined, args.reuseServers === true)) as T;
+    // What the phone layout's lean lists leave out, from the server each photo is shown from, with the names this
+    // account gives people (this computer's photos come whole: nothing to fetch)
+    case "get_photo_details": {
+      const byEngine = new Map<string, string[]>();
+      for (const h of (args.hashes as string[]) ?? []) {
+        const engine = engineOfShown(h);
+        if (!engine) continue;
+        byEngine.set(engine, [...(byEngine.get(engine) ?? []), h]);
+      }
+      const answers = await Promise.all(
+        [...byEngine].map(async ([engine, hashes]) => {
+          const found = await engineTransport(engine).call<Record<string, PhotoDetails>>("get_photo_details", { hashes });
+          const show = showOn(engine);
+          return Object.entries(found).map(([hash, d]): [string, PhotoDetails] => [
+            hash,
+            { ...d, faces: (d.faces ?? []).map((f) => (f.person_name ? { ...f, person_name: show(f.person_name) } : f)) },
+          ]);
+        })
+      );
+      return Object.fromEntries(answers.flat()) as T;
+    }
     case "get_photos": {
       const byEngine = new Map<string, string[]>();
       for (const h of (args.hashes as string[]) ?? []) {

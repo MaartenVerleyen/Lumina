@@ -1,14 +1,14 @@
 import { useEffect, useRef, useState } from "react";
-import { ChevronLeft, Cloud, CloudOff, CloudUpload, Download, ExternalLink, FileImage, FolderOpen, Info, Loader2, MapPin, Camera, MoreVertical, Share2, Smartphone, UserRound, X } from "lucide-react";
+import { ChevronLeft, Cloud, CloudOff, CloudUpload, Download, ExternalLink, FileImage, FolderOpen, Info, Loader2, MapPin, MoreVertical, Share2, Smartphone, UserRound, X } from "lucide-react";
 import { allPhotosCanBackUp, allPhotosSources, call, callLocal, canEditPhoto, mediaUrl, onAndroid, openLibraryIsAll } from "../../api";
 import { whereabouts, type Source } from "../../api/allPhotos";
+import { needsDetails, withDetails, type PhotoDetails } from "../../api/leanList";
 import { useServers } from "../../hooks/useServers";
 import { openWith, saveToPhone, serverOf, sharePhotos } from "./share";
 import { Button } from "./PhoneParts";
 import type { FaceInstance, PersonItem, PhotoItem } from "../../types/lumina";
 import { formatBytes, thumbSrc } from "../../utils/photoHelpers";
 import { isVideo } from "../../utils/media";
-import { shutterLabel } from "../../utils/exposure";
 import LoupeVideo from "../modals/LoupeVideo";
 import { useBackCloses } from "./navigation";
 
@@ -61,11 +61,29 @@ export default function PhoneViewer({
   onPerson: (name: string) => void;
   // The names to suggest when naming a face, and where a photo's renamed faces go
   people: PersonItem[];
-  onFaces: (faces: Record<string, FaceInstance[]>) => void;
+  // `known`: the faces the photo had before (fetched for a photo of a lean list)
+  onFaces: (faces: Record<string, FaceInstance[]>, known?: Record<string, FaceInstance[]>) => void;
   // The phone app: the phone's folder this photo is in (Albums)
   onShowFolder?: (photo: PhotoItem) => void;
 }) {
-  const photo = photos[index];
+  // What a lean list leaves out (faces, for the boxes and naming), for this photo and the ones on either side
+  const [details, setDetails] = useState<Record<string, PhotoDetails>>({});
+  const asked = useRef(new Set<string>());
+  useEffect(() => {
+    const wanted = [index - 1, index, index + 1]
+      .map((i) => photos[i])
+      .filter((p): p is PhotoItem => !!p && needsDetails(p) && !asked.current.has(p.hash))
+      .map((p) => p.hash);
+    if (wanted.length === 0) return;
+    for (const h of wanted) asked.current.add(h);
+    call<Record<string, PhotoDetails>>("get_photo_details", { hashes: wanted })
+      .then((found) => setDetails((prev) => ({ ...prev, ...found })))
+      .catch(() => {
+        // Asked again when the photo is shown next time
+        for (const h of wanted) asked.current.delete(h);
+      });
+  }, [index, photos]);
+  const photo = photos[index] ? withDetails(photos[index], details[photos[index].hash]) : undefined;
   const video = photo ? isVideo(photo) : false;
   const [view, setView] = useState({ scale: 1, x: 0, y: 0 });
   const [drag, setDrag] = useState({ dx: 0, dy: 0 });
@@ -441,7 +459,8 @@ function Details({
   onPerson: (name: string) => void;
   onAction: (what: Action) => void;
   people: PersonItem[];
-  onFaces: (faces: Record<string, FaceInstance[]>) => void;
+  // `known`: the faces the photo had before (fetched for a photo of a lean list)
+  onFaces: (faces: Record<string, FaceInstance[]>, known?: Record<string, FaceInstance[]>) => void;
 }) {
   const { servers } = useServers();
   const [naming, setNaming] = useState<FaceInstance | null>(null);
@@ -461,17 +480,12 @@ function Details({
         onClose={() => setNaming(null)}
         onPerson={onPerson}
         onDone={(changed) => {
-          onFaces(changed);
+          onFaces(changed, { [photo.hash]: photo.faces });
           setNaming(null);
         }}
       />
     );
   }
-  const aperture = photo.aperture ? `f/${String(photo.aperture).replace(/^f\//, "")}` : "";
-  // A phone's lens name often holds the aperture already ("5.96mm f/1.6")
-  const exposure = [aperture && !(photo.lens_model ?? "").includes(aperture) && aperture, shutterLabel(photo.shutter_speed), photo.iso && `ISO ${String(photo.iso).replace(/^ISO\s*/i, "")}`]
-    .filter(Boolean)
-    .join(" · ");
   return (
     <div data-viewer-chrome className="absolute inset-0 flex flex-col justify-end" onClick={onClose}>
       <div
@@ -528,17 +542,6 @@ function Details({
           <div className="mt-2 flex items-center gap-2 text-[13px] text-zinc-300">
             <MapPin className="w-4 h-4 text-emerald-400 shrink-0" />
             {photo.location}
-          </div>
-        )}
-        {(photo.camera_model || exposure) && (
-          <div className="mt-2 flex items-center gap-2 text-[13px] text-zinc-300">
-            <Camera className="w-4 h-4 text-emerald-400 shrink-0" />
-            {/* A phone's lens name starts with its model already ("OnePlus 13R back camera 24mm f/1.8") */}
-            <span>
-              {[photo.lens_model && photo.camera_model && photo.lens_model.startsWith(photo.camera_model) ? "" : photo.camera_model, photo.lens_model, exposure]
-                .filter(Boolean)
-                .join(" · ")}
-            </span>
           </div>
         )}
         {shownFaces.length > 0 && (

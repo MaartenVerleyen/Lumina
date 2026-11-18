@@ -4,6 +4,8 @@
 // (lumina-server's listing.rs), which is worked into the copy here.
 // Every step may fail (a private window, storage full, no IndexedDB under Node): then the list is asked for whole.
 
+import { leanListsOn } from "./leanList.ts";
+
 export interface KeptList {
   tag: string;
   text: string;
@@ -37,10 +39,16 @@ function smallDevice(): boolean {
 
 // Lists above this many characters aren't kept in a phone's browser: the list as text, the photos made from it
 // and the copy written to IndexedDB at once were more than iOS lets a page have (a library of 90,000 photos is
-// about 120 MB of text), and the page was closed while it loaded
+// about 120 MB of text), and the page was closed while it loaded. The phone layout's lean lists are half that and
+// make far smaller photos (leanList.ts), so they are kept up to a larger size.
 const PHONE_KEEPS_UP_TO = 16_000_000;
+const PHONE_KEEPS_LEAN_UP_TO = 64_000_000;
 
-export function browserKeptLists(keepsUpTo = smallDevice() ? PHONE_KEEPS_UP_TO : Infinity): KeptLists | null {
+function phoneLimit(): number {
+  return leanListsOn() ? PHONE_KEEPS_LEAN_UP_TO : PHONE_KEEPS_UP_TO;
+}
+
+export function browserKeptLists(keepsUpTo: () => number = smallDevice() ? phoneLimit : () => Infinity): KeptLists | null {
   if (typeof indexedDB === "undefined") return null;
   let opened: Promise<IDBDatabase> | null = null;
   const db = () => {
@@ -71,7 +79,7 @@ export function browserKeptLists(keepsUpTo = smallDevice() ? PHONE_KEEPS_UP_TO :
       try {
         // One transaction: never a tag without its list
         const s = await store("readwrite");
-        if (list.text.length > keepsUpTo) {
+        if (list.text.length > keepsUpTo()) {
           s.delete(`list:${key}`);
           await request(s.delete(`tag:${key}`));
           return;

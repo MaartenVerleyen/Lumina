@@ -5,6 +5,7 @@
 // account may not edit has no home (read-only).
 // Pure functions only: index.ts does the calls, and the tests run this under Node.
 import type { PersonItem, PhotoItem, SemanticHit, SemanticStatus } from "../types/lumina";
+import { needsDetails } from "./leanList.ts";
 
 export interface Source {
   // null: a folder on this computer
@@ -266,12 +267,13 @@ export function shownPersonName(name: string, names: Map<string, PersonName> | u
 }
 
 // A photo with its people (and named faces) as this account shows them
+// A photo whose names all read the same stays the same object: a copy of each of a large library's photos would be
+// another list's worth of memory on a phone. A photo of a lean list keeps its "not fetched yet" faces (leanList.ts).
 export function withPeopleNamed(p: PhotoItem, show: (name: string) => string): PhotoItem {
-  return {
-    ...p,
-    people: p.people.map(show),
-    faces: (p.faces ?? []).map((f) => (f.person_name ? { ...f, person_name: show(f.person_name) } : f)),
-  };
+  const people = p.people.map(show);
+  const faces = !p.faces || needsDetails(p) ? p.faces : p.faces.map((f) => (f.person_name && show(f.person_name) !== f.person_name ? { ...f, person_name: show(f.person_name) } : f));
+  const same = people.every((n, i) => n === p.people[i]) && (faces === p.faces || faces.every((f, i) => f === p.faces[i]));
+  return same ? (p.faces ? p : { ...p, faces: [] }) : { ...p, people, faces: faces ?? [] };
 }
 
 // One source's part of a person All photos shows: the engine, the name there, and whether this account may

@@ -11,7 +11,7 @@ use lumina_core::host::Host;
 use axum::{Extension, Json};
 use super::lookup;
 use crate::host::ServerHost;
-use crate::listing::Answer;
+use crate::listing::{Answer, Encoding};
 use super::access::{self, Target};
 use crate::scope::{self, Scope};
 use crate::dynamic;
@@ -278,8 +278,10 @@ fn user_id(host: &ServerHost, name: &str) -> Result<i64, ApiError> {
 commands! {
     // Browsing (viewer and up; a guest sees what is shared with them). scan_folder lists a library from the
     // database: the server keeps its libraries up to date itself; a rescan is admin work (rescan_library).
-    Viewer [Target::Root(folder_path.clone())] async scan_folder(folder_path: String, force_reprocess: Option<bool>) |host, scope| {
-        let _ = force_reprocess;
+    // `lean`: the list in its lean form (lean.rs), as the phone and the web client ask for it; put in that form
+    // after the call, by the dispatch below
+    Viewer [Target::Root(folder_path.clone())] async scan_folder(folder_path: String, force_reprocess: Option<bool>, lean: Option<bool>) |host, scope| {
+        let _ = (force_reprocess, lean);
         let root = lookup::library_root(&*host, &folder_path)?;
         let photos = scan::list_library(host.clone(), root).await;
         visible_only(&host, &scope, photos)
@@ -289,6 +291,18 @@ commands! {
     Viewer blocking get_photos(hashes: Vec<String>) |host, scope| {
         let wanted = scope.visible(&db::open_global_db(&*host)?, &hashes)?;
         scan::photos_by_hash(&*host, &wanted).map_err(ApiError::from)
+    };
+    // What the lean list leaves out (faces, camera settings, ...), per photo: {hash: {faces: [...], ...}}
+    Viewer blocking get_photo_details(hashes: Vec<String>) |host, scope| {
+        let wanted = scope.visible(&db::open_global_db(&*host)?, &hashes)?;
+        let photos = scan::photos_by_hash(&*host, &wanted).map_err(ApiError::from)?;
+        let mut out = serde_json::Map::new();
+        for photo in photos {
+            let mut value = serde_json::to_value(&photo).map_err(|e| ApiError::from(e.to_string()))?;
+            host.hide_data_dir(&mut value);
+            out.insert(photo.hash.clone(), crate::lean::details_of(&value));
+        }
+        Ok::<_, ApiError>(JsonValue::Object(out))
     };
     Viewer [Target::Photos(vec![hash.clone()])] blocking get_photo_history(hash: String) |host, scope|
         changes::history(&db::open_global_db(&*host)?, &hash, 50);
@@ -770,6 +784,7 @@ pub async fn call(
     } else {
         serde_json::from_slice(&body).map_err(|e| ApiError::new(StatusCode::BAD_REQUEST, format!("Bad JSON: {e}")))?
     };
+    let lean = cmd.name == "scan_folder" && args["lean"].as_bool() == Some(true);
     if cmd.name == "scan_folder" {
         if let Some(kept) = kept_listing(&host, &scope, &args, &headers).await? {
             return Ok(kept);
@@ -792,6 +807,12 @@ pub async fn call(
         announce(&state, &user, cmd.name, changed, origin).await;
     }
     state.host.hide_data_dir(&mut value);
+    // A list worked out for this user (a guest, a client that takes no gzip), in the lean form it asked for
+    if let (true, Some(photos)) = (lean, value.as_array_mut()) {
+        for photo in photos.iter_mut() {
+            *photo = crate::lean::lean_photo(photo);
+        }
+    }
     Ok(Json(value).into_response())
 }
 
@@ -804,7 +825,9 @@ const DIFFERENCES: &str = "x-lumina-differences";
 // client that takes no gzip, someone who sees only part of the library).
 async fn kept_listing(host: &Arc<ServerHost>, scope: &Arc<Scope>, args: &JsonValue, headers: &HeaderMap) -> Result<Option<Response>, ApiError> {
     let header = |name: &str| headers.get(name).and_then(|v| v.to_str().ok()).unwrap_or("");
-    let takes_gzip = header("accept-encoding").split(',').any(|e| e.trim().split(';').next() == Some("gzip"));
+    let takes = |name: &str| header("accept-encoding").split(',').any(|e| e.trim().split(';').next() == Some(name));
+    let takes_gzip = takes("gzip");
+    let encoding = if takes("br") { Encoding::Brotli } else { Encoding::Gzip };
     let Some(folder) = args["folderPath"].as_str() else { return Ok(None) };
     if !scope.sees_all() || !takes_gzip {
         return Ok(None);
@@ -813,10 +836,11 @@ async fn kept_listing(host: &Arc<ServerHost>, scope: &Arc<Scope>, args: &JsonVal
     let (host, folder) = (host.clone(), folder.to_string());
     let have: Vec<String> = header("if-none-match").split(',').map(|tag| tag.trim().to_string()).filter(|tag| !tag.is_empty()).collect();
     let differences = header(DIFFERENCES) == "1";
+    let lean = args["lean"].as_bool() == Some(true);
     let listing = tokio::task::spawn_blocking(move || -> Result<_, ApiError> {
         let root = lookup::library_root(&*host, &folder)?;
         let have: Vec<&str> = have.iter().map(String::as_str).collect();
-        host.listings.answer(&host, &root, &have, differences).map_err(ApiError::from)
+        host.listings.answer(&host, &root, &have, differences, lean, encoding).map_err(ApiError::from)
     })
     .await
     .map_err(|e| ApiError::from(e.to_string()))??;
@@ -827,7 +851,11 @@ async fn kept_listing(host: &Arc<ServerHost>, scope: &Arc<Scope>, args: &JsonVal
     let answer = match listing {
         Answer::Same(etag) => answer.header("etag", etag).status(StatusCode::NOT_MODIFIED).body(axum::body::Body::empty()),
         Answer::Differences { etag, base, gzipped: body } => gzipped(answer.header("etag", etag).header(DIFFERENCES, base), body),
-        Answer::Whole { etag, gzipped: body } => gzipped(answer.header("etag", etag), body),
+        Answer::Whole { etag, encoding, body } => answer
+            .header("etag", etag)
+            .header("content-type", "application/json")
+            .header("content-encoding", encoding.name())
+            .body(axum::body::Body::from(body)),
     };
     answer.map(Some).map_err(|e| ApiError::from(e.to_string()))
 }

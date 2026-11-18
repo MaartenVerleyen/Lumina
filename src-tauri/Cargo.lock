@@ -880,6 +880,7 @@ version = "0.4.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "84f840cff84d10085260e460023934d0af699e71212b09b2a41452e8bd9cda43"
 dependencies = [
+ "brotli 9.0.0",
  "compression-core",
  "flate2",
  "memchr",
@@ -3215,6 +3216,7 @@ dependencies = [
  "axum",
  "axum-extra",
  "blake3",
+ "brotli 8.0.4",
  "flate2",
  "http-body-util",
  "image",

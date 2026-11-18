@@ -1574,3 +1574,97 @@ async fn a_client_with_a_list_is_sent_what_differs() {
     let (_, base, text) = ask(Some("\"1-1-00000000\"".to_string()), true).await;
     assert_eq!((base, text.as_str()), (None, whole.as_str()));
 }
+
+// The phone layout asks for the lean list: no face boxes, camera settings or other details, and tags of its own, so a lean copy is never answered with the full list's differences or the other way round.
+// What it leaves out comes from get_photo_details.
+#[tokio::test]
+async fn the_lean_list_leaves_details_out_and_has_tags_of_its_own() {
+    use std::io::Read;
+    let s = server("lean");
+    let (root, _) = add_library(&s);
+    let viewer = login(&s.app, "vera").await;
+    let editor = login(&s.app, "ed").await;
+    let ask = |lean: bool, tag: Option<String>| {
+        let mut req = post("/api/rpc/scan_folder", json!({"folderPath": root, "lean": lean}), Some(&viewer));
+        req.headers_mut().insert(header::ACCEPT_ENCODING, "gzip".parse().unwrap());
+        req.headers_mut().insert("x-lumina-differences", "1".parse().unwrap());
+        if let Some(tag) = tag {
+            req.headers_mut().insert(header::IF_NONE_MATCH, tag.parse().unwrap());
+        }
+        let app = s.app.clone();
+        async move {
+            let resp = app.oneshot(req).await.unwrap();
+            let status = resp.status();
+            let headers = resp.headers().clone();
+            let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+            let mut text = String::new();
+            if !bytes.is_empty() {
+                flate2::read::GzDecoder::new(&bytes[..]).read_to_string(&mut text).unwrap();
+            }
+            let header = |name: &str| headers.get(name).map(|v| v.to_str().unwrap().to_string());
+            (status, header("etag").unwrap_or_default(), header("x-lumina-differences"), text)
+        }
+    };
+
+    let (_, full_tag, _, full) = ask(false, None).await;
+    let (_, lean_tag, _, lean) = ask(true, None).await;
+    assert_ne!(full_tag, lean_tag);
+    let full: Value = serde_json::from_str(&full).unwrap();
+    let lean: Value = serde_json::from_str(&lean).unwrap();
+    assert_eq!(full[0]["faces"].as_array().unwrap().len(), 1);
+    let photo = lean[0].as_object().unwrap();
+    assert_eq!(photo["hash"], "abc123");
+    for gone in crate::lean::DETAILS {
+        assert!(!photo.contains_key(*gone), "{gone} is left out of the lean list");
+    }
+    for kept in crate::lean::KEPT {
+        assert!(photo.contains_key(*kept), "{kept} is in the lean list, also when empty");
+    }
+    assert_eq!(*photo, crate::lean::lean_photo(&full[0]).as_object().unwrap().clone());
+
+    // The same list: 304 for each form with its own tag, never for the other's
+    assert_eq!(ask(true, Some(lean_tag.clone())).await.0, StatusCode::NOT_MODIFIED);
+    let (status, _, base, _) = ask(true, Some(full_tag.clone())).await;
+    assert_eq!((status, base), (StatusCode::OK, None), "a full list's tag gets the whole lean list");
+
+    // A change: the lean copy is sent the lean photo
+    let (status, _, _) = send(&s.app, post("/api/rpc/set_photos_rating", json!({"hashes": ["abc123"], "rating": 5}), Some(&editor))).await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, _, base, differences) = ask(true, Some(lean_tag.clone())).await;
+    assert_eq!(base.as_deref(), Some(lean_tag.as_str()));
+    let d: Value = serde_json::from_str(&differences).unwrap();
+    assert_eq!(d["changed"][0]["photo"]["rating"], 5);
+    assert!(d["changed"][0]["photo"].get("faces").is_none());
+
+    // The details, for photos this user sees
+    let (status, _, details) = send(&s.app, post("/api/rpc/get_photo_details", json!({"hashes": ["abc123", "nope"]}), Some(&viewer))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(details["abc123"]["faces"][0]["face_id"], "abc123_10_20");
+    assert!(details.get("nope").is_none());
+}
+
+// Whole lists go out in brotli to clients that take it, in gzip to the others, with the same list inside
+#[tokio::test]
+async fn whole_lists_are_sent_in_brotli_when_the_client_takes_it() {
+    use std::io::Read;
+    let s = server("brotli");
+    let (root, _) = add_library(&s);
+    let viewer = login(&s.app, "vera").await;
+    let mut lists = Vec::new();
+    for accepts in ["gzip, deflate, br", "gzip"] {
+        let mut req = post("/api/rpc/scan_folder", json!({"folderPath": root, "lean": true}), Some(&viewer));
+        req.headers_mut().insert(header::ACCEPT_ENCODING, accepts.parse().unwrap());
+        let resp = s.app.clone().oneshot(req).await.unwrap();
+        let encoding = resp.headers().get(header::CONTENT_ENCODING).unwrap().to_str().unwrap().to_string();
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let mut text = String::new();
+        if encoding == "br" {
+            brotli::Decompressor::new(&bytes[..], 4096).read_to_string(&mut text).unwrap();
+        } else {
+            flate2::read::GzDecoder::new(&bytes[..]).read_to_string(&mut text).unwrap();
+        }
+        lists.push((encoding, text));
+    }
+    assert_eq!((lists[0].0.as_str(), lists[1].0.as_str()), ("br", "gzip"));
+    assert_eq!(lists[0].1, lists[1].1);
+}

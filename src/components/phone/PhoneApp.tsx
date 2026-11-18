@@ -23,7 +23,7 @@ import { freeUpScan, moveToTrash } from "./freeUp";
 import { refreshBackup, usePhoneBackup } from "./usePhoneBackup";
 import { checkForUpdate, useUpdate } from "./useUpdate";
 import PhoneViewer from "./PhoneViewer";
-import { withFaces } from "./faces";
+import { applyFaces } from "./faces";
 import { useScreens, type Scope, type Tab } from "./navigation";
 import luminaMark from "../../assets/lumina-mark.svg";
 
@@ -365,8 +365,8 @@ export default function PhoneApp() {
           onPerson={showPerson}
           onShowFolder={onAndroid ? (photo) => void showFolderOf(photo) : undefined}
           people={lib.people}
-          onFaces={(changed) => {
-            lib.setPhotos((prev) => withFaces(prev, changed));
+          onFaces={(changed, known) => {
+            applyFaces(lib, changed, known);
             void lib.refreshPeople();
           }}
         />

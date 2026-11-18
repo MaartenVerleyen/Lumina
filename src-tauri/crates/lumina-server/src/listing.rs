@@ -48,8 +48,24 @@ pub enum Answer {
     // `changed` is in the list's order and `after` the photo before it there: where a new one goes. A photo
     // in both went from its place and is put where `after` says.
     Differences { etag: String, base: String, gzipped: axum::body::Bytes },
-    // The JSON array of photos as scan_folder answers it, gzipped
-    Whole { etag: String, gzipped: axum::body::Bytes },
+    // The JSON array of photos as scan_folder answers it, compressed as `encoding` says
+    Whole { etag: String, encoding: Encoding, body: axum::body::Bytes },
+}
+
+// How a whole list is sent: brotli to clients that take it (browsers over HTTPS, the apps), gzip to the others
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Encoding {
+    Gzip,
+    Brotli,
+}
+
+impl Encoding {
+    pub fn name(self) -> &'static str {
+        match self {
+            Encoding::Gzip => "gzip",
+            Encoding::Brotli => "br",
+        }
+    }
 }
 
 struct Tracked {
@@ -143,19 +159,36 @@ impl Track {
         self.photos.values().map(|t| t.json.len()).sum()
     }
 
-    // The whole list, gzipped: the same text as the array of photos written at once
-    fn whole(&self) -> Result<Vec<u8>, String> {
+    // The whole list, compressed: the same text as the array of photos written at once
+    fn whole(&self, encoding: Encoding) -> Result<Vec<u8>, String> {
         let failed = |e: std::io::Error| e.to_string();
-        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
-        gz.write_all(b"[").map_err(failed)?;
-        for (i, hash) in self.order.iter().enumerate() {
-            if i > 0 {
-                gz.write_all(b",").map_err(failed)?;
+        let write = |out: &mut dyn Write| -> Result<(), String> {
+            out.write_all(b"[").map_err(failed)?;
+            for (i, hash) in self.order.iter().enumerate() {
+                if i > 0 {
+                    out.write_all(b",").map_err(failed)?;
+                }
+                out.write_all(&self.photos.get(hash).ok_or("A photo of the kept list is missing")?.json).map_err(failed)?;
             }
-            gz.write_all(&self.photos.get(hash).ok_or("A photo of the kept list is missing")?.json).map_err(failed)?;
+            out.write_all(b"]").map_err(failed)
+        };
+        match encoding {
+            Encoding::Gzip => {
+                let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+                write(&mut gz)?;
+                gz.finish().map_err(failed)
+            }
+            Encoding::Brotli => {
+                // Quality 5: about 0.4 s for 40 MB, within 5 % of the best brotli does in 1.4 s
+                let mut out = Vec::new();
+                {
+                    let mut br = brotli::CompressorWriter::new(&mut out, 1 << 16, 5, 22);
+                    write(&mut br)?;
+                    br.flush().map_err(failed)?;
+                }
+                Ok(out)
+            }
         }
-        gz.write_all(b"]").map_err(failed)?;
-        gz.finish().map_err(failed)
     }
 }
 
@@ -175,14 +208,16 @@ struct Kept {
     // This state of the list, and its tag
     number: u64,
     etag: String,
-    // The whole list gzipped, once someone asked for this state of it
-    gzipped: Option<axum::body::Bytes>,
+    // The whole list compressed, once someone asked for this state of it: per form (full, lean) and encoding
+    compressed: Vec<((bool, Encoding), axum::body::Bytes)>,
 }
 
 #[derive(Default)]
 struct Slot {
     kept: Option<Kept>,
     track: Track,
+    // The same photos in their lean form (lean.rs), in the same states
+    lean: Track,
 }
 
 // What changed since a list was last brought up to date. Each number moves on with changes of its kind.
@@ -260,11 +295,12 @@ fn root_mark(root: &str) -> String {
     blake3::hash(root.as_bytes()).to_hex()[..8].to_string()
 }
 
-// A photo as scan_folder answers it
-fn json_of(host: &ServerHost, photo: &PhotoItem) -> Result<Vec<u8>, String> {
+// A photo as scan_folder answers it, in full and lean
+fn json_of(host: &ServerHost, photo: &PhotoItem) -> Result<(Vec<u8>, Vec<u8>), String> {
     let mut value = serde_json::to_value(photo).map_err(|e| e.to_string())?;
     host.hide_data_dir(&mut value);
-    serde_json::to_vec(&value).map_err(|e| e.to_string())
+    let lean = crate::lean::lean_photo(&value);
+    Ok((serde_json::to_vec(&value).map_err(|e| e.to_string())?, serde_json::to_vec(&lean).map_err(|e| e.to_string())?))
 }
 
 impl Listings {
@@ -307,15 +343,17 @@ impl Listings {
         Marks { version: read(&self.version), files: read(&self.files), links: read(&self.links), wholly: read(&self.wholly) }
     }
 
-    fn tag(&self, number: u64, root: &str) -> String {
-        format!("\"{:x}-{:x}-{}\"", self.run, number, root_mark(root))
+    // The lean form's tags end in "l": a client that switches form never takes one list for the other
+    fn tag(&self, number: u64, root: &str, lean: bool) -> String {
+        format!("\"{:x}-{:x}-{}{}\"", self.run, number, root_mark(root), if lean { "l" } else { "" })
     }
 
-    // The state a tag of this run and this library names
-    fn number_of(&self, tag: &str, root: &str) -> Option<u64> {
+    // The state a tag of this run, this library and this form names
+    fn number_of(&self, tag: &str, root: &str, lean: bool) -> Option<u64> {
         let mut parts = tag.trim().trim_matches('"').split('-');
         let (run, number, mark) = (parts.next()?, parts.next()?, parts.next()?);
-        if parts.next().is_some() || u64::from_str_radix(run, 16).ok()? != self.run || mark != root_mark(root) {
+        let want = format!("{}{}", root_mark(root), if lean { "l" } else { "" });
+        if parts.next().is_some() || u64::from_str_radix(run, 16).ok()? != self.run || mark != want {
             return None;
         }
         u64::from_str_radix(number, 16).ok()
@@ -348,27 +386,31 @@ impl Listings {
         let list = LibraryList::make(host, root)?;
         let mut order = Vec::with_capacity(list.photos().len());
         let mut all = Vec::with_capacity(list.photos().len());
+        let mut all_lean = Vec::with_capacity(list.photos().len());
         for photo in list.photos() {
+            let (full, lean) = json_of(host, photo)?;
             order.push(photo.hash.clone());
-            all.push((photo.hash.clone(), json_of(host, photo)?));
+            all.push((photo.hash.clone(), full));
+            all_lean.push((photo.hash.clone(), lean));
         }
         let number = self.made.fetch_add(1, Ordering::SeqCst);
+        slot.lean.update(number, order.clone(), all_lean, &[]);
         let differs = slot.track.update(number, order, all, &[]);
         println!("[listing] {root}: {} photos, made in {:.1} s", list.photos().len(), started.elapsed().as_secs_f64());
         // Made anew and the same as before: the list keeps its tag, and clients their copies
-        let (number, etag, gzipped) = match slot.kept.take() {
-            Some(old) if !differs => (old.number, old.etag, old.gzipped),
-            _ => (number, self.tag(number, root), None),
+        let (number, etag, compressed) = match slot.kept.take() {
+            Some(old) if !differs => (old.number, old.etag, old.compressed),
+            _ => (number, self.tag(number, root, false), Vec::new()),
         };
         let now = Instant::now();
         let Marks { version, files, links, wholly } = marks;
-        slot.kept = Some(Kept { list, version, files, links, wholly, made: now, files_checked: now, rev, rows, number, etag, gzipped });
+        slot.kept = Some(Kept { list, version, files, links, wholly, made: now, files_checked: now, rev, rows, number, etag, compressed });
         Ok(())
     }
 
     // The kept list brought up to date with what changed since. False when the whole list is to be made.
     fn follow(&self, slot: &mut Slot, host: &ServerHost, root: &str, marks: Marks) -> Result<bool, String> {
-        let Slot { kept: Some(kept), track } = slot else { return Ok(false) };
+        let Slot { kept: Some(kept), track, lean } = slot else { return Ok(false) };
         let started = Instant::now();
         let (rev, rows, mut look_at) = {
             let conn = db::open_global_db(host)?;
@@ -385,17 +427,21 @@ impl Listings {
         let photos: HashMap<&str, &PhotoItem> =
             if followed.touched.is_empty() { HashMap::new() } else { kept.list.photos().iter().map(|p| (p.hash.as_str(), p)).collect() };
         let mut touched = Vec::with_capacity(followed.touched.len());
+        let mut touched_lean = Vec::with_capacity(followed.touched.len());
         for hash in &followed.touched {
             if let Some(photo) = photos.get(hash.as_str()) {
-                touched.push((hash.clone(), json_of(host, photo)?));
+                let (full, slim) = json_of(host, photo)?;
+                touched.push((hash.clone(), full));
+                touched_lean.push((hash.clone(), slim));
             }
         }
         let count = (touched.len(), followed.removed.len());
-        let order = kept.list.photos().iter().map(|p| p.hash.clone()).collect();
+        let order: Vec<String> = kept.list.photos().iter().map(|p| p.hash.clone()).collect();
         let number = self.made.fetch_add(1, Ordering::SeqCst);
+        lean.update(number, order.clone(), touched_lean, &followed.moved);
         // A change that shows in no photo leaves the list, and its tag, as they were
         if track.update(number, order, touched, &followed.moved) {
-            (kept.number, kept.etag, kept.gzipped) = (number, self.tag(number, root), None);
+            (kept.number, kept.etag, kept.compressed) = (number, self.tag(number, root, false), Vec::new());
             println!("[listing] {root}: {} read again, {} gone, in {:.0} ms", count.0, count.1, started.elapsed().as_secs_f64() * 1000.0);
         }
         (kept.version, kept.files, kept.links, kept.rev, kept.rows) = (marks.version, marks.files, marks.links, rev, rows);
@@ -416,33 +462,34 @@ impl Listings {
 
     // The library's list for a client that may have one already: `have` are the tags it named, `differences`
     // whether it can take only what differs from the list it has
-    pub fn answer(&self, host: &ServerHost, root: &str, have: &[&str], differences: bool) -> Result<Answer, String> {
+    pub fn answer(&self, host: &ServerHost, root: &str, have: &[&str], differences: bool, lean: bool, encoding: Encoding) -> Result<Answer, String> {
         let slot = self.slot(root);
         let mut slot = slot.lock().unwrap_or_else(|e| e.into_inner());
         self.current(&mut slot, host, root)?;
-        let Slot { kept: Some(kept), track } = &mut *slot else { return Err("The list was not made".to_string()) };
-        let etag = kept.etag.clone();
+        let Slot { kept: Some(kept), track, lean: lean_track } = &mut *slot else { return Err("The list was not made".to_string()) };
+        let track = if lean { &*lean_track } else { &*track };
+        let etag = if lean { self.tag(kept.number, root, true) } else { kept.etag.clone() };
         if have.iter().any(|tag| tag.trim() == etag) {
             return Ok(Answer::Same(etag));
         }
         if let ([base], true) = (have, differences) {
-            if let Some(json) = self.number_of(base, root).filter(|n| *n < kept.number).and_then(|n| track.since(n)) {
+            if let Some(json) = self.number_of(base, root, lean).filter(|n| *n < kept.number).and_then(|n| track.since(n)) {
                 // Nearly everything changed: the whole list is no more to send, and less to work in
                 if json.len() < SMALL_ANSWER || json.len() < track.bytes() / 2 {
                     return Ok(Answer::Differences { etag, base: base.trim().to_string(), gzipped: gzip(&json)?.into() });
                 }
             }
         }
-        // Gzipped once per state of the list, and only when someone needs all of it
-        let gzipped = match &kept.gzipped {
-            Some(gzipped) => gzipped.clone(),
+        // Compressed once per state of the list, and only when someone needs all of it
+        let body = match kept.compressed.iter().find(|(kind, _)| *kind == (lean, encoding)) {
+            Some((_, body)) => body.clone(),
             None => {
-                let gzipped: axum::body::Bytes = track.whole()?.into();
-                kept.gzipped = Some(gzipped.clone());
-                gzipped
+                let body: axum::body::Bytes = track.whole(encoding)?.into();
+                kept.compressed.push(((lean, encoding), body.clone()));
+                body
             }
         };
-        Ok(Answer::Whole { etag, gzipped })
+        Ok(Answer::Whole { etag, encoding, body })
     }
 }
 
@@ -521,7 +568,9 @@ mod tests {
         let from4 = since(&t, 4).unwrap();
         assert_eq!((hashes(&from4), &from4["removed"], &from4["changed"][0]["after"]), (vec!["d".to_string()], &serde_json::json!(["d"]), &serde_json::json!("c")));
         assert!(t.update(6, order(), list(&[("d", "1")]), &["d".to_string()]));
-        let whole: serde_json::Value = serde_json::from_reader(flate2::read::GzDecoder::new(&t.whole().unwrap()[..])).unwrap();
+        let whole: serde_json::Value = serde_json::from_reader(flate2::read::GzDecoder::new(&t.whole(Encoding::Gzip).unwrap()[..])).unwrap();
+        let in_brotli: serde_json::Value = serde_json::from_reader(brotli::Decompressor::new(&t.whole(Encoding::Brotli).unwrap()[..], 4096)).unwrap();
+        assert_eq!(in_brotli, whole, "the same list in either encoding");
         assert_eq!(whole.as_array().unwrap().iter().map(|p| format!("{}{}", p["hash"].as_str().unwrap(), p["v"].as_str().unwrap())).collect::<Vec<_>>(), ["d1", "a2", "b2", "e2", "c1"]);
 
         // Photos that changed places can't be said with differences
