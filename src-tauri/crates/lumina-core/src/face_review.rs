@@ -292,10 +292,10 @@ fn every_face_suggestion(app: &dyn Host, conn: &Connection, root_folder: Option<
 // (so it holds every change made before), instead of starting their own.
 static SUGGESTIONS_TURN: Mutex<()> = Mutex::new(());
 type Suggestions = HashMap<String, Vec<SimilarFaceCandidate>>;
-// The folder, when the computation started, what it was made from (clusters_mark), each person's first batch,
-// and every face suggested for anyone
-type LastSuggestions = (Option<String>, std::time::Instant, FacesMark, Suggestions, Arc<HashSet<String>>);
-static LAST_SUGGESTIONS: Mutex<Option<LastSuggestions>> = Mutex::new(None);
+// Per folder (the server's pipeline and the apps ask for a library and for all of them): when the computation
+// started, what it was made from (clusters_mark), each person's first batch, and every face suggested for anyone
+type LastSuggestions = (std::time::Instant, FacesMark, Suggestions, Arc<HashSet<String>>);
+static LAST_SUGGESTIONS: LazyLock<Mutex<HashMap<Option<String>, LastSuggestions>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
 fn refresh_suggestion_cache(
     app: &dyn Host,
@@ -312,8 +312,9 @@ fn refresh_suggestions(app: &dyn Host, conn: &Connection, root_folder: Option<&s
     // counts when it opens: on a large library each computation is seconds of every core), or when they were
     // made after this ask came in
     let mark = clusters_mark(conn);
-    if let Some((root, started, made_from, list, all)) = LAST_SUGGESTIONS.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
-        if root.as_deref() == root_folder && (*started >= asked || *made_from == mark) {
+    let folder = root_folder.map(str::to_string);
+    if let Some((started, made_from, list, all)) = LAST_SUGGESTIONS.lock().unwrap_or_else(|e| e.into_inner()).get(&folder) {
+        if *started >= asked || *made_from == mark {
             return Ok((list.clone(), all.clone()));
         }
     }
@@ -323,7 +324,7 @@ fn refresh_suggestions(app: &dyn Host, conn: &Connection, root_folder: Option<&s
     for list in suggestions.values_mut() {
         list.truncate(MAX_SUGGESTIONS_PER_PERSON);
     }
-    *LAST_SUGGESTIONS.lock().unwrap_or_else(|e| e.into_inner()) = Some((root_folder.map(str::to_string), started, mark, suggestions.clone(), all.clone()));
+    LAST_SUGGESTIONS.lock().unwrap_or_else(|e| e.into_inner()).insert(folder, (started, mark, suggestions.clone(), all.clone()));
     let keyed: HashMap<String, Vec<SimilarFaceCandidate>> = suggestions
         .iter()
         .map(|(name, list)| (pending_cache_key(name, root_folder), list.clone()))
@@ -772,8 +773,8 @@ static KEPT_CLUSTERS: LazyLock<Mutex<HashMap<Option<String>, KeptClusters>>> = L
 static CLUSTERS_TURN: Mutex<()> = Mutex::new(());
 static CLUSTERS_BEHIND: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-// What suggestions and groups are made from: the faces and their names (the revision counter, revision.rs), the
-// turned-down and set-aside faces, and the people (hidden people get no suggestions)
+// What suggestions and groups are made from: the faces and their names (faces_generation), the turned-down and
+// set-aside faces, and the people (hidden people get no suggestions)
 fn clusters_mark(conn: &Connection) -> FacesMark {
     let rejections = conn
         .query_row("SELECT COUNT(*), COALESCE(MAX(rowid), 0) FROM face_rejections", [], |r| Ok((r.get(0)?, r.get(1)?)))
@@ -781,7 +782,100 @@ fn clusters_mark(conn: &Connection) -> FacesMark {
     let people = conn
         .query_row("SELECT COUNT(*), COALESCE(SUM(COALESCE(hidden, 0)), 0) FROM people", [], |r| Ok((r.get(0)?, r.get(1)?)))
         .unwrap_or((0, 0));
-    (crate::revision::current(conn).unwrap_or(0), rejections.0, rejections.1, people.0, people.1)
+    (faces_generation(conn), rejections.0, rejections.1, people.0, people.1)
+}
+
+// The faces of each photo as one number, and the photo revision (revision.rs) they were read at. The revision
+// goes up with every caption a server writes, a few a minute, so it can't say by itself that faces changed:
+// then only the photos changed since are read again, and the generation goes up when the faces of one of them
+// differ. Per database: tests open many.
+struct FacesSeen {
+    rev: i64,
+    per_photo: HashMap<String, u64>,
+    generation: i64,
+}
+static FACES_SEEN: LazyLock<Mutex<HashMap<String, FacesSeen>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+// More changed photos than this: all faces are read again
+const FACES_FOLLOWED: usize = 5000;
+
+fn faces_of_photos(conn: &Connection, hashes: Option<&[String]>) -> HashMap<String, u64> {
+    use std::hash::{Hash, Hasher};
+    let mut out: HashMap<String, std::collections::hash_map::DefaultHasher> = HashMap::new();
+    let mut add = |hash: String, face: String, person: String, engine: String, confidence: f64| {
+        let h = out.entry(hash).or_default();
+        (face, person, engine, confidence.to_bits()).hash(h);
+    };
+    let sql = "SELECT hash, face_id, COALESCE(person_name, ''), COALESCE(engine, ''), COALESCE(confidence, 0) FROM photo_faces";
+    let read = |r: &rusqlite::Row| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?, r.get::<_, f64>(4)?));
+    match hashes {
+        None => {
+            if let Ok(mut stmt) = conn.prepare(&format!("{sql} ORDER BY hash, face_id")) {
+                if let Ok(rows) = stmt.query_map([], read) {
+                    for (hash, face, person, engine, confidence) in rows.flatten() {
+                        add(hash, face, person, engine, confidence);
+                    }
+                }
+            }
+        }
+        Some(hashes) => {
+            if let Ok(mut stmt) = conn.prepare(&format!("{sql} WHERE hash = ?1 ORDER BY face_id")) {
+                for hash in hashes {
+                    if let Ok(rows) = stmt.query_map(params![hash], read) {
+                        for (hash, face, person, engine, confidence) in rows.flatten() {
+                            add(hash, face, person, engine, confidence);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    out.into_iter().map(|(hash, h)| (hash, h.finish())).collect()
+}
+
+fn faces_generation(conn: &Connection) -> i64 {
+    let rev = crate::revision::current(conn).unwrap_or(0);
+    let key = conn.path().unwrap_or("").to_string();
+    if key.is_empty() {
+        // A database in memory has no name to keep its faces under: all of them, every time
+        use std::hash::{Hash, Hasher};
+        let mut digests: Vec<(String, u64)> = faces_of_photos(conn, None).into_iter().collect();
+        digests.sort();
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        digests.hash(&mut h);
+        return h.finish() as i64;
+    }
+    let mut seen = FACES_SEEN.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(state) = seen.get_mut(&key) else {
+        seen.insert(key, FacesSeen { rev, per_photo: faces_of_photos(conn, None), generation: 0 });
+        return 0;
+    };
+    if state.rev == rev {
+        return state.generation;
+    }
+    match crate::revision::changed_since(conn, state.rev, FACES_FOLLOWED) {
+        Ok(Some(changed)) => {
+            let now = faces_of_photos(conn, Some(&changed));
+            let mut differs = false;
+            for hash in &changed {
+                let after = now.get(hash).copied();
+                let before = match after {
+                    Some(digest) => state.per_photo.insert(hash.clone(), digest),
+                    None => state.per_photo.remove(hash),
+                };
+                differs |= before != after;
+            }
+            if differs {
+                state.generation += 1;
+            }
+        }
+        // Too many changed (a scan, a restore), or the database couldn't say: everything counts as changed
+        _ => {
+            state.per_photo = faces_of_photos(conn, None);
+            state.generation += 1;
+        }
+    }
+    state.rev = rev;
+    state.generation
 }
 
 // Kept groups without the faces that have a name now or were set aside
@@ -1037,5 +1131,33 @@ mod tests {
         assert_eq!(now.len(), 1);
         assert_eq!((now[0].size, now[0].face_ids.clone()), (2, vec!["f2".to_string(), "f3".to_string()]));
         assert_eq!(now[0].samples.iter().map(|f| f.face_id.as_str()).collect::<Vec<_>>(), ["f2", "f3"]);
+    }
+
+    // A server writes captions all the time: they mustn't make every face suggestion be worked out again
+    #[test]
+    fn captions_leave_the_faces_mark_alone_and_names_move_it() {
+        for in_memory in [false, true] {
+            let dir = std::env::temp_dir().join(format!("lumina-faces-mark-{}-{in_memory}", std::process::id()));
+            let _ = std::fs::create_dir_all(&dir);
+            let conn = if in_memory { Connection::open_in_memory().unwrap() } else { Connection::open(dir.join("library.db")).unwrap() };
+            crate::db::migrate(&conn).unwrap();
+            conn.execute_batch(
+                "DELETE FROM photo_faces; DELETE FROM photos;
+                 INSERT INTO photos (hash, current_path) VALUES ('a', '/lib/a.jpg'), ('b', '/lib/b.jpg');
+                 INSERT INTO photo_faces (face_id, hash, bbox_x, bbox_y, bbox_w, bbox_h, face_thumb, embedding) VALUES
+                   ('f1', 'a', 0, 0, 1, 1, 'f1.jpg', ''), ('f2', 'b', 0, 0, 1, 1, 'f2.jpg', '');",
+            )
+            .unwrap();
+            let mark = clusters_mark(&conn);
+            conn.execute_batch("UPDATE photos SET ai_caption = 'two people on a beach' WHERE hash = 'a'; UPDATE photos SET rating = 4 WHERE hash = 'b'").unwrap();
+            assert_eq!(clusters_mark(&conn), mark, "a caption and a rating are not faces");
+            conn.execute_batch("UPDATE photo_faces SET person_name = 'Anna' WHERE face_id = 'f2'").unwrap();
+            let named = clusters_mark(&conn);
+            assert_ne!(named, mark, "a face got a name");
+            conn.execute_batch("DELETE FROM photo_faces WHERE face_id = 'f1'").unwrap();
+            assert_ne!(clusters_mark(&conn), named, "a face went");
+            drop(conn);
+            let _ = std::fs::remove_dir_all(&dir);
+        }
     }
 }

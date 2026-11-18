@@ -28,7 +28,19 @@ function request<T>(req: IDBRequest<T>): Promise<T> {
   });
 }
 
-export function browserKeptLists(): KeptLists | null {
+// A phone's or tablet's browser (iPadOS calls itself a Mac with a touch screen)
+function smallDevice(): boolean {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent ?? "";
+  return /iPhone|iPad|iPod|Android/i.test(ua) || (/Macintosh/.test(ua) && (navigator.maxTouchPoints ?? 0) > 1);
+}
+
+// Lists above this many characters aren't kept in a phone's browser: the list as text, the photos made from it
+// and the copy written to IndexedDB at once were more than iOS lets a page have (a library of 90,000 photos is
+// about 120 MB of text), and the page was closed while it loaded
+const PHONE_KEEPS_UP_TO = 16_000_000;
+
+export function browserKeptLists(keepsUpTo = smallDevice() ? PHONE_KEEPS_UP_TO : Infinity): KeptLists | null {
   if (typeof indexedDB === "undefined") return null;
   let opened: Promise<IDBDatabase> | null = null;
   const db = () => {
@@ -59,6 +71,11 @@ export function browserKeptLists(): KeptLists | null {
       try {
         // One transaction: never a tag without its list
         const s = await store("readwrite");
+        if (list.text.length > keepsUpTo) {
+          s.delete(`list:${key}`);
+          await request(s.delete(`tag:${key}`));
+          return;
+        }
         s.put(list.text, `list:${key}`);
         await request(s.put(list.tag, `tag:${key}`));
       } catch (e) {
