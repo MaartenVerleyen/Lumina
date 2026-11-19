@@ -133,6 +133,7 @@ pub fn migrate(conn: &Connection) -> Result<(), String> {
     let _ = conn.execute("ALTER TABLE photos ADD COLUMN video_codec TEXT", []);
 
     ensure_album_tables(conn);
+    crate::moments::ensure_tables(conn);
     // Hidden people: kept on their photos, left out of the people bar and of suggestions
     let _ = conn.execute("ALTER TABLE people ADD COLUMN hidden INTEGER DEFAULT 0", []);
     // Starred people: Best of favours photos with them

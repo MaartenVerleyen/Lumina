@@ -31,6 +31,8 @@ interface CollectionsViewProps {
   onDeleteAlbum: (id: number) => Promise<void>;
   onDeleteSavedSearch: (id: number) => Promise<void>;
   onRenameTrip: (id: string, name: string) => Promise<void>;
+  // Every photo of a trip (the cards have only their covers)
+  tripPhotos: (id: string) => Promise<string[]>;
   // On a server: share an album with other users (absent in the desktop app, and for who may not edit)
   onShareAlbum?: (album: { id: number; name: string; kind?: "album" | "search" }) => void;
   // All photos in the desktop app: follow an album shared with you (its photos into a library of yours)
@@ -180,6 +182,7 @@ export default function CollectionsView({
   onDeleteAlbum,
   onDeleteSavedSearch,
   onRenameTrip,
+  tripPhotos,
   onShareAlbum,
   onFollowAlbum,
   onHighlights,
@@ -487,16 +490,16 @@ export default function CollectionsView({
                   subtitle={`${e.kind === "trip" ? "Trip" : "Event"} · ${e.count} photos`}
                   cover={
                     <Cover
-                      hashes={tripsById.get(e.id)?.hashes ?? []}
+                      hashes={tripsById.get(e.id)?.cover ?? []}
                       photoByHash={photoByHash}
                       icon={e.kind === "trip" ? <Plane className="w-8 h-8" /> : <Calendar className="w-8 h-8" />}
                     />
                   }
                   onOpen={() => onOpenTrip(e.id)}
                   menu={[
-                    { label: "Highlights", run: () => onHighlights(e.label, tripsById.get(e.id)?.hashes ?? []) },
+                    { label: "Highlights", run: () => void tripPhotos(e.id).then((hashes) => onHighlights(e.label, hashes)) },
                     ...(onShareGallery
-                      ? [{ label: "Share as a web gallery…", run: () => onShareGallery(e.label, tripsById.get(e.id)?.hashes ?? []) }]
+                      ? [{ label: "Share as a web gallery…", run: () => void tripPhotos(e.id).then((hashes) => onShareGallery(e.label, hashes)) }]
                       : []),
                     ...(access.edit ? [{ label: "Rename", run: () => setRenaming({ kind: "trip", id: e.id, value: "" }) }] : []),
                   ]}

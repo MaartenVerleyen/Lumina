@@ -810,6 +810,7 @@ export default function App() {
               onDeleteAlbum={lib.handleDeleteAlbum}
               onDeleteSavedSearch={lib.handleDeleteSavedSearch}
               onRenameTrip={lib.handleRenameTrip}
+              tripPhotos={lib.tripPhotos}
               // Albums are shared with the accounts of the server the library is on (the web client's, or one
               // the desktop app opened a library of)
               onShareAlbum={!openLibraryIsLocal() && access.edit ? setShareAlbum : undefined}

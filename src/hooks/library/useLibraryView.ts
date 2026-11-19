@@ -88,7 +88,7 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
     expandedFolders,
     setExpandedFolders,
   } = filters;
-  const { tripOfHash, albumContext, albumSets } = collections;
+  const { tripHashes, albumContext, albumSets } = collections;
   // Closed eyes and soft focus, at the sensitivity chosen in Settings
   const settings = useSettings();
   const culling = useMemo(() => cullingOf(settings), [settings.eyesCheck, settings.focusCheck]);
@@ -242,7 +242,7 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
     activeSubfolder,
     activeEvent,
     // Only a chosen trip filters by it: new trips (photos taken somewhere new) don't sort the whole library again
-    activeEvent !== "ALL" ? tripOfHash : null,
+    activeEvent !== "ALL" ? tripHashes : null,
     activeTag,
     parsedSearch,
     matchContext,
@@ -313,7 +313,7 @@ export function useLibraryView(core: LibraryCore, filters: FilterState, collecti
           }
         }
       }
-      if (activeEvent !== "ALL" && tripOfHash.get(p.hash) !== activeEvent) return false;
+      if (activeEvent !== "ALL" && !tripHashes?.has(p.hash)) return false;
       if (activeTag !== "ALL" && !p.tags.includes(activeTag)) return false;
 
       if (q && !searchTextOf(p).includes(q)) return false;

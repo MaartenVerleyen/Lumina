@@ -72,18 +72,67 @@ The engine adds what only it knows:
    through captions. Checked on cachy against a list of real trips and big days Maarten writes down (about 20).
 4. **Smart search** for days without captions, and the home setting, if 3 leaves gaps.
 
-## What needs Maarten
+## Agreed with Maarten (2026-11-19)
 
-- **Agreeing this plan**: it adds tables to the database and changes how the apps get trips (from the engine
-  instead of working them out), both things CLAUDE.md asks to agree first.
-- **About 20 real trips and big days** from the library on cachy, with their dates and what they should be called,
-  to check milestone 3 against.
-- **Choices:**
-  - Names in English as now, or Dutch ("Verjaardag · Emma")? The caption model writes English.
-  - Should big days below 50 photos come from captions alone (a birthday with 15 photos), or only with people
-    in them too?
-  - Should the engine's names use people's names ("Emma's birthday") when the trip is shared with a guest who
-    doesn't know who Emma is? (Suggested: yes, they are the names the person sharing gave.)
+- The plan, its tables (`moments`, `moment_photos`) and the apps getting trips from the engine.
+- Names in English.
+- A big day below 50 photos can come from captions alone (a birthday with 15 photos).
+- The engine's names use people's names, also when the trip is shared with a guest.
+- **Real examples:** a first try over a copy of cachy's database (2021 on, with people and caption words) is being
+  checked by Maarten entry by entry; milestone 3 is checked against his answers. What the first try showed: in
+  2022 most of the 35 big days are ordinary days with many photos; a batch of 436 photos on one day all with "beach"
+  in the caption (a wrong date?); whose birthday it is can't be told from who is in most photos when that's the
+  household (the four people in far more photos than anyone else).
+- **His first 24 answers** (2021 to Aug 2022; kept with the check page, not in this repository): 3 right, 4 not a
+  trip or big day, 17 renamed or joined. What they teach:
+  - *Joining.* A journey abroad split in two by a gap of a little over two days should be one trip. Days of one
+    occasion belong together: two days around a birth; several days at the same place that isn't home (a hospital)
+    over a few weeks.
+  - *Names are occasions, not places:* "New year's trip to Strasbourg" (the dates say New Year), "France - Summer
+    of 2021" (a long summer trip abroad), "Birthday of a friend", "Grandparents visit", "Family gathering".
+  - *Who:* a pet is a named "person" and names days ("Walk with …", "Beach with …"). Two guests in a fifth to a
+    third of the photos are a visit, not a "Party" because of balloons. Many different guests, each in few photos,
+    are a family gathering. A birthday is named after a person only when that person is clearly in it.
+  - *Too many big days:* ordinary days with many photos (a newborn at home), and a "Christmas" from 14 photos
+    after the holidays, are not big days.
+  - Engine names can't know everything ("Hospital", "Baroque weekend"): the aim is fewer wrong groupings and names
+    that are close enough to keep or to change in one go.
+
+## Milestone 3 as built (rule 2, `moments.rs`)
+
+- **What the library says about people:** the household is the people in at least 40% as many photos as the
+  person in most; a pet is a "person" whose photos' captions name a dog or a cat (60%+); a guest is anyone else.
+- **Trips** in the same country abroad less than four days apart are one journey. Names: "New year's trip to X"
+  (over the turn of the year), "Wedding in X", "Ski trip to X", "X - Summer of 2021" (5+ days abroad starting in June
+  to August), "Beach trip with <pet>" / "Beach trip to X" (also snow and walking), "Day trip to X", "Weekend in X",
+  with " with A & B" for one or two guests in 30%+ of the photos. Otherwise no title: the place is shown.
+- **Long stays:** days at or near home whose captions name a hospital (25%+), no more than nine days apart, are
+  one "Hospital stay". A household member first seen at its start makes its first two days "Birth of <name>"; the
+  day after it is "Homecoming".
+- **Big days need a reason:** an occasion (wedding, birthday, Christmas in December up to the 26th, New Year's Eve,
+  a party), which also makes a day of 10+ photos a big day; or, from 50 photos, guests ("Family gathering" for four
+  or more, "Visit from A & B" for one or two in 15%+) or something done (beach, snow, a walk, with the pet). A day
+  whose photos mostly have no caption yet keeps the old rule (50 photos). Days in a row with the same name are one.
+- On the copy of cachy's database: 99 moments instead of 178, 0.44 s in a debug build. Against Maarten's 24 answers:
+  the three "not a big day" are gone, the three joins are made (the summer abroad, the birth, the hospital stay),
+  and the names match or are close ("Day trip to … with …" for a themed weekend, "Party with <pet>" for the pet's
+  birthday, "Birthday" for a friend's).
+
+### Rule 3, after Maarten's second check (77 answers, about 50 right as they were)
+
+- **Strays:** a phone's photo without a position joins a trip only when that phone has photos with one on the
+  trip. The other partner's phone at home made trips include home photos and screenshots. Cameras that never record
+  a position (under 5% of their photos) still join, as before.
+- **Trip names don't name guests** ("Day trip to Rochefort", not "… with Michiel & Wim"), and a trip named after a
+  country gets no "Weekend in"/"Day trip to".
+- **Districts are their town** ("Zagreb - Centar" is Zagreb).
+- **Events from captions:** festival, concert, race (circuit), exhibition or museum, for trips ("Festival in …") and
+  for days ("Exhibition"); they count as occasions.
+- **A day out:** most of a day in a town that isn't one of home's towns (20%+ of the photos near home) and 15+ km
+  away is "Day trip to …", a trip, after a gathering and before a visit ("Visit from Annie" was a day out).
+- **A second guest** is named from a third of the first one's share ("Visit from John & Sabine" with 33% and 6%).
+- What engine names can't know: a bachelor party, a conference, a circuit's name, small day trips that weren't
+  trips (to family nearby), a party that wasn't one.
 
 ## Checks
 

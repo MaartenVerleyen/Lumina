@@ -46,6 +46,7 @@ import {
 } from "./allPhotos.ts";
 import type { FaceCluster, PersonItem, PhotoItem, SemanticHit, SemanticStatus, SimilarFaceCandidate } from "../types/lumina";
 import { fromLeanList, leanListsOn, type PhotoDetails } from "./leanList.ts";
+import type { Trip } from "../utils/trips.ts";
 
 export type { EngineEvent, MediaRef, Transport, RemoteUser, Role, LibraryRef, ServerInfo, Source };
 export { libraryRefFromString, libraryRefToString };
@@ -833,6 +834,8 @@ const lastPendingCounts = new Map<string, Record<string, number>>();
 // Where each photo of the duplicate sets last found in All photos came from: the engine that found the set and the
 // photo's id there, so staging the extras goes back to that library (a set never spans two libraries)
 const duplicateHomes = new Map<string, { engine: string; id: string }>();
+// Where each trip All photos lists comes from (the libraries that have it), for its photos
+const momentHomes = new Map<string, { engine: string; root: string; id: string }[]>();
 
 // Each server library's list as the last load fetched it. A server answers from its database, so a load that
 // only checks this computer's folders (the background check after opening) reuses these: a large library's
@@ -1480,6 +1483,51 @@ async function callAll<T>(command: string, args: Record<string, unknown>): Promi
         [...byEngine].map(([engine, sets]) => engineTransport(engine).call<number>(command, { ...args, sets }))
       );
       return counts.reduce((n, c) => n + (Number(c) || 0), 0) as T;
+    }
+    // Trips and big days of every library. One that two libraries share is shown once: the same photos give the same
+    // id (its first photo) in both. Within one engine a trip over two libraries is one moment, its photos counted in
+    // each; across engines the larger copy counts.
+    case "get_moments": {
+      const sources = [...all.sources.values()].filter((s) => s.root !== PHONE_ROOT);
+      const lists = await Promise.all(
+        sources.map(async (s) => {
+          const engine = engineOf(s);
+          const moments = await engineTransport(engine).call<Trip[]>(command, { rootFolder: s.root }).catch(() => [] as Trip[]);
+          return { engine, root: s.root, moments };
+        })
+      );
+      momentHomes.clear();
+      const merged = new Map<string, Trip & { engines: Map<string, number> }>();
+      for (const { engine, root, moments } of lists) {
+        for (const m of moments) {
+          const shown = (h: string) => (engine === "" ? all.fromLocal.get(h) ?? h : h);
+          const id = shown(m.id);
+          const homes = momentHomes.get(id) ?? [];
+          homes.push({ engine, root, id: m.id });
+          momentHomes.set(id, homes);
+          const before = merged.get(id);
+          if (!before) {
+            merged.set(id, { ...m, id, cover: m.cover.map(shown), engines: new Map([[engine, m.count]]) });
+            continue;
+          }
+          before.engines.set(engine, (before.engines.get(engine) ?? 0) + m.count);
+          before.start = Math.min(before.start, m.start);
+          before.end = Math.max(before.end, m.end);
+          before.count = Math.max(...before.engines.values());
+          if (m.cover.length > before.cover.length) before.cover = m.cover.map(shown);
+        }
+      }
+      return [...merged.values()].map(({ engines: _, ...m }) => m).sort((a, b) => a.start - b.start) as T;
+    }
+    case "get_moment_photos": {
+      const homes = momentHomes.get(String(args.id)) ?? [];
+      const lists = await Promise.all(
+        homes.map(async (h) => {
+          const hashes = await engineTransport(h.engine).call<string[]>(command, { id: h.id, rootFolder: h.root }).catch(() => [] as string[]);
+          return h.engine === "" ? hashes.map((x) => all.fromLocal.get(x) ?? x) : hashes;
+        })
+      );
+      return [...new Set(lists.flat())] as T;
     }
     // Trip names of every library (a new one is kept where the window's own commands go)
     case "get_trip_names": {

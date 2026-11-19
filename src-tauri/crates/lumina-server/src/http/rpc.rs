@@ -22,7 +22,7 @@ use crate::restore;
 use crate::{accounts, changes};
 use lumina_core::types::PersonItem;
 use std::sync::Arc;
-use lumina_core::{ai, albums, backup, clip, db, decode, duplicates, face_engine, face_quality, face_review, face_scan, ffmpeg, files, highlights, libraries, library, people, photo_meta, scan};
+use lumina_core::{ai, albums, backup, clip, db, decode, duplicates, face_engine, face_quality, face_review, face_scan, ffmpeg, files, highlights, libraries, library, moments, people, photo_meta, scan};
 use serde::de::DeserializeOwned;
 use serde_json::Value as JsonValue;
 use std::future::Future;
@@ -243,6 +243,31 @@ fn people_for(host: &ServerHost, scope: &Scope, root: Option<String>, people: Ve
     access::people_for(&db::open_global_db(host)?, scope, library, value)
 }
 
+// The trips and big days this user sees: every one, with a role on the library; else those with photos shared with
+// them, counted and covered by those photos alone (a guest never sees a trip of photos they can't see)
+fn moments_for(host: &ServerHost, scope: &Scope, root: Option<String>, list: Vec<moments::MomentItem>) -> Result<JsonValue, ApiError> {
+    let library = root.as_deref().and_then(|r| scope.library_id_of_root(r));
+    let sees = match library {
+        Some(id) => scope.role_on(id) >= Role::Viewer,
+        None => scope.sees_all(),
+    };
+    if sees {
+        return answer(Ok::<_, String>(list));
+    }
+    let conn = db::open_global_db(host)?;
+    let mut out = Vec::new();
+    for mut m in list {
+        let hashes = scope.visible(&conn, &moments::photos_of(&conn, &m.id, root.as_deref())?)?;
+        if hashes.is_empty() {
+            continue;
+        }
+        m.count = hashes.len();
+        m.cover = moments::cover_of(&hashes);
+        out.push(m);
+    }
+    answer(Ok::<_, String>(out))
+}
+
 // Of a backup's values, those this user may set: on any photo of a library where they are an editor, else
 // on their own uploads (their uploads/<name>/ folder); answers those and the hashes of the others
 fn values_allowed(host: &ServerHost, scope: &Scope, items: Vec<lumina_core::photo_meta::PhotoMeta>) -> Result<(Vec<lumina_core::photo_meta::PhotoMeta>, Vec<String>), String> {
@@ -326,6 +351,18 @@ commands! {
     };
     Viewer blocking get_trip_names() |host, scope| {
         if scope.admin() || scope.anywhere(Role::Viewer) { albums::get_trip_names(host) } else { Ok(Default::default()) }
+    };
+    // Trips and big days (lumina-core moments.rs), and the photos of one when it is opened
+    Viewer [Target::OptRoot(root_folder.clone())] async get_moments(root_folder: Option<String>) |host, scope| {
+        let root = optional_root(&host, root_folder)?;
+        let list = moments::get_moments(host.clone(), root.clone()).await?;
+        moments_for(&host, &scope, root, list)
+    };
+    Viewer [Target::OptRoot(root_folder.clone())] blocking get_moment_photos(id: String, root_folder: Option<String>) |host, scope| {
+        let root = optional_root(&host, root_folder)?;
+        let conn = db::open_global_db(&*host)?;
+        let hashes = moments::photos_of(&conn, &id, root.as_deref())?;
+        Ok::<_, ApiError>(scope.visible(&conn, &hashes)?)
     };
     Viewer [Target::OptRoot(root_folder.clone())] async semantic_status(root_folder: Option<String>) |host, scope| {
         let root = optional_root(&host, root_folder)?;

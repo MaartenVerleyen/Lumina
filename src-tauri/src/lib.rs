@@ -95,6 +95,8 @@ pub fn run() {
                 LazyLock::force(&BG_POOL);
             });
             import::start_drive_watch(Arc::new(app.handle().clone()));
+            // Trips and big days of this PC's folders, made again in the background when their photos change
+            lumina_core::moments::keep_ready(Arc::new(app.handle().clone()));
             #[cfg(any(target_os = "linux", target_os = "android"))]
             media_server::start(app.handle().clone());
             // Servers this app is signed in to: their events, and uploads or downloads still waiting
@@ -148,6 +150,8 @@ pub fn run() {
             engine_commands::set_person_cover,
             engine_commands::get_trip_names,
             engine_commands::set_trip_name,
+            engine_commands::get_moments,
+            engine_commands::get_moment_photos,
             engine_commands::find_similar_faces,
             engine_commands::get_confirmed_faces_for_person,
             engine_commands::get_rejected_faces_for_person,

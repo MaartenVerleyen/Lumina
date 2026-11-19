@@ -200,6 +200,16 @@ pub fn get_trip_names(app: AppHandle) -> Result<HashMap<String, String>, String>
 }
 
 #[tauri::command]
+pub async fn get_moments(app: AppHandle, root_folder: Option<String>) -> Result<Vec<lumina_core::moments::MomentItem>, String> {
+    lumina_core::moments::get_moments(Arc::new(app), root_folder).await
+}
+
+#[tauri::command]
+pub async fn get_moment_photos(app: AppHandle, id: String, root_folder: Option<String>) -> Result<Vec<String>, String> {
+    lumina_core::moments::get_moment_photos(Arc::new(app), id, root_folder).await
+}
+
+#[tauri::command]
 pub fn set_trip_name(app: AppHandle, trip_id: String, name: String) -> Result<(), String> {
     albums::set_trip_name(Arc::new(app), trip_id, name)
 }

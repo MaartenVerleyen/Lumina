@@ -1,9 +1,8 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { ALL_PHOTOS_LOADED, call, isOwnChange, openLibraryIsAll, openLibraryServer, RECONNECTED, subscribe } from "../../api";
-import { useKeptWhile } from "../../utils/photoChanges";
 import { Album, SavedSearch } from "../../types/lumina";
 import { MatchContext } from "../../utils/searchQuery";
-import { computeTrips, tripLabel } from "../../utils/trips";
+import { Trip, tripLabel } from "../../utils/trips";
 import { leanListsOn } from "../../api/leanList";
 import type { LibraryCore } from "./core";
 import type { FilterState } from "./useFilterState";
@@ -13,7 +12,6 @@ import { plural } from "../../utils/plural";
 export function useCollections(core: LibraryCore, filters: FilterState) {
   const {
     folder,
-    photos,
     photoByHash,
     resolveTargets,
     pushCustomUndo,
@@ -23,7 +21,7 @@ export function useCollections(core: LibraryCore, filters: FilterState) {
     setAutoMatchNotice,
     setActiveBulkPopover,
   } = core;
-  const { activeAlbumId, setActiveAlbumId, searchQuery, setSearchQuery } = filters;
+  const { activeAlbumId, setActiveAlbumId, searchQuery, setSearchQuery, activeEvent } = filters;
   // Albums, smart albums and trip names belong to the engine of the open library: this computer's, or a
   // server's, so they load again when a library of another server (or of this computer) opens
   const server = openLibraryServer();
@@ -36,29 +34,53 @@ export function useCollections(core: LibraryCore, filters: FilterState) {
   useEffect(() => {
     call<Record<string, string>>("get_trip_names").then(setTripNames).catch(() => {});
   }, [folder, server]);
-  // Made from when and where photos were taken (and whether they are WhatsApp photos or screenshots): a new
-  // caption, rating or face leaves them as they were (worked out again for 110,000 photos at every caption the
-  // server wrote, the phone froze each time). The phone layout shows no trips (its lean lists have no camera model).
-  const trips = useKeptWhile(
-    photos,
-    () => (leanListsOn() ? [] : computeTrips(photos)),
-    (before, after) =>
-      before.captured_at === after.captured_at &&
-      before.location === after.location &&
-      before.latitude === after.latitude &&
-      before.longitude === after.longitude &&
-      before.name === after.name &&
-      before.camera_model === after.camera_model &&
-      before.tags.includes("whatsapp") === after.tags.includes("whatsapp") &&
-      before.tags.includes("screenshot") === after.tags.includes("screenshot"),
-    [],
-    "trips"
+  // Made by the engine of the open library (moments.rs) from when and where photos were taken; the window only
+  // lists them, and hears when they were made again (moments-changed). The phone layout shows no trips yet.
+  const [trips, setTrips] = useState<Trip[]>([]);
+  const refreshTrips = useCallback(() => {
+    if (leanListsOn()) return;
+    call<Trip[]>("get_moments", { rootFolder: folder || null })
+      .then(setTrips)
+      .catch(() => {});
+  }, [folder, server]);
+  useEffect(() => {
+    setTrips([]);
+    refreshTrips();
+  }, [refreshTrips]);
+  useEffect(() => {
+    const off = subscribe("moments-changed", () => refreshTrips());
+    const offReconnected = subscribe(RECONNECTED, () => refreshTrips());
+    const allLoaded = () => {
+      if (openLibraryIsAll()) refreshTrips();
+    };
+    window.addEventListener(ALL_PHOTOS_LOADED, allLoaded);
+    return () => {
+      window.removeEventListener(ALL_PHOTOS_LOADED, allLoaded);
+      off.then((f) => f());
+      offReconnected.then((f) => f());
+    };
+  }, [refreshTrips]);
+  // Every photo of a trip, asked for when it is opened or its Highlights shown
+  const tripPhotos = useCallback(
+    (id: string) => call<string[]>("get_moment_photos", { id, rootFolder: folder || null }),
+    [folder, server]
   );
-  const tripOfHash = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const t of trips) for (const h of t.hashes) m.set(h, t.id);
-    return m;
-  }, [trips]);
+  // The photos of the chosen trip, which the grid shows (null while they come)
+  const [chosenTrip, setChosenTrip] = useState<{ id: string; hashes: Set<string> } | null>(null);
+  useEffect(() => {
+    if (activeEvent === "ALL") {
+      setChosenTrip(null);
+      return;
+    }
+    let current = true;
+    tripPhotos(activeEvent)
+      .then((hashes) => current && setChosenTrip({ id: activeEvent, hashes: new Set(hashes) }))
+      .catch((err) => setError(String(err)));
+    return () => {
+      current = false;
+    };
+  }, [activeEvent, tripPhotos, trips]);
+  const tripHashes = chosenTrip && chosenTrip.id === activeEvent ? chosenTrip.hashes : null;
   const autoEvents = useMemo(
     () =>
       trips
@@ -275,7 +297,8 @@ export function useCollections(core: LibraryCore, filters: FilterState) {
 
   return {
     trips,
-    tripOfHash,
+    tripHashes,
+    tripPhotos,
     autoEvents,
     handleRenameTrip,
     albums,

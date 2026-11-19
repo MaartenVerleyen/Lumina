@@ -139,6 +139,8 @@ async fn serve(config: &Config, host: Arc<ServerHost>) -> Result<(), String> {
     dynamic::keep_up(host.clone());
     // Each library's list is made now and kept up to date, so no window waits for it
     listing::keep_ready(host.clone());
+    // Trips and big days are made again in the background when the photos they come from change
+    lumina_core::moments::keep_ready(host.clone());
 
     let mut changes = host.take_watched().ok_or("The pipeline runs once per server")?;
     let mut jobs = host.jobs.take_receiver().ok_or("The pipeline runs once per server")?;
