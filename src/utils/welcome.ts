@@ -14,6 +14,12 @@ export interface ReleaseNotes {
 // Newest first. Add an entry for every release that should greet updating users with "What's new".
 export const RELEASE_NOTES: ReleaseNotes[] = [
   {
+    version: "6.3.9",
+    items: [
+      { title: "New photos show up by themselves", text: "A photo uploaded from another phone, the web app or a backup now appears in Lumina within a few seconds, without pulling down to refresh. During a large backup the list is brought up to date once the uploads pause, and at least every 30 seconds." },
+    ],
+  },
+  {
     version: "6.3.8",
     items: [
       { title: "The phone app uses less memory", text: "All photos on the phone no longer keeps a second copy of every photo while it shows the phone's photos and the server's together. On a library of 120,000 photos that is about a fifth less memory." },

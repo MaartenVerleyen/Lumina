@@ -936,6 +936,32 @@ export function useFolder(core: LibraryCore, filters: FilterState) {
 
   const silentRescanRef = useRef(silentRescan);
   silentRescanRef.current = silentRescan;
+
+  // A photo uploaded to a server library this window shows (from another phone, the web client, a backup): the
+  // list is asked for again, quietly, which since 6.3.7 is only what changed. A backup sends hundreds: the list is
+  // asked for once they pause for ADDED_QUIET, and at least every ADDED_AT_MOST while they keep coming.
+  useEffect(() => {
+    const ADDED_QUIET = 3000;
+    const ADDED_AT_MOST = 30000;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let first = 0;
+    const listAgain = () => {
+      timer = null;
+      first = 0;
+      void silentRescanRef.current();
+    };
+    const unlisten = subscribe<string>("photos-added", (event) => {
+      if (!isOpenLibraryRoot(event.payload, event)) return;
+      const now = Date.now();
+      if (!first) first = now;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(listAgain, now - first >= ADDED_AT_MOST ? 0 : ADDED_QUIET);
+    });
+    return () => {
+      if (timer) clearTimeout(timer);
+      unlisten.then((f) => f());
+    };
+  }, []);
   useEffect(() => {
     const unlisten = subscribe<string>("library-files-changed", (event) => {
       if (!isOpenLibraryRoot(event.payload, event) || Date.now() < watchQuietUntilRef.current) return;

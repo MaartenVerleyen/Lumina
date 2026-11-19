@@ -413,6 +413,8 @@ const IN_THE_DATABASE: &[&str] = &[
     "ai-batch-progress",
     // Part of a long first index was saved: the new rows have revisions
     "library-indexed",
+    // An upload: its row has a revision
+    "photos-added",
 ];
 // Events after which files may have come or gone
 const FILES: &[&str] = &["scan-progress", "library-files-changed", "import-progress"];

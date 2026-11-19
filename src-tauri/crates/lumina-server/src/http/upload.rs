@@ -367,7 +367,7 @@ pub async fn finish(
     let origin: String = headers.get("x-lumina-client").and_then(|v| v.to_str().ok()).unwrap_or("").chars().take(64).collect();
     let state2 = state.clone();
     let user2 = user.clone();
-    let (photo, dest) = blocking(move || {
+    let (photo, dest, root) = blocking(move || {
         let (conn, root) = may_upload(&state2, &user2)?;
         let upload = find(&conn, &user2, &id)?;
         let host = &state2.host;
@@ -409,7 +409,7 @@ pub async fn finish(
         } else {
             Some(scan::index_new_file(host.clone(), &root, &dest)?)
         };
-        Ok((photo, dest))
+        Ok((photo, dest, root))
     })
     .await?;
     println!("[upload] {} uploaded {}", user.name, dest.display());
@@ -422,6 +422,9 @@ pub async fn finish(
         })
         .await;
         state.host.emit_value("photos-changed", json!({ "hashes": [p.hash], "by": user.name, "origin": origin }));
+        // photos-changed refreshes photos a window shows; a photo it doesn't have yet needs its list asked for
+        // again (only what changed, listing.rs), which this says for the library
+        state.host.emit_value("photos-added", json!(root));
     }
     Ok(Json(serde_json::to_value(photo).map_err(|e| ApiError::from(e.to_string()))?))
 }

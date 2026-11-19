@@ -1157,6 +1157,14 @@ async fn a_file_uploads_in_three_chunks_and_lands_in_the_users_folder_indexed() 
         }
     };
     assert_eq!(payload["hashes"], json!([content_hash(&bytes)]));
+    // and windows that show the library ask for its list again: a photo they don't have yet
+    let added = loop {
+        let (event, payload) = events.recv().await.unwrap();
+        if event == "photos-added" {
+            break payload;
+        }
+    };
+    assert_eq!(added, json!(root));
 
     // Now the server has it
     let (_, _, check) = send(&s.app, post("/api/upload/check", json!({"files": [{"hash": content_hash(&bytes), "size": bytes.len(), "name": "x.jpg"}]}), Some(&ed))).await;
