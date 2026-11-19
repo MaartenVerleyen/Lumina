@@ -978,7 +978,8 @@ type MergedLists = { photos: PhotoItem[]; copies: Map<string, Copies>; localValu
 // shows
 function install(sourceMap: Map<string, Source>, names: AllState["names"], merged: MergedLists) {
   const placed = new Map<string, Placed>();
-  const faces = new Map<string, string>();
+  // Crops learnt since (a photo's details, people's covers) stay: an open photo keeps the faces it fetched
+  const faces = new Map<string, string>(all.faces);
   for (const p of merged.photos) {
     // The phone layout's photos carry no placing of their own (mergeSources' `lean`)
     if (p.copies) placed.set(p.hash, { subfolder: p.subfolder, also_in: p.also_in, copies: p.copies, home: p.home });
@@ -1257,10 +1258,11 @@ async function callAll<T>(command: string, args: Record<string, unknown>): Promi
         [...byEngine].map(async ([engine, hashes]) => {
           const found = await engineTransport(engine).call<Record<string, PhotoDetails>>("get_photo_details", { hashes });
           const show = showOn(engine);
-          return Object.entries(found).map(([hash, d]): [string, PhotoDetails] => [
-            hash,
-            { ...d, faces: (d.faces ?? []).map((f) => (f.person_name ? { ...f, person_name: show(f.person_name) } : f)) },
-          ]);
+          return Object.entries(found).map(([hash, d]): [string, PhotoDetails] => {
+            // The lean list brought no faces, so their crops are known to come from this engine only now
+            for (const f of d.faces ?? []) if (f.face_thumb) all.faces.set(f.face_thumb, engine);
+            return [hash, { ...d, faces: (d.faces ?? []).map((f) => (f.person_name ? { ...f, person_name: show(f.person_name) } : f)) }];
+          });
         })
       );
       return Object.fromEntries(answers.flat()) as T;
