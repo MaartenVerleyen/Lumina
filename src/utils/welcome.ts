@@ -14,6 +14,13 @@ export interface ReleaseNotes {
 // Newest first. Add an entry for every release that should greet updating users with "What's new".
 export const RELEASE_NOTES: ReleaseNotes[] = [
   {
+    version: "6.3.10",
+    items: [
+      { title: "Trips and big days with names", text: "Lumina now works out trips and big days itself, from the dates, places, people and captions of your photos, and names them: \"Ski trip to Les Arcs\", \"France - Summer of 2025\", \"Birthday of Emma\", \"Visit from Ann & Bert\", \"Christmas at home\". Days with many photos but nothing special no longer count as big days, and photos from a phone that stayed home no longer join a trip. A name you give a trip still wins." },
+      { title: "Face crops on the phone", text: "In a photo's details in All photos on the phone, the small circles of the people in it show their faces again instead of a broken image." },
+    ],
+  },
+  {
     version: "6.3.9",
     items: [
       { title: "New photos show up by themselves", text: "A photo uploaded from another phone, the web app or a backup now appears in Lumina within a few seconds, without pulling down to refresh. During a large backup the list is brought up to date once the uploads pause, and at least every 30 seconds." },
